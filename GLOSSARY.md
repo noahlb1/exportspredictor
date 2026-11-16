@@ -86,6 +86,10 @@ _Avoid_: FTA (except as a type of Trade Agreement), deal
 A named group of countries whose membership implies Trade Agreements with every other member, such as the EU or CPTPP.
 _Avoid_: union, alliance
 
+**Customs Union**:
+A Trading Bloc whose members also share a common external tariff, such as the EU customs union. Membership of the Customs Union and of the wider bloc are tracked separately.
+_Avoid_: single market
+
 ### People
 
 **Advisor**:
