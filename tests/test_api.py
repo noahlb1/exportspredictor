@@ -70,3 +70,48 @@ def test_unknown_product_returns_404_with_a_message(client):
 
     assert response.status_code == 404
     assert "999999" in response.json()["detail"]
+
+
+def test_products_search_finds_a_product_by_its_code(client):
+    response = client.get("/products", params={"q": "851712"})
+
+    assert response.status_code == 200
+    assert [product["hs6"] for product in response.json()] == ["851712"]
+
+
+def test_products_search_finds_a_product_by_an_everyday_word(client):
+    # The HS 2012 description says "Telephones for cellular networks", never "smartphone".
+    hs6s = [product["hs6"] for product in client.get("/products", params={"q": "Smartphone"}).json()]
+
+    assert hs6s[0] == "851712"
+
+
+def test_products_search_matches_words_in_the_description(client):
+    body = client.get("/products", params={"q": "fish frozen"}).json()
+
+    assert body == [{"hs6": "030420", "description": "Fish fillets, frozen", "sector": "03"}]
+
+
+def test_products_search_by_code_prefix_lists_the_sector(client):
+    hs6s = [product["hs6"] for product in client.get("/products", params={"q": "22"}).json()]
+
+    assert hs6s == ["220830"]
+
+
+def test_unknown_search_text_returns_an_empty_list(client):
+    response = client.get("/products", params={"q": "zzz-not-a-product"})
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_markets_lists_every_market_with_name_and_region(client):
+    response = client.get("/markets")
+
+    assert response.status_code == 200
+    assert {market["iso3"]: market for market in response.json()}["JPN"] == {
+        "iso3": "JPN",
+        "name": "Japan",
+        "region": "East Asia & Pacific",
+    }
+    assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND"}

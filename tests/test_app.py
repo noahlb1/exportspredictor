@@ -42,11 +42,11 @@ def api_url(fixture_artefacts_dir):
     thread.join(timeout=5)
 
 
-def _run_page(monkeypatch, api_url: str, hs6: str) -> AppTest:
+def _run_page(monkeypatch, api_url: str, query: str) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
     page = AppTest.from_file(str(PAGE), default_timeout=30)
     page.run()
-    page.text_input(key="hs6").input(hs6).run()
+    page.text_input(key="product_query").input(query).run()
     return page
 
 
@@ -67,11 +67,30 @@ def test_page_shows_baseline_year_banner(monkeypatch, api_url):
     assert "2024" in banner and "provisional" in banner
 
 
-def test_unknown_product_shows_a_message(monkeypatch, api_url):
-    page = _run_page(monkeypatch, api_url, "999999")
+def test_searching_by_everyday_words_finds_the_product(monkeypatch, api_url):
+    page = _run_page(monkeypatch, api_url, "smartphone")
 
     assert not page.exception
-    assert any("999999" in element.value for element in page.warning)
+    assert page.selectbox(key="hs6").value == "851712"
+    assert any("851712" in element.value for element in page.subheader)
+
+
+def test_choosing_among_several_matches_shows_that_product(monkeypatch, api_url):
+    # Sector-level prefix "8": 851712 and 870323.
+    page = _run_page(monkeypatch, api_url, "8")
+    options = page.selectbox(key="hs6").options
+
+    assert len(options) == 2
+    page.selectbox(key="hs6").select_index(1).run()
+    assert any("870323" in element.value for element in page.subheader)
+
+
+def test_unknown_search_text_shows_a_message(monkeypatch, api_url):
+    page = _run_page(monkeypatch, api_url, "zzz-not-a-product")
+
+    assert not page.exception
+    assert any("zzz-not-a-product" in element.value for element in page.warning)
+    assert not page.dataframe
 
 
 def test_api_down_shows_a_clear_message(monkeypatch):
