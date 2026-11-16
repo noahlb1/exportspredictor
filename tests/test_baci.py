@@ -14,6 +14,7 @@ COUNTRIES = """country_code,country_name,country_iso2,country_iso3
 826,United Kingdom,GB,GBR
 276,Germany,DE,DEU
 280,Fed. Rep. of Germany (...1990),DE,DEU
+384,CÃ´te d'Ivoire,CI,CIV
 """
 PRODUCTS = """code,description
 010121,"Horses: live, pure-bred breeding animals"
@@ -99,10 +100,13 @@ def test_product_lookup_has_descriptions_and_sectors(data_root):
 def test_market_lookup_has_names_regions_and_income_levels(data_root):
     markets = {row["iso3"]: row for row in baci.markets(data_root).iter_rows(named=True)}
 
-    assert set(markets) == {"JPN", "S19", "GBR", "DEU"}  # historical codes are dropped
+    assert set(markets) == {"JPN", "S19", "GBR", "DEU", "CIV"}  # historical codes are dropped
     assert markets["JPN"]["region"] == "East Asia & Pacific"
     assert markets["GBR"]["name"] == "United Kingdom"
     assert markets["GBR"]["income_level"] == "High income"
+    assert markets["CIV"]["region"] == "Unclassified"  # not in this test's World Bank list
+    # BACI's file double-encodes accented names as UTF-8; the lookup repairs them.
+    assert markets["CIV"]["name"] == "Côte d'Ivoire"
     # BACI's "Other Asia, nes" stands in for Taiwan, which the World Bank does not list.
     assert markets["S19"]["region"] == "East Asia & Pacific"
 

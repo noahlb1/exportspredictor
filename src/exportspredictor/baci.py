@@ -252,12 +252,24 @@ def _markets_lookup(country_codes: pl.DataFrame, countries_json: Path) -> pl.Dat
     )
     return (
         country_codes.filter(~pl.col("country_name").str.contains(_HISTORICAL))
-        .select(iso3="country_iso3", name="country_name", baci_code="country_code")
+        .select(
+            iso3="country_iso3",
+            name=pl.col("country_name").map_elements(_repair_double_encoding, return_dtype=pl.String),
+            baci_code="country_code",
+        )
         .join(pl.concat([world_bank, overrides]), on="iso3", how="left")
         .with_columns(pl.col("region", "income_level").fill_null(_UNCLASSIFIED))
         .select("iso3", "name", "region", "income_level", "baci_code")
         .sort("iso3")
     )
+
+
+def _repair_double_encoding(text: str) -> str:
+    """BACI's country file stores accented names UTF-8-encoded twice ("CÃ´te" for "Côte")."""
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
 
 
 def _write_atomic(frame: pl.DataFrame, target: Path) -> None:
