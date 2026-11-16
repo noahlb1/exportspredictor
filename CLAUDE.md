@@ -29,7 +29,15 @@ These encode the project's core integrity. Each one exists because breaking it s
 
 ## Environment
 
-- Windows 11, PowerShell. Hardware: Ryzen 5800X, 32 GB RAM, RTX 3080. Use XGBoost with `device="cuda"` and Polars with lazy Parquet scans, so that HS6 data never has to sit fully in memory.
+- Windows 11, PowerShell. Use XGBoost with `device="cuda"` and Polars with lazy Parquet scans, so that HS6 data never has to sit fully in memory.
+- Hardware, the budget for every model and tuning choice:
+
+  | Part | Spec | Limit to plan around |
+  |---|---|---|
+  | GPU | RTX 3080, **10 GB VRAM** (driver 610.88) | The binding limit for GPU training. Build training data as `QuantileDMatrix` and keep sampled training rows within VRAM, or use XGBoost external memory. |
+  | CPU | Ryzen 7 5800X, 8 cores / 16 threads | Polars feature builds and CPU prediction. |
+  | RAM | 32 GB | Peak for feature builds. Use compact types and never build the dense Exporter × Importer × Product grid. |
+  | Disk | about 690 GB free | Not a constraint. |
 - Python is managed with `uv`. Containers are run with `podman compose`.
 
 ## Agent skills
