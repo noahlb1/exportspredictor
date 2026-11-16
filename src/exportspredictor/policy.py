@@ -72,8 +72,9 @@ _COLUMNS = {
     "Specific Entry/Exit dates": "specific",
 }
 
-# WTO party names -> ISO 3166 alpha-3, as BACI codes countries. Exceptions: Chinese Taipei is
-# BACI's "S19" (Other Asia, nes), and Kosovo has no ISO code (XKX is the common stand-in).
+# WTO party names -> ISO 3166 alpha-3, the codes the derived country tables use (BACI's own
+# codes map to them through `derived/country_map.parquet`, e.g. BACI "S19" -> "TWN").
+# Kosovo has no ISO code; XKX is the common stand-in.
 COUNTRY_CODES = {
     "Afghanistan": "AFG", "Albania": "ALB", "Algeria": "DZA", "Andorra": "AND", "Angola": "AGO",
     "Anguilla": "AIA", "Antigua and Barbuda": "ATG", "Argentina": "ARG", "Armenia": "ARM",
@@ -86,7 +87,7 @@ COUNTRY_CODES = {
     "Brunei Darussalam": "BRN", "Bulgaria": "BGR", "Burkina Faso": "BFA", "Burundi": "BDI",
     "Cabo Verde": "CPV", "Cambodia": "KHM", "Cameroon": "CMR", "Canada": "CAN",
     "Cayman Islands": "CYM", "Central African Republic": "CAF", "Chad": "TCD", "Chile": "CHL",
-    "China": "CHN", "Chinese Taipei": "S19", "Colombia": "COL", "Comoros": "COM", "Congo": "COG",
+    "China": "CHN", "Chinese Taipei": "TWN", "Colombia": "COL", "Comoros": "COM", "Congo": "COG",
     "Cook Islands": "COK", "Costa Rica": "CRI", "Croatia": "HRV", "Cuba": "CUB", "Cyprus": "CYP",
     "Czech Republic": "CZE", "Côte d'Ivoire": "CIV", "Democratic Republic of the Congo": "COD",
     "Denmark": "DNK", "Djibouti": "DJI", "Dominica": "DMA", "Dominican Republic": "DOM",
@@ -445,34 +446,26 @@ def build(root: Path | None = None, years: list[int] = DEFAULT_YEARS, source: Pa
 
 # --- Cross-check against CEPII Gravity ------------------------------------------------
 
-GRAVITY_ZIP = Path("raw") / "gravity" / "Gravity_csv_V202211.zip"
 GRAVITY_YEARS = list(range(2012, 2022))  # Gravity V202211's policy variables end in 2021
 
 
 def read_gravity_policy(root: Path | None = None, years: list[int] = GRAVITY_YEARS) -> pl.DataFrame:
-    """Gravity's policy columns for existing countries, read straight from the release zip.
+    """Gravity's policy columns (`fta_wto`, `eu_o/_d`) for countries that existed in the year.
 
-    Cached as `derived/gravity_policy_check.parquet`, since the CSV is about 700 MB.
+    Reads `derived/gravity_extract.parquet`, which the gravity build step writes
+    (`python -m exportspredictor.gravity`).
     """
-    import zipfile
-
-    root = root or data_dir()
-    cache = root / "derived" / "gravity_policy_check.parquet"
-    if not cache.exists():
-        columns = ["year", "iso3_o", "iso3_d", "country_exists_o", "country_exists_d", "eu_o", "eu_d", "fta_wto"]
-        with zipfile.ZipFile(root / GRAVITY_ZIP) as archive, archive.open("Gravity_V202211.csv") as csv:
-            gravity = pl.read_csv(csv, columns=columns, schema_overrides={"year": pl.Int32})
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        part = cache.with_name(cache.name + ".part")
-        gravity.filter(
-            pl.col("year").is_in(GRAVITY_YEARS)
+    extract = (root or data_dir()) / "derived" / "gravity_extract.parquet"
+    return (
+        pl.scan_parquet(extract)
+        .filter(
+            pl.col("year").is_in(years)
             & (pl.col("country_exists_o") == 1)
             & (pl.col("country_exists_d") == 1)
             & (pl.col("iso3_o") != pl.col("iso3_d"))
-        ).drop("country_exists_o", "country_exists_d").write_parquet(part)
-        part.replace(cache)
-    return pl.read_parquet(cache).filter(pl.col("year").is_in(years)).with_columns(
-        pl.col("iso3_o", "iso3_d").replace("TWN", "S19")  # BACI's code for Chinese Taipei
+        )
+        .select(pl.col("year").cast(pl.Int32), "iso3_o", "iso3_d", "eu_o", "eu_d", "fta_wto")
+        .collect()
     )
 
 
