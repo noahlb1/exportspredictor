@@ -19,13 +19,26 @@ gravity and policy tables (`Sources`). Leakage rules are built in:
   Scenario that flips only policy columns would understate the Scenario Effect.
 - **Training years only**: `FeatureTransform` (clip ranges and the Sector encoder) is
   fitted on training years, so test-year data cannot reach it.
+
+`build()` (also `uv run python -m exportspredictor.features`) runs this on real data, one
+year at a time so that peak memory stays far below 32 GB, and writes under the data root:
+
+    derived/features_<BACI version>/training_<year>.parquet   training rows with features
+    derived/features_<BACI version>/uk_grid_<year>.parquet    the full UK grid with features
+    derived/features_<BACI version>/features.json             rate, seed, years, feature list
+
+Every table is keyed by standard ISO3 codes (BACI's `S19` becomes `TWN`), as the gravity
+and policy tables are.
 """
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import polars as pl
 
-from exportspredictor import policy
+from exportspredictor import baci, policy
+from exportspredictor.paths import data_dir
 
 KEYS = ["exporter", "importer", "hs6", "year"]
 
@@ -263,3 +276,88 @@ def _attach_policy(table: pl.DataFrame, sources: Sources) -> pl.DataFrame:
     agreements = sources.agreements.select("exporter", "importer", "year", *policy.PAIR_FEATURES)
     flags = policy.attach_policy(keys, agreements, sources.blocs)
     return table.join(flags.rename({"exporter": "_o", "importer": "_d"}), on=["_o", "_d", "year"], how="left")
+
+
+# --- Real-data build ----------------------------------------------------------------------
+
+YEARS = list(range(2012, 2025))
+SETTINGS_FILE = "features.json"
+
+
+def features_dir(root: Path | None = None) -> Path:
+    return Path(root or data_dir()) / "derived" / f"features_{baci.BACI_VERSION}"
+
+
+def load_sources(root: Path | None = None) -> tuple[Sources, dict[str, str]]:
+    """The derived gravity and policy tables, and the BACI ISO3 -> standard ISO3 mapping."""
+    root = Path(root or data_dir())
+    derived = root / "derived"
+    country_map = pl.read_parquet(derived / "country_map.parquet").select("baci_iso3", "iso3").unique()
+    to_iso3 = dict(country_map.iter_rows())
+    markets = baci.markets(root)
+    high_income = markets.filter(pl.col("income_level") == "High income")["iso3"]
+    paths = policy.policy_paths(root)
+    sources = Sources(
+        agreements=pl.read_parquet(paths["agreements"]),
+        blocs=pl.read_parquet(paths["trading_blocs"]),
+        country_year=pl.read_parquet(derived / "country_year.parquet"),
+        pairs=pl.read_parquet(derived / "gravity_pairs.parquet"),
+        high_income=frozenset(to_iso3.get(code, code) for code in high_income),
+    )
+    return sources, to_iso3
+
+
+def load_year_flows(year: int, to_iso3: dict[str, str], root: Path | None = None) -> pl.DataFrame:
+    """One year of BACI Flows with Exporter and Importer as standard ISO3 strings."""
+    return (
+        baci.scan_flows(root)
+        .filter(pl.col("year") == year)
+        .with_columns(
+            pl.col(side).cast(pl.String).replace_strict(to_iso3, return_dtype=pl.String)
+            for side in ("exporter", "importer")
+        )
+        .collect()
+    )
+
+
+def build(
+    root: Path | None = None,
+    *,
+    years: list[int] = YEARS,
+    rate: float = ZERO_SAMPLING_RATE,
+    seed: int = 0,
+    uk: str = baci.UK,
+) -> Path:
+    """Write the training rows and the UK grid, with features, for each year; return the folder.
+
+    Each year is built from that year's Flows alone, so a year's file never depends on
+    another year's data. Transforms are not applied here: they are fitted on the training
+    years when the model is trained (`FeatureTransform`).
+    """
+    sources, to_iso3 = load_sources(root)
+    out = features_dir(root)
+    out.mkdir(parents=True, exist_ok=True)
+    for year in years:
+        flows = load_year_flows(year, to_iso3, root)
+        _write(build_features(training_rows(flows, rate=rate, seed=seed), flows, sources), out / f"training_{year}.parquet")
+        _write(build_features(uk_grid(flows, uk), flows, sources), out / f"uk_grid_{year}.parquet")
+        del flows
+    settings = {
+        "baci_version": baci.BACI_VERSION,
+        "years": list(years),
+        "zero_sampling_rate": rate,
+        "zero_sampling_seed": seed,
+        "features": FEATURES,
+    }
+    (out / SETTINGS_FILE).write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    return out
+
+
+def _write(frame: pl.DataFrame, target: Path) -> None:
+    part = target.with_name(target.name + ".part")
+    frame.write_parquet(part, compression="zstd")
+    part.replace(target)
+
+
+if __name__ == "__main__":
+    print(build())
