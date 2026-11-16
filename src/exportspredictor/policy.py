@@ -49,6 +49,12 @@ _GROUP_PARTIES = {
     "Southern African Customs Union (SACU)": [7],
     "Southern Common Market (MERCOSUR)": [130],
 }
+# Record-name prefixes that imply a bloc party.
+_NAMED_PARTIES = {
+    "EU - ": "European Union",
+    "EC - ": "European Union",
+    "EFTA - ": "European Free Trade Association (EFTA)",
+}
 # The WTO records keep the UK in the EU's agreements and customs union until the end of
 # the transition period (31 Dec 2020). As a Trading Bloc member (political membership,
 # as Gravity's `eu_o/_d` codes it) the UK left on 31 Jan 2020, which the records' Remarks
@@ -169,6 +175,11 @@ def read_rta_export(path: Path) -> pl.DataFrame:
     """Read the export (.xlsx, or a .csv extract with the same headers) into tidy columns."""
     path = Path(path)
     raw = pl.read_excel(path) if path.suffix == ".xlsx" else pl.read_csv(path, infer_schema=False)
+    return read_rta_export_frame(raw)
+
+
+def read_rta_export_frame(raw: pl.DataFrame) -> pl.DataFrame:
+    """Tidy an already-loaded export frame (WTO column headers) into the columns used here."""
     return raw.select(list(_COLUMNS)).rename(_COLUMNS).with_columns(
         pl.col("rta_id").cast(pl.Int64),
         pl.col("entry_into_force").cast(pl.String).str.slice(0, 10).str.to_date("%Y-%m-%d"),
@@ -192,10 +203,16 @@ def _party_spells(rtas: pl.DataFrame) -> pl.DataFrame:
 
     A party starts at its specific entry date or else the goods entry-into-force date, and
     ends at the earlier of its specific exit date and the agreement's inactive date.
-    A party listed only among current signatories, with no specific entry date, joined at
-    an unknown date and is left out (for the EU Treaty, such members come in through the
-    enlargement records instead). Bloc parties are always kept and expanded later.
+
+    Two gaps in the export are filled:
+    - A record named "EU - X" or "EFTA - X" has the bloc as a party even when only its
+      members at signature are listed (inactive records list no current signatories).
+    - In the records that define a bloc's membership, a member listed only among current
+      signatories with no specific entry date joined at an unknown date, so it is left out
+      there and comes in through its accession record (e.g. Croatia's EU membership comes
+      from "EU (28) Enlargement", not from the 1958 EU Treaty).
     """
+    defining = {rta_id for records in _GROUP_PARTIES.values() for rta_id in records}
     rows = []
     for record in rtas.filter(pl.col("entry_into_force").is_not_null()).iter_rows(named=True):
         specific = {}
@@ -205,10 +222,11 @@ def _party_spells(rtas: pl.DataFrame) -> pl.DataFrame:
                 raise ValueError(f"RTA {record['rta_id']}: cannot parse entry/exit {item!r}")
             specific[match["party"]] = (_parse_day(match["entry"]), _parse_day(match["exit"]))
         original = _split(record["original"])
-        parties = dict.fromkeys(original + _split(record["current"]) + list(specific))
+        implied = [group for prefix, group in _NAMED_PARTIES.items() if record["name"].startswith(prefix)]
+        parties = dict.fromkeys(original + _split(record["current"]) + list(specific) + implied)
         for party in parties:
             entry, exit_ = specific.get(party, (None, None))
-            if party not in original and entry is None and party not in _GROUP_PARTIES:
+            if record["rta_id"] in defining and party not in original and entry is None:
                 continue
             ends = [d for d in (exit_, record["inactive"]) if d is not None]
             rows.append(
@@ -238,9 +256,43 @@ def memberships(rtas: pl.DataFrame) -> pl.DataFrame:
 
     A country is in an agreement through a bloc party for the overlap of the bloc party's
     spell in the agreement and the country's spell in the bloc.
+
+    `side` says which side of a bloc agreement a country is on: the bloc's name for
+    countries in the bloc while in the agreement, "other" for the rest, and null when the
+    agreement has no bloc party. EU - OCT links each territory with the EU, not the
+    territories with each other; EU - United Kingdom puts the (former member) UK on the
+    other side.
     """
     spells = _party_spells(rtas)
     direct = _country_spells(spells)
+    bloc_spells = pl.concat(
+        [
+            direct.filter(pl.col("rta_id").is_in(records)).select(
+                "iso3", group=pl.lit(group), member_start="start", member_end="end"
+            )
+            for group, records in _GROUP_PARTIES.items()
+        ]
+    )
+    record_groups = spells.filter(pl.col("party").is_in(list(_GROUP_PARTIES))).select("rta_id", group="party").unique()
+    on_bloc_side = (
+        direct.join(record_groups, on="rta_id")
+        .join(bloc_spells, on=["iso3", "group"])
+        .filter(
+            (pl.col("end").is_null() | (pl.col("member_start") <= pl.col("end")))
+            & (pl.col("member_end").is_null() | (pl.col("member_end") >= pl.col("start")))
+        )
+        .select("rta_id", "iso3", "start", "group")
+        .unique(["rta_id", "iso3", "start"])
+    )
+    direct = (
+        direct.join(on_bloc_side, on=["rta_id", "iso3", "start"], how="left")
+        .with_columns(
+            side=pl.coalesce(
+                "group", pl.when(pl.col("rta_id").is_in(record_groups["rta_id"].implode())).then(pl.lit("other"))
+            )
+        )
+        .drop("group")
+    )
     via_groups = []
     for group, records in _GROUP_PARTIES.items():
         members = direct.filter(pl.col("rta_id").is_in(records)).select(
@@ -252,14 +304,17 @@ def memberships(rtas: pl.DataFrame) -> pl.DataFrame:
             .with_columns(
                 start=pl.max_horizontal("start", "member_start"),
                 end=pl.min_horizontal("end", "member_end"),
+                side=pl.lit(group),
             )
             .filter(pl.col("end").is_null() | (pl.col("end") >= pl.col("start")))
             .select(direct.columns)
         )
-    return pl.concat([direct, *via_groups]).join(
-        rtas.select("rta_id", customs_union=pl.col("type").str.starts_with("CU").fill_null(False)),
-        on="rta_id",
+    # Partial-scope agreements (type "PSA", e.g. GSTP) cut tariffs on a short list of
+    # goods only. They are not Trade Agreements here, as in Gravity's `fta_wto`.
+    agreements = rtas.filter(pl.col("type").is_not_null() & (pl.col("type") != "PSA")).select(
+        "rta_id", customs_union=pl.col("type").str.starts_with("CU")
     )
+    return pl.concat([direct, *via_groups]).join(agreements, on="rta_id")
 
 
 def _in_force(spells: pl.DataFrame, years: list[int]) -> pl.DataFrame:
@@ -284,7 +339,10 @@ def pair_agreements(rtas: pl.DataFrame, years: list[int]) -> pl.DataFrame:
     active = _in_force(memberships(rtas), years)
     return (
         active.join(active, on=["rta_id", "year"], suffix="_d")
-        .filter(pl.col("iso3") != pl.col("iso3_d"))
+        .filter(
+            (pl.col("iso3") != pl.col("iso3_d"))
+            & (pl.col("side").is_null() | (pl.col("side") != pl.col("side_d")))
+        )
         .group_by(exporter="iso3", importer="iso3_d", year="year")
         .agg(customs_union=(pl.col("customs_union") & pl.col("customs_union_d")).any())
         .select(
@@ -382,6 +440,95 @@ def build(root: Path | None = None, years: list[int] = DEFAULT_YEARS, source: Pa
         table.write_parquet(part)
         part.replace(paths[name])
     return paths
+
+
+# --- Cross-check against CEPII Gravity ------------------------------------------------
+
+GRAVITY_ZIP = Path("raw") / "gravity" / "Gravity_csv_V202211.zip"
+GRAVITY_YEARS = list(range(2012, 2022))  # Gravity V202211's policy variables end in 2021
+
+
+def read_gravity_policy(root: Path | None = None, years: list[int] = GRAVITY_YEARS) -> pl.DataFrame:
+    """Gravity's policy columns for existing countries, read straight from the release zip.
+
+    Cached as `derived/gravity_policy_check.parquet`, since the CSV is about 700 MB.
+    """
+    import zipfile
+
+    root = root or data_dir()
+    cache = root / "derived" / "gravity_policy_check.parquet"
+    if not cache.exists():
+        columns = ["year", "iso3_o", "iso3_d", "country_exists_o", "country_exists_d", "eu_o", "eu_d", "fta_wto"]
+        with zipfile.ZipFile(root / GRAVITY_ZIP) as archive, archive.open("Gravity_V202211.csv") as csv:
+            gravity = pl.read_csv(csv, columns=columns, schema_overrides={"year": pl.Int32})
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        part = cache.with_name(cache.name + ".part")
+        gravity.filter(
+            pl.col("year").is_in(GRAVITY_YEARS)
+            & (pl.col("country_exists_o") == 1)
+            & (pl.col("country_exists_d") == 1)
+            & (pl.col("iso3_o") != pl.col("iso3_d"))
+        ).drop("country_exists_o", "country_exists_d").write_parquet(part)
+        part.replace(cache)
+    return pl.read_parquet(cache).filter(pl.col("year").is_in(years))
+
+
+def gravity_crosscheck(
+    agreements: pl.DataFrame, blocs: pl.DataFrame, gravity: pl.DataFrame
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Compare our flags with Gravity's `fta_wto` (pairs) and `eu_o/_d` (countries).
+
+    Compares every pair-year (and country-year) that Gravity has. Returns a summary per
+    feature (pair_years, agreement_rate, both, ours_only, gravity_only, positive_overlap) and the
+    disagreements grouped by pair (or by country, with a null importer, for `eu`) with
+    the years they occur in.
+    """
+    gravity = gravity.filter(pl.col("iso3_o") != pl.col("iso3_d"))
+    pairs = gravity.select(
+        "year", exporter="iso3_o", importer="iso3_d", gravity=pl.col("fta_wto").fill_null(0).cast(pl.Int8)
+    ).join(
+        agreements.select("exporter", "importer", pl.col("year").cast(pl.Int32), ours="trade_agreement"),
+        on=["exporter", "importer", "year"],
+        how="left",
+    )
+    countries = (
+        pl.concat(
+            [
+                gravity.select("year", exporter="iso3_o", gravity="eu_o"),
+                gravity.select("year", exporter="iso3_d", gravity="eu_d"),
+            ]
+        )
+        .unique(["exporter", "year"])
+        .with_columns(pl.col("gravity").fill_null(0).cast(pl.Int8), importer=pl.lit(None, pl.String))
+        .join(
+            blocs.select(pl.col("iso3").alias("exporter"), pl.col("year").cast(pl.Int32), ours="eu"),
+            on=["exporter", "year"],
+            how="left",
+        )
+    )
+    compared = pl.concat(
+        [
+            pairs.with_columns(feature=pl.lit("trade_agreement")),
+            countries.select(pairs.columns).with_columns(feature=pl.lit("eu")),
+        ]
+    ).with_columns(pl.col("ours").fill_null(0).cast(pl.Int8))
+    summary = compared.group_by("feature", maintain_order=True).agg(
+        pair_years=pl.len(),
+        agreement_rate=(pl.col("ours") == pl.col("gravity")).mean(),
+        both=((pl.col("ours") == 1) & (pl.col("gravity") == 1)).sum(),
+        ours_only=((pl.col("ours") == 1) & (pl.col("gravity") == 0)).sum(),
+        gravity_only=((pl.col("ours") == 0) & (pl.col("gravity") == 1)).sum(),
+    ).with_columns(
+        # Most pair-years have no agreement in either source, which flatters the plain rate.
+        positive_overlap=pl.col("both") / (pl.col("both") + pl.col("ours_only") + pl.col("gravity_only"))
+    )
+    disagreements = (
+        compared.filter(pl.col("ours") != pl.col("gravity"))
+        .group_by("feature", "exporter", "importer", "ours", "gravity")
+        .agg(years=pl.col("year").sort(), n_years=pl.len())
+        .sort(["feature", "n_years", "exporter", "importer"], descending=[False, True, False, False], nulls_last=True)
+    )
+    return summary, disagreements
 
 
 if __name__ == "__main__":

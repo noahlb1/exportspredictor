@@ -127,3 +127,51 @@ def test_build_writes_reproducible_policy_tables(tmp_path):
     assert _flag(agreements, "GBR", "AUS", 2023) == 1
     assert _member(blocs, "GBR", 2019, "eu") == 1
     assert all(path.is_relative_to(tmp_path) for path in written.values())
+
+
+def test_gravity_crosscheck_reports_agreement_rate_and_lists_disagreements():
+    ours_agreements = pl.DataFrame(
+        {"exporter": ["GBR", "GBR"], "importer": ["JPN", "KOR"], "year": [2021, 2021],
+         "trade_agreement": [1, 1], "customs_union": [0, 0]},
+        schema_overrides={"year": pl.Int32, "trade_agreement": pl.Int8, "customs_union": pl.Int8},
+    )
+    ours_blocs = pl.DataFrame(
+        {"iso3": ["FRA"], "year": [2021], "eu": [1], "cptpp": [0], "efta": [0]},
+        schema_overrides={"year": pl.Int32, "eu": pl.Int8, "cptpp": pl.Int8, "efta": pl.Int8},
+    )
+    # Gravity agrees on GBR-JPN and GBR-FRA, misses GBR-KOR and wrongly codes USA-FRA.
+    gravity = pl.DataFrame(
+        {"iso3_o": ["GBR", "GBR", "GBR", "USA"], "iso3_d": ["JPN", "KOR", "FRA", "FRA"],
+         "year": [2021] * 4, "fta_wto": [1, 0, 0, 1], "eu_o": [0, 0, 0, 0], "eu_d": [0, 0, 1, 1]},
+        schema_overrides={"year": pl.Int32},
+    )
+    summary, disagreements = policy.gravity_crosscheck(ours_agreements, ours_blocs, gravity)
+
+    ta = summary.filter(pl.col("feature") == "trade_agreement").row(0, named=True)
+    assert (ta["pair_years"], ta["agreement_rate"]) == (4, 0.5)
+    assert (ta["ours_only"], ta["gravity_only"]) == (1, 1)
+    assert ta["positive_overlap"] == 1 / 3  # both say 1, out of pair-years where either does
+    eu = summary.filter(pl.col("feature") == "eu").row(0, named=True)
+    assert eu["agreement_rate"] == 1.0
+    assert set(disagreements.select("exporter", "importer").rows()) == {("GBR", "KOR"), ("USA", "FRA")}
+
+
+def test_bloc_agreements_link_the_bloc_side_to_the_other_side_only():
+    # EU - Eastern and Southern Africa States, copied from the WTO export.
+    record = pl.DataFrame(
+        {
+            "RTA ID": ["469"], "RTA Name": ["EU - Eastern and Southern Africa States"], "Type": ["FTA"],
+            "Date of Entry into Force (G)": ["2012-05-14"], "Inactive Date": [None],
+            "Original signatories": ["France; Germany; Madagascar; Mauritius; Seychelles; Zimbabwe"],
+            "Current signatories": ["Comoros; Madagascar; Mauritius; Seychelles; Zimbabwe; European Union"],
+            "Specific Entry/Exit dates": ["Comoros(07-Feb-2019 - )"],
+        }
+    )
+    eu = pl.read_csv(EXTRACT, infer_schema=False).filter(pl.col("RTA ID").is_in(["120", "145", "869"]))
+    rtas = policy.read_rta_export_frame(pl.concat([record, eu.select(record.columns)], how="vertical_relaxed"))
+    agreements = policy.pair_agreements(rtas, YEARS)
+    assert _flag(agreements, "FRA", "MDG", 2015) == 1
+    assert _flag(agreements, "HRV", "MUS", 2015) == 1
+    assert _flag(agreements, "COM", "FRA", 2018) == 0
+    assert _flag(agreements, "COM", "FRA", 2019) == 1
+    assert _flag(agreements, "MDG", "MUS", 2015) == 0
