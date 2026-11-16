@@ -21,7 +21,8 @@ def test_round_trip_keeps_tables_metadata_and_predictions(fixture_artefacts, tmp
     assert loaded.metadata == fixture_artefacts.metadata
     assert_frame_equal(loaded.baseline, fixture_artefacts.baseline)
     assert_frame_equal(loaded.products, fixture_artefacts.products)
-    probe = xgb.DMatrix(np.array([[10.0, 12.0, 1.0]]), feature_names=loaded.metadata["features"])
+    names = loaded.metadata["features"]
+    probe = xgb.DMatrix(np.linspace(0.0, 20.0, len(names)).reshape(1, -1), feature_names=names)
     for before, after in zip(fixture_artefacts.fold_models, loaded.fold_models, strict=True):
         assert after.predict(probe) == pytest.approx(before.predict(probe))
 

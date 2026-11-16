@@ -1,10 +1,14 @@
 """Training through the package: fixture world in, a Baseline table out-of-fold for every UK pair."""
 
+from dataclasses import replace
+
 import polars as pl
 import pytest
 
+from exportspredictor.features import FEATURES, POLICY_FEATURES
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
+from exportspredictor.pipeline import build_artefacts
 
 
 @pytest.fixture
@@ -56,3 +60,24 @@ def test_fold_assignment_is_deterministic_and_keeps_a_pair_in_one_fold(world):
 
     assert first.equals(second)
     assert first.group_by("hs6", "iso3").agg(pl.col("fold").n_unique())["fold"].max() == 1
+
+
+def test_metadata_records_the_zero_sampling_rate_and_the_full_feature_set(artefacts):
+    assert artefacts.metadata["zero_sampling_rate"] == pytest.approx(0.5)
+    assert artefacts.metadata["features"] == FEATURES
+    assert set(POLICY_FEATURES) <= set(artefacts.metadata["monotone_constraints"])
+
+
+def test_baseline_year_data_never_reaches_the_fitted_transform(world, artefacts):
+    baseline_year = pl.col("year") == 2024
+    distorted = replace(
+        world,
+        flows=world.flows.with_columns(
+            value_usd=pl.when(baseline_year).then(pl.col("value_usd") * 1000).otherwise("value_usd")
+        ),
+    )
+
+    rebuilt = build_artefacts(distorted, version="distorted")
+
+    assert rebuilt.metadata["feature_transform"] == artefacts.metadata["feature_transform"]
+    assert rebuilt.metadata["training_years"] == [2021, 2022, 2023]

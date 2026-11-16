@@ -43,13 +43,19 @@ def train_fold_models(
     device: str = "cuda",
     seed: int = 0,
 ) -> list[xgb.Booster]:
-    """Train one model per fold on all non-UK rows plus the UK pairs outside that fold."""
+    """Train one model per fold on all non-UK rows plus the UK pairs outside that fold.
+
+    A `weight` column, if present, weights each row (sampled zero cells carry 1/rate).
+    """
     rows = _with_uk_fold(features, uk, n_folds)
     models = []
     for k in range(n_folds):
         train = rows.filter(pl.col("fold") != k)
         matrix = xgb.DMatrix(
-            train.select(FEATURES).to_numpy(), label=train["value_usd"].to_numpy(), feature_names=FEATURES
+            train.select(FEATURES).to_numpy(),
+            label=train["value_usd"].to_numpy(),
+            weight=train["weight"].to_numpy() if "weight" in train.columns else None,
+            feature_names=FEATURES,
         )
         params = {**_PARAMS, "device": device, "seed": seed}
         models.append(xgb.train(params, matrix, num_boost_round=_ROUNDS))

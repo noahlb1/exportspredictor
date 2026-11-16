@@ -40,3 +40,16 @@ def test_products_are_zero_padded_hs6_strings():
     world = build_world()
 
     assert all(len(code) == 6 and code.isdigit() for code in world.products["hs6"])
+
+
+def test_world_carries_every_feature_source_for_its_countries():
+    world = build_world()
+    countries = set(world.flows["exporter"]) | set(world.flows["importer"])
+
+    assert set(world.country_year["iso3"]) == countries
+    assert world.country_year.select("iso3", "year").is_duplicated().sum() == 0
+    pairs = set(world.pairs.select("iso3_o", "iso3_d").iter_rows())
+    assert {(e, i) for e, i in world.flows.select("exporter", "importer").unique().iter_rows()} <= pairs
+    assert {"trade_agreement", "customs_union"} <= set(world.policy.columns)
+    assert {"iso3", "year", "eu", "cptpp", "efta"} == set(world.blocs.columns)
+    assert world.high_income <= countries

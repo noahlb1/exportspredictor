@@ -30,10 +30,11 @@ class Step:
 
 STEPS = [
     # Downloads and derived tables (#12 BACI Flows and lookups, #14 gravity and WDI, #13
-    # Trade Agreements and Trading Blocs) go here, one Step per line, in this order.
+    # Trade Agreements and Trading Blocs, #15 the feature table) go here, one Step per line, in this order.
     Step("BACI Flows and lookups (download, convert to Parquet)", [PY, "-m", "exportspredictor.baci"]),
     Step("Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet)", [PY, "-m", "exportspredictor.gravity"]),
     Step("Trade Agreement and Trading Bloc features (WTO RTA-IS download, build)", [PY, "-m", "exportspredictor.policy"]),
+    Step("Feature table (training rows with sampled zeros, UK grid; per year)", [PY, "-m", "exportspredictor.features"]),
     Step("Train, evaluate and save artefacts (notebook)", [PY, "-m", "jupyter", "execute", "notebooks/exports_predictor.ipynb"]),
 ]
 
