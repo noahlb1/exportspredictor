@@ -17,7 +17,11 @@ def banner() -> dict | None:
     try:
         health = client.get("/health")
     except client.ApiUnavailable as error:
-        st.error(f"The API is unavailable: {error} Start it with `uv run uvicorn api.main:app`.")
+        st.error(
+            f"The API is unavailable: {error} "
+            "Start everything with `podman compose up`, or for development run `uv run uvicorn api.main:app`. "
+            "Then reload this page."
+        )
         return None
     st.info(
         f"Baseline year {health['baseline_year']} (provisional data). "
