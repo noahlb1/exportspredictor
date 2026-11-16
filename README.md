@@ -63,7 +63,7 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 | --- | --- |
 | BACI Flows and lookups (download, convert to Parquet) | in place: `python -m exportspredictor.baci`; idempotent, about 1.3 GB download, 30 s convert, 2.5 GB peak memory |
 | Trade Agreement and Trading Bloc features (WTO RTA-IS) | arrives with #13 |
-| Gravity and WDI features (CEPII, World Bank) | arrives with #14 |
+| Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet) | in place: `python -m exportspredictor.gravity`; needs the BACI step first (country codes); about 210 MB download, 40 s build |
 | Train, evaluate and save artefacts (notebook) | in place; runs in fixture mode until real-data mode lands |
 
 ## Manual UI checklist
