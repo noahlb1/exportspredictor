@@ -32,6 +32,7 @@ STEPS = [
     # Downloads and derived tables (#12 BACI Flows and lookups, #13 Trade Agreements and
     # Trading Blocs, #14 gravity and WDI) go here, one Step per line, in this order.
     Step("BACI Flows and lookups (download, convert to Parquet)", [PY, "-m", "exportspredictor.baci"]),
+    Step("Trade Agreement and Trading Bloc features (WTO RTA-IS download, build)", [PY, "-m", "exportspredictor.policy"]),
     Step("Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet)", [PY, "-m", "exportspredictor.gravity"]),
     Step("Train, evaluate and save artefacts (notebook)", [PY, "-m", "jupyter", "execute", "notebooks/exports_predictor.ipynb"]),
 ]
