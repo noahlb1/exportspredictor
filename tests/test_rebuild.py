@@ -1,0 +1,45 @@
+"""The full data rebuild script: an ordered list of download and build steps, run in order."""
+
+import importlib.util
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+SCRIPT = REPO / "scripts" / "rebuild.py"
+
+
+def _load_script():
+    spec = importlib.util.spec_from_file_location("rebuild", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_list_prints_the_steps_in_order_without_running_them():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--list"], capture_output=True, text=True, timeout=60, cwd=REPO
+    )
+
+    assert result.returncode == 0
+    lines = result.stdout.strip().splitlines()
+    assert lines[0].startswith("1. ")
+    assert "notebook" in lines[-1].lower()
+
+
+def test_run_executes_steps_in_order_and_stops_at_the_first_failure(tmp_path):
+    rebuild = _load_script()
+    log = tmp_path / "log.txt"
+
+    def append(word: str) -> list[str]:
+        return [sys.executable, "-c", f"open(r'{log}', 'a').write('{word} ')"]
+
+    steps = [
+        rebuild.Step("first", append("first")),
+        rebuild.Step("second", append("second")),
+        rebuild.Step("broken", [sys.executable, "-c", "raise SystemExit(3)"]),
+        rebuild.Step("never", append("never")),
+    ]
+
+    assert rebuild.run(steps) == 3
+    assert log.read_text().split() == ["first", "second"]

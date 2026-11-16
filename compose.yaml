@@ -1,0 +1,47 @@
+# One-command run for Advisors:  podman compose up   then open http://localhost:8501
+# Needs a trained artefact folder in ./artefacts (see README.md).
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: exportspredictor:latest
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      EXPORTSPREDICTOR_ARTEFACTS_DIR: /artefacts
+    volumes:
+      - ./artefacts:/artefacts:ro
+    ports:
+      - "8000:8000"
+    # /health answers 200 only once artefacts are loaded (503 before), so "healthy" means ready.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: exportspredictor:latest
+    command:
+      - streamlit
+      - run
+      - app/Home.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    environment:
+      EXPORTSPREDICTOR_API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy

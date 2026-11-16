@@ -1,0 +1,12 @@
+# Keep the build context small: no data, artefacts, environments or notebooks.
+.git
+.venv
+.claude
+.agents
+data
+artefacts
+notebooks
+docs
+tests
+**/__pycache__
+*.parquet
