@@ -13,9 +13,10 @@ derived tables, then the notebook, which trains, evaluates and saves the artefac
 """
 
 import argparse
+import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -26,6 +27,7 @@ PY = sys.executable
 class Step:
     name: str
     command: list[str]
+    env: dict[str, str] = field(default_factory=dict)  # extra environment variables for this step
 
 
 STEPS = [
@@ -35,7 +37,12 @@ STEPS = [
     Step("Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet)", [PY, "-m", "exportspredictor.gravity"]),
     Step("Trade Agreement and Trading Bloc features (WTO RTA-IS download, build)", [PY, "-m", "exportspredictor.policy"]),
     Step("Feature table (training rows with sampled zeros, UK grid; per year)", [PY, "-m", "exportspredictor.features"]),
-    Step("Train, evaluate and save artefacts (notebook)", [PY, "-m", "jupyter", "execute", "notebooks/exports_predictor.ipynb"]),
+    # The notebook runs on real data here (it defaults to fixture mode, as the tests run it).
+    Step(
+        "Train, evaluate and save artefacts (notebook)",
+        [PY, "-m", "jupyter", "execute", "notebooks/exports_predictor.ipynb"],
+        env={"EXPORTSPREDICTOR_FIXTURE_MODE": "0"},
+    ),
 ]
 
 
@@ -43,7 +50,7 @@ def run(steps: list[Step]) -> int:
     """Run the steps in order from the repo root. Returns 0, or the first failing exit code."""
     for number, step in enumerate(steps, start=1):
         print(f"[{number}/{len(steps)}] {step.name}", flush=True)
-        code = subprocess.run(step.command, cwd=REPO).returncode
+        code = subprocess.run(step.command, cwd=REPO, env={**os.environ, **step.env}).returncode
         if code != 0:
             print(f"Step {number} failed with exit code {code}: {step.name}", file=sys.stderr)
             return code

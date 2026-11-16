@@ -43,3 +43,18 @@ def test_run_executes_steps_in_order_and_stops_at_the_first_failure(tmp_path):
 
     assert rebuild.run(steps) == 3
     assert log.read_text().split() == ["first", "second"]
+
+
+def test_a_step_runs_with_its_own_environment_variables(tmp_path):
+    rebuild = _load_script()
+    log = tmp_path / "log.txt"
+    write_env = f"import os; open(r'{log}', 'w').write(os.environ['EXPORTSPREDICTOR_FIXTURE_MODE'])"
+
+    assert rebuild.run([rebuild.Step("env", [sys.executable, "-c", write_env], env={"EXPORTSPREDICTOR_FIXTURE_MODE": "0"})]) == 0
+    assert log.read_text() == "0"
+
+
+def test_the_notebook_step_runs_on_real_data():
+    rebuild = _load_script()
+
+    assert rebuild.STEPS[-1].env == {"EXPORTSPREDICTOR_FIXTURE_MODE": "0"}
