@@ -3,19 +3,18 @@
 import polars as pl
 import pytest
 
-from exportspredictor.fixture import UK, build_world
+from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
-from exportspredictor.pipeline import build_artefacts
 
 
-@pytest.fixture(scope="module")
-def world():
-    return build_world()
+@pytest.fixture
+def world(fixture_world):
+    return fixture_world
 
 
-@pytest.fixture(scope="module")
-def artefacts(world):
-    return build_artefacts(world, version="test-v1")
+@pytest.fixture
+def artefacts(fixture_artefacts):
+    return fixture_artefacts
 
 
 def test_baseline_has_one_row_per_uk_product_market_pair(artefacts):
@@ -45,7 +44,7 @@ def test_export_gap_is_potential_minus_actual(artefacts):
 
 
 def test_metadata_records_version_baseline_year_and_folds(artefacts):
-    assert artefacts.metadata["version"] == "test-v1"
+    assert artefacts.metadata["version"] == "fixture-test"
     assert artefacts.metadata["baseline_year"] == 2024
     assert len(artefacts.fold_models) == artefacts.metadata["n_folds"] == 5
 
