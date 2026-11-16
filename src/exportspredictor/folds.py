@@ -2,83 +2,106 @@
 
 UK Product–Market pairs are split into folds by a deterministic hash of the pair, so all
 years of a pair share a fold. Fold model k trains on every non-UK row plus the UK pairs
-outside fold k, and each UK pair is scored only by the model that held it out.
+outside fold k, and each UK pair is scored only by the model that held it out. Each model
+records the fold it held out (`held_out_fold` attribute), and scoring returns each pair's
+`fold`, so Scenarios and explanations can use the same model as the Baseline.
+
+Training data comes in chunks (one feature table per year, see `training`), so the real
+~165 M rows never sit in memory at once.
 """
 
 import hashlib
+from collections.abc import Sequence
 
 import numpy as np
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor.features import FEATURES, MONOTONE_CONSTRAINTS
+from exportspredictor.features import FEATURES, FeatureTransform
+from exportspredictor.training import (
+    DEFAULT_ROUNDS,
+    Chunk,
+    model_params,
+    preparer,
+    training_matrix,
+)
 
 N_FOLDS = 5
 
-_PARAMS = {
-    "objective": "reg:tweedie",
-    "tweedie_variance_power": 1.5,
-    "max_depth": 3,
-    "eta": 0.1,
-    "monotone_constraints": "(" + ",".join(str(MONOTONE_CONSTRAINTS.get(f, 0)) for f in FEATURES) + ")",
-}
-_ROUNDS = 100
-
 
 def assign_folds(pairs: pl.DataFrame, n_folds: int = N_FOLDS) -> pl.DataFrame:
-    """Add a `fold` column to rows keyed by `hs6` and `iso3`. Deterministic across runs."""
+    """Add a `fold` column to rows keyed by `hs6` and `iso3`. Deterministic across runs.
+
+    The fold depends only on the pair's codes (SHA-256), never on the year or on row order.
+    """
 
     def fold_of(hs6: str, iso3: str) -> int:
         digest = hashlib.sha256(f"{hs6}|{iso3}".encode()).digest()
         return int.from_bytes(digest[:8], "big") % n_folds
 
-    folds = [fold_of(hs6, iso3) for hs6, iso3 in pairs.select("hs6", "iso3").iter_rows()]
-    return pairs.with_columns(fold=pl.Series(folds, dtype=pl.Int8))
+    unique = pairs.select("hs6", "iso3").unique()
+    folds = [fold_of(str(hs6), str(iso3)) for hs6, iso3 in unique.iter_rows()]
+    lookup = unique.with_columns(fold=pl.Series(folds, dtype=pl.Int8))
+    return pairs.join(lookup, on=["hs6", "iso3"], how="left", maintain_order="left")
 
 
 def train_fold_models(
-    features: pl.DataFrame,
+    chunks: Sequence[Chunk],
+    *,
     uk: str,
+    params: dict | None = None,
+    rounds: int = DEFAULT_ROUNDS,
     n_folds: int = N_FOLDS,
     device: str = "cuda",
     seed: int = 0,
+    transform: FeatureTransform | None = None,
+    non_uk_rate: float = 1.0,
 ) -> list[xgb.Booster]:
     """Train one model per fold on all non-UK rows plus the UK pairs outside that fold.
 
-    A `weight` column, if present, weights each row (sampled zero cells carry 1/rate).
+    `chunks` are feature tables (or Parquet paths), read one at a time. A `weight` column
+    weights each row (sampled zero cells carry 1/rate). `non_uk_rate` < 1 trains on a
+    reweighted hash sample of non-UK rows; UK rows are always kept in full. The returned
+    models are set to predict on CPU, as the API does.
     """
-    rows = _with_uk_fold(features, uk, n_folds)
     models = []
     for k in range(n_folds):
-        train = rows.filter(pl.col("fold") != k)
-        matrix = xgb.DMatrix(
-            train.select(FEATURES).to_numpy(),
-            label=train["value_usd"].to_numpy(),
-            weight=train["weight"].to_numpy() if "weight" in train.columns else None,
-            feature_names=FEATURES,
-        )
-        params = {**_PARAMS, "device": device, "seed": seed}
-        models.append(xgb.train(params, matrix, num_boost_round=_ROUNDS))
+        keep = _outside_fold(uk, n_folds, k)
+        prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed, keep=keep)
+        matrix = training_matrix(chunks, prepare)
+        model = xgb.train(model_params(params, device=device, seed=seed), matrix, num_boost_round=rounds)
+        del matrix
+        model.set_param({"device": "cpu"})
+        model.set_attr(held_out_fold=str(k))
+        models.append(model)
     return models
 
 
 def score_out_of_fold(features: pl.DataFrame, models: list[xgb.Booster], uk: str) -> pl.DataFrame:
-    """Return UK rows with `export_potential_usd`, each scored by the fold model that held it out."""
-    rows = _with_uk_fold(features.filter(pl.col("exporter") == uk), uk, len(models))
+    """UK rows with their pair's `fold` and `export_potential_usd` from the model that held it out."""
+    rows = _with_fold(features.filter(pl.col("exporter").cast(pl.String) == uk), len(models))
+    fold = rows["fold"].to_numpy()
     potential = np.empty(rows.height)
     for k, model in enumerate(models):
-        mask = (rows["fold"] == k).to_numpy()
+        if model.attr("held_out_fold") not in (None, str(k)):
+            raise ValueError(f"Model {k} held out fold {model.attr('held_out_fold')}, not {k}")
+        mask = fold == k
         if mask.any():
-            matrix = xgb.DMatrix(rows.filter(pl.col("fold") == k).select(FEATURES).to_numpy(), feature_names=FEATURES)
-            potential[mask] = model.predict(matrix)
-    return rows.drop("fold").with_columns(export_potential_usd=pl.Series(potential))
+            data = rows.filter(pl.Series(mask)).select(FEATURES).to_numpy().astype(np.float32)
+            potential[mask] = model.inplace_predict(data)
+    return rows.with_columns(export_potential_usd=pl.Series(potential))
 
 
-def _with_uk_fold(features: pl.DataFrame, uk: str, n_folds: int) -> pl.DataFrame:
-    """Give UK rows their pair's fold; non-UK rows get -1, so every fold model trains on them."""
-    is_uk = pl.col("exporter") == uk
-    uk_rows = assign_folds(features.filter(is_uk).rename({"importer": "iso3"}), n_folds).rename(
-        {"iso3": "importer"}
-    )
-    other = features.filter(~is_uk).with_columns(fold=pl.lit(-1, dtype=pl.Int8))
-    return pl.concat([other, uk_rows.select(other.columns)])
+def _with_fold(rows: pl.DataFrame, n_folds: int) -> pl.DataFrame:
+    return assign_folds(rows.rename({"importer": "iso3"}), n_folds).rename({"iso3": "importer"})
+
+
+def _outside_fold(uk: str, n_folds: int, k: int):
+    """Row filter for fold model k: every non-UK row, and UK rows whose pair is not in fold k."""
+
+    def keep(table: pl.DataFrame) -> pl.DataFrame:
+        is_uk = pl.col("exporter").cast(pl.String) == uk
+        uk_rows = _with_fold(table.filter(is_uk), n_folds).filter(pl.col("fold") != k).drop("fold")
+        return pl.concat([table.filter(~is_uk), uk_rows])
+
+    return keep

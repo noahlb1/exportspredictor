@@ -81,3 +81,40 @@ def test_baseline_year_data_never_reaches_the_fitted_transform(world, artefacts)
 
     assert rebuilt.metadata["feature_transform"] == artefacts.metadata["feature_transform"]
     assert rebuilt.metadata["training_years"] == [2021, 2022, 2023]
+
+
+def test_hyperparameters_are_tuned_on_the_validation_year_and_recorded(artefacts):
+    metadata = artefacts.metadata
+
+    assert metadata["validation_year"] == 2022
+    assert metadata["training_years"] == [2021, 2022, 2023]
+    assert len(metadata["tuning"]) >= 2
+    best = min(metadata["tuning"], key=lambda result: result["valid_metric"])
+    assert metadata["params"] == best["config"]
+    assert metadata["rounds"] == best["rounds"]
+
+
+def test_metadata_records_the_device_and_the_search_and_training_time(artefacts):
+    metadata = artefacts.metadata
+
+    assert metadata["device"] == "cpu"  # the fixture; the real run records "cuda"
+    assert metadata["tuning_seconds"] > 0
+    assert metadata["training_seconds"] > 0
+
+
+def test_baseline_features_hold_each_pairs_fold_and_model_inputs(artefacts):
+    inputs = artefacts.baseline_features
+
+    assert inputs.select("hs6", "iso3").sort("hs6", "iso3").equals(artefacts.baseline.select("hs6", "iso3"))
+    assert set(FEATURES) <= set(inputs.columns)
+    assert inputs.equals(assign_folds(inputs.drop("fold")).select(inputs.columns))
+
+
+def test_history_holds_uk_actual_exports_up_to_the_baseline_year(world, artefacts):
+    history = artefacts.history
+    uk = world.flows.filter(pl.col("exporter") == UK, pl.col("value_usd") > 0)
+
+    assert history.columns == ["hs6", "iso3", "year", "actual_exports_usd"]
+    assert sorted(history["year"].unique().to_list()) == [2021, 2022, 2023, 2024]
+    assert history.height == uk.height
+    assert history["actual_exports_usd"].sum() == pytest.approx(uk["value_usd"].sum())

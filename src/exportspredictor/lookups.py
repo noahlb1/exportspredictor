@@ -68,3 +68,22 @@ def search_products(products: pl.DataFrame, query: str, limit: int = _DEFAULT_LI
         .drop("_rank")
         .head(limit)
     )
+
+
+# BACI keys Taiwan as "Other Asia, nes" (`S19`); every other table uses its ISO3 and name.
+_STANDARD_NAMES = {"TWN": "Taiwan"}
+
+
+def market_lookup(markets: pl.DataFrame, country_map: pl.DataFrame) -> pl.DataFrame:
+    """The Market lookup (`iso3`, `name`, `region`) keyed by standard ISO3, as the features are.
+
+    `markets` is BACI's lookup (keyed by BACI's iso3, e.g. `S19`); `country_map` maps
+    `baci_iso3` to `iso3`.
+    """
+    to_iso3 = dict(country_map.select("baci_iso3", "iso3").unique().iter_rows())
+    return (
+        markets.with_columns(iso3=pl.col("iso3").replace(to_iso3))
+        .with_columns(name=pl.col("iso3").replace_strict(_STANDARD_NAMES, default=pl.col("name")))
+        .select("iso3", "name", "region")
+        .unique("iso3", keep="first", maintain_order=True)
+    )
