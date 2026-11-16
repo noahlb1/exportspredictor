@@ -1,5 +1,5 @@
 # Data and model artefacts (reproducible, large)
-data/
+/data/
 artefacts/
 *.parquet
 
