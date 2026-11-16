@@ -28,6 +28,12 @@ from exportspredictor import paths
 BACI_ISO3_OVERRIDES = {
     "S19": "TWN",  # BACI code 490 "Other Asia, nes" is Taiwan (BACI FAQ)
 }
+# BACI countries missing from CEPII Gravity -> the nearby territory whose pair features
+# stand in for theirs. Both are small French overseas territories with real trade.
+GRAVITY_PROXIES = {
+    "BLM": "GLP",  # Saint Barthelemy: Guadeloupe, its administrative parent until 2007
+    "ATF": "REU",  # French Southern and Antarctic Lands: Reunion, which administers them
+}
 
 
 def map_baci_countries(
@@ -36,6 +42,8 @@ def map_baci_countries(
     """Map BACI country codes to ISO3 and flag whether Gravity and WDI know each one.
 
     `baci_countries` has BACI's `country_code`, `country_name` and `country_iso3`.
+    `gravity_proxy` names the country whose Gravity pair features stand in, if any;
+    `in_gravity` is true when the country or its proxy is in Gravity.
     """
     return baci_countries.select(
         baci_code=pl.col("country_code"),
@@ -43,7 +51,9 @@ def map_baci_countries(
         baci_iso3=pl.col("country_iso3"),
         iso3=pl.col("country_iso3").replace(BACI_ISO3_OVERRIDES),
     ).with_columns(
-        in_gravity=pl.col("iso3").is_in(sorted(gravity_iso3)),
+        gravity_proxy=pl.col("iso3").replace_strict(GRAVITY_PROXIES, default=None),
+    ).with_columns(
+        in_gravity=pl.coalesce("gravity_proxy", "iso3").is_in(sorted(gravity_iso3)),
         in_wdi=pl.col("iso3").is_in(sorted(wdi_iso3)),
     )
 
@@ -119,20 +129,37 @@ PAIR_FEATURES = {
 }
 
 
-def gravity_pairs(gravity: pl.LazyFrame) -> pl.DataFrame:
+def gravity_pairs(gravity: pl.LazyFrame, *, proxies: dict[str, str] = GRAVITY_PROXIES) -> pl.DataFrame:
     """Time-invariant features for every ordered country pair in CEPII Gravity.
 
     Only rows where both countries exist that year count, so historical entities sharing
     an ISO3 code (such as Sudan before 2011) do not leak in. Each feature takes the
-    pair's latest non-null value.
+    pair's latest non-null value. Each country in `proxies` gets copies of its proxy's
+    pairs, in both directions.
     """
-    return (
+    pairs = (
         gravity.filter((pl.col("country_exists_o") == 1) & (pl.col("country_exists_d") == 1))
         .sort("year")
         .group_by("iso3_o", "iso3_d")
         .agg(pl.col(source).drop_nulls().last().alias(name) for name, source in PAIR_FEATURES.items())
-        .sort("iso3_o", "iso3_d")
         .collect()
+    )
+    # Each country's name in the output -> the Gravity country whose pairs it takes.
+    known = pl.concat([pairs["iso3_o"], pairs["iso3_d"]]).unique()
+    stand_in = pl.concat(
+        [
+            pl.DataFrame({"iso3": known, "source": known}),
+            pl.DataFrame({"iso3": list(proxies), "source": list(proxies.values())}),
+        ]
+    )
+    return (
+        pairs.join(stand_in.rename({"iso3": "out_o", "source": "iso3_o"}), on="iso3_o")
+        .join(stand_in.rename({"iso3": "out_d", "source": "iso3_d"}), on="iso3_d")
+        .filter(pl.col("out_o") != pl.col("out_d"))
+        .drop("iso3_o", "iso3_d")
+        .rename({"out_o": "iso3_o", "out_d": "iso3_d"})
+        .select("iso3_o", "iso3_d", *PAIR_FEATURES)
+        .sort("iso3_o", "iso3_d")
     )
 
 

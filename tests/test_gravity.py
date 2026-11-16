@@ -11,16 +11,16 @@ from exportspredictor import gravity
 def _baci_countries():
     return pl.DataFrame(
         {
-            "country_code": [826, 251, 490, 842, 999],
-            "country_name": ["United Kingdom", "France", "Other Asia, nes", "USA", "Atlantis"],
-            "country_iso3": ["GBR", "FRA", "S19", "USA", "ATL"],
+            "country_code": [826, 251, 490, 842, 652, 999],
+            "country_name": ["United Kingdom", "France", "Other Asia, nes", "USA", "Saint Barthelemy", "Atlantis"],
+            "country_iso3": ["GBR", "FRA", "S19", "USA", "BLM", "ATL"],
         }
     )
 
 
 def test_baci_codes_map_to_iso3_with_taiwan_override_and_unresolved_listed():
     mapping = gravity.map_baci_countries(
-        _baci_countries(), gravity_iso3={"GBR", "FRA", "TWN", "USA"}, wdi_iso3={"GBR", "FRA", "USA"}
+        _baci_countries(), gravity_iso3={"GBR", "FRA", "TWN", "USA", "GLP"}, wdi_iso3={"GBR", "FRA", "USA"}
     )
 
     by_code = {row["baci_code"]: row for row in mapping.iter_rows(named=True)}
@@ -29,6 +29,8 @@ def test_baci_codes_map_to_iso3_with_taiwan_override_and_unresolved_listed():
     assert by_code[490]["in_gravity"] and not by_code[490]["in_wdi"]
     assert by_code[999]["iso3"] == "ATL"
     assert not by_code[999]["in_gravity"]
+    # Saint Barthelemy is not in Gravity; its pair features come from Guadeloupe, next door.
+    assert (by_code[652]["iso3"], by_code[652]["gravity_proxy"], by_code[652]["in_gravity"]) == ("BLM", "GLP", True)
     assert gravity.unresolved(mapping)["baci_code"].to_list() == [999]
 
 
@@ -102,9 +104,22 @@ def test_pair_features_take_each_pairs_latest_known_value_among_existing_countri
     assert rows["SDN", "GBR"]["distance_km"] == 5000.0
 
 
+def test_a_proxied_country_takes_its_proxys_pair_features_in_both_directions():
+    raw = _gravity_rows(
+        [
+            (2021, "GLP", "FRA", 1, 1, 6800.0, 0, 1, 1, 0),
+            (2021, "FRA", "GLP", 1, 1, 6800.0, 0, 1, 1, 0),
+        ]
+    )
+
+    pairs = gravity.gravity_pairs(raw.lazy(), proxies={"BLM": "GLP"})
+
+    rows = {(r["iso3_o"], r["iso3_d"]): r["distance_km"] for r in pairs.iter_rows(named=True)}
+    assert rows == {("GLP", "FRA"): 6800.0, ("FRA", "GLP"): 6800.0, ("BLM", "FRA"): 6800.0, ("FRA", "BLM"): 6800.0}
+
+
 def _write_sources(data_dir):
     """Tiny copies of every raw file, laid out as the download leaves them."""
-
     (data_dir / "raw" / "gravity").mkdir(parents=True)
     gravity_csv = _gravity_rows(
         [
