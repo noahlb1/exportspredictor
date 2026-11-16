@@ -1,0 +1,3 @@
+# UK Flows are predicted out-of-fold, never in-sample
+
+The model trains on every Exporter's Flows, including the UK's. But each UK Product–Market pair gets its Export Potential from a model that never saw that pair. We split UK pairs into 5 groups, keeping all years of a pair together; we train 5 models, each with all non-UK Flows plus 4/5 of UK pairs; and each pair is scored by the model that held it out. Features built from UK data (such as UK supply of a Product) are computed leaving out the target pair's Market. Training directly on UK Flows makes Export Potential copy Actual Exports, which shrinks every Export Gap to zero. Leaving the UK out entirely would lose the UK's general strengths. Scenarios for a pair use the same held-out model.

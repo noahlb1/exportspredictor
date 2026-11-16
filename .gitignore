@@ -1,0 +1,14 @@
+# Data and model artefacts (reproducible, large)
+data/
+artefacts/
+*.parquet
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Local
+.env
