@@ -4,12 +4,12 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch
+from app.ui import banner, fetch, product_picker
 
 st.title("Product → Markets")
 
 if banner() is not None:
-    hs6 = st.text_input("Product (HS6 code, 2012 edition)", key="hs6", max_chars=6).strip()
+    hs6 = product_picker()
     if hs6:
         try:
             body = fetch(f"/opportunities/by-product/{hs6}", client.api_url())

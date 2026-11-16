@@ -12,11 +12,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import polars as pl
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from api.schemas import Health, MarketOpportunity, ProductOpportunities, ProductOut
+from api.schemas import Health, MarketOpportunity, MarketOut, ProductOpportunities, ProductOut
 from exportspredictor import artefacts as store
+from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
 
 
@@ -46,6 +47,17 @@ def create_app(artefacts_root: Path | None = None) -> FastAPI:
         if artefacts is None:
             return JSONResponse(status_code=503, content=Health(ready=False).model_dump())
         return Health(ready=True, artefact_version=artefacts.version, baseline_year=artefacts.baseline_year)
+
+    @app.get("/products", response_model=list[ProductOut])
+    def products(q: str = Query("", description="HS6 code (or prefix) or words"), limit: int = Query(20, ge=1, le=200), artefacts: store.Artefacts = Depends(loaded)):
+        """Products matching a code or words, best first; an empty list when nothing matches."""
+        found = search_products(artefacts.products, q, limit=limit)
+        return [ProductOut(**{k: row[k] for k in ProductOut.model_fields}) for row in found.iter_rows(named=True)]
+
+    @app.get("/markets", response_model=list[MarketOut])
+    def markets(artefacts: store.Artefacts = Depends(loaded)):
+        """Every Market, by name."""
+        return [MarketOut(**{k: row[k] for k in MarketOut.model_fields}) for row in artefacts.markets.sort("name").iter_rows(named=True)]
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
     def by_product(hs6: str, artefacts: store.Artefacts = Depends(loaded)):

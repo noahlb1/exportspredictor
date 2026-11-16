@@ -61,7 +61,7 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 
 | Step | Status |
 | --- | --- |
-| BACI Flows and lookups (download, convert to Parquet) | arrives with #12 |
+| BACI Flows and lookups (download, convert to Parquet) | in place: `python -m exportspredictor.baci`; idempotent, about 1.3 GB download, 30 s convert, 2.5 GB peak memory |
 | Trade Agreement and Trading Bloc features (WTO RTA-IS) | arrives with #13 |
 | Gravity and WDI features (CEPII, World Bank) | arrives with #14 |
 | Train, evaluate and save artefacts (notebook) | in place; runs in fixture mode until real-data mode lands |
@@ -75,9 +75,9 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Stop the API (`podman compose stop api`) and reload: every page shows a clear "API is unavailable" message instead of an error. Start it again with `podman compose start api`.
 
 **Product → Markets**
-- [ ] Enter a known HS6 code (e.g. `220830`, whisky): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
+- [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
 - [ ] Export Potential, Actual Exports and Export Gap appear side by side.
-- [ ] An unknown code (e.g. `999999`) shows a clear "Unknown Product" warning.
+- [ ] Search text that matches nothing (e.g. `999999` or `zzz`) shows a clear "No Product matches" warning.
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen. (CSV export arrives with #17.)
 
 **Market → Products** (arrives with #17)
