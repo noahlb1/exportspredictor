@@ -29,3 +29,9 @@ class ProductOpportunities(BaseModel):
     baseline_year: int
     product: ProductOut
     opportunities: list[MarketOpportunity]  # every Market, sorted by Export Gap, largest first
+
+
+class MarketOut(BaseModel):
+    iso3: str
+    name: str
+    region: str
