@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
+from exportspredictor.features import Sources
+
 UK = "GBR"
 
 EXPORTERS = {"GBR": 1.0, "DEU": 1.4, "FRA": 1.1, "USA": 1.6}
@@ -42,15 +44,45 @@ _AGREEMENTS = {
 _AGREEMENT_EFFECT = 0.6  # log-points; the association the model should recover
 _ZERO_SHARE = 0.1
 
+# Trading Bloc memberships in the fixture window (UK left the EU before 2021, joins CPTPP in 2025).
+_BLOCS = {"DEU": "eu", "FRA": "eu", "JPN": "cptpp", "CAN": "cptpp"}
+_HIGH_INCOME = frozenset({"GBR", "DEU", "FRA", "USA", "JPN", "CAN"})
+# Population (millions) and distance (km) from the Exporter to each Market, rounded.
+_POPULATION = {"GBR": 67, "DEU": 83, "FRA": 68, "USA": 333, "JPN": 125, "CAN": 38, "IND": 1400}
+_DISTANCE = {
+    "GBR": {"JPN": 9560, "CAN": 5370, "IND": 6700},
+    "DEU": {"JPN": 9100, "CAN": 6100, "IND": 6200},
+    "FRA": {"JPN": 9700, "CAN": 5650, "IND": 6600},
+    "USA": {"JPN": 10900, "CAN": 730, "IND": 12000},
+}
+_CONTIGUOUS = {("USA", "CAN")}
+_COMMON_LANGUAGE = {("GBR", "CAN"), ("GBR", "IND"), ("USA", "CAN"), ("USA", "IND"), ("FRA", "CAN")}
+_COLONIAL_TIE = {("GBR", "CAN"), ("GBR", "IND"), ("FRA", "CAN")}
+
 
 @dataclass(frozen=True)
 class World:
-    """Flows, policy and lookups shaped like the real data the package builds."""
+    """Flows, policy, gravity and lookups shaped like the real data the package builds."""
 
     flows: pl.DataFrame  # exporter, importer, hs6, year, value_usd (zeros included)
-    policy: pl.DataFrame  # exporter, importer, year, trade_agreement
+    policy: pl.DataFrame  # exporter, importer, year, trade_agreement, customs_union
     products: pl.DataFrame  # hs6, description, sector
     markets: pl.DataFrame  # iso3, name, region
+    blocs: pl.DataFrame  # iso3, year, eu, cptpp, efta (as policy.bloc_membership)
+    country_year: pl.DataFrame  # iso3, year, gdp_usd, population (as gravity's country_year)
+    pairs: pl.DataFrame  # iso3_o, iso3_d, distance_km, contiguous, ... (as gravity_pairs)
+    high_income: frozenset[str]  # ISO3 codes of high-income countries
+
+    @property
+    def sources(self) -> Sources:
+        """The non-Flow tables the feature table is built from."""
+        return Sources(
+            agreements=self.policy,
+            blocs=self.blocs,
+            country_year=self.country_year,
+            pairs=self.pairs,
+            high_income=self.high_income,
+        )
 
 
 def build_world(seed: int = 0) -> World:
@@ -101,7 +133,7 @@ def build_world(seed: int = 0) -> World:
             "trade_agreement": pl.Int8,
         },
         orient="row",
-    )
+    ).with_columns(customs_union=pl.lit(0, pl.Int8))  # no fixture pair shares a Customs Union
     products = pl.DataFrame(
         {
             "hs6": list(PRODUCTS),
@@ -116,4 +148,47 @@ def build_world(seed: int = 0) -> World:
             "region": [region for _, region, _ in MARKETS.values()],
         }
     )
-    return World(flows=flows, policy=policy, products=products, markets=markets)
+    return World(
+        flows=flows,
+        policy=policy,
+        products=products,
+        markets=markets,
+        blocs=_blocs(),
+        country_year=_country_year(),
+        pairs=_pairs(),
+        high_income=_HIGH_INCOME,
+    )
+
+
+def _blocs() -> pl.DataFrame:
+    """Trading Bloc membership, shaped like `policy.bloc_membership` (only countries in a bloc)."""
+    rows = [
+        (iso3, year, int(bloc == "eu"), int(bloc == "cptpp"), 0)
+        for iso3, bloc in _BLOCS.items()
+        for year in YEARS
+    ]
+    schema = {"iso3": pl.String, "year": pl.Int16, "eu": pl.Int8, "cptpp": pl.Int8, "efta": pl.Int8}
+    return pl.DataFrame(rows, schema=schema, orient="row")
+
+
+def _country_year() -> pl.DataFrame:
+    """GDP grows 3% a year from a level set by each country's size in the Flow rule."""
+    size = {**EXPORTERS, **{iso3: s for iso3, (_, _, s) in MARKETS.items()}}
+    rows = [
+        (iso3, year, float(np.exp(size[iso3]) * 1e12 * 1.03 ** (year - YEARS[0])), _POPULATION[iso3] * 1e6)
+        for iso3 in size
+        for year in YEARS
+    ]
+    schema = {"iso3": pl.String, "year": pl.Int16, "gdp_usd": pl.Float64, "population": pl.Float64}
+    return pl.DataFrame(rows, schema=schema, orient="row")
+
+
+def _pairs() -> pl.DataFrame:
+    """Time-invariant pair features, shaped like `gravity.gravity_pairs`."""
+    rows = [
+        (e, i, km, int((e, i) in _CONTIGUOUS), int((e, i) in _COMMON_LANGUAGE), int((e, i) in _COLONIAL_TIE), 0)
+        for e, markets in _DISTANCE.items()
+        for i, km in markets.items()
+    ]
+    columns = ["iso3_o", "iso3_d", "distance_km", "contiguous", "common_language", "colonial_tie", "common_colonizer"]
+    return pl.DataFrame(rows, schema=columns, orient="row")
