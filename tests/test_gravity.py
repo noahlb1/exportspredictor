@@ -1,5 +1,8 @@
 """Gravity and WDI features: country mapping, the missing-value rule and the build entry point."""
 
+import json
+import zipfile
+
 import polars as pl
 
 from exportspredictor import gravity
@@ -65,3 +68,103 @@ def test_gaps_between_observed_years_are_interpolated():
 
     assert filled["gdp_usd"].to_list() == [100.0, 200.0, 300.0, 400.0]
     assert filled["gdp_source"].to_list() == ["wdi", "interpolated", "interpolated", "wdi"]
+
+
+def _gravity_rows(rows):
+    columns = ["year", "iso3_o", "iso3_d", "country_exists_o", "country_exists_d", "dist", "contig"]
+    columns += ["comlang_off", "col_dep_ever", "comcol"]
+    return pl.DataFrame(rows, schema=columns, orient="row")
+
+
+def test_pair_features_take_each_pairs_latest_known_value_among_existing_countries():
+    raw = _gravity_rows(
+        [
+            (2020, "GBR", "IRL", 1, 1, 460.0, 1, 1, 1, 0),
+            (2021, "GBR", "IRL", 1, 1, 463.0, 1, None, 1, 0),
+            (2021, "SDN", "GBR", 1, 1, 5000.0, 0, 1, 1, 0),
+            (2021, "SDN", "GBR", 0, 1, 5100.0, 0, 0, 0, 0),  # the pre-2011 Sudan: no longer exists
+        ]
+    )
+
+    pairs = gravity.gravity_pairs(raw.lazy())
+
+    rows = {(r["iso3_o"], r["iso3_d"]): r for r in pairs.iter_rows(named=True)}
+    assert set(rows) == {("GBR", "IRL"), ("SDN", "GBR")}
+    assert rows["GBR", "IRL"] == {
+        "iso3_o": "GBR",
+        "iso3_d": "IRL",
+        "distance_km": 463.0,
+        "contiguous": 1,
+        "common_language": 1,
+        "colonial_tie": 1,
+        "common_colonizer": 0,
+    }
+    assert rows["SDN", "GBR"]["distance_km"] == 5000.0
+
+
+def _write_sources(data_dir):
+    """Tiny copies of every raw file, laid out as the download leaves them."""
+
+    (data_dir / "raw" / "gravity").mkdir(parents=True)
+    gravity_csv = _gravity_rows(
+        [
+            (2011, "GBR", "FRA", 1, 1, 340.0, 0, 0, 0, 0),
+            (2021, "GBR", "FRA", 1, 1, 344.0, 0, 0, 0, 0),
+            (2021, "FRA", "GBR", 1, 1, 344.0, 0, 0, 0, 0),
+            (2021, "GBR", "TWN", 1, 1, 9800.0, 0, 0, 0, 0),
+            (2021, "TWN", "GBR", 1, 1, 9800.0, 0, 0, 0, 0),
+        ]
+    ).with_columns(
+        gdp_o=pl.when(pl.col("iso3_o") == "FRA").then(2_900_000_000.0),  # thousand USD
+        pop_o=pl.when(pl.col("iso3_o") == "FRA").then(67_000.0),  # thousands
+        fta_wto=pl.lit(0),
+    )
+    with zipfile.ZipFile(data_dir / "raw" / "gravity" / gravity.GRAVITY_ZIP, "w") as archive:
+        archive.writestr(gravity.GRAVITY_CSV, gravity_csv.write_csv())
+
+    (data_dir / "raw" / "wdi").mkdir(parents=True)
+    for indicator, value in [("NY.GDP.MKTP.CD", 3.0e12), ("SP.POP.TOTL", 68e6)]:
+        records = [
+            {"countryiso3code": "GBR", "date": str(year), "value": value} for year in range(2012, 2025)
+        ]
+        records.append({"countryiso3code": "", "date": "2024", "value": 1.0})
+        (data_dir / "raw" / "wdi" / f"{indicator}.json").write_text(json.dumps([{"page": 1}, records]))
+
+    (data_dir / "raw" / "imf_weo").mkdir(parents=True)
+    for indicator, value in [("NGDPD", 800.0), ("LP", 23.4)]:
+        payload = {"values": {indicator: {"TWN": {str(year): value for year in range(2012, 2025)}}}}
+        (data_dir / "raw" / "imf_weo" / f"{indicator}.json").write_text(json.dumps(payload))
+
+    (data_dir / "raw" / "baci").mkdir(parents=True)
+    (data_dir / "raw" / "baci" / "country_codes_V202601.csv").write_text(
+        "country_code,country_name,country_iso2,country_iso3\n"
+        "826,United Kingdom,GB,GBR\n251,France,FR,FRA\n490,\"Other Asia, nes\",,S19\n"
+    )
+
+
+def test_build_writes_country_map_pair_features_and_country_years_for_2012_to_2024(tmp_path):
+    _write_sources(tmp_path)
+
+    outputs = gravity.build(tmp_path, download_missing=False)
+
+    country_map = pl.read_parquet(outputs["country_map"])
+    assert dict(zip(country_map["baci_code"], country_map["iso3"])) == {826: "GBR", 251: "FRA", 490: "TWN"}
+    assert gravity.unresolved(country_map).is_empty()
+
+    pairs = pl.read_parquet(outputs["gravity_pairs"])
+    assert pairs.filter(iso3_o="GBR", iso3_d="FRA")["distance_km"].item() == 344.0
+
+    country_year = pl.read_parquet(outputs["country_year"])
+    assert country_year.height == 3 * 13  # every BACI country, every year 2012-2024
+    assert country_year["gdp_usd"].null_count() == 0
+    by_key = {(r["iso3"], r["year"]): r for r in country_year.iter_rows(named=True)}
+    assert (by_key["GBR", 2024]["gdp_usd"], by_key["GBR", 2024]["gdp_source"]) == (3.0e12, "wdi")
+    assert (by_key["TWN", 2024]["gdp_usd"], by_key["TWN", 2024]["gdp_source"]) == (800.0e9, "imf_weo")
+    assert by_key["TWN", 2024]["population"] == 23.4e6
+    # France is in neither WDI nor IMF here, so Gravity's 2021 value (thousands) is used, then carried.
+    assert (by_key["FRA", 2021]["gdp_usd"], by_key["FRA", 2021]["gdp_source"]) == (2.9e12, "cepii_gravity")
+    assert (by_key["FRA", 2024]["population"], by_key["FRA", 2024]["population_source"]) == (67e6, "carried")
+
+    # The Gravity extract keeps every column from 2012 on, for the policy cross-check.
+    extract = pl.read_parquet(outputs["gravity_extract"])
+    assert extract["year"].min() == 2021 and "fta_wto" in extract.columns  # the 2011 row is dropped
