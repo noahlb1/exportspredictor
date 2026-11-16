@@ -334,3 +334,56 @@ def _ensure_bloc_columns(frame: pl.DataFrame) -> pl.DataFrame:
         (pl.col(bloc) if bloc in frame.columns else pl.lit(None)).fill_null(0).cast(pl.Int8).alias(bloc)
         for bloc in TRADING_BLOCS
     ).select("iso3", "year", *TRADING_BLOCS)
+
+
+def attach_policy(rows: pl.DataFrame, agreements: pl.DataFrame, blocs: pl.DataFrame) -> pl.DataFrame:
+    """Add every POLICY_FEATURES column to rows keyed by exporter, importer and year.
+
+    Pairs with no agreement, and countries in no tracked bloc, get 0.
+    """
+    year_type = rows.schema["year"]
+    agreements = agreements.with_columns(pl.col("year").cast(year_type))
+    blocs = blocs.with_columns(pl.col("year").cast(year_type))
+    return (
+        rows.join(agreements, on=["exporter", "importer", "year"], how="left")
+        .join(blocs.rename({b: f"{b}_o" for b in TRADING_BLOCS}), left_on=["exporter", "year"], right_on=["iso3", "year"], how="left")
+        .join(blocs.rename({b: f"{b}_d" for b in TRADING_BLOCS}), left_on=["importer", "year"], right_on=["iso3", "year"], how="left")
+        .with_columns(pl.col(POLICY_FEATURES).fill_null(0).cast(pl.Int8))
+        .select(*rows.columns, *POLICY_FEATURES)
+    )
+
+
+# --- Build entry point ----------------------------------------------------------------
+
+DEFAULT_YEARS = list(range(2012, 2025))
+
+
+def policy_paths(root: Path | None = None) -> dict[str, Path]:
+    derived = (root or data_dir()) / "derived"
+    return {
+        "agreements": derived / "policy_agreements.parquet",
+        "trading_blocs": derived / "policy_trading_blocs.parquet",
+    }
+
+
+def build(root: Path | None = None, years: list[int] = DEFAULT_YEARS, source: Path | None = None) -> dict[str, Path]:
+    """Download the WTO export if missing, then write the policy tables. Safe to re-run.
+
+    Writes `derived/policy_agreements.parquet` (exporter, importer, year, trade_agreement,
+    customs_union) and `derived/policy_trading_blocs.parquet` (iso3, year, eu, cptpp, efta)
+    under the data root, and returns their paths.
+    """
+    rtas = read_rta_export(source or download_rta_export(root))
+    paths = policy_paths(root)
+    paths["agreements"].parent.mkdir(parents=True, exist_ok=True)
+    tables = {"agreements": pair_agreements(rtas, years), "trading_blocs": bloc_membership(rtas, years)}
+    for name, table in tables.items():
+        part = paths[name].with_name(paths[name].name + ".part")
+        table.write_parquet(part)
+        part.replace(paths[name])
+    return paths
+
+
+if __name__ == "__main__":
+    for name, path in build().items():
+        print(f"{name}: {path}")

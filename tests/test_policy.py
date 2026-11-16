@@ -10,6 +10,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 
 from exportspredictor import policy
 
@@ -100,3 +101,29 @@ def test_uk_cptpp_accession_counts_from_2025_not_2024(blocs, agreements):
     # Canada ratified on 1 Sep 2026, after 1 July, so the UK-Canada pair joins in 2027
     # (the full export also has the UK-Canada continuity agreement, so check bloc only).
     assert _flag(agreements, "GBR", "MEX", 2026) == 1
+
+
+def test_attach_policy_fills_every_policy_feature_for_any_rows(rtas):
+    rows = pl.DataFrame(
+        {"exporter": ["GBR", "GBR", "GBR"], "importer": ["FRA", "IND", "JPN"], "year": [2020, 2020, 2025]},
+        schema={"exporter": pl.String, "importer": pl.String, "year": pl.Int32},
+    )
+    out = policy.attach_policy(rows, policy.pair_agreements(rtas, YEARS), policy.bloc_membership(rtas, YEARS))
+    assert out.columns == [*rows.columns, *policy.POLICY_FEATURES]
+    by_importer = {r["importer"]: r for r in out.iter_rows(named=True)}
+    assert (by_importer["FRA"]["trade_agreement"], by_importer["FRA"]["customs_union"]) == (1, 1)
+    assert (by_importer["FRA"]["eu_o"], by_importer["FRA"]["eu_d"]) == (0, 1)
+    assert (by_importer["IND"]["trade_agreement"], by_importer["IND"]["eu_d"]) == (0, 0)
+    assert (by_importer["JPN"]["cptpp_o"], by_importer["JPN"]["cptpp_d"]) == (1, 1)
+
+
+def test_build_writes_reproducible_policy_tables(tmp_path):
+    written = policy.build(tmp_path, years=YEARS, source=EXTRACT)
+    agreements = pl.read_parquet(written["agreements"])
+    blocs = pl.read_parquet(written["trading_blocs"])
+    policy.build(tmp_path, years=YEARS, source=EXTRACT)
+    assert_frame_equal(pl.read_parquet(written["agreements"]), agreements)
+    assert_frame_equal(pl.read_parquet(written["trading_blocs"]), blocs)
+    assert _flag(agreements, "GBR", "AUS", 2023) == 1
+    assert _member(blocs, "GBR", 2019, "eu") == 1
+    assert all(path.is_relative_to(tmp_path) for path in written.values())
