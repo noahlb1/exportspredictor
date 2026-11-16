@@ -1,0 +1,36 @@
+"""The app's only route to the model: HTTP calls to the API.
+
+The API base URL comes from `EXPORTSPREDICTOR_API_URL` (default http://localhost:8000).
+"""
+
+import os
+
+import httpx
+
+DEFAULT_API_URL = "http://localhost:8000"
+
+
+class ApiUnavailable(RuntimeError):
+    """The API could not be reached or is not ready."""
+
+
+class NotFound(LookupError):
+    """The API answered 404, e.g. an unknown Product."""
+
+
+def api_url() -> str:
+    return os.environ.get("EXPORTSPREDICTOR_API_URL", DEFAULT_API_URL).rstrip("/")
+
+
+def get(path: str, **params) -> dict:
+    """GET a JSON resource from the API, mapping failures to ApiUnavailable / NotFound."""
+    try:
+        response = httpx.get(f"{api_url()}{path}", params=params or None, timeout=30)
+    except httpx.TransportError as error:
+        raise ApiUnavailable(f"Cannot reach the API at {api_url()}.") from error
+    if response.status_code == 404:
+        raise NotFound(response.json().get("detail", "Not found"))
+    if response.status_code == 503:
+        raise ApiUnavailable("The API is running but its artefacts are not loaded yet.")
+    response.raise_for_status()
+    return response.json()
