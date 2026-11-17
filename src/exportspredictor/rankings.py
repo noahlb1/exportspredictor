@@ -9,7 +9,8 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 
 RANKED_BY = "export_gap_usd"
-VALUES = ("export_potential", "actual_exports", "export_gap")  # each in _usd and _gbp
+# Each in _usd and _gbp. blocked_effect: the Scenario Effect of adding a Trade Agreement where none exists.
+VALUES = ("export_potential", "actual_exports", "export_gap", "blocked_effect")
 
 
 def rank_opportunities(

@@ -65,7 +65,7 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 | Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet) | in place: `python -m exportspredictor.gravity`; needs the BACI step first (country codes); about 210 MB download, 40 s build |
 | Trade Agreement and Trading Bloc features (WTO RTA-IS download, build) | in place: `python -m exportspredictor.policy`; idempotent (skips the download if `raw/wto/AllRTAs.xlsx` exists), about 200 KB download, 2 s build |
 | Feature table (training rows with sampled zeros, UK grid; per year) | in place: `python -m exportspredictor.features`; needs the three steps above; writes `derived/features_V202601/`, about 3.4 GB, 90 s build, 8 GB peak memory |
-| Train, evaluate and save artefacts (notebook) | in place: runs the notebook with `EXPORTSPREDICTOR_FIXTURE_MODE=0`; tunes on 2022, trains five fold models on the GPU (about 30 minutes on an RTX 3080) and saves a new artefact version. To train without the notebook: `python -m exportspredictor.pipeline` |
+| Train, evaluate and save artefacts (notebook) | in place: runs the notebook with `EXPORTSPREDICTOR_FIXTURE_MODE=0`; tunes on 2022, trains five fold models on the GPU (about 30 minutes on an RTX 3080) and saves a new artefact version. To train without the notebook: `python -m exportspredictor.pipeline`. The run also precomputes the Blocked Opportunity values; to recompute only those from the newest artefact's saved fold models, run `python -m exportspredictor.scenarios` (seconds, CPU, writes a new artefact version) |
 
 ## Manual UI checklist
 
@@ -83,17 +83,21 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Each row says whether a UK Trade Agreement is in force with the Market (e.g. Japan: Yes, India: No).
 - [ ] The Sector filter narrows the Product search; the region and minimum-Gap filters narrow the ranking.
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
+- [ ] Switch "Rank by" to Blocked Opportunity value: Markets without a Trade Agreement rise to the top, and rows clearing 20% and $1M are flagged.
 
 **Market → Products**
 - [ ] Pick a Market (e.g. Japan): Products are ranked by Export Gap, and the page says whether a UK Trade Agreement is in force with it.
 - [ ] The region filter narrows the Market list; the Sector and minimum-Gap (£) filters narrow the ranking, and a filter matching nothing says so.
+- [ ] Switch "Rank by" to Blocked Opportunity value for a Market without a UK Trade Agreement (e.g. India): Products are ranked by that value; for a Market with one (e.g. Japan) every value is 0.
 - [ ] Values show in £, with the conversion rate and year stated.
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
 
-**Scenarios** (arrives with #18)
-- [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). The summary shows the total change, the change per Market and the top Products gaining, phrased as associations.
+**Scenarios**
+- [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds, and the summary shows the total change, the change per Market and the top Products gaining, phrased as associations.
+- [ ] Run the CPTPP preset: it shows a non-zero Scenario Effect (the 2024 Baseline has no UK CPTPP membership).
 - [ ] Blocked Opportunities unlocked by the Scenario are listed, and changing the thresholds changes the list.
-- [ ] A Scenario that changes nothing (e.g. adding an agreement that already exists) says so.
+- [ ] Pick a Market in the drill-down: its most affected Product–Market pairs are listed, largest effect first.
+- [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
 
 **Why?**
 - [ ] On **Product → Markets** and **Market → Products**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.

@@ -34,3 +34,22 @@ def get(path: str, **params) -> dict:
         raise ApiUnavailable("The API is running but its artefacts are not loaded yet.")
     response.raise_for_status()
     return response.json()
+
+
+class InvalidRequest(ValueError):
+    """The API answered 422: the request (e.g. a Scenario) is invalid."""
+
+
+def post(path: str, body: dict) -> dict:
+    """POST JSON to the API, mapping failures to ApiUnavailable / InvalidRequest."""
+    try:
+        response = httpx.post(f"{api_url()}{path}", json=body, timeout=60)
+    except httpx.TransportError as error:
+        raise ApiUnavailable(f"Cannot reach the API at {api_url()}.") from error
+    if response.status_code == 422:
+        detail = response.json().get("detail", "Invalid request")
+        raise InvalidRequest(detail if isinstance(detail, str) else "; ".join(d.get("msg", "") for d in detail))
+    if response.status_code == 503:
+        raise ApiUnavailable("The API is running but its artefacts are not loaded yet.")
+    response.raise_for_status()
+    return response.json()

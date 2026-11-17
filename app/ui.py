@@ -4,6 +4,7 @@ Both ranking pages render through `ranking_filters` and `show_ranking`, so a ran
 column or row link is added here once.
 """
 
+import json
 from urllib.parse import urlencode
 
 import pandas as pd
@@ -13,7 +14,12 @@ from app import client
 
 # HS2 chapters of the 2012 edition (chapter 77 is reserved and unused).
 SECTORS = [f"{chapter:02d}" for chapter in range(1, 98) if chapter != 77]
-_VALUES = {"export_potential": "Export Potential", "actual_exports": "Actual Exports", "export_gap": "Export Gap"}
+_VALUES = {
+    "export_potential": "Export Potential",
+    "actual_exports": "Actual Exports",
+    "export_gap": "Export Gap",
+    "blocked_effect": "Blocked Opportunity value",
+}
 _CURRENCIES = {"GBP": ("gbp", "£"), "USD": ("usd", "USD")}
 
 
@@ -44,9 +50,9 @@ def banner() -> dict | None:
 
 
 def ranking_filters() -> dict:
-    """Sector, region and minimum-Gap filters, shared by both ranking pages.
+    """The ranking order and the Sector, region and minimum-Gap filters, shared by both ranking pages.
 
-    Returns the API query parameters that are set (`sector`, `region`, `min_gap_gbp`).
+    Returns the API query parameters that are set (`rank_by`, `sector`, `region`, `min_gap_gbp`).
     """
     markets = fetch("/markets", client.api_url())
     regions = sorted({market["region"] for market in markets})
@@ -58,7 +64,8 @@ def ranking_filters() -> dict:
         "Market region", [None, *regions], format_func=lambda r: "All regions" if r is None else r, key="region"
     )
     min_gap = gap_column.number_input("Minimum Export Gap (£)", value=None, step=1_000_000.0, key="min_gap")
-    params = {"sector": sector, "region": region, "min_gap_gbp": min_gap}
+    rank_by = st.radio("Rank by", list(RANK_BY), format_func=RANK_BY.get, key="rank_by", horizontal=True)
+    params = {"rank_by": rank_by, "sector": sector, "region": region, "min_gap_gbp": min_gap}
     return {name: value for name, value in params.items() if value is not None}
 
 
@@ -92,6 +99,17 @@ def product_picker(sector: str | None = None) -> str | None:
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def run_scenario(body_json: str, api_url: str) -> dict:
+    """Cached Scenario run; `body_json` is the request body as sorted JSON (the cache key)."""
+    del api_url
+    return client.post("/scenarios", json.loads(body_json))
+
+
+# The two ranking orders of the Opportunity pages (`rank_by` in the API).
+RANK_BY = {"gap": "Export Gap", "blocked": "Blocked Opportunity value"}
+
+
 def market_picker(region: str | None = None) -> str | None:
     """Pick a Market by name, from one region if given. Returns its ISO3 code, or None."""
     markets = [m for m in fetch("/markets", client.api_url()) if region is None or m["region"] == region]
@@ -112,10 +130,16 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     currency = st.radio("Values in", list(_CURRENCIES), horizontal=True, key="currency")
     suffix, unit = _CURRENCIES[currency]
     st.caption(
-        f"Ranked by Export Gap, Baseline year {body['baseline_year']}. "
+        f"Ranked by {RANK_BY[body['rank_by']]}, Baseline year {body['baseline_year']}. "
         f"£ values use £1 = ${rate['usd_per_gbp']:.4f}, the {rate['year']} annual average "
         f"({rate['source']})."
     )
+    if body["rank_by"] == "blocked":
+        st.caption(
+            "Blocked Opportunity value: the Scenario Effect the model associates with adding a Trade "
+            "Agreement where none exists (0 where one does). Flagged rows clear 20% of Baseline Export "
+            "Potential and $1M."
+        )
     rows = body["opportunities"]
     if not rows:
         st.info("No Opportunities match these filters.")
@@ -125,6 +149,7 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     table["UK Trade Agreement in force"] = raw["trade_agreement"].map({True: "Yes", False: "No"})
     for field, heading in _VALUES.items():
         table[f"{heading} ({unit})"] = raw[f"{field}_{suffix}"]
+    table["Blocked Opportunity"] = raw["blocked_opportunity"]
     links = [why_link(hs6 or row["hs6"], iso3 or row["iso3"]) for row in rows]
     st.dataframe(
         table.assign(**{"Why?": links}),

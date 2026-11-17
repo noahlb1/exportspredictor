@@ -9,6 +9,8 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    best configuration and its round count; the feature transform is fitted on the same years.
 3. **Score** the Baseline year's full UK Product × Market grid out-of-fold and assemble the
    Baseline table, the Scenario inputs and the Actual Exports history.
+4. **Blocked Opportunity values**: re-predict every pair without a Trade Agreement with
+   one added (`scenarios.blocked_effects`), for the `rank_by=blocked` rankings.
 
 `build_artefacts(world)` runs this on the fixture world (CPU, seconds).
 `build_real_artefacts()` runs it on the per-year feature files of `features.build()`
@@ -41,6 +43,7 @@ from exportspredictor.fixture import UK, World
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
+from exportspredictor.scenarios import blocked_effects, with_blocked_effects
 from exportspredictor.training import Chunk, model_params, scan_chunks, tune
 
 # The fixture world has only a few dozen relevant zeros, so it keeps half of them. Real
@@ -243,6 +246,9 @@ def _train_and_score(
         "export_potential_usd",
         actual_exports_usd="value_usd",
     ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
+    baseline_features = scored.select("hs6", "iso3", "fold", *FEATURES)
+    # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
+    baseline = with_blocked_effects(baseline, blocked_effects(baseline_features, baseline, models))
     metadata = {
         "baseline_year": baseline_year,
         "gbp_rate": gbp_rate(baseline_year),
@@ -267,7 +273,7 @@ def _train_and_score(
     return _Trained(
         models=models,
         baseline=baseline,
-        baseline_features=scored.select("hs6", "iso3", "fold", *FEATURES),
+        baseline_features=baseline_features,
         metadata=metadata,
     )
 
