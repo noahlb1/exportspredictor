@@ -3,7 +3,12 @@
 import polars as pl
 import pytest
 
-from exportspredictor.exclusions import EXCLUSIONS, drop_excluded, excluded_products, exclusion_reason
+from exportspredictor.exclusions import (
+    EXCLUSIONS,
+    drop_excluded,
+    excluded_products,
+    exclusion_reason,
+)
 
 
 @pytest.mark.parametrize(

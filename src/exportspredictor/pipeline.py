@@ -32,8 +32,12 @@ import xgboost as xgb
 
 from exportspredictor import baci, backtests, constraints, evaluation
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
-from exportspredictor.currency import gbp_rate
-from exportspredictor.exclusions import EXCLUSIONS, drop_excluded, excluded_products, is_excluded
+from exportspredictor.exclusions import (
+    EXCLUSIONS,
+    drop_excluded,
+    excluded_products,
+    is_excluded,
+)
 from exportspredictor.features import (
     FEATURES,
     MONOTONE_CONSTRAINTS,
@@ -317,6 +321,8 @@ def _train_and_score(
     )
     if scored.select("hs6", "iso3").is_duplicated().any() or scored.height != grid.height:
         raise ValueError("The Baseline must hold exactly one row per UK Product–Market pair of the grid")
+    if scored.select(is_excluded().any()).item():
+        raise ValueError("The UK grid holds Excluded Products; they are never scored (ADR 0005)")
     baseline = scored.select(
         "hs6",
         "iso3",
@@ -329,7 +335,6 @@ def _train_and_score(
     metadata = {
         "artefact_format": ARTEFACT_FORMAT,
         "baseline_year": baseline_year,
-        "gbp_rate": gbp_rate(baseline_year),
         "validation_year": validation_year,
         "test_year": test_year,
         "tuning_years": tuning_years,
@@ -447,14 +452,13 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
     """A new version of a saved bundle with its derived metadata recomputed; no retraining.
 
     The fold models and tables are reused as they are. Use it when a derived value (such as
-    the GBP rate, or the source versions read from the raw downloads under `data_root`) is
-    added after the models were trained.
+    the source versions read from the raw downloads under `data_root`) is added after the
+    models were trained. A v1 `gbp_rate` is dropped: every output is in USD.
     """
     metadata = {
-        **bundle.metadata,
+        **{key: value for key, value in bundle.metadata.items() if key != "gbp_rate"},
         "version": version or new_version(),
         "refreshed_from": bundle.version,
-        "gbp_rate": gbp_rate(bundle.baseline_year),
         "sources": source_versions(data_root),
     }
     return replace(bundle, metadata=metadata)
@@ -475,7 +479,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if list(argv) == ["refresh"]:
         source = artefacts.latest_folder(artefacts_dir())
         bundle = refresh(artefacts.load(source))
-        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "gbp_rate", "sources")}), flush=True)
+        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "sources")}), flush=True)
         # Copied file for file, so files this step does not know about (e.g. the model card) survive.
         print(artefacts.copy_version(source, artefacts_dir(), metadata=bundle.metadata), flush=True)
         return

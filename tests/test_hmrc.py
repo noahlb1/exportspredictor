@@ -144,3 +144,15 @@ def test_crosscheck_reports_the_difference_and_where_it_comes_from(archive):
     assert report["pairs"]["in_both"] == 2
     assert report["usd_per_gbp"] == 2.0
     assert "BACI" in report["text"] and "HMRC" in report["text"]
+
+
+@pytest.mark.parametrize(("year", "usd_per_gbp"), [(2022, 1.2362), (2023, 1.2434)])
+def test_crosscheck_converts_hmrc_pounds_at_that_years_own_rate(archive, year, usd_per_gbp):
+    # Bank of England XUAAUSS annual averages, US$ per £.
+    ots = hmrc.allocate(hmrc.read_exports(archive), CONCORDANCE, MARKETS)
+    baci_uk = pl.DataFrame({"hs6": ["220830"], "iso3": ["JPN"], "value_usd": [4_000.0]})
+
+    report = hmrc.crosscheck(ots, baci_uk, year=year)
+
+    assert report["usd_per_gbp"] == usd_per_gbp
+    assert report["ots_usd"] == pytest.approx(ots["value_gbp"].sum() * usd_per_gbp)

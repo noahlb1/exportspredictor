@@ -38,8 +38,8 @@ from pathlib import Path
 import polars as pl
 
 from exportspredictor import baci, policy
-from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
 from exportspredictor.downloads import write_parquet
+from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
 from exportspredictor.paths import data_dir
 
 KEYS = ["exporter", "importer", "hs6", "year"]

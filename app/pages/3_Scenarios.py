@@ -6,7 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, currency_choice, fetch, rate_caption, run_scenario
+from app.ui import banner, fetch, run_scenario
+from exportspredictor.currency import USD_UNIT, format_change
 
 st.title("Scenarios")
 
@@ -16,14 +17,12 @@ PAIR_NAMES = {"hs6": "HS6", "description": "Product", "market": "Market"}
 DRILL_DOWN_ROWS = 50
 
 
-def value_columns(suffix: str, unit: str) -> dict[str, str]:
-    """Baseline, Scenario and effect columns in the chosen currency, and the effect share."""
-    return {
-        f"baseline_potential_{suffix}": f"Baseline Export Potential ({unit})",
-        f"scenario_potential_{suffix}": f"Scenario Export Potential ({unit})",
-        f"effect_{suffix}": f"Scenario Effect ({unit})",
-        "effect_share": "Scenario Effect (share of Baseline)",
-    }
+VALUE_COLUMNS = {
+    "baseline_potential_usd": f"Baseline Export Potential ({USD_UNIT})",
+    "scenario_potential_usd": f"Scenario Export Potential ({USD_UNIT})",
+    "effect_usd": f"Scenario Effect ({USD_UNIT})",
+    "effect_share": "Scenario Effect (share of Baseline)",
+}
 
 
 def table(rows: list[dict], columns: dict[str, str]) -> pd.DataFrame:
@@ -105,13 +104,11 @@ if banner() is not None:
                     "forecasts: the model associates these policy conditions with this change in Export "
                     f"Potential, holding everything else at the {result['baseline_year']} Baseline."
                 )
-                suffix, unit = currency_choice()
-                st.caption(rate_caption(result["gbp_rate"]))
-                pair_columns = {**PAIR_NAMES, **value_columns(suffix, unit)}
-                total_columns = {**value_columns(suffix, unit), "pairs": "Product–Market pairs changed"}
+                pair_columns = {**PAIR_NAMES, **VALUE_COLUMNS}
+                total_columns = {**VALUE_COLUMNS, "pairs": "Product–Market pairs changed"}
                 total = result["total"]
                 a, b, c = st.columns(3)
-                a.metric(f"Scenario Effect ({unit})", f"{total[f'effect_{suffix}']:,.0f}")
+                a.metric(f"Scenario Effect ({USD_UNIT})", format_change(total["effect_usd"]))
                 b.metric("Share of Baseline", f"{total['effect_share']:+.1%}")
                 c.metric("Blocked Opportunities", f"{result['blocked_count']:,}")
 

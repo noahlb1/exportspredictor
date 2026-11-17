@@ -3,7 +3,14 @@
 import streamlit as st
 
 from app import client
-from app.ui import banner, excluded_products_list, fetch, product_picker, ranking_filters, show_ranking
+from app.ui import (
+    banner,
+    excluded_products_list,
+    fetch,
+    product_picker,
+    ranking_filters,
+    show_ranking,
+)
 
 st.title("Product → Markets")
 

@@ -8,19 +8,12 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, currency_choice, fetch, product_picker, rate_caption
+from app.ui import banner, fetch, product_picker
+from exportspredictor.currency import USD_UNIT, format_usd
 
 TOP_FACTORS = 8
 
 st.title("Why?")
-
-
-def _money(amount: float, unit: str) -> str:
-    symbol = "£" if unit == "£" else "US$"
-    for size, word in ((1e9, "billion"), (1e6, "million")):
-        if abs(amount) >= size:
-            return f"{symbol}{amount / size:,.1f} {word}"
-    return f"{symbol}{amount:,.0f}"
 
 
 def _pair() -> tuple[str | None, str | None]:
@@ -50,14 +43,12 @@ if banner() is not None:
         else:
             product, market = body["product"], body["market"]
             st.subheader(f"{product['hs6']} – {product['description']} → {market['name']}")
-            suffix, unit = currency_choice()
             st.markdown(
                 f"Baseline year {body['baseline_year']}: "
-                f"Export Potential **{_money(body[f'export_potential_{suffix}'], unit)}**, "
-                f"Actual Exports **{_money(body[f'actual_exports_{suffix}'], unit)}**, "
-                f"Export Gap **{_money(body[f'export_gap_{suffix}'], unit)}**."
+                f"Export Potential **{format_usd(body['export_potential_usd'])}**, "
+                f"Actual Exports **{format_usd(body['actual_exports_usd'])}**, "
+                f"Export Gap **{format_usd(body['export_gap_usd'])}**."
             )
-            st.caption(rate_caption(body["gbp_rate"]))
             st.markdown(
                 "Each factor below is something the model associates with higher or lower UK exports "
                 "of this Product to this Market. These are associations the model has learned, not causes: "
@@ -95,10 +86,10 @@ if banner() is not None:
 
             st.subheader("UK Actual Exports, recent years")
             baseline_year = body["baseline_year"]
-            exports = {point["year"]: point[f"actual_exports_{suffix}"] for point in body["history"]}
+            exports = {point["year"]: point["actual_exports_usd"] for point in body["history"]}
             years = range(baseline_year - 5, baseline_year + 1)
             st.dataframe(
-                pd.DataFrame({"Year": list(years), f"Actual Exports ({unit})": [exports.get(y, 0.0) for y in years]}),
+                pd.DataFrame({"Year": list(years), f"Actual Exports ({USD_UNIT})": [exports.get(y, 0.0) for y in years]}),
                 hide_index=True,
             )
             st.caption(f"{baseline_year} figures are provisional. A year with no recorded UK exports shows 0.")
