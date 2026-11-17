@@ -26,7 +26,7 @@ def artefacts(fixture_artefacts):
 def test_baseline_has_one_row_per_uk_product_market_pair(artefacts):
     baseline = artefacts.baseline
 
-    assert baseline.height == 5 * 3
+    assert baseline.height == 5 * 4
     assert baseline.select("hs6", "iso3").is_duplicated().sum() == 0
 
 
@@ -36,7 +36,7 @@ def test_baseline_carries_actual_exports_from_the_baseline_year(world, artefacts
     )
     joined = artefacts.baseline.join(uk_2024, on=["hs6", "iso3"])
 
-    assert joined.height == 15
+    assert joined.height == 20
     assert (joined["actual_exports_usd"] == joined["expected"]).all()
 
 

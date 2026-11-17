@@ -5,9 +5,12 @@ import pytest
 
 from exportspredictor.exclusions import (
     EXCLUSIONS,
+    REEXPORT_HUBS,
     drop_excluded,
     excluded_products,
     exclusion_reason,
+    flag_columns,
+    is_flagged_product,
 )
 
 
@@ -81,3 +84,42 @@ def test_the_excluded_products_table_lists_each_one_with_its_reason():
     assert table.columns == ["hs6", "description", "sector", "reason"]
     assert table["hs6"].to_list() == ["270900", "710812"]
     assert table["reason"].to_list() == [exclusion_reason("270900"), exclusion_reason("710812")]
+
+
+# --- Flagged Products and Re-export Hubs: scored as normal, shown with a caveat ------------
+
+
+@pytest.mark.parametrize(
+    ("hs6", "flagged"),
+    [
+        ("710110", True),  # pearls (7101)
+        ("710239", True),  # diamonds (7102)
+        ("710510", True),  # precious-stone dust (7105)
+        ("710700", True),  # base metal clad with silver (7107)
+        ("710900", True),  # base metal clad with gold (7109)
+        ("711100", True),  # base metal clad with platinum (7111)
+        ("711319", True),  # gold jewellery (7113)
+        ("711719", True),  # imitation jewellery (7117)
+        ("710812", False),  # gold: Excluded, not Flagged
+        ("710691", False),  # silver: Excluded
+        ("710490", True),  # synthetic stones (7104)
+        ("711810", False),  # coins: Excluded
+        ("220830", False),  # whisky
+        ("071000", False),  # frozen vegetables: 0710 is not 7101
+    ],
+)
+def test_flagged_products_are_the_rest_of_sector_71(hs6, flagged):
+    assert is_flagged_product(hs6) is flagged
+
+
+def test_re_export_hubs_are_the_adr_markets():
+    assert REEXPORT_HUBS == frozenset({"NLD", "BEL", "IRL", "HKG", "SGP", "ARE", "CHE", "LUX"})
+
+
+def test_flag_columns_mark_rows_by_the_constants():
+    rows = pl.DataFrame({"hs6": ["711319", "220830"], "iso3": ["HKG", "JPN"]})
+
+    flagged = rows.with_columns(flag_columns())
+
+    assert flagged["flagged_product"].to_list() == [True, False]
+    assert flagged["reexport_hub"].to_list() == [True, False]

@@ -77,4 +77,4 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
 
     loaded = store.load_latest(tmp_path)
     assert loaded.metadata["source"] == "fixture"
-    assert loaded.baseline.height == 15
+    assert loaded.baseline.height == 20

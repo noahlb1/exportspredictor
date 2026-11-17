@@ -15,7 +15,7 @@ def test_build_writes_training_rows_and_the_uk_grid_per_year(derived_data_root):
     grid = pl.read_parquet(out / "uk_grid_2024.parquet")
     assert set(training.columns) >= {*features.KEYS, *features.FEATURES, "value_usd", "weight"}
     assert set(grid["exporter"]) == {UK}
-    assert grid.height == 5 * 3
+    assert grid.height == 5 * 4
     assert set(training["weight"]) == {1.0, 2.0}
 
 

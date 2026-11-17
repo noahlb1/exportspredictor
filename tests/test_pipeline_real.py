@@ -23,7 +23,7 @@ def trained(derived_data_root):
 def test_baseline_covers_every_uk_product_market_pair_of_the_baseline_year(trained, derived_data_root):
     grid = pl.read_parquet(features.features_dir(derived_data_root) / "uk_grid_2024.parquet")
 
-    assert trained.baseline.height == grid.height == 5 * 3
+    assert trained.baseline.height == grid.height == 5 * 4
     assert trained.baseline.select("hs6", "iso3").is_duplicated().sum() == 0
     assert trained.baseline.schema["hs6"] == pl.String
     assert (trained.baseline["export_potential_usd"] > 0).all()
@@ -67,7 +67,7 @@ def test_the_real_run_evaluates_on_the_test_year(trained):
     assert report["test_year"] == 2023
     assert report["test_training_years"] == [2021, 2022]
     assert report["non_uk_sampling_rate"] == 0.5
-    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 3
+    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 4
     assert report["headline"]["text"]
 
 

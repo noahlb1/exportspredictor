@@ -59,7 +59,7 @@ def test_page_shows_markets_ranked_by_export_gap(monkeypatch, api_url):
 
     assert not page.exception
     table = page.dataframe[0].value
-    assert list(table["Market"]) and set(table["Market"]) == {"Japan", "Canada", "India"}
+    assert list(table["Market"]) and set(table["Market"]) == {"Japan", "Canada", "India", "Hong Kong"}
     gaps = list(table["Export Gap (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
 
@@ -125,7 +125,7 @@ def test_market_page_ranks_products_by_export_gap(monkeypatch, api_url):
     assert not page.exception
     assert any("Japan" in element.value for element in page.subheader)
     table = page.dataframe[0].value
-    assert set(table["HS6"]) == {"030420", "220830", "300490", "851712", "870323"}
+    assert set(table["HS6"]) == {"711319", "220830", "300490", "851712", "870323"}
     gaps = list(table["Export Gap (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
 
@@ -144,6 +144,7 @@ def test_product_page_shows_which_markets_have_a_uk_trade_agreement(monkeypatch,
         "Japan": "Yes",
         "Canada": "Yes",
         "India": "No",
+        "Hong Kong": "No",
     }
 
 

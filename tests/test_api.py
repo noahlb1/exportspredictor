@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
+from exportspredictor.fixture import PRODUCTS
 
 FIXTURE_HS6 = "220830"
 
@@ -68,7 +69,7 @@ def test_by_product_returns_every_market_sorted_by_export_gap(client):
 
     gaps = [row["export_gap_usd"] for row in body["opportunities"]]
     assert gaps == sorted(gaps, reverse=True)
-    assert {row["iso3"] for row in body["opportunities"]} == {"JPN", "CAN", "IND"}
+    assert {row["iso3"] for row in body["opportunities"]} == {"JPN", "CAN", "IND", "HKG"}
     assert body["product"] == {"hs6": "220830", "description": "Whiskies", "sector": "22"}
     assert body["baseline_year"] == 2024
     assert body["artefact_version"] == "fixture-test"
@@ -112,10 +113,10 @@ def test_products_search_finds_a_product_by_an_everyday_word(client):
 
 
 def test_products_search_matches_words_in_the_description(client):
-    body = client.get("/products", params={"q": "fish frozen"}).json()
+    body = client.get("/products", params={"q": "jewellery precious"}).json()
 
     assert body == [
-        {"hs6": "030420", "description": "Fish fillets, frozen", "sector": "03", "excluded": False, "exclusion_reason": None}
+        {"hs6": "711319", "description": PRODUCTS["711319"], "sector": "71", "excluded": False, "exclusion_reason": None}
     ]
 
 
@@ -141,7 +142,7 @@ def test_markets_lists_every_market_with_name_and_region(client):
         "name": "Japan",
         "region": "East Asia & Pacific",
     }
-    assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND"}
+    assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND", "HKG"}
 
 
 def test_evaluation_returns_the_report_with_headline_breakdowns_and_limitations(client):
@@ -178,7 +179,7 @@ def test_by_market_returns_every_product_sorted_by_export_gap(client):
 
     gaps = [row["export_gap_usd"] for row in body["opportunities"]]
     assert gaps == sorted(gaps, reverse=True)
-    assert {row["hs6"] for row in body["opportunities"]} == {"030420", "220830", "300490", "851712", "870323"}
+    assert {row["hs6"] for row in body["opportunities"]} == {"711319", "220830", "300490", "851712", "870323"}
     assert body["market"] == {"iso3": "JPN", "name": "Japan", "region": "East Asia & Pacific"}
     assert body["baseline_year"] == 2024
     assert body["artefact_version"] == "fixture-test"
@@ -290,10 +291,10 @@ def test_the_old_gbp_gap_filter_is_gone(client):
 
 
 def test_rows_show_whether_a_uk_trade_agreement_is_in_force_with_the_market(client):
-    # The fixture's UK Trade Agreements: Japan from 2022, Canada from 2021; none with India.
+    # The fixture's UK Trade Agreements: Japan from 2022, Canada from 2021; none with India or Hong Kong.
     rows = _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}")
 
-    assert {row["iso3"]: row["trade_agreement"] for row in rows} == {"JPN": True, "CAN": True, "IND": False}
+    assert {row["iso3"]: row["trade_agreement"] for row in rows} == {"JPN": True, "CAN": True, "IND": False, "HKG": False}
 
 
 def test_every_row_of_a_market_shows_its_trade_agreement(client):
