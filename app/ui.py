@@ -63,9 +63,12 @@ def ranking_filters() -> dict:
     region = region_column.selectbox(
         "Market region", [None, *regions], format_func=lambda r: "All regions" if r is None else r, key="region"
     )
-    min_gap = gap_column.number_input("Minimum Export Gap (£)", value=None, step=1_000_000.0, key="min_gap")
-    rank_by = st.radio("Rank by", list(RANK_BY), format_func=RANK_BY.get, key="rank_by", horizontal=True)
-    params = {"rank_by": rank_by, "sector": sector, "region": region, "min_gap_gbp": min_gap}
+    min_gap_gbp = gap_column.number_input("Minimum Export Gap (£)", value=None, step=1_000_000.0, key="min_gap_gbp")
+    orders = rank_orders()
+    rank_by = st.radio(
+        "Rank by", list(orders), format_func=lambda name: orders[name]["title"], key="rank_by", horizontal=True
+    )
+    params = {"rank_by": rank_by, "sector": sector, "region": region, "min_gap_gbp": min_gap_gbp}
     return {name: value for name, value in params.items() if value is not None}
 
 
@@ -106,8 +109,22 @@ def run_scenario(body_json: str, api_url: str) -> dict:
     return client.post("/scenarios", json.loads(body_json))
 
 
-# The two ranking orders of the Opportunity pages (`rank_by` in the API).
-RANK_BY = {"gap": "Export Gap", "blocked": "Blocked Opportunity value"}
+def rank_orders() -> dict[str, dict]:
+    """The ranking orders the API accepts as `rank_by`, by name: title and description."""
+    return {order["name"]: order for order in fetch("/opportunities/rank-by", client.api_url())}
+
+
+def currency_choice() -> tuple[str, str]:
+    """The £/USD switch every page with money values shows (£ first). Returns (field suffix, unit label)."""
+    currency = st.radio("Values in", list(_CURRENCIES), horizontal=True, key="currency")
+    return _CURRENCIES[currency]
+
+
+def rate_caption(rate: dict) -> str:
+    """The sentence stating the USD/GBP rate a response's £ values use."""
+    return (
+        f"£ values use £1 = ${rate['usd_per_gbp']:.4f}, the {rate['year']} annual average ({rate['source']})."
+    )
 
 
 def market_picker(region: str | None = None) -> str | None:
@@ -126,20 +143,10 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
     holds exactly the table's data columns (the Why? links are page navigation, not data).
     """
-    rate = body["gbp_rate"]
-    currency = st.radio("Values in", list(_CURRENCIES), horizontal=True, key="currency")
-    suffix, unit = _CURRENCIES[currency]
-    st.caption(
-        f"Ranked by {RANK_BY[body['rank_by']]}, Baseline year {body['baseline_year']}. "
-        f"£ values use £1 = ${rate['usd_per_gbp']:.4f}, the {rate['year']} annual average "
-        f"({rate['source']})."
-    )
-    if body["rank_by"] == "blocked":
-        st.caption(
-            "Blocked Opportunity value: the Scenario Effect the model associates with adding a Trade "
-            "Agreement where none exists (0 where one does). Flagged rows clear 20% of Baseline Export "
-            "Potential and $1M."
-        )
+    suffix, unit = currency_choice()
+    order = rank_orders()[body["rank_by"]]
+    st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {rate_caption(body['gbp_rate'])}")
+    st.caption(f"{order['title']}: {order['description']}")
     rows = body["opportunities"]
     if not rows:
         st.info("No Opportunities match these filters.")

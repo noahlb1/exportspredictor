@@ -204,7 +204,7 @@ def test_min_gap_filter_drops_smaller_gaps(monkeypatch, api_url):
     page = _market_page(monkeypatch, api_url, "JPN")
     everything = page.dataframe[0].value
 
-    page.number_input(key="min_gap").set_value(0).run()
+    page.number_input(key="min_gap_gbp").set_value(0).run()
 
     table = page.dataframe[0].value
     assert 0 < len(table) < len(everything)
@@ -214,7 +214,7 @@ def test_min_gap_filter_drops_smaller_gaps(monkeypatch, api_url):
 def test_filters_that_match_nothing_say_so(monkeypatch, api_url):
     page = _market_page(monkeypatch, api_url, "JPN")
 
-    page.number_input(key="min_gap").set_value(10**12).run()
+    page.number_input(key="min_gap_gbp").set_value(10**12).run()
 
     assert not page.exception
     assert not page.dataframe

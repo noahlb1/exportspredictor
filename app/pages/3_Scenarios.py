@@ -6,28 +6,24 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch, run_scenario
+from app.ui import banner, currency_choice, fetch, rate_caption, run_scenario
 
 st.title("Scenarios")
 
 PRESET = "Trading Bloc preset"
 CUSTOM = "Custom Trade Agreements"
-PAIR_COLUMNS = {
-    "hs6": "HS6",
-    "description": "Product",
-    "market": "Market",
-    "baseline_potential_usd": "Baseline Export Potential (USD)",
-    "scenario_potential_usd": "Scenario Export Potential (USD)",
-    "effect_usd": "Scenario Effect (USD)",
-    "effect_share": "Scenario Effect (share of Baseline)",
-}
-TOTAL_COLUMNS = {
-    "baseline_potential_usd": "Baseline Export Potential (USD)",
-    "scenario_potential_usd": "Scenario Export Potential (USD)",
-    "effect_usd": "Scenario Effect (USD)",
-    "effect_share": "Scenario Effect (share of Baseline)",
-    "pairs": "Product–Market pairs changed",
-}
+PAIR_NAMES = {"hs6": "HS6", "description": "Product", "market": "Market"}
+DRILL_DOWN_ROWS = 50
+
+
+def value_columns(suffix: str, unit: str) -> dict[str, str]:
+    """Baseline, Scenario and effect columns in the chosen currency, and the effect share."""
+    return {
+        f"baseline_potential_{suffix}": f"Baseline Export Potential ({unit})",
+        f"scenario_potential_{suffix}": f"Scenario Export Potential ({unit})",
+        f"effect_{suffix}": f"Scenario Effect ({unit})",
+        "effect_share": "Scenario Effect (share of Baseline)",
+    }
 
 
 def table(rows: list[dict], columns: dict[str, str]) -> pd.DataFrame:
@@ -38,6 +34,7 @@ if banner() is not None:
     try:
         presets = fetch("/scenarios/presets", client.api_url())
         markets = fetch("/markets", client.api_url())
+        defaults = fetch("/scenarios/thresholds", client.api_url())
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
         st.stop()
@@ -73,12 +70,20 @@ if banner() is not None:
     st.markdown("**Blocked Opportunity thresholds**: a pair counts when its Scenario Effect clears both.")
     left, right = st.columns(2)
     min_share = left.number_input(
-        "Minimum Scenario Effect, % of Baseline Export Potential", min_value=0.0, value=20.0, step=5.0, key="min_share"
+        "Minimum Scenario Effect, % of Baseline Export Potential",
+        min_value=0.0,
+        value=defaults["min_effect_share"] * 100,
+        step=5.0,
+        key="min_share",
     )
     min_usd = right.number_input(
-        "Minimum Scenario Effect, USD million", min_value=0.0, value=1.0, step=0.5, key="min_usd"
+        "Minimum Scenario Effect, USD million",
+        min_value=0.0,
+        value=defaults["min_effect_usd"] / 1e6,
+        step=0.5,
+        key="min_usd",
     )
-    body |= {"min_effect_share": min_share / 100, "min_effect_usd": min_usd * 1e6, "limit": 500}
+    body |= {"min_effect_share": min_share / 100, "min_effect_usd": min_usd * 1e6, "limit": 100}
 
     if st.button("Run Scenario", key="run", type="primary"):
         st.session_state["scenario_body"] = json.dumps(body, sort_keys=True)
@@ -100,18 +105,22 @@ if banner() is not None:
                     "forecasts: the model associates these policy conditions with this change in Export "
                     f"Potential, holding everything else at the {result['baseline_year']} Baseline."
                 )
+                suffix, unit = currency_choice()
+                st.caption(rate_caption(result["gbp_rate"]))
+                pair_columns = {**PAIR_NAMES, **value_columns(suffix, unit)}
+                total_columns = {**value_columns(suffix, unit), "pairs": "Product–Market pairs changed"}
                 total = result["total"]
                 a, b, c = st.columns(3)
-                a.metric("Scenario Effect (USD)", f"{total['effect_usd']:,.0f}")
+                a.metric(f"Scenario Effect ({unit})", f"{total[f'effect_{suffix}']:,.0f}")
                 b.metric("Share of Baseline", f"{total['effect_share']:+.1%}")
                 c.metric("Blocked Opportunities", f"{result['blocked_count']:,}")
 
                 st.subheader("Change per Market")
-                st.dataframe(table(result["markets"], {"market": "Market", **TOTAL_COLUMNS}), hide_index=True)
+                st.dataframe(table(result["markets"], {"market": "Market", **total_columns}), hide_index=True)
 
                 st.subheader("Top Products gaining")
                 st.dataframe(
-                    table(result["products"], {"hs6": "HS6", "description": "Product", **TOTAL_COLUMNS}),
+                    table(result["products"], {"hs6": "HS6", "description": "Product", **total_columns}),
                     hide_index=True,
                 )
 
@@ -121,12 +130,18 @@ if banner() is not None:
                     f"{result['thresholds']['min_effect_share']:.0%} of Baseline Export Potential and at least "
                     f"${result['thresholds']['min_effect_usd']:,.0f}. The largest are shown."
                 )
-                st.dataframe(table(result["blocked_opportunities"], PAIR_COLUMNS), hide_index=True)
+                st.dataframe(table(result["blocked_opportunities"], pair_columns), hide_index=True)
 
                 st.subheader("Drill down: the pairs most affected in one Market")
                 changed = [market["iso3"] for market in result["markets"]]
                 market = st.selectbox(
                     "Market", changed, format_func=lambda iso3: market_names.get(iso3, iso3), key="drill_market"
                 )
-                pairs = [pair for pair in result["top_pairs"] if pair["iso3"] == market]
-                st.dataframe(table(pairs, PAIR_COLUMNS), hide_index=True)
+                # Ask for this Market's own top pairs: a global top list can miss smaller Markets.
+                drill_body = {**json.loads(st.session_state["scenario_body"]), "market": market, "limit": DRILL_DOWN_ROWS}
+                try:
+                    drilled = run_scenario(json.dumps(drill_body, sort_keys=True), client.api_url())
+                except (client.InvalidRequest, client.ApiUnavailable) as error:
+                    st.error(f"The drill-down failed: {error}")
+                else:
+                    st.dataframe(table(drilled["top_pairs"], pair_columns), hide_index=True)

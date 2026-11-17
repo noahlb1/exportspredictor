@@ -70,7 +70,7 @@ def test_why_page_shows_actual_exports_history_for_every_recent_year(monkeypatch
     history = page.dataframe[1].value
     assert list(history["Year"]) == sorted(history["Year"])
     assert max(history["Year"]) == 2024
-    assert "Actual Exports (USD)" in history.columns
+    assert "Actual Exports (£)" in history.columns
 
 
 def test_why_page_phrases_results_as_associations(monkeypatch, api_url):
@@ -124,3 +124,15 @@ def test_market_to_products_rows_link_to_why(monkeypatch, api_url):
         assert url.path.endswith("Why")
         links[hs6] = parse_qs(url.query)
     assert links["220830"] == {"hs6": ["220830"], "iso3": ["JPN"]}
+
+
+def test_why_page_shows_pounds_by_default_and_dollars_on_request(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    assert any("Export Potential **£" in m.value for m in page.markdown)
+    assert any("£1 = $1.2783" in c.value for c in page.caption)
+
+    page.radio(key="currency").set_value("USD").run()
+
+    assert any("Export Potential **US$" in m.value for m in page.markdown)
+    assert "Actual Exports (USD)" in page.dataframe[1].value.columns
