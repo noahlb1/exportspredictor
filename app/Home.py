@@ -14,3 +14,8 @@ st.markdown(
     "Find where UK goods exports fall short of what the UK's fundamentals suggest. "
     "Start with **Product → Markets** in the sidebar."
 )
+
+# PROTOTYPE (throwaway, wayfinder "Top Opportunities landing view"): landing-view variants.
+from app.prototype_landing import render  # noqa: E402
+
+render()
