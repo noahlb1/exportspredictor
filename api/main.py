@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.schemas import (
+    Evaluation,
     Explanation,
     FactorOut,
     Health,
@@ -38,6 +39,7 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
+from exportspredictor.evaluation import LIMITATIONS
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
@@ -102,6 +104,18 @@ def create_app(artefacts_root: Path | None = None) -> FastAPI:
         return MarketOpportunities(
             **_ranking(artefacts, query, ProductOpportunity, iso3=iso3),
             market=MarketOut(**market.row(0, named=True)),
+        )
+
+    @app.get("/evaluation", response_model=Evaluation)
+    def evaluation(artefacts: store.Artefacts = Depends(loaded)):
+        """The evaluation artefact: test-year accuracy, breakdowns, stability, and the known limitations."""
+        if artefacts.evaluation is None:
+            raise HTTPException(status_code=404, detail=f"Artefact version {artefacts.version} has no evaluation.")
+        return Evaluation(
+            **artefacts.evaluation,
+            artefact_version=artefacts.version,
+            baseline_year=artefacts.baseline_year,
+            limitations=LIMITATIONS,
         )
 
     @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)

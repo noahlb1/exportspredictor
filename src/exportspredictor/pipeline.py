@@ -11,6 +11,9 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    Baseline table, the Scenario inputs and the Actual Exports history.
 4. **Blocked Opportunity values**: re-predict every pair without a Trade Agreement with
    one added (`scenarios.blocked_effects`), for the `rank_by=blocked` rankings.
+5. **Evaluate** on the test year (Baseline year − 1): fold models refitted on the years
+   before it with the tuned configuration score it, against a naive baseline
+   (`evaluation`). The report is saved in the artefact as `evaluation.json`.
 
 `build_artefacts(world)` runs this on the fixture world (CPU, seconds).
 `build_real_artefacts()` runs it on the per-year feature files of `features.build()`
@@ -27,7 +30,7 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import baci
+from exportspredictor import baci, evaluation
 from exportspredictor.artefacts import Artefacts, new_version
 from exportspredictor.currency import gbp_rate
 from exportspredictor.features import (
@@ -44,7 +47,7 @@ from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
 from exportspredictor.scenarios import blocked_effects, with_blocked_effects
-from exportspredictor.training import Chunk, model_params, scan_chunks, tune
+from exportspredictor.training import Chunk, model_params, read_chunk, scan_chunks, tune
 
 # The fixture world has only a few dozen relevant zeros, so it keeps half of them. Real
 # data uses `features.ZERO_SAMPLING_RATE`, chosen in the notebook.
@@ -104,8 +107,11 @@ def build_artefacts(
             year_flows = flows.filter(pl.col("year") == year)
             rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed)
             training[year] = build_features(rows, year_flows, sources)
-    baseline_flows = flows.filter(pl.col("year") == baseline_year)
-    grid = build_features(uk_grid(baseline_flows, UK), baseline_flows, sources)
+    grids = {}
+    for year in (baseline_year - 1, baseline_year):
+        year_flows = flows.filter(pl.col("year") == year)
+        grids[year] = build_features(uk_grid(year_flows, UK), year_flows, sources)
+    grid = grids[baseline_year]
     trained = _train_and_score(
         training, grid, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed,
@@ -118,6 +124,9 @@ def build_artefacts(
         "zero_sampling_rate": zero_sampling_rate,
         "zero_sampling_seed": seed,
     }
+    report = _evaluate(
+        training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0, seed=seed
+    )
     return Artefacts(
         metadata=metadata,
         fold_models=trained.models,
@@ -126,6 +135,7 @@ def build_artefacts(
         history=_history(flows.filter((pl.col("exporter") == UK) & recent)),
         products=world.products,
         markets=world.markets,
+        evaluation=report,
     )
 
 
@@ -166,6 +176,7 @@ def build_real_artefacts(
         ).collect()
     )
     country_map = pl.read_parquet(root / "derived" / "country_map.parquet")
+    markets = market_lookup(baci.markets(root), country_map)
     metadata = {
         "version": version or new_version(),
         "source": f"BACI {baci.BACI_VERSION}",
@@ -173,6 +184,8 @@ def build_real_artefacts(
         "zero_sampling_rate": settings["zero_sampling_rate"],
         "zero_sampling_seed": settings["zero_sampling_seed"],
     }
+    test_grid = folder / f"uk_grid_{baseline_year - 1}.parquet"
+    report = _evaluate(training, test_grid, trained, metadata, markets=markets, device=device, non_uk_rate=non_uk_rate, seed=seed)
     return Artefacts(
         metadata=metadata,
         fold_models=trained.models,
@@ -180,7 +193,8 @@ def build_real_artefacts(
         baseline_features=trained.baseline_features,
         history=history,
         products=baci.products(root),
-        markets=market_lookup(baci.markets(root), country_map),
+        markets=markets,
+        evaluation=report,
     )
 
 
@@ -196,11 +210,13 @@ def _train_and_score(
     non_uk_rate: float,
     seed: int,
 ) -> _Trained:
-    validation_year = baseline_year - 2
+    validation_year, test_year = baseline_year - 2, baseline_year - 1
     tuning_years = [y for y in sorted(training) if y < validation_year]
     training_years = [y for y in sorted(training) if y < baseline_year]
     if not tuning_years or validation_year not in training:
         raise ValueError(f"Need training years before {validation_year} and {validation_year} itself")
+    # The test year is reserved for the evaluation: tuning must never read it.
+    assert test_year not in tuning_years and test_year != validation_year
 
     # 1. Tune on the validation year (the test year, baseline_year - 1, is not read).
     started = time.perf_counter()
@@ -253,6 +269,7 @@ def _train_and_score(
         "baseline_year": baseline_year,
         "gbp_rate": gbp_rate(baseline_year),
         "validation_year": validation_year,
+        "test_year": test_year,
         "tuning_years": tuning_years,
         "training_years": training_years,
         "n_folds": n_folds,
@@ -276,6 +293,47 @@ def _train_and_score(
         baseline_features=baseline_features,
         metadata=metadata,
     )
+
+
+def _evaluate(
+    training: Mapping[int, Chunk],
+    test_grid: Chunk,
+    trained: _Trained,
+    metadata: dict,
+    *,
+    markets: pl.DataFrame,
+    device: str,
+    non_uk_rate: float,
+    seed: int,
+) -> dict:
+    """Train the test-year fold models with the tuned configuration and evaluate them on the test year."""
+    test_year = metadata["test_year"]
+    started = time.perf_counter()
+    test_models = evaluation.train_test_models(
+        {y: chunk for y, chunk in training.items() if y < test_year},
+        test_year=test_year,
+        uk=UK,
+        params=metadata["params"],
+        rounds=metadata["rounds"],
+        n_folds=metadata["n_folds"],
+        device=device,
+        non_uk_rate=non_uk_rate,
+        seed=seed,
+    )
+    report = evaluation.evaluate(
+        read_chunk(training[test_year]),
+        read_chunk(test_grid),
+        test_models=test_models,
+        baseline=trained.baseline,
+        baseline_models=trained.models,
+        baseline_transform=FeatureTransform.from_dict(metadata["feature_transform"]),
+        markets=markets,
+        uk=UK,
+        settings=evaluation.report_settings(metadata),
+    )
+    report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
+    print(f"Evaluated on {test_year} in {report['evaluation_seconds']:.0f} s", flush=True)
+    return report
 
 
 def _history(uk_flows: pl.DataFrame) -> pl.DataFrame:

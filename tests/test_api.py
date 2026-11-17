@@ -124,6 +124,35 @@ def test_markets_lists_every_market_with_name_and_region(client):
     assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND"}
 
 
+def test_evaluation_returns_the_report_with_headline_breakdowns_and_limitations(client):
+    response = client.get("/evaluation")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["artefact_version"] == "fixture-test"
+    assert body["test_year"] == 2023
+    assert set(body["accuracy"]) == {"all_exporters", "uk_out_of_fold"}
+    for scope in body["accuracy"].values():
+        assert set(scope) == {"overall", "by_sector", "by_region"}
+        assert scope["by_sector"] and scope["by_region"]
+    assert body["headline"]["text"]
+    assert isinstance(body["headline"]["beats_naive"], bool)
+    assert body["stability"]["years"] == [2023, 2024]
+    titles = " ".join(item["title"] for item in body["limitations"]).lower()
+    assert "goods only" in titles and "tariffs" in titles
+
+
+def test_evaluation_is_404_when_the_artefact_has_none(fixture_artefacts, tmp_path):
+    from dataclasses import replace
+
+    store.save(replace(fixture_artefacts, evaluation=None), tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        response = client.get("/evaluation")
+
+    assert response.status_code == 404
+    assert "evaluation" in response.json()["detail"].lower()
+
+
 def test_by_market_returns_every_product_sorted_by_export_gap(client):
     body = client.get("/opportunities/by-market/JPN").json()
 
