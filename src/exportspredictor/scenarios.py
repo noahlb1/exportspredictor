@@ -202,14 +202,17 @@ def run(
 ) -> ScenarioResult:
     """Apply a Scenario and re-predict the changed pairs with their own fold models.
 
-    `baseline` holds each pair's Baseline `export_potential_usd`, which the same fold
-    models produced from the same feature rows, so only the changed rows are predicted.
+    `baseline` holds each pair's `baseline_export_potential_usd` (the Baseline year's, never
+    the Gap Period mean), which the same fold models produced from the same feature rows,
+    so only the changed rows are predicted.
     """
     changed = apply(baseline_features, scenario)
     pairs = (
         changed.select("hs6", "iso3")
         .with_columns(scenario_potential_usd=predict(changed, models))
-        .join(baseline.select("hs6", "iso3", baseline_potential_usd="export_potential_usd"), on=["hs6", "iso3"])
+        .join(
+            baseline.select("hs6", "iso3", baseline_potential_usd="baseline_export_potential_usd"), on=["hs6", "iso3"]
+        )
         .with_columns(effect_usd=pl.col("scenario_potential_usd") - pl.col("baseline_potential_usd"))
         .with_columns(effect_share=_share("effect_usd", "baseline_potential_usd"))
         .select(
@@ -225,6 +228,8 @@ def blocked_effects(
 ) -> pl.DataFrame:
     """Every pair's Scenario Effect of adding a Trade Agreement where none exists (0 where one does).
 
+    Measured against the Baseline year's Export Potential (`baseline_export_potential_usd`).
+
     Returns hs6, iso3, blocked_effect_usd: the value `rank_by=blocked` rankings sort by.
     """
     without = baseline_features.filter(pl.col("trade_agreement") == 0)
@@ -232,14 +237,14 @@ def blocked_effects(
     check_only_policy_changed(baseline_features, added)
     effects = added.select("hs6", "iso3").with_columns(scenario=predict(added, models))
     return (
-        baseline.select("hs6", "iso3", "export_potential_usd")
+        baseline.select("hs6", "iso3", "baseline_export_potential_usd")
         .join(effects, on=["hs6", "iso3"], how="left")
         .select(
             "hs6",
             "iso3",
             blocked_effect_usd=pl.when(pl.col("scenario").is_null())
             .then(0.0)
-            .otherwise(pl.col("scenario") - pl.col("export_potential_usd")),
+            .otherwise(pl.col("scenario") - pl.col("baseline_export_potential_usd")),
         )
     )
 

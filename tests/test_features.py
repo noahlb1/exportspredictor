@@ -14,6 +14,7 @@ from exportspredictor.features import (
     SUPPLY_FEATURES,
     FeatureTransform,
     build_features,
+    grid_pairs,
     training_rows,
     uk_grid,
 )
@@ -203,6 +204,25 @@ def test_uk_grid_has_every_product_and_market_with_actual_exports(world):
     assert grid.select("importer", "hs6").is_duplicated().sum() == 0
     assert grid.filter(_is(*TARGET))["value_usd"][0] == _value(flows, *TARGET)
 
+
+
+def test_the_gap_period_grid_scores_a_pair_in_a_year_its_product_was_not_traded(world):
+    # Nobody trades whisky in 2023: the plain 2023 grid has no whisky row, but the Gap
+    # Period scores the union of its years' pairs in every year, with $0 Actual Exports.
+    flows = world.flows.filter(pl.col("year").is_between(2022, 2023))
+    no_whisky_2023 = flows.filter(~((pl.col("year") == YEAR) & (pl.col("hs6") == WHISKY)))
+    years = {y: no_whisky_2023.filter(pl.col("year") == y) for y in (2022, YEAR)}
+    assert WHISKY not in set(uk_grid(years[YEAR], UK)["hs6"])
+
+    pairs = grid_pairs(uk_grid(year_flows, UK) for year_flows in years.values())
+    grid = uk_grid(years[YEAR], UK, pairs=pairs)
+
+    assert pairs.height == grid.height == 5 * 4
+    whisky = build_features(grid, years[YEAR], world.sources).filter(pl.col("hs6") == WHISKY)
+    assert whisky.height == 4
+    assert (whisky["value_usd"] == 0).all()
+    assert (whisky["log_supply_loo"] == 0).all()
+    assert whisky["log_gdp_d"].is_not_null().all()
 
 # --- Transforms are fitted on training years only -----------------------------------------
 

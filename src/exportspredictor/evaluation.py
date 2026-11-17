@@ -50,6 +50,7 @@ from exportspredictor import artefacts as store
 from exportspredictor import baci
 from exportspredictor.features import FEATURES, FeatureTransform, features_dir
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
+from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.training import Chunk, scan_chunks
 
@@ -420,9 +421,9 @@ def evaluate(
     """The evaluation report for the test year.
 
     `test_rows` are the test year's training rows (every non-zero Flow plus sampled zeros),
-    `test_grid` its full UK grid, both with features untransformed. `baseline` is the
-    Baseline table and `baseline_models` / `baseline_transform` the models that scored it,
-    used for the stability check. `settings` (validation year, params, sampling rates, ...)
+    `test_grid` its full UK grid, both with features untransformed. `baseline` holds the
+    Baseline year's UK scores (`gap_period.baseline_year_scores`) and `baseline_models` /
+    `baseline_transform` the models that scored them, used for the stability check. `settings` (validation year, params, sampling rates, ...)
     is recorded in the report.
     """
     year = test_models.test_year
@@ -536,7 +537,7 @@ def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) 
         pl.read_parquet(folder / f"training_{year}.parquet"),
         pl.read_parquet(folder / f"uk_grid_{year}.parquet"),
         test_models=test_models,
-        baseline=artefacts.baseline,
+        baseline=baseline_year_scores(artefacts.history, artefacts.baseline_year),
         baseline_models=artefacts.fold_models,
         baseline_transform=FeatureTransform.from_dict(artefacts.metadata["feature_transform"]),
         markets=markets_with_income(artefacts.markets, root),

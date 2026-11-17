@@ -98,7 +98,12 @@ def create_app(
         if artefacts is None:
             content = Health(ready=False, reason=request.app.state.load_error).model_dump(exclude_none=True)
             return JSONResponse(status_code=503, content=content)
-        return Health(ready=True, artefact_version=artefacts.version, baseline_year=artefacts.baseline_year)
+        return Health(
+            ready=True,
+            artefact_version=artefacts.version,
+            baseline_year=artefacts.baseline_year,
+            gap_years=list(artefacts.gap_years),
+        )
 
     @app.get("/products", response_model=list[ProductMatch])
     def products(q: str = Query("", description="HS6 code (or prefix) or words"), limit: int = Query(20, ge=1, le=200), artefacts: store.Artefacts = Depends(loaded)):
@@ -158,7 +163,14 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
         values = (
             artefacts.baseline.filter((pl.col("hs6") == hs6) & (pl.col("iso3") == iso3))
-            .select("export_potential_usd", "actual_exports_usd", "export_gap_usd", "flagged_product", "reexport_hub")
+            .select(
+                "export_potential_usd",
+                "actual_exports_usd",
+                "export_gap_usd",
+                "baseline_export_potential_usd",
+                "flagged_product",
+                "reexport_hub",
+            )
             .row(0, named=True)
         )
         return Explanation(
@@ -179,9 +191,7 @@ def create_app(
                 )
                 for f in explanation.factors
             ],
-            history=[
-                HistoryOut(year=h.year, actual_exports_usd=h.actual_exports_usd) for h in explanation.history
-            ],
+            history=[HistoryOut(**vars(h)) for h in explanation.history],
         )
 
     @app.get("/scenarios/presets", response_model=list[PresetOut])
@@ -239,8 +249,12 @@ def _market(artefacts: store.Artefacts, iso3: str) -> MarketOut:
 
 
 def _metadata(artefacts: store.Artefacts) -> dict:
-    """The response metadata every value-carrying response shares: version and Baseline year."""
-    return {"artefact_version": artefacts.version, "baseline_year": artefacts.baseline_year}
+    """The response metadata every value-carrying response shares: version, Baseline year and Gap Period."""
+    return {
+        "artefact_version": artefacts.version,
+        "baseline_year": artefacts.baseline_year,
+        "gap_years": list(artefacts.gap_years),
+    }
 
 
 def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:

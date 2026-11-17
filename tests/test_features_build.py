@@ -4,7 +4,7 @@ import json
 
 import polars as pl
 
-from exportspredictor import features
+from exportspredictor import baci, features
 from exportspredictor.fixture import UK
 
 
@@ -45,6 +45,21 @@ def test_build_drops_excluded_products_and_records_the_list(derived_data_root):
         assert "270900" not in set(pl.read_parquet(out / f"{name}.parquet")["hs6"].cast(pl.String))
     settings = json.loads((out / "features.json").read_text())
     assert settings["excluded_products"][0] == "Sector 27 except 2712"
+
+
+def test_build_scores_the_union_of_the_gap_period_grids_in_each_gap_year(derived_data_root):
+    # Nobody trades whisky in 2023, so the 2023 grid alone would have no whisky pair.
+    path = baci.flows_dir(derived_data_root) / "flows_2023.parquet"
+    flows = pl.read_parquet(path)
+    flows.filter(pl.col("hs6").cast(pl.String) != "220830").write_parquet(path)
+
+    out = features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
+
+    grid = pl.read_parquet(out / "uk_grid_2023.parquet")
+    assert grid.height == 5 * 4
+    assert grid.filter(pl.col("hs6").cast(pl.String) == "220830")["value_usd"].to_list() == [0.0] * 4
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["gap_years"] == [2022, 2024]
 
 
 def test_build_adds_relatedness_import_growth_and_the_reexport_ratio(derived_data_root):

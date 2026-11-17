@@ -21,7 +21,7 @@ def test_contributions_plus_base_value_reconstruct_the_baseline_export_potential
 
         log_potential = explanation.base_value + sum(f.contribution for f in explanation.factors)
         assert log_potential == pytest.approx(explanation.log_export_potential, abs=1e-4)
-        assert math.exp(log_potential) == pytest.approx(baseline["export_potential_usd"].item(), rel=1e-3)
+        assert math.exp(log_potential) == pytest.approx(baseline["baseline_export_potential_usd"].item(), rel=1e-3)
 
 
 def test_explanation_uses_the_fold_model_that_scored_the_pair(fixture_artefacts):
@@ -74,8 +74,8 @@ def test_history_holds_the_pairs_actual_exports_by_year(fixture_artefacts):
     explanation = explain_pair(fixture_artefacts, "220830", "JPN")
     expected = fixture_artefacts.history.filter((pl.col("hs6") == "220830") & (pl.col("iso3") == "JPN"))
 
-    assert [(h.year, h.actual_exports_usd) for h in explanation.history] == list(
-        expected.select("year", "actual_exports_usd").iter_rows()
+    assert [(h.year, h.actual_exports_usd, h.export_gap_usd) for h in explanation.history] == list(
+        expected.select("year", "actual_exports_usd", "export_gap_usd").iter_rows()
     )
     assert expected.height > 0
 
