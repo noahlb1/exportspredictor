@@ -62,7 +62,7 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
-from exportspredictor.evaluation import LIMITATIONS
+from exportspredictor.evaluation import LIMITATIONS, NOT_SERVED
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
@@ -196,11 +196,15 @@ def create_app(
 
     @app.get("/evaluation", response_model=Evaluation)
     def evaluation(artefacts: store.Artefacts = Depends(loaded)):
-        """The evaluation artefact: test-year accuracy, breakdowns, stability, and the known limitations."""
+        """The evaluation artefact: test-year accuracy, breakdowns, stability, and the known limitations.
+
+        The v1/v2 comparison stays in the artefact and the model card, never in the API (spec #39).
+        """
         if artefacts.evaluation is None:
             raise HTTPException(status_code=404, detail=f"Artefact version {artefacts.version} has no evaluation.")
+        served = {key: value for key, value in artefacts.evaluation.items() if key not in NOT_SERVED}
         return Evaluation(
-            **artefacts.evaluation,
+            **served,
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
             limitations=LIMITATIONS,

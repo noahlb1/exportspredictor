@@ -80,6 +80,9 @@ NARROW_MARGIN = 0.05
 _PREDICTORS = {"model": "export_potential_usd", "naive": "naive_usd"}
 # The two sides of the test-metric split by `tariff_imputed` (ADR 0006), in display order.
 TARIFF_GROUPS = ("observed", "imputed")
+# Evaluation results kept in the artefact (and the model card) but never served by the API:
+# the pre-registered v1/v2 comparison (`comparison`, spec #39).
+NOT_SERVED = frozenset({"v1_comparison"})
 
 LIMITATIONS = [
     {
@@ -152,17 +155,21 @@ LIMITATIONS = [
 # --- Metrics ---------------------------------------------------------------------------
 
 
-def tweedie_deviance(prediction: str, *, power: float = TWEEDIE_POWER) -> pl.Expr:
-    """Weighted mean Tweedie unit deviance of `prediction` against `value_usd` (1 < power < 2)."""
+def tweedie_unit_deviance(prediction: str, *, power: float = TWEEDIE_POWER) -> pl.Expr:
+    """Each row's Tweedie unit deviance of `prediction` against `value_usd` (1 < power < 2)."""
     y = pl.col("value_usd").cast(pl.Float64)
     mu = pl.col(prediction).cast(pl.Float64).clip(lower_bound=MIN_PREDICTION_USD)
-    unit = 2 * (
+    return 2 * (
         y.pow(2 - power) / ((1 - power) * (2 - power))
         - y * mu.pow(1 - power) / (1 - power)
         + mu.pow(2 - power) / (2 - power)
     )
+
+
+def tweedie_deviance(prediction: str, *, power: float = TWEEDIE_POWER) -> pl.Expr:
+    """Weighted mean Tweedie unit deviance of `prediction` against `value_usd` (1 < power < 2)."""
     weight = pl.col("weight").cast(pl.Float64)
-    return (unit * weight).sum() / weight.sum()
+    return (tweedie_unit_deviance(prediction, power=power) * weight).sum() / weight.sum()
 
 
 def _rmse_log(prediction: str) -> pl.Expr:

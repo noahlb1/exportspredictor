@@ -100,3 +100,5 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
         output.get("text", "") for cell in notebook.cells if cell.cell_type == "code" for output in cell.outputs
     )
     assert f"{coverage['coverage']:.0%} of their Actual Exports fell inside their Potential Range" in printed
+    # The pre-registered v1 comparison section runs on the fixture's synthetic frozen v1.
+    assert loaded.evaluation["v1_comparison"]["verdict"]["text"] in printed
