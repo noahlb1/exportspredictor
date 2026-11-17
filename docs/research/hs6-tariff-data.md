@@ -175,3 +175,13 @@ Federal Register notices from USTR (all via the [Federal Register API](https://w
 - The UNCTAD TRAINS dissemination-policy text, and the licence for the Teti datasets.
 - Primary sources for China's retaliatory tariff lists.
 - Note: the ticket file `issues/04-hs6-tariff-data.md` (and the other `issues/` files) were no longer on disk when this note was written. The question above is quoted from the copy read at the start of the session.
+
+## Implementation notes (#48, 2026-11-17)
+
+How `exportspredictor.tariffs` uses TRAINS, with what was found while building it:
+
+- **Requests.** `.../SDMX/V21/datasource/TRN/reporter/{code}/partner/{partner}/product/all/year/{y}/datatype/reported` returns structure-specific SDMX XML (about 1–2 MB); a partner with no records returns HTTP 404 "NoRecordsFound". Rows whose ad valorem average is empty or `NaN` (only non-ad-valorem lines) are skipped.
+- **Coverage.** The availability file matched the counts above on 2026-11-17 (137, 140, 111, 139, 129, 112, 116, 121, 144, 144 reporters for 2012–2021; 11,329 reporter-partner calls).
+- **Revisions.** Reporter-years come in H1–H5. In 2012, 60 of 137 are HS07 (H3), so HS07 is converted along with HS17 (UNSD correlation tables "HS 2012 to HS 2007" and "HS2017toHS2012"). H0–H2 (about one reporter-year a year after 2013) are dropped.
+- **Groups.** The WITS API lists partner groups but not their members. EU groups (EUN/918, N04, A36, M02, N63, M13, N55, A37, A11) are expanded to the EU's members that year; other groups (GSP and regional schemes, about a quarter of the calls) are not expanded.
+- **Codes.** WITS uses its own ISO3 for a few countries: MNT (MNE), ROM (ROU), SER (SRB), SUD (SDN), TMP (TLS), ZAR (COD).

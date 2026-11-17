@@ -5,7 +5,9 @@ date) record it. Sources without one (the WTO RTA-IS export, the IMF DataMapper 
 HMRC archive) record the date their raw file was downloaded: the file's modification date
 (UTC), which the write-then-rename download leaves at the moment the download finished.
 The Bank of England rate table (used only to convert HMRC's £ for the cross-check) is
-copied into `currency`, so it records the copy date.
+copied into `currency`, so it records the copy date. TRAINS has no version either; its
+pull date is the date the last complete download finished, which the download's
+manifest records.
 
 `source_versions` is stored in artefact metadata as `sources` (`pipeline.refresh` adds it
 to a saved artefact without retraining).
@@ -15,7 +17,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from exportspredictor import baci, currency, gravity, hmrc, policy
+from exportspredictor import baci, currency, gravity, hmrc, policy, tariffs
 from exportspredictor.paths import data_dir
 
 
@@ -59,6 +61,24 @@ def source_versions(root: Path | None = None) -> list[dict]:
             "version": f"{hmrc.YEAR} archive {hmrc.ARCHIVE_NAME} (cross-check only)",
             "downloaded": _downloaded(hmrc_files),
             "files": [f.relative_to(root).as_posix() for f in hmrc_files],
+        }
+    )
+    trains = [tariffs.raw_dir(root) / "availability.xml", tariffs.manifest_path(root)]
+    found.append(
+        {
+            "source": "UNCTAD TRAINS",
+            "version": f"WITS API, reported rates {tariffs.TRAINS_YEARS[0]}–{tariffs.LAST_TRAINS_YEAR} (unversioned)",
+            "downloaded": tariffs.manifest(root)["pulled"] if trains[1].exists() else None,
+            "files": [f.relative_to(root).as_posix() for f in trains],
+        }
+    )
+    unsd = [tariffs.concordance_dir(root) / table.file for table in tariffs.CONCORDANCES.values()]
+    found.append(
+        {
+            "source": "UNSD HS correlation tables",
+            "version": "HS 2017 and HS 2007 to HS 2012",
+            "downloaded": _downloaded(unsd),
+            "files": [f.relative_to(root).as_posix() for f in unsd],
         }
     )
     return found
