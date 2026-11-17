@@ -60,8 +60,8 @@ BLOCKED = RankOrder(
     "blocked",
     "blocked_effect_usd",
     "Blocked Opportunity value",
-    "The Scenario Effect the model associates with adding a Trade Agreement where none exists "
-    f"(0 where one does). Flagged rows clear {DEFAULT_MIN_SHARE:.0%} of Baseline Export Potential "
+    "The Scenario Effect the model associates with adding a Trade Agreement and removing the tariff where no "
+    f"agreement exists (0 where one does). Flagged rows clear {DEFAULT_MIN_SHARE:.0%} of Baseline Export Potential "
     f"and ${DEFAULT_MIN_USD / 1e6:g}M.",
 )
 _ORDERS = {**RANK_BY, BLOCKED.name: BLOCKED}  # every order `rank_opportunities` accepts

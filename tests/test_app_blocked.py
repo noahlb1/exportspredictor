@@ -105,3 +105,10 @@ def test_the_leaderboard_no_longer_offers_a_blocked_ranking(monkeypatch, fixture
     home.run()
 
     assert home.radio(key="rank_by").options == ["Export Gap", "Relative Export Gap"]
+
+
+def test_the_caption_says_the_value_removes_the_tariff_with_the_agreement(monkeypatch, fixture_api_url):
+    page = _page(monkeypatch, fixture_api_url)
+
+    about_value = [text for text in page.caption.values if "Blocked Opportunity value" in text]
+    assert any("and removing the tariff" in text for text in about_value)
