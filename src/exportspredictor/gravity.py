@@ -16,13 +16,14 @@ calls: it downloads what is missing and writes the derived Parquet files.
 
 import json
 import shutil
-import urllib.request
 import zipfile
 from pathlib import Path
 
 import polars as pl
 
 from exportspredictor import paths
+from exportspredictor.downloads import download as download_file
+from exportspredictor.downloads import write_parquet, writing
 
 # BACI codes whose ISO3 field is not a real ISO3 code, mapped by hand.
 BACI_ISO3_OVERRIDES = {
@@ -196,14 +197,7 @@ def download(data_dir: Path | None = None) -> None:
     """
     data_dir = data_dir or paths.data_dir()
     for target, url in _raw_files(data_dir).items():
-        if target.exists():
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        partial = target.with_name(target.name + ".part")
-        request = urllib.request.Request(url, headers={"User-Agent": "exportspredictor-data-build"})
-        with urllib.request.urlopen(request, timeout=600) as response, partial.open("wb") as out:
-            shutil.copyfileobj(response, out)
-        partial.replace(target)
+        download_file(url, target)
 
 
 def _long_frame(rows: list[tuple], variable: str) -> pl.DataFrame:
@@ -260,22 +254,16 @@ def _gravity_extract(data_dir: Path) -> Path:
     raw = data_dir / "raw" / "gravity"
     csv = raw / GRAVITY_CSV
     if not csv.exists():
-        partial = raw / (GRAVITY_CSV + ".part")
-        with zipfile.ZipFile(raw / GRAVITY_ZIP) as archive, archive.open(GRAVITY_CSV) as src, partial.open("wb") as out:
+        with (
+            writing(csv) as partial,
+            zipfile.ZipFile(raw / GRAVITY_ZIP) as archive,
+            archive.open(GRAVITY_CSV) as src,
+            partial.open("wb") as out,
+        ):
             shutil.copyfileobj(src, out)
-        partial.replace(csv)
     target = data_dir / "derived" / "gravity_extract.parquet"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_name(target.name + ".part")
-    pl.scan_csv(csv, infer_schema_length=None).filter(pl.col("year") >= YEARS[0]).sink_parquet(partial)
-    partial.replace(target)
-    return target
-
-
-def _write(frame: pl.DataFrame, target: Path) -> Path:
-    partial = target.with_name(target.name + ".part")
-    frame.write_parquet(partial)
-    partial.replace(target)
+    with writing(target) as partial:
+        pl.scan_csv(csv, infer_schema_length=None).filter(pl.col("year") >= YEARS[0]).sink_parquet(partial)
     return target
 
 
@@ -309,9 +297,9 @@ def build(data_dir: Path | None = None, *, download_missing: bool = True) -> dic
     country_year = fill_country_year(sources, iso3=sorted(set(mapping["iso3"])), years=YEARS)
     return {
         "gravity_extract": extract,
-        "country_map": _write(mapping, derived / "country_map.parquet"),
-        "gravity_pairs": _write(gravity_pairs(gravity), derived / "gravity_pairs.parquet"),
-        "country_year": _write(country_year, derived / "country_year.parquet"),
+        "country_map": write_parquet(mapping, derived / "country_map.parquet"),
+        "gravity_pairs": write_parquet(gravity_pairs(gravity), derived / "gravity_pairs.parquet"),
+        "country_year": write_parquet(country_year, derived / "country_year.parquet"),
     }
 
 
