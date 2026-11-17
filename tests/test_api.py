@@ -133,7 +133,7 @@ def test_evaluation_returns_the_report_with_headline_breakdowns_and_limitations(
     assert body["test_year"] == 2023
     assert set(body["accuracy"]) == {"all_exporters", "uk_out_of_fold"}
     for scope in body["accuracy"].values():
-        assert set(scope) == {"overall", "by_sector", "by_region"}
+        assert set(scope) == {"overall", "by_sector", "by_region", "by_income"}  # by_income empty without income levels
         assert scope["by_sector"] and scope["by_region"]
     assert body["headline"]["text"]
     assert isinstance(body["headline"]["beats_naive"], bool)
