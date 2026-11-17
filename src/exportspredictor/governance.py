@@ -168,8 +168,14 @@ def _metrics(report: dict) -> list[dict]:
         for direction in event["directions"]:
             pooled = direction["pooled"]
             rows.append({"name": f"Event Backtest: {direction['label']}", "model": pooled["predicted"],
-                         "naive": None, "text": f"observed {_f(pooled['observed'], '+.0%')} "
-                         f"(95% interval {_ci(pooled['observed_ci'], percent=True)})"})
+                         "naive": pooled["observed"], "percent": True,
+                         "text": f"model's Scenario Effect against the observed change (95% interval "
+                         f"{_ci(pooled['observed_ci'], percent=True)})"})
+    uk = report.get("accuracy", {}).get("uk_out_of_fold", {})
+    for group in uk.get("by_income", []):
+        rows.append({"name": f"UK ranking, {group['group']} Markets", "model": group["model_spearman_within_product"],
+                     "naive": group["naive_spearman_within_product"],
+                     "text": f"{group['non_zero_flows']:,} UK Flows in {group['rows']:,} pairs"})
     return rows
 
 
@@ -202,7 +208,7 @@ def _result_limitations(metadata: dict, report: dict) -> list[dict]:
     if events:
         pooled = events[0]["directions"][0]["pooled"]
         limits.append({"title": "Scenario Effects are larger than observed changes",
-                       "text": f"For {events[0]['title']}, the model associated the agreement with "
+                       "text": f"For {events[0]['title'][0].lower() + events[0]['title'][1:]}, the model associated the agreement with "
                        f"{_f(pooled['predicted'], '+.0%')}, against an observed {_f(pooled['observed'], '+.0%')}. Read Scenario "
                        f"Effects as an upper-end association."})
     rate = metadata.get("non_uk_sampling_rate")
@@ -219,17 +225,23 @@ def render_model_card(card: dict) -> str:
              f"**Owner:** {card['owner']}", "", f"**Model:** {card['model']}", ""]
     lines += ["## Intended use", "", *[f"- {item}" for item in card["intended_use"]], ""]
     lines += ["## Out-of-scope use", "", *[f"- {item}" for item in card["out_of_scope"]], ""]
-    lines += ["## Metrics", "", "| Metric | Model | Reference | Note |", "| --- | --- | --- | --- |"]
-    lines += [f"| {m['name']} | {_number(m['model'])} | {_number(m['naive'])} | {m['text']} |" for m in card["metrics"]]
+    lines += ["## Metrics", "", "| Metric | Model | Reference (naive baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
+    lines += [
+        f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
+        f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"
+        for m in card["metrics"]
+    ]
     lines += ["", "## Limitations", "", *[f"- **{x['title']}.** {x['text']}" for x in card["limitations"]], ""]
     lines += ["## Data sources", "", *[f"- **{s['name']}** ({s['location']}): {s['use']}" for s in card["data_sources"]], ""]
     lines += ["## Decisions behind the model", "", *[f"- **{d['title']}.** {d['text']}" for d in card["decisions"]], ""]
     return "\n".join(lines)
 
 
-def _number(value) -> str:
+def _number(value, percent: bool = False) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "–"
+    if percent:
+        return f"{value:+.0%}"
     return f"{value:,.0f}" if abs(value) >= 100 else f"{value:.2f}"
 
 
