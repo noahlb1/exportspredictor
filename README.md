@@ -94,8 +94,11 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Pick a Market in the drill-down: its most affected Product–Market pairs are listed, largest effect first.
 - [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
 
-**Why?** (arrives with #19)
-- [ ] Open "Why?" for a Product–Market pair: the factors are described in plain words, and the recent Actual Exports are shown.
+**Why?**
+- [ ] On **Product → Markets**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
+- [ ] The factors are described in plain words (no raw feature names), each marked as raising or lowering Export Potential, phrased as associations.
+- [ ] The UK's Actual Exports for the last six years are shown, with 0 for years with none.
+- [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.
 
 **Model Evaluation** (arrives with #20)
 - [ ] The accuracy headline, Lift, Sector and region breakdowns, the Event Backtest and the known-limitations panel all render.

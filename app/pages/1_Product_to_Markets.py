@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import RANK_BY, banner, fetch, product_picker
+from app.ui import RANK_BY, banner, fetch, product_picker, why_column, why_link
 
 st.title("Product → Markets")
 
@@ -21,14 +21,19 @@ if banner() is not None:
         else:
             product = body["product"]
             st.subheader(f"{product['hs6']} – {product['description']}")
-            st.caption(f"Markets ranked by {RANK_BY[body['rank_by']]}, Baseline year {body['baseline_year']}.")
+            st.caption(
+                f"Markets ranked by {RANK_BY[body['rank_by']]}, Baseline year {body['baseline_year']}. "
+                "Open **Why?** on a row to see which factors raised or lowered its Export Potential."
+            )
             if body["rank_by"] == "blocked":
                 st.caption(
                     "Blocked Opportunity value: the Scenario Effect the model associates with adding a Trade "
                     "Agreement where none exists (0 where one does). Flagged rows clear 20% of Baseline Export "
                     "Potential and $1M."
                 )
-            table = pd.DataFrame(body["opportunities"]).rename(
+            table = pd.DataFrame(body["opportunities"])
+            table["Why?"] = [why_link(product["hs6"], iso3) for iso3 in table["iso3"]]
+            table = table.rename(
                 columns={
                     "market": "Market",
                     "region": "Region",
@@ -49,7 +54,9 @@ if banner() is not None:
                         "Export Gap (USD)",
                         "Blocked Opportunity value (USD)",
                         "Blocked Opportunity",
+                        "Why?",
                     ]
                 ],
                 hide_index=True,
+                column_config={"Why?": why_column()},
             )

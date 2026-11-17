@@ -16,7 +16,10 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from api.schemas import (
+    Explanation,
+    FactorOut,
     Health,
+    HistoryOut,
     MarketOpportunity,
     MarketOut,
     PresetOut,
@@ -28,6 +31,7 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
+from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
 
@@ -94,6 +98,44 @@ def create_app(artefacts_root: Path | None = None) -> FastAPI:
                 MarketOpportunity(**{k: row[k] for k in MarketOpportunity.model_fields})
                 for row in rows.iter_rows(named=True)
             ],
+        )
+
+    @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)
+    def explain(hs6: str, iso3: str, artefacts: store.Artefacts = Depends(loaded)):
+        """Why? one pair's Export Potential: SHAP factors from its own fold model, plus history."""
+        product = artefacts.products.filter(pl.col("hs6") == hs6)
+        if product.is_empty():
+            raise HTTPException(status_code=404, detail=f"Unknown Product: {hs6}")
+        market = artefacts.markets.filter(pl.col("iso3") == iso3)
+        if market.is_empty():
+            raise HTTPException(status_code=404, detail=f"Unknown Market: {iso3}")
+        try:
+            explanation = explain_pair(artefacts, hs6, iso3)
+        except UnknownPair as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        baseline = artefacts.baseline.filter((pl.col("hs6") == hs6) & (pl.col("iso3") == iso3)).row(0, named=True)
+        return Explanation(
+            artefact_version=artefacts.version,
+            baseline_year=artefacts.baseline_year,
+            product=ProductOut(**{k: product.row(0, named=True)[k] for k in ProductOut.model_fields}),
+            market=MarketOut(**{k: market.row(0, named=True)[k] for k in MarketOut.model_fields}),
+            fold=explanation.fold,
+            base_value=explanation.base_value,
+            log_export_potential=explanation.log_export_potential,
+            export_potential_usd=baseline["export_potential_usd"],
+            actual_exports_usd=baseline["actual_exports_usd"],
+            export_gap_usd=baseline["export_gap_usd"],
+            factors=[
+                FactorOut(
+                    label=f.label,
+                    value_text=f.value_text,
+                    contribution=f.contribution,
+                    multiplier=f.multiplier,
+                    direction="raised" if f.contribution > 0 else "lowered" if f.contribution < 0 else "no effect",
+                )
+                for f in explanation.factors
+            ],
+            history=[HistoryOut(year=h.year, actual_exports_usd=h.actual_exports_usd) for h in explanation.history],
         )
 
     @app.get("/scenarios/presets", response_model=list[PresetOut])

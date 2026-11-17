@@ -117,3 +117,62 @@ def test_markets_lists_every_market_with_name_and_region(client):
         "region": "East Asia & Pacific",
     }
     assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND"}
+
+
+def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
+    response = client.get(f"/explain/{FIXTURE_HS6}/JPN")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {
+        "artefact_version",
+        "baseline_year",
+        "product",
+        "market",
+        "fold",
+        "base_value",
+        "log_export_potential",
+        "export_potential_usd",
+        "actual_exports_usd",
+        "export_gap_usd",
+        "factors",
+        "history",
+    }
+    assert body["product"]["hs6"] == FIXTURE_HS6
+    assert body["market"] == {"iso3": "JPN", "name": "Japan", "region": "East Asia & Pacific"}
+    assert set(body["factors"][0]) == {"label", "value_text", "contribution", "multiplier", "direction"}
+    assert [point["year"] for point in body["history"]] == sorted(point["year"] for point in body["history"])
+
+
+def test_explain_matches_the_ranking_row_of_the_pair(client):
+    explained = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
+    ranked = client.get(f"/opportunities/by-product/{FIXTURE_HS6}").json()["opportunities"]
+    row = next(r for r in ranked if r["iso3"] == "JPN")
+
+    assert explained["export_potential_usd"] == pytest.approx(row["export_potential_usd"], rel=1e-3)
+    assert explained["export_gap_usd"] == pytest.approx(row["export_gap_usd"], rel=1e-3, abs=1e-3)
+    total = explained["base_value"] + sum(f["contribution"] for f in explained["factors"])
+    assert total == pytest.approx(explained["log_export_potential"], abs=1e-4)
+
+
+def test_explain_directions_follow_the_sign_of_each_contribution(client):
+    factors = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()["factors"]
+
+    for factor in factors:
+        expected = "raised" if factor["contribution"] > 0 else "lowered" if factor["contribution"] < 0 else "no effect"
+        assert factor["direction"] == expected
+
+
+@pytest.mark.parametrize("path", ["/explain/999999/JPN", f"/explain/{FIXTURE_HS6}/ZZZ"])
+def test_explain_unknown_pair_returns_404_with_a_message(client, path):
+    response = client.get(path)
+
+    assert response.status_code == 404
+    assert response.json()["detail"]
+
+
+def test_explain_needs_loaded_artefacts(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        response = client.get(f"/explain/{FIXTURE_HS6}/JPN")
+
+    assert response.status_code == 503
