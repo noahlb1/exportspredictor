@@ -172,13 +172,18 @@ def naive_potential(rows: pl.DataFrame, flows: pl.DataFrame) -> pl.DataFrame:
 
 
 def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
-    """Every metric for the model and the naive baseline: overall, by Sector and by region.
+    """Every metric for the model and the naive baseline: overall, by Sector, by region and by income level.
 
     `scored` has exporter, importer, hs6, value_usd, weight, `export_potential_usd` and
-    `naive_usd`; `markets` maps `iso3` to `region`. Breakdowns are sorted weakest first
-    (lowest within-Product rank correlation of the model).
+    `naive_usd`; `markets` maps `iso3` to `region` and, optionally, World Bank
+    `income_level` (the bias review's stand-in for reporting quality; `by_income` is
+    added only when it is there). Breakdowns are sorted weakest first (lowest
+    within-Product rank correlation of the model).
     """
-    regions = markets.select(_i=pl.col("iso3").cast(pl.String), region=pl.col("region"))
+    has_income = "income_level" in markets.columns
+    regions = markets.select(
+        _i=pl.col("iso3").cast(pl.String), region=pl.col("region"), *(["income_level"] if has_income else [])
+    )
     frame = (
         scored.with_columns(
             hs6=pl.col("hs6").cast(pl.String),
@@ -186,13 +191,16 @@ def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
         )
         .with_columns(sector=pl.col("hs6").str.slice(0, 2))
         .join(regions, on="_i", how="left")
-        .with_columns(pl.col("region").fill_null("Unclassified"))
+        .with_columns(pl.col("region", *(["income_level"] if has_income else [])).fill_null("Unclassified"))
     )
     overall = _metrics(frame.with_columns(_all=pl.lit("all")), "_all").drop("group").row(0, named=True)
+    groups = {"by_sector": "sector", "by_region": "region", **({"by_income": "income_level"} if has_income else {})}
     return {
         "overall": _clean(overall),
-        "by_sector": [_clean(row) for row in _weakest_first(_metrics(frame, "sector")).iter_rows(named=True)],
-        "by_region": [_clean(row) for row in _weakest_first(_metrics(frame, "region")).iter_rows(named=True)],
+        **{
+            name: [_clean(row) for row in _weakest_first(_metrics(frame, column)).iter_rows(named=True)]
+            for name, column in groups.items()
+        },
     }
 
 
@@ -531,10 +539,25 @@ def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) 
         baseline=artefacts.baseline,
         baseline_models=artefacts.fold_models,
         baseline_transform=FeatureTransform.from_dict(artefacts.metadata["feature_transform"]),
-        markets=artefacts.markets,
+        markets=markets_with_income(artefacts.markets, root),
         uk=baci.UK,
         settings=report_settings(artefacts.metadata),
     )
+
+
+def markets_with_income(markets: pl.DataFrame, root: Path | None = None) -> pl.DataFrame:
+    """The artefact's Market lookup plus World Bank `income_level` from the BACI lookups (keyed by standard ISO3)."""
+    if "income_level" in markets.columns:
+        return markets
+    country_map = pl.read_parquet((root or data_dir()) / "derived" / "country_map.parquet")
+    income = (
+        baci.markets(root)
+        .select(baci_iso3="iso3", income_level="income_level")
+        .join(country_map.select("baci_iso3", "iso3").unique("baci_iso3"), on="baci_iso3", how="left")
+        .select(iso3=pl.col("iso3").fill_null(pl.col("baci_iso3")), income_level="income_level")
+        .unique("iso3")
+    )
+    return markets.join(income, on="iso3", how="left")
 
 
 def add_to_latest(root: Path | None = None, artefacts_root: Path | None = None, *, device: str = "cuda") -> Path:
