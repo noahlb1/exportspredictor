@@ -38,6 +38,7 @@ from exportspredictor.exclusions import (
     EXCLUSIONS,
     drop_excluded,
     excluded_products,
+    flag_columns,
     is_excluded,
 )
 from exportspredictor.features import (
@@ -345,9 +346,13 @@ def _train_and_score(
             for year, table in scored.items()
         ]
     ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
-    baseline = export_gaps(yearly).join(
-        scored[baseline_year].select("hs6", "iso3", baseline_export_potential_usd="export_potential_usd"),
-        on=["hs6", "iso3"],
+    baseline = (
+        export_gaps(yearly)
+        .join(
+            scored[baseline_year].select("hs6", "iso3", baseline_export_potential_usd="export_potential_usd"),
+            on=["hs6", "iso3"],
+        )
+        .with_columns(*flag_columns())
     )
     # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
     baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES)

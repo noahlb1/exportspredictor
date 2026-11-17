@@ -9,6 +9,11 @@ same with or without the exclusion. The exclusion limits rows, not features.
 
 `EXCLUSIONS` is the one definition of the list. The artefact carries it expanded to HS6
 Products with reasons (`excluded_products`), which the API serves at `/products/excluded`.
+
+Flagged Products (the rest of Sector 71) and Re-export Hubs are the other two tiers of
+ADR 0005. They stay in training, scoring and rankings; the Baseline carries them as the
+boolean `flagged_product` and `reexport_hub` columns (`flag_columns`), and Advisors see
+their caveats and can hide them.
 """
 
 from dataclasses import dataclass
@@ -88,3 +93,42 @@ def excluded_products(products: pl.DataFrame) -> pl.DataFrame:
         .select("hs6", "description", "sector", reason=reason_expr())
         .sort("hs6")
     )
+
+
+# --- Flagged Products and Re-export Hubs: scored and ranked as normal, shown with a caveat ---
+
+# The rest of Sector 71 after the exclusions (HS4 codes), as listed in ADR 0005.
+FLAGGED_PRODUCT_PREFIXES = (
+    "7101", "7102", "7103", "7104", "7105", "7107", "7109", "7111",
+    "7113", "7114", "7115", "7116", "7117",
+)
+FLAGGED_PRODUCT_CAVEAT = (
+    "Flagged Product: precious stones, jewellery and other Sector 71 goods. Their recorded values are "
+    "volatile and entrepôt-driven, so treat the Export Potential with caution."
+)
+REEXPORT_HUBS = frozenset({"NLD", "BEL", "IRL", "HKG", "SGP", "ARE", "CHE", "LUX"})
+REEXPORT_HUB_CAVEAT = (
+    "Re-export Hub: this Market re-exports much of what it imports, so part of its demand belongs "
+    "to other Markets."
+)
+
+
+def flagged_product_expr(column: str = "hs6") -> pl.Expr:
+    """True where the row's Product is a Flagged Product."""
+    code = _code(column)
+    return pl.any_horizontal(code.str.starts_with(p) for p in FLAGGED_PRODUCT_PREFIXES)
+
+
+def reexport_hub_expr(column: str = "iso3") -> pl.Expr:
+    """True where the row's Market is a Re-export Hub."""
+    return pl.col(column).cast(pl.String).is_in(sorted(REEXPORT_HUBS))
+
+
+def flag_columns(hs6: str = "hs6", iso3: str = "iso3") -> list[pl.Expr]:
+    """The boolean `flagged_product` and `reexport_hub` columns of rows keyed by Product and Market."""
+    return [flagged_product_expr(hs6).alias("flagged_product"), reexport_hub_expr(iso3).alias("reexport_hub")]
+
+
+def is_flagged_product(hs6: str) -> bool:
+    """Whether `hs6` is a Flagged Product."""
+    return hs6.startswith(FLAGGED_PRODUCT_PREFIXES)

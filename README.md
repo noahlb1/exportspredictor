@@ -85,6 +85,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Values are in USD: column headers say "(USD, nominal)".
 - [ ] Each row says whether a UK Trade Agreement is in force with the Market (e.g. Japan: Yes, India: No).
 - [ ] The Sector filter narrows the Product search; the region and minimum-Gap filters narrow the ranking.
+- [ ] Search a jewellery Product (e.g. `711319`): every row carries the "Flagged Product" caveat badge, and the Netherlands, Hong Kong and other Re-export Hubs carry "Re-export Hub". "Hide Flagged Products" and "Hide Re-export Hubs" are off by default; ticking one removes exactly those rows.
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
 - [ ] Switch "Rank by" to Blocked Opportunity value: Markets without a Trade Agreement rise to the top, and rows clearing 20% and $1M are flagged.
 
@@ -108,6 +109,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] The factors are described in plain words (no raw feature names), each marked as raising or lowering Export Potential, phrased as associations.
 - [ ] A year-by-year table shows the last six years' UK Actual Exports (0 for years with none) and, for 2022–2024, each year's Export Potential and Export Gap; the three yearly gaps average to the Export Gap shown above it.
 - [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.
+- [ ] Open Why? for a Flagged Product or a Re-export Hub (e.g. `711319` to Hong Kong): its caveats are shown under the heading.
 
 **Model Evaluation**
 - [ ] The plain-English accuracy headline renders, green if the model beats the naive baseline and amber with a plain warning if it does not, with the test year and the non-UK training sample stated below it.

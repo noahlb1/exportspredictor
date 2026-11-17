@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch, gap_period_label, product_picker
+from app.ui import banner, fetch, gap_period_label, product_picker, show_caveats
 from exportspredictor.currency import USD_UNIT, format_usd
 
 TOP_FACTORS = 8
@@ -43,6 +43,7 @@ if banner() is not None:
         else:
             product, market = body["product"], body["market"]
             st.subheader(f"{product['hs6']} – {product['description']} → {market['name']}")
+            show_caveats(body)
             averaged = gap_period_label(body["gap_years"])
             st.markdown(
                 f"{averaged[0].upper()}{averaged[1:]}: "

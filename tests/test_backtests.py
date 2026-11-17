@@ -260,7 +260,7 @@ def test_the_event_backtest_reports_predicted_and_observed_effects_and_its_contr
     direction = event["directions"][0]
 
     assert event["role"] == "primary"
-    assert direction["controls"] == ["IND"]  # Canada already has a UK agreement
+    assert direction["controls"] == ["IND", "HKG"]  # Canada already has a UK agreement
     assert event["control_rule"]
     for year in direction["by_year"]:
         assert year["predicted"] is not None and year["observed"] is not None

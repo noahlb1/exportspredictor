@@ -33,7 +33,7 @@ def artefacts(fixture_artefacts):
 def test_baseline_has_one_row_per_uk_product_market_pair(artefacts):
     baseline = artefacts.baseline
 
-    assert baseline.height == 5 * 3
+    assert baseline.height == 5 * 4
     assert baseline.select("hs6", "iso3").is_duplicated().sum() == 0
 
 
@@ -43,7 +43,7 @@ def test_baseline_actual_exports_are_the_gap_period_mean_with_missing_years_as_z
     totals = uk.group_by("hs6", iso3="importer").agg(total=pl.col("value_usd").sum())
     joined = artefacts.baseline.join(totals, on=["hs6", "iso3"])
 
-    assert joined.height == 15
+    assert joined.height == 20
     assert joined["actual_exports_usd"].to_list() == pytest.approx((joined["total"] / 3).to_list())
     phones_to_japan = joined.filter(pl.col("hs6") == "851712", pl.col("iso3") == "JPN").row(0, named=True)
     flows = uk.filter(pl.col("hs6") == "851712", pl.col("importer") == "JPN", pl.col("value_usd") > 0)
@@ -60,7 +60,7 @@ def test_metadata_records_the_gap_period_and_the_baseline_year(artefacts):
 def test_history_holds_each_gap_years_export_potential_and_gap_for_every_pair(artefacts):
     gap_rows = artefacts.history.filter(pl.col("year") >= 2022)
 
-    assert gap_rows.height == 15 * 3
+    assert gap_rows.height == 20 * 3
     assert gap_rows["export_potential_usd"].is_not_null().all()
     assert gap_rows["export_gap_usd"].to_list() == pytest.approx(
         (gap_rows["export_potential_usd"] - gap_rows["actual_exports_usd"]).to_list()
@@ -75,7 +75,7 @@ def test_baseline_export_potential_is_the_baseline_years_score(artefacts):
     latest = artefacts.history.filter(pl.col("year") == 2024).select("hs6", "iso3", "export_potential_usd")
     joined = artefacts.baseline.join(latest, on=["hs6", "iso3"], suffix="_2024")
 
-    assert joined.height == 15
+    assert joined.height == 20
     assert joined["baseline_export_potential_usd"].to_list() == pytest.approx(
         joined["export_potential_usd_2024"].to_list()
     )
@@ -93,7 +93,7 @@ def test_each_gap_years_uk_score_comes_from_the_fold_model_that_held_the_pair_ou
             )
         )
         scored = artefacts.history.filter(pl.col("year") == year).join(grid.drop("year"), on=["hs6", "iso3"])
-        assert scored.height == 15
+        assert scored.height == 20
         for (fold,), rows in scored.group_by("fold"):
             model = artefacts.fold_models[fold]
             assert model.attr("held_out_fold") == str(fold)
@@ -225,3 +225,18 @@ def test_the_artefact_lists_excluded_products_with_reasons(artefacts):
     assert "pipelines" in table["reason"][0]
     # The Product lookup keeps it, so a search can say it is excluded rather than unknown.
     assert CRUDE_OIL in set(artefacts.products["hs6"])
+
+
+def test_baseline_flags_flagged_products_and_re_export_hubs(artefacts):
+    flags = {
+        (row["hs6"], row["iso3"]): (row["flagged_product"], row["reexport_hub"])
+        for row in artefacts.baseline.iter_rows(named=True)
+    }
+
+    assert flags[("711319", "HKG")] == (True, True)  # gold jewellery to Hong Kong
+    assert flags[("711319", "JPN")] == (True, False)
+    assert flags[("220830", "HKG")] == (False, True)
+    assert flags[("220830", "JPN")] == (False, False)
+    assert artefacts.baseline.schema["flagged_product"] == pl.Boolean
+    assert sum(flagged for flagged, _ in flags.values()) == 4  # one Product in every Market
+    assert sum(hub for _, hub in flags.values()) == 5  # every Product in one Market

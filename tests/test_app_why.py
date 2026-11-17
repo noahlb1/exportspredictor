@@ -151,3 +151,13 @@ def test_why_page_writes_values_in_dollars(monkeypatch, api_url):
 
     assert any(re.search(r"Export Potential \*\*\$[0-9,.]+(bn|m|k)?\*\*", m.value) for m in page.markdown)
     assert "Actual Exports (USD, nominal)" in page.dataframe[1].value.columns
+
+
+def test_why_page_shows_the_caveats_of_a_flagged_product_in_a_re_export_hub(monkeypatch, api_url):
+    flagged = _why(monkeypatch, api_url, hs6="711319", iso3="HKG")
+    plain = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    assert not flagged.exception
+    caveats = " ".join(w.value for w in flagged.warning)
+    assert "Flagged Product" in caveats and "Re-export Hub" in caveats
+    assert not any("Flagged Product" in w.value or "Re-export Hub" in w.value for w in plain.warning)

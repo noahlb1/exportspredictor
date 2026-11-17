@@ -7,7 +7,8 @@ Layout of `<root>/<version>/`:
     models/fold_<k>.ubj
     baseline.parquet   one row per UK Product–Market pair: Gap Period means of Export Potential,
                        Actual Exports and Export Gap; the Baseline year's Export Potential;
-                       the Blocked Opportunity value
+                       the Blocked Opportunity value; its Flagged Product and Re-export Hub
+                       flags (ADR 0005)
     baseline_features.parquet  the same pairs' Baseline-year model inputs and fold (for Scenarios, explanations)
     history.parquet    per pair and year, last six years: UK Actual Exports (non-zero only before
                        the Gap Period) and, in Gap Period years, Export Potential and Export Gap
@@ -52,7 +53,7 @@ class Artefacts:
     metadata: dict
     fold_models: list[xgb.Booster]
     # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd (Gap Period means),
-    # baseline_export_potential_usd (the Baseline year's), blocked_effect_usd
+    # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_effect_usd
     baseline: pl.DataFrame
     baseline_features: pl.DataFrame  # hs6, iso3, fold, FEATURES (transformed, as the models saw them)
     history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd

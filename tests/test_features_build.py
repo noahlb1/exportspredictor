@@ -15,7 +15,7 @@ def test_build_writes_training_rows_and_the_uk_grid_per_year(derived_data_root):
     grid = pl.read_parquet(out / "uk_grid_2024.parquet")
     assert set(training.columns) >= {*features.KEYS, *features.FEATURES, "value_usd", "weight"}
     assert set(grid["exporter"]) == {UK}
-    assert grid.height == 5 * 3
+    assert grid.height == 5 * 4
     assert set(training["weight"]) == {1.0, 2.0}
 
 
@@ -56,7 +56,7 @@ def test_build_scores_the_union_of_the_gap_period_grids_in_each_gap_year(derived
     out = features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
 
     grid = pl.read_parquet(out / "uk_grid_2023.parquet")
-    assert grid.height == 5 * 3
-    assert grid.filter(pl.col("hs6").cast(pl.String) == "220830")["value_usd"].to_list() == [0.0] * 3
+    assert grid.height == 5 * 4
+    assert grid.filter(pl.col("hs6").cast(pl.String) == "220830")["value_usd"].to_list() == [0.0] * 4
     settings = json.loads((out / "features.json").read_text())
     assert settings["gap_years"] == [2022, 2024]
