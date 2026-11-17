@@ -18,8 +18,8 @@ Gotchas of this machine that the code and config don't reveal. Add one when a ru
 
 ## Shared data and artefacts
 
-- **One data directory** for every checkout: set `EXPORTSPREDICTOR_DATA_DIR=C:\CodingProjectsC\exportspredictor\data` in a worktree. Raw BACI alone is 1.3 GB; check a file exists before downloading, and write through `exportspredictor.downloads` so nobody reads a half-written file.
-- **Artefacts**: set `EXPORTSPREDICTOR_ARTEFACTS_DIR=C:\CodingProjectsC\exportspredictor\artefacts`. The API serves the lexically newest version folder.
+- **One data directory and one artefacts directory** for every checkout, the main checkout's. `scripts/wt.ps1` sets `EXPORTSPREDICTOR_DATA_DIR` and `EXPORTSPREDICTOR_ARTEFACTS_DIR` to them; without it, the real-data tests skip in a worktree. Raw BACI alone is 1.3 GB; check a file exists before downloading, and write through `exportspredictor.downloads` so nobody reads a half-written file.
+- **Artefacts**: the API serves the lexically newest version folder.
 - **Build on the saved fold models.** A full real rebuild (`python -m exportspredictor.pipeline`) takes about an hour on the GPU. A ticket that adds a table derives it from the newest artefact's fold models and writes a new version; `python -m exportspredictor.pipeline refresh` copies the newest version with fresh metadata in seconds. An artefact missing a table that `artefacts.load` expects fails to load, so regenerate or refresh after adding one.
 
 ## Long GPU runs
