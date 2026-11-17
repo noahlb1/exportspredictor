@@ -65,16 +65,52 @@ def _years(years: list[int]) -> str:
     return str(years[0]) if len(years) == 1 else f"{years[0]}–{years[-1]}"
 
 
+SIZE_EXPLANATION = (
+    "Raw Lift compares the pairs with the largest Export Gaps with all pairs, so it mostly reflects pair size: "
+    "large gaps sit on large pairs, which grow by ${usd:,.0f} more easily. Size-matched Lift compares them with "
+    "pairs of similar Export Potential instead, so it shows what the Export Gap adds beyond size. Above 1, large "
+    "gaps tended to grow more often than pairs of their size; below 1, less often. Both describe a tendency across "
+    "many pairs, not a forecast for any one Opportunity."
+)
+
+
+def _number(value: float | None, digits: int) -> str:
+    return "n/a" if value is None else f"{value:.{digits}f}"
+
+
+def _lift_figures(lift: dict) -> pd.DataFrame:
+    matched = lift["size_matched"]
+    return pd.DataFrame(
+        [
+            {
+                "Measure": "Raw Lift",
+                "Lift": lift["lift"],
+                "95% interval": f"{_number(lift['ci'][0], 1)} to {_number(lift['ci'][1], 1)}",
+                "Compared with": "all pairs",
+            },
+            {
+                "Measure": "Size-matched Lift",
+                "Lift": matched["lift"],
+                "95% interval": f"{_number(matched['ci'][0], 2)} to {_number(matched['ci'][1], 2)}",
+                "Compared with": "pairs of similar Export Potential",
+            },
+        ]
+    )
+
+
 def _show_lift(lift: dict) -> None:
     st.subheader("Do large Export Gaps point at growth? (Lift)")
     st.markdown(lift["text"])
-    held = len(lift["held_out_exporters"])
+    st.dataframe(_lift_figures(lift), hide_index=True)
+    st.markdown(SIZE_EXPLANATION.format(usd=lift["min_growth_usd"]))
+    gap = _years(lift["gap_years"])
     st.caption(
-        f"Lift is measured on {held} Exporters ({lift['held_out_share']:.0%}, chosen at random) that a model trained "
-        f"on {_years(lift['training_years'])} never saw. Each of their Product–Market pairs is ranked by its "
-        f"{lift['gap_year']} Export Gap, and a pair counts as grown when its Flow rose by at least "
-        f"{lift['min_growth_share']:.0%} and ${lift['min_growth_usd']:,.0f} by {lift['outcome_year']}. The interval "
-        f"comes from resampling whole Exporters. It describes a tendency across many pairs, not a forecast."
+        f"Lift is measured on {len(lift['held_out_exporters'])} Exporters that a model trained on "
+        f"{_years(lift['training_years'])} never saw: the Exporters v1 held out, within v2's Exporter scope, so both "
+        f"models are scored on the same countries. Each of their Product–Market pairs is ranked by its Export Gap "
+        f"averaged over {gap}, and a pair counts as grown when its {lift['outcome_year']} Flow was at least "
+        f"{lift['min_growth_share']:.0%} and ${lift['min_growth_usd']:,.0f} above its {gap} mean Actual Exports. "
+        f"The intervals come from resampling whole Exporters."
     )
     deciles = pd.DataFrame(
         {
