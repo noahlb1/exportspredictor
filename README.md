@@ -65,7 +65,7 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 | Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet) | in place: `python -m exportspredictor.gravity`; needs the BACI step first (country codes); about 210 MB download, 40 s build |
 | Trade Agreement and Trading Bloc features (WTO RTA-IS download, build) | in place: `python -m exportspredictor.policy`; idempotent (skips the download if `raw/wto/AllRTAs.xlsx` exists), about 200 KB download, 2 s build |
 | Feature table (training rows with sampled zeros, UK grid; per year) | in place: `python -m exportspredictor.features`; needs the three steps above; writes `derived/features_V202601/`, about 3.4 GB, 90 s build, 8 GB peak memory |
-| Train, evaluate and save artefacts (notebook) | in place: runs the notebook with `EXPORTSPREDICTOR_FIXTURE_MODE=0`; tunes on 2022, trains five fold models on the GPU (about 30 minutes on an RTX 3080) and saves a new artefact version. To train without the notebook: `python -m exportspredictor.pipeline` |
+| Train, evaluate and save artefacts (notebook) | in place: runs the notebook with `EXPORTSPREDICTOR_FIXTURE_MODE=0`; tunes on 2022, trains five fold models on the GPU (about 30 minutes on an RTX 3080) and saves a new artefact version. To train without the notebook: `python -m exportspredictor.pipeline`. The run also precomputes the Blocked Opportunity values; to recompute only those from the newest artefact's saved fold models, run `python -m exportspredictor.scenarios` (seconds, CPU, writes a new artefact version) |
 
 ## Manual UI checklist
 
@@ -79,6 +79,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
 - [ ] Export Potential, Actual Exports and Export Gap appear side by side.
 - [ ] Search text that matches nothing (e.g. `999999` or `zzz`) shows a clear "No Product matches" warning.
+- [ ] Switch "Rank by" to Blocked Opportunity value: Markets without a Trade Agreement rise to the top, and rows clearing 20% and $1M are flagged.
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen. (CSV export arrives with #17.)
 
 **Market → Products** (arrives with #17)
@@ -86,10 +87,12 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Values show in £, with the conversion rate and year stated.
 - [ ] Export the ranking to CSV and open it.
 
-**Scenarios** (arrives with #18)
-- [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). The summary shows the total change, the change per Market and the top Products gaining, phrased as associations.
+**Scenarios**
+- [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds, and the summary shows the total change, the change per Market and the top Products gaining, phrased as associations.
+- [ ] Run the CPTPP preset: it shows a non-zero Scenario Effect (the 2024 Baseline has no UK CPTPP membership).
 - [ ] Blocked Opportunities unlocked by the Scenario are listed, and changing the thresholds changes the list.
-- [ ] A Scenario that changes nothing (e.g. adding an agreement that already exists) says so.
+- [ ] Pick a Market in the drill-down: its most affected Product–Market pairs are listed, largest effect first.
+- [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
 
 **Why?** (arrives with #19)
 - [ ] Open "Why?" for a Product–Market pair: the factors are described in plain words, and the recent Actual Exports are shown.

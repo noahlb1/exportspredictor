@@ -52,6 +52,10 @@ _Avoid_: lead, prospect
 A UK Product–Market pair whose Export Potential rises materially in a Scenario that removes a Barrier. It is distinct from an Opportunity, because the Barrier already holds Export Potential down, so it shows no Export Gap.
 _Avoid_: hidden opportunity, latent demand
 
+**Blocked Opportunity value**:
+The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). Rankings can be ordered by it instead of by Export Gap.
+_Avoid_: blocked gap, unlock value
+
 **Barrier**:
 A trade-policy condition that suppresses Export Potential, namely a tariff or the absence of a Trade Agreement.
 _Avoid_: blocker, obstacle, friction
