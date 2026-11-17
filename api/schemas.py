@@ -13,6 +13,7 @@ class Health(BaseModel):
     ready: bool
     artefact_version: str | None = None
     baseline_year: int | None = None
+    reason: str | None = None  # why the artefacts are not loaded, while not ready
 
 
 class ProductOut(BaseModel):

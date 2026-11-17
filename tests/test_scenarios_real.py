@@ -19,6 +19,8 @@ def client():
         bundle = store.load_latest(artefacts_dir())
     except store.ArtefactsNotFound:
         pytest.skip("No real artefacts under EXPORTSPREDICTOR_ARTEFACTS_DIR")
+    except store.UnreadableArtefacts as error:
+        pytest.skip(f"The newest real artefacts are not artefact format {store.ARTEFACT_FORMAT}: {error}")
     if bundle.metadata.get("source", "fixture") == "fixture":
         pytest.skip("The artefacts are fixture artefacts")
     with TestClient(create_app(artefacts_dir())) as client:
