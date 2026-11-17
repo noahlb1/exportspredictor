@@ -6,7 +6,8 @@ FIXTURE_HS6 = "220830"
 
 
 def test_rank_orders_name_a_column_a_title_and_a_description():
-    assert list(rankings.RANK_BY) == ["gap", "blocked"]
+    assert list(rankings.RANK_BY) == ["gap", "relative", "blocked"]
+    assert rankings.RANK_BY["relative"].title == "Relative Export Gap"
     assert rankings.RANK_BY["gap"].title == "Export Gap"
     assert rankings.RANK_BY["blocked"].title == "Blocked Opportunity value"
     # The description states the default Blocked Opportunity thresholds (20% and $1M).

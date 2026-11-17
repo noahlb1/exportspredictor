@@ -50,6 +50,7 @@ if banner() is not None:
                 f"Export Potential **{format_usd(body['export_potential_usd'])}**, "
                 f"Actual Exports **{format_usd(body['actual_exports_usd'])}**, "
                 f"Export Gap **{format_usd(body['export_gap_usd'])}**. "
+                f"Opportunity Type: **{body['opportunity_type']}**. "
                 f"Baseline year {body['baseline_year']} Export Potential, which the factors below explain: "
                 f"**{format_usd(body['baseline_export_potential_usd'])}**."
             )

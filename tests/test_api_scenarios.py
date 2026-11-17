@@ -210,6 +210,7 @@ def test_default_thresholds_are_served(client):
 def test_rank_orders_are_served_with_titles(client):
     body = client.get("/opportunities/rank-by").json()
 
-    assert [order["name"] for order in body] == ["gap", "blocked"]
-    assert body[1]["title"] == "Blocked Opportunity value"
-    assert "20%" in body[1]["description"]
+    assert [order["name"] for order in body] == ["gap", "relative", "blocked"]
+    blocked = body[2]
+    assert blocked["title"] == "Blocked Opportunity value"
+    assert "20%" in blocked["description"]

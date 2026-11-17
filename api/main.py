@@ -6,8 +6,9 @@ Tests inject an artefact root with `create_app(root)`; the module-level `app` re
 
 To add an endpoint: add a route in `create_app`, get the bundle with `Depends(loaded)` (it
 answers 503 until artefacts load), and declare a response model in `api/schemas.py`.
-Both ranking views go through `_ranking`, which calls the package's `rank_opportunities`
-(the one filter, sort and limit); ranking orders live in `exportspredictor.rankings.RANK_BY`.
+Every ranking view (the Leaderboard, by Product, by Market) goes through `_ranked`, which
+calls the package's `rank_opportunities` (the one filter, sort and limit); ranking orders
+live in `exportspredictor.rankings.RANK_BY`.
 
 Loading: artefacts load at startup. If none exist yet, `/health` answers 503 and the load
 is retried at most once every `retry_seconds` (default 30 s) when a request arrives, so
@@ -36,6 +37,10 @@ from api.schemas import (
     FactorOut,
     Health,
     HistoryOut,
+    Leaderboard,
+    LeaderboardOpportunity,
+    LeaderboardQuery,
+    LeaderboardSummary,
     MarketOpportunities,
     MarketOpportunity,
     MarketOut,
@@ -57,7 +62,13 @@ from exportspredictor.evaluation import LIMITATIONS
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
-from exportspredictor.rankings import RANK_BY, rank_opportunities
+from exportspredictor.rankings import (
+    DEFAULT_MIN_POTENTIAL_USD,
+    MIN_POTENTIAL_USD_OPTIONS,
+    RANK_BY,
+    rank_opportunities,
+    summarise,
+)
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -127,7 +138,28 @@ def create_app(
     @app.get("/opportunities/rank-by", response_model=list[RankOrderOut])
     def rank_orders():
         """The ranking orders both Opportunity views accept as `rank_by`, in display order."""
-        return [RankOrderOut(name=o.name, title=o.title, description=o.description) for o in RANK_BY.values()]
+        minimums = {
+            "min_potential_usd_options": list(MIN_POTENTIAL_USD_OPTIONS),
+            "default_min_potential_usd": DEFAULT_MIN_POTENTIAL_USD,
+        }
+        return [
+            RankOrderOut(name=o.name, title=o.title, description=o.description, **(minimums if o.min_potential else {}))
+            for o in RANK_BY.values()
+        ]
+
+    @app.get("/opportunities/top", response_model=Leaderboard)
+    def top(query: Annotated[LeaderboardQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
+        """The Leaderboard: every UK Product–Market pair ranked, with a summary of the filtered pairs."""
+        if query.market is not None:
+            _market(artefacts, query.market)
+        rows = _ranked(artefacts, query.model_copy(update={"limit": None}), iso3=query.market)
+        shown = rows if query.limit is None else rows.head(query.limit)
+        return Leaderboard(
+            **_metadata(artefacts),
+            rank_by=query.rank_by,
+            summary=LeaderboardSummary(**summarise(rows)),
+            opportunities=[_pick(LeaderboardOpportunity, row) for row in shown.iter_rows(named=True)],
+        )
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
     def by_product(hs6: str, query: Annotated[RankingQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
@@ -168,6 +200,8 @@ def create_app(
                 "actual_exports_usd",
                 "export_gap_usd",
                 "baseline_export_potential_usd",
+                "relative_export_gap",
+                "opportunity_type",
                 "flagged_product",
                 "reexport_hub",
             )
@@ -257,19 +291,27 @@ def _metadata(artefacts: store.Artefacts) -> dict:
     }
 
 
-def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:
-    """The fields both ranking views share: metadata and the ranked rows."""
-    rows = rank_opportunities(
+def _ranked(artefacts: store.Artefacts, query: RankingQuery, **subject) -> pl.DataFrame:
+    """The rows of a ranking query: the package's `rank_opportunities` with the query's filters."""
+    return rank_opportunities(
         artefacts,
         **subject,
         sector=query.sector,
         region=query.region,
+        opportunity_type=query.opportunity_type,
         min_gap_usd=query.min_gap_usd,
+        trade_agreement=query.trade_agreement,
         hide_flagged=query.hide_flagged,
         hide_hubs=query.hide_hubs,
         rank_by=query.rank_by,
+        min_potential_usd=query.min_potential_usd,
         limit=query.limit,
     )
+
+
+def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:
+    """The fields the by-Product and by-Market views share: metadata and the ranked rows."""
+    rows = _ranked(artefacts, query, **subject)
     return {
         **_metadata(artefacts),
         "rank_by": query.rank_by,

@@ -62,6 +62,7 @@ from exportspredictor.gap_period import (
     export_gaps,
     gap_period,
     gap_years,
+    with_opportunity_columns,
 )
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
@@ -401,6 +402,7 @@ def _train_and_score(
             on=["hs6", "iso3"],
         )
         .with_columns(*flag_columns())
+        .pipe(with_opportunity_columns)
     )
     # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
     baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES)

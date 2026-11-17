@@ -1,6 +1,6 @@
 """Shared page furniture: cached API reads, the persistent banner, pickers and the ranking table.
 
-Both ranking pages render through `ranking_filters` and `show_ranking`, so a ranking option,
+The Leaderboard and both ranking pages render through `ranking_filters` and `show_ranking`, so a ranking option,
 column or row link is added here once.
 """
 
@@ -11,8 +11,9 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from exportspredictor.currency import USD_CAPTION, USD_UNIT
+from exportspredictor.currency import USD_CAPTION, USD_UNIT, format_usd
 from exportspredictor.exclusions import FLAGGED_PRODUCT_CAVEAT, REEXPORT_HUB_CAVEAT
+from exportspredictor.gap_period import OPPORTUNITY_TYPES
 
 # HS2 chapters of the 2012 edition (chapter 77 is reserved and unused).
 SECTORS = [f"{chapter:02d}" for chapter in range(1, 98) if chapter != 77]
@@ -29,6 +30,14 @@ CAVEATS = {
     "flagged_product": ("Flagged Product", FLAGGED_PRODUCT_CAVEAT),
     "reexport_hub": ("Re-export Hub", REEXPORT_HUB_CAVEAT),
 }
+
+
+OPPORTUNITY_TYPE_HELP = (
+    "Expand: the UK already exports the Product to this Market. New Market: the UK exports the Product, "
+    "but not to this Market. New Product: the UK exports the Product to no Market (over the Gap Period)."
+)
+# The Trade Agreement filter: any pair, or only pairs with or without a UK Trade Agreement in force.
+_AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
 
 
 def gap_period_label(gap_years: list[int]) -> str:
@@ -69,11 +78,14 @@ def banner() -> dict | None:
     return health
 
 
-def ranking_filters() -> dict:
-    """The ranking order and the Sector, region, minimum-Gap and hide filters, shared by both ranking pages.
+def ranking_filters(*, market_filter: bool = False) -> dict:
+    """The ranking order and filters, shared by the Leaderboard and both ranking pages.
 
-    Returns the API query parameters that are set (`rank_by`, `sector`, `region`, `min_gap_usd`,
-    and `hide_flagged` / `hide_hubs` when ticked; both are off by default).
+    Returns the API query parameters that are set: `rank_by` (with `min_potential_usd`, chosen
+    from the API's options, when the order ranks only pairs above a minimum Export Potential),
+    `sector`, `region`, `opportunity_type`, `trade_agreement`, `min_gap_usd`, and
+    `hide_flagged` / `hide_hubs` when ticked (both off by default). With `market_filter`
+    (the Leaderboard), one Market can be chosen too (`market`).
     """
     markets = fetch("/markets", client.api_url())
     regions = sorted({market["region"] for market in markets})
@@ -87,19 +99,58 @@ def ranking_filters() -> dict:
     min_gap_usd = gap_column.number_input(
         f"Minimum Export Gap ({USD_UNIT})", value=None, step=1_000_000.0, key="min_gap_usd"
     )
+    type_column, agreement_column, market_column = st.columns(3)
+    opportunity_type = type_column.selectbox(
+        "Opportunity Type",
+        [None, *OPPORTUNITY_TYPES],
+        format_func=lambda kind: "All Opportunity Types" if kind is None else kind,
+        key="opportunity_type",
+        help=OPPORTUNITY_TYPE_HELP,
+    )
+    trade_agreement = agreement_column.selectbox(
+        "UK Trade Agreement in force",
+        list(_AGREEMENT_CHOICES),
+        format_func=_AGREEMENT_CHOICES.get,
+        key="trade_agreement",
+    )
+    market = None
+    if market_filter:
+        names = {m["iso3"]: m["name"] for m in markets if region is None or m["region"] == region}
+        market = market_column.selectbox(
+            "Market",
+            [None, *sorted(names, key=names.get)],
+            format_func=lambda iso3: "All Markets" if iso3 is None else names[iso3],
+            key="market",
+        )
     flagged_column, hubs_column = st.columns(2)
     hide_flagged = flagged_column.checkbox(
         "Hide Flagged Products", key="hide_flagged", help=CAVEATS["flagged_product"][1]
     )
     hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=CAVEATS["reexport_hub"][1])
     orders = rank_orders()
-    rank_by = st.radio(
+    order_column, minimum_column = st.columns(2)
+    rank_by = order_column.radio(
         "Rank by", list(orders), format_func=lambda name: orders[name]["title"], key="rank_by", horizontal=True
     )
+    min_potential_usd = None
+    options = orders[rank_by].get("min_potential_usd_options")
+    if options:
+        min_potential_usd = minimum_column.selectbox(
+            f"Only pairs with Export Potential of at least ({USD_UNIT})",
+            options,
+            index=options.index(orders[rank_by]["default_min_potential_usd"]),
+            format_func=format_usd,
+            key="min_potential_usd",
+            help="Every pair with no Actual Exports has a Relative Export Gap of 100%, so small pairs are left out.",
+        )
     params = {
         "rank_by": rank_by,
+        "min_potential_usd": min_potential_usd,
         "sector": sector,
         "region": region,
+        "market": market,
+        "opportunity_type": opportunity_type,
+        "trade_agreement": trade_agreement,
         "min_gap_usd": min_gap_usd,
         "hide_flagged": hide_flagged or None,
         "hide_hubs": hide_hubs or None,
@@ -194,8 +245,9 @@ def market_picker(region: str | None = None) -> str | None:
 def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: str | None = None, iso3: str | None = None) -> None:
     """The ranking table in nominal USD, with caveat badges, a Why? link per row and a CSV export.
 
-    Export Potential, Actual Exports and Export Gap are Gap Period means, labelled as such
-    (e.g. "Export Gap, 2022–2024 average (USD, nominal)").
+    Export Potential, Actual Exports, Export Gap and the Relative Export Gap are Gap Period
+    means, labelled as such (e.g. "Export Gap, 2022–2024 average (USD, nominal)"); each row
+    shows its Opportunity Type.
 
     `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
     ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
@@ -209,6 +261,7 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
         return
     raw = pd.DataFrame(rows)
     table = raw[list(columns)].rename(columns=columns)
+    table["Opportunity Type"] = raw["opportunity_type"]
     table["UK Trade Agreement in force"] = raw["trade_agreement"].map({True: "Yes", False: "No"})
     averaged = gap_period_label(body["gap_years"])
     headings = {
@@ -217,6 +270,8 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     }
     for field, heading in headings.items():
         table[heading] = raw[f"{field}_usd"]
+    relative = f"Relative Export Gap, {averaged}"
+    table[relative] = raw["relative_export_gap"]
     table["Blocked Opportunity"] = raw["blocked_opportunity"]
     table["Caveats"] = [caveat_badges(row) for row in rows]
     links = [why_link(hs6 or row["hs6"], iso3 or row["iso3"]) for row in rows]
@@ -225,6 +280,8 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
         hide_index=True,
         column_config={
             **{heading: st.column_config.NumberColumn(format="localized") for heading in headings.values()},
+            relative: st.column_config.NumberColumn(format="percent"),
+            "Opportunity Type": st.column_config.TextColumn(help=OPPORTUNITY_TYPE_HELP),
             "Why?": why_column(),
         },
     )

@@ -57,3 +57,28 @@ def baseline_year_scores(history: pl.DataFrame, baseline_year: int) -> pl.DataFr
     return history.filter(pl.col("year") == baseline_year).select(
         "hs6", "iso3", "export_potential_usd", "export_gap_usd"
     )
+
+
+EXPAND, NEW_MARKET, NEW_PRODUCT = OPPORTUNITY_TYPES = ("Expand", "New Market", "New Product")
+
+
+def with_opportunity_columns(gaps: pl.DataFrame) -> pl.DataFrame:
+    """`gaps` (one row per UK pair: Gap Period means) with its Relative Export Gap and Opportunity Type.
+
+    `relative_export_gap` is the Export Gap divided by Export Potential (missing where Export
+    Potential is 0). `opportunity_type` says how far the UK already trades the pair over the
+    Gap Period: Expand (Actual Exports to this Market), New Market (none here, but some to
+    another Market) or New Product (none to any Market). `gaps` must hold every Market of each
+    Product, as the UK grid does, so "any Market" is read from the Product's own rows.
+    """
+    exports_here = pl.col("actual_exports_usd") > 0
+    return gaps.with_columns(
+        relative_export_gap=pl.when(pl.col("export_potential_usd") > 0).then(
+            pl.col("export_gap_usd") / pl.col("export_potential_usd")
+        ),
+        opportunity_type=pl.when(exports_here)
+        .then(pl.lit(EXPAND))
+        .when(exports_here.any().over("hs6"))
+        .then(pl.lit(NEW_MARKET))
+        .otherwise(pl.lit(NEW_PRODUCT)),
+    )
