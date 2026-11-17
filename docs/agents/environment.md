@@ -8,7 +8,7 @@ Gotchas of this machine that the code and config don't reveal. Add one when a ru
 - **Python** comes only through uv. A bare `python` in Git Bash hits the Windows Store stub and hangs until timeout: always go through `uv run`.
 - **Printing non-ASCII** (accented Market names, `£`) crashes on cp1252: run Python with `-X utf8`. `python -I` ignores `PYTHONIOENCODING`.
 - **`gh` bodies**: PowerShell 5.1 splits a multi-line `--body` into separate arguments. Write the body to a file in the scratchpad and pass `--body-file`.
-- **podman** is installed but needs WSL, which needs admin rights and a reboot. Until `podman machine init` works, write compose changes and leave `podman compose up` to the user.
+- **podman** runs in a WSL2 VM, with `docker-compose` as its compose provider. If `podman compose` can't connect after a reboot, run `podman machine start`. `podman compose up -d --build` serves the API on :8000 and the app on :8501; `podman compose down` stops them.
 
 ## Worktrees
 
