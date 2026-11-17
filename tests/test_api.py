@@ -62,6 +62,8 @@ def test_by_product_rows_have_the_documented_shape(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
+        "blocked_effect_usd",
+        "blocked_opportunity",
     }
 
 
