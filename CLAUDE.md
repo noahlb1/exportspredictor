@@ -53,3 +53,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Unattended runs
+
+`/implement-spec` runs unattended. It and its subagents take the recommended option instead of asking, and log each decision. See `docs/agents/unattended-runs.md`.
