@@ -4,7 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD
+from exportspredictor import scenarios
+from exportspredictor.rankings import DEFAULT_RANK_BY, RANK_BY
+from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, PRESETS
 
 
 class Health(BaseModel):
@@ -25,16 +27,24 @@ class MarketOut(BaseModel):
     region: str
 
 
-RankBy = Literal["gap", "blocked"]
+RankBy = Literal[tuple(RANK_BY)]  # the ranking orders of `exportspredictor.rankings.RANK_BY`
+
+
+class RankOrderOut(BaseModel):
+    name: str
+    title: str
+    description: str
 
 
 class RankingQuery(BaseModel):
     """Query parameters both ranking views accept."""
 
-    rank_by: RankBy = Field("gap", description="gap: Export Gap; blocked: Blocked Opportunity value")
+    rank_by: RankBy = Field(
+        DEFAULT_RANK_BY, description="; ".join(f"{order.name}: {order.title}" for order in RANK_BY.values())
+    )
     sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
     region: str | None = Field(None, description="Market region, e.g. South Asia")
-    min_gap: float | None = Field(None, description="Minimum Export Gap, in USD")
+    min_gap_usd: float | None = Field(None, description="Minimum Export Gap, in USD")
     min_gap_gbp: float | None = Field(None, description="Minimum Export Gap, in GBP")
     limit: int | None = Field(None, ge=1, description="Keep only the top rows")
 
@@ -240,34 +250,45 @@ class Evaluation(BaseModel):
     event_backtest: EventBacktest | None = None
     limitations: list[Limitation]
 
+
 class PresetOut(BaseModel):
     name: str
     title: str
     description: str
 
 
-class ScenarioRequest(BaseModel):
-    """A Trading Bloc preset, *or* Markets (ISO3) to add or remove a Trade Agreement with."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    preset: Literal["eu_rejoin", "eu_customs_union", "cptpp", "leave"] | None = None
-    add_agreements: list[str] = []
-    remove_agreements: list[str] = []
-    min_effect_share: float = Field(DEFAULT_MIN_SHARE, ge=0, description="Blocked Opportunity: effect ≥ this share of Baseline")
-    min_effect_usd: float = Field(DEFAULT_MIN_USD, ge=0, description="Blocked Opportunity: effect ≥ this many USD")
-    limit: int = Field(50, ge=1, le=1000, description="Rows returned in each list")
+PresetName = Literal[tuple(PRESETS)]  # the presets of `exportspredictor.scenarios.PRESETS`
 
 
 class ScenarioIn(BaseModel):
-    preset: str | None
-    add_agreements: list[str]
-    remove_agreements: list[str]
+    """A Trading Bloc preset, *or* Markets (ISO3) to add or remove a Trade Agreement with."""
+
+    preset: PresetName | None = None
+    add_agreements: list[str] = []
+    remove_agreements: list[str] = []
+
+    def to_scenario(self) -> scenarios.Scenario:
+        return scenarios.Scenario(
+            preset=self.preset,
+            add_agreements=tuple(self.add_agreements),
+            remove_agreements=tuple(self.remove_agreements),
+        )
 
 
 class Thresholds(BaseModel):
-    min_effect_share: float
-    min_effect_usd: float
+    """The Blocked Opportunity thresholds; the defaults are the package's."""
+
+    min_effect_share: float = Field(DEFAULT_MIN_SHARE, ge=0, description="Blocked Opportunity: effect ≥ this share of Baseline")
+    min_effect_usd: float = Field(DEFAULT_MIN_USD, ge=0, description="Blocked Opportunity: effect ≥ this many USD")
+
+
+class ScenarioRequest(ScenarioIn, Thresholds):
+    """The Scenario, the Blocked Opportunity thresholds, and how many rows to return."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(50, ge=1, le=1000, description="Rows returned in each list")
+    market: str | None = Field(None, description="Drill-down: top pairs of this Market (ISO3) only")
 
 
 class EffectTotals(BaseModel):
@@ -275,6 +296,9 @@ class EffectTotals(BaseModel):
     scenario_potential_usd: float
     effect_usd: float
     effect_share: float
+    baseline_potential_gbp: float
+    scenario_potential_gbp: float
+    effect_gbp: float
 
 
 class MarketEffect(EffectTotals):
@@ -298,20 +322,25 @@ class PairEffect(BaseModel):
     scenario_potential_usd: float
     effect_usd: float
     effect_share: float
+    baseline_potential_gbp: float
+    scenario_potential_gbp: float
+    effect_gbp: float
     blocked_opportunity: bool
 
 
 class ScenarioResponse(BaseModel):
     artefact_version: str
     baseline_year: int
+    gbp_rate: GbpRate
     scenario: ScenarioIn
     thresholds: Thresholds
+    market: str | None  # the drill-down Market `top_pairs` is limited to, if any
     changes_nothing: bool
     summary: str  # one associational sentence
     total: EffectTotals  # over the pairs the Scenario changes
     markets: list[MarketEffect]  # every changed Market, largest effect first
     products: list[ProductEffect]  # top Products by effect
-    top_pairs: list[PairEffect]  # top Product–Market pairs by effect
+    top_pairs: list[PairEffect]  # top Product–Market pairs by effect (of `market` only, if given)
     blocked_opportunities: list[PairEffect]  # pairs clearing both thresholds, largest first
     blocked_count: int  # all Blocked Opportunities, before `limit`
 
@@ -327,11 +356,13 @@ class FactorOut(BaseModel):
 class HistoryOut(BaseModel):
     year: int
     actual_exports_usd: float
+    actual_exports_gbp: float
 
 
 class Explanation(BaseModel):
     artefact_version: str
     baseline_year: int
+    gbp_rate: GbpRate
     product: ProductOut
     market: MarketOut
     fold: int  # the fold model that held the pair out, scored its Baseline and explains it
@@ -340,5 +371,8 @@ class Explanation(BaseModel):
     export_potential_usd: float
     actual_exports_usd: float
     export_gap_usd: float
+    export_potential_gbp: float
+    actual_exports_gbp: float
+    export_gap_gbp: float
     factors: list[FactorOut]  # largest absolute contribution first
     history: list[HistoryOut]  # UK Actual Exports by year; years with none are absent

@@ -9,6 +9,8 @@ The table is copied from the Bank of England database
 (https://www.bankofengland.co.uk/boeapps/database/, series XUAAUSS), downloaded 2026-11-17.
 """
 
+import polars as pl
+
 GBP_RATE_SOURCE = "Bank of England, series XUAAUSS: annual average spot exchange rate, US$ into sterling"
 
 # US dollars per pound sterling, annual average.
@@ -35,3 +37,20 @@ def gbp_rate(year: int) -> dict:
     if year not in USD_PER_GBP:
         raise KeyError(f"No USD/GBP annual average for {year}; add it to currency.USD_PER_GBP")
     return {"usd_per_gbp": USD_PER_GBP[year], "year": year, "source": GBP_RATE_SOURCE}
+
+
+def with_gbp(rows: pl.DataFrame, usd_per_gbp: float) -> pl.DataFrame:
+    """`rows` with a `<name>_gbp` column added for each `<name>_usd` column."""
+    return rows.with_columns(
+        (pl.col(c) / usd_per_gbp).alias(c.removesuffix("_usd") + "_gbp") for c in rows.columns if c.endswith("_usd")
+    )
+
+
+def format_change(value: float, symbol: str = "$") -> str:
+    """A signed, rounded amount of money, e.g. +$1.2bn or -£350.0m."""
+    sign = "-" if value < 0 else "+"
+    value = abs(value)
+    for unit, size in (("bn", 1e9), ("m", 1e6), ("k", 1e3)):
+        if value >= size:
+            return f"{sign}{symbol}{value / size:,.1f}{unit}"
+    return f"{sign}{symbol}{value:,.0f}"
