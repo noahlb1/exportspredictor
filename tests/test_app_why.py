@@ -167,3 +167,24 @@ def test_why_page_shows_the_pairs_opportunity_type(monkeypatch, api_url):
     page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
 
     assert any("Opportunity Type: **Expand**" in element.value for element in page.markdown)
+
+
+def _pairs_by_uncertainty(api_url: str) -> tuple[dict, dict]:
+    rows = httpx.get(f"{api_url}/opportunities/top").json()["opportunities"]
+    return next(r for r in rows if r["uncertain"]), next(r for r in rows if not r["uncertain"])
+
+
+def test_why_page_shows_the_potential_range_bar_in_plain_words(monkeypatch, api_url):
+    uncertain, certain = _pairs_by_uncertainty(api_url)
+    page = _why(monkeypatch, api_url, hs6=uncertain["hs6"], iso3=uncertain["iso3"])
+
+    assert not page.exception
+    assert len(page.get("vega_lite_chart")) == 1
+    words = " ".join(m.value for m in page.markdown)
+    assert "Potential Range" in words and "comparable pairs" in words
+    assert "confidence" not in words.lower()
+    assert any("Uncertain Opportunity" in w.value for w in page.warning)
+
+    other = _why(monkeypatch, api_url, hs6=certain["hs6"], iso3=certain["iso3"])
+    assert len(other.get("vega_lite_chart")) == 1
+    assert not any("Uncertain Opportunity" in w.value for w in other.warning)

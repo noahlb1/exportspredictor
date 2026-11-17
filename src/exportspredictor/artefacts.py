@@ -8,13 +8,14 @@ Layout of `<root>/<version>/`:
     baseline.parquet   one row per UK Product–Market pair: Gap Period means of Export Potential,
                        Actual Exports and Export Gap; the Baseline year's Export Potential;
                        the Blocked Opportunity value; its Flagged Product and Re-export Hub
-                       flags (ADR 0005)
+                       flags (ADR 0005); its Potential Range and Uncertain Opportunity flag (ADR 0007)
     baseline_features.parquet  the same pairs' Baseline-year model inputs and fold (for Scenarios, explanations)
     history.parquet    per pair and year, last six years: UK Actual Exports (non-zero only before
                        the Gap Period) and, in Gap Period years, Export Potential and Export Gap
     products.parquet   Product lookup (hs6, description, sector)
     markets.parquet    Market lookup (iso3, name, region)
     excluded_products.parquet  Excluded Products (hs6, description, sector, reason), ADR 0005
+    potential_range_bands.parquet  the Potential Range's band offsets (ADR 0007, `conformal.fit_bands`)
     evaluation.json    accuracy on the test year, stability and later checks (optional)
 
 `artefact_format` is 2. `load` refuses any other format, including v1 folders (which
@@ -37,7 +38,15 @@ import xgboost as xgb
 METADATA_FILE = "metadata.json"
 EVALUATION_FILE = "evaluation.json"
 ARTEFACT_FORMAT = 2
-_TABLES = ("baseline", "baseline_features", "history", "products", "markets", "excluded_products")
+_TABLES = (
+    "baseline",
+    "baseline_features",
+    "history",
+    "products",
+    "markets",
+    "excluded_products",
+    "potential_range_bands",
+)
 
 
 class ArtefactsNotFound(FileNotFoundError):
@@ -53,13 +62,16 @@ class Artefacts:
     metadata: dict
     fold_models: list[xgb.Booster]
     # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd (Gap Period means),
-    # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_effect_usd
+    # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_effect_usd,
+    # potential_range_low_usd, potential_range_high_usd, uncertain
     baseline: pl.DataFrame
     baseline_features: pl.DataFrame  # hs6, iso3, fold, FEATURES (transformed, as the models saw them)
     history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd
     products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
     markets: pl.DataFrame
     excluded_products: pl.DataFrame  # hs6, description, sector, reason (`exclusions.excluded_products`)
+    # band, min_export_potential_usd, rows, low_offset_usd, high_offset_usd (`conformal.fit_bands`)
+    potential_range_bands: pl.DataFrame
     # The evaluation report (`exportspredictor.evaluation`), JSON-ready; None if not evaluated.
     evaluation: dict | None = None
 

@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import nbformat
+import pytest
 from nbclient import NotebookClient
 
 from exportspredictor import artefacts as store
@@ -87,3 +88,10 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
     loaded = store.load_latest(tmp_path)
     assert loaded.metadata["source"] == "fixture"
     assert loaded.baseline.height == 20
+    # The Potential Range's coverage is reported on the fixture's held-out half, near its 80% target.
+    coverage = loaded.evaluation["potential_range"]
+    assert coverage["coverage"] == pytest.approx(0.8, abs=0.15)
+    printed = " ".join(
+        output.get("text", "") for cell in notebook.cells if cell.cell_type == "code" for output in cell.outputs
+    )
+    assert f"{coverage['coverage']:.0%} of their Actual Exports fell inside their Potential Range" in printed

@@ -16,6 +16,10 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    history holds each year's scores; the Scenario inputs are the Baseline year's features.
 4. **Blocked Opportunity values**: re-predict every pair without a Trade Agreement with
    one added (`scenarios.blocked_effects`), against the Baseline year only.
+   **Potential Range** (ADR 0007, `conformal`): score other Exporters' Baseline-year
+   training rows (never the UK's) with their hash-assigned fold models, fit the band
+   offsets, apply them around the Gap Period mean Export Potential, and measure coverage
+   on a held-out half of those rows.
 5. **Evaluate** on the test year (Baseline year − 1): fold models refitted on the years
    before it with the tuned configuration score it, against a naive baseline
    (`evaluation`). The report is saved in the artefact as `evaluation.json`.
@@ -35,7 +39,7 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import baci, backtests, constraints, evaluation
+from exportspredictor import baci, backtests, conformal, constraints, evaluation
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.exclusions import (
     EXCLUSIONS,
@@ -104,6 +108,8 @@ REAL_MAX_ROUNDS = 1500
 # `training.fit_non_uk_rate`). A given rate is checked against the budget before training.
 REAL_NON_UK_RATE: float | None = None
 HISTORY_YEARS = 6  # Actual Exports history: the Baseline year and the five before it
+# The fixture world has about 60 calibration rows, so its bands need far fewer than real data's 1,000.
+FIXTURE_MIN_BAND_ROWS = 12
 
 # The fixture's backtests, inside its four years: Lift from a 2021–2022 model on 2022 gaps,
 # grown by 2023; the UK–Japan agreement of 2022 as the Event Backtest, with a 2021 model.
@@ -134,6 +140,8 @@ class _Trained:
     baseline: pl.DataFrame
     baseline_features: pl.DataFrame
     yearly: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd
+    potential_range_bands: pl.DataFrame
+    potential_range_report: dict  # held-out coverage and the share of Opportunities that are uncertain
     metadata: dict
 
 
@@ -150,11 +158,13 @@ def build_artefacts(
     max_rounds: int = FIXTURE_MAX_ROUNDS,
     seed: int = 0,
     row_budget: int | None = None,
+    min_band_rows: int = FIXTURE_MIN_BAND_ROWS,
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
     `zero_sampling_rate` is the share of other Exporters' Zero Cells kept for training; it
     is recorded in the metadata. `row_budget` overrides the VRAM row budget.
+    `min_band_rows` is the Potential Range's minimum band size.
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
@@ -167,9 +177,16 @@ def build_artefacts(
     year_flows = {year: flows.filter(pl.col("year") == year) for year in gap_years(baseline_year)}
     pairs = grid_pairs(uk_grid(f, UK) for f in year_flows.values())
     grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in year_flows.items()}
+    # The Potential Range's calibration rows: the Baseline year's training rows (ADR 0007).
+    calibration = build_features(
+        training_rows(year_flows[baseline_year], rate=zero_sampling_rate, seed=seed, uk=UK, exporters=scope),
+        flows,
+        sources,
+    )
     trained = _train_and_score(
         training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed, row_budget=row_budget,
+        calibration=calibration, min_band_rows=min_band_rows,
     )
     recent = (pl.col("year") > baseline_year - HISTORY_YEARS) & (pl.col("year") <= baseline_year)
     metadata = {
@@ -195,6 +212,7 @@ def build_artefacts(
         products=world.products,
         markets=world.markets,
         excluded_products=excluded_products(world.products),
+        potential_range_bands=trained.potential_range_bands,
         evaluation=report,
     )
 
@@ -231,6 +249,7 @@ def build_real_artefacts(
     non_uk_rate: float | None = REAL_NON_UK_RATE,
     seed: int = 0,
     row_budget: int | None = None,
+    min_band_rows: int = conformal.MIN_BAND_ROWS,
     backtest_plan: backtests.Plan = backtests.REAL_PLAN,
     constraint_plan: constraints.Plan = constraints.REAL_PLAN,
 ) -> Artefacts:
@@ -268,6 +287,7 @@ def build_real_artefacts(
     trained = _train_and_score(
         training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
         n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
+        calibration=folder / f"training_{baseline_year}.parquet", min_band_rows=min_band_rows,
     )
     history_years = [y for y in settings["years"] if baseline_year - HISTORY_YEARS < y <= baseline_year]
     history = _history(
@@ -312,6 +332,7 @@ def build_real_artefacts(
         products=baci.products(root),
         markets=markets,
         excluded_products=excluded_products(baci.products(root)),
+        potential_range_bands=trained.potential_range_bands,
         evaluation=report,
     )
 
@@ -327,6 +348,8 @@ def _train_and_score(
     device: str,
     non_uk_rate: float | None,
     seed: int,
+    calibration: Chunk,
+    min_band_rows: int,
     row_budget: int | None = None,
 ) -> _Trained:
     validation_year, test_year = baseline_year - 2, baseline_year - 1
@@ -406,6 +429,21 @@ def _train_and_score(
     )
     # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
     baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES)
+    # The Potential Range (ADR 0007): other Exporters' Baseline-year rows, never the UK's.
+    started = time.perf_counter()
+    scored_calibration = conformal.score_calibration(read_chunk(calibration), models, transform, uk=UK)
+    bands = conformal.fit_bands(scored_calibration, min_rows=min_band_rows)
+    baseline = conformal.with_potential_range(baseline, bands)
+    potential_range_report = {
+        **conformal.coverage_report(scored_calibration, min_rows=min_band_rows),
+        **conformal.uncertain_share(baseline),
+    }
+    potential_range_seconds = time.perf_counter() - started
+    print(
+        f"Potential Range from {scored_calibration.height:,} calibration rows in {potential_range_seconds:.0f} s: "
+        f"{bands.height} bands, held-out coverage {potential_range_report['coverage']:.1%}",
+        flush=True,
+    )
     # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
     baseline = with_blocked_effects(baseline, blocked_effects(baseline_features, baseline, models))
     metadata = {
@@ -433,6 +471,16 @@ def _train_and_score(
         "xgboost_version": xgb.__version__,
         "tuning_seconds": round(tuning_seconds, 2),
         "training_seconds": round(training_seconds, 2),
+        "potential_range": {
+            "coverage": conformal.COVERAGE,
+            "n_bands": conformal.N_BANDS,
+            "min_band_rows": min_band_rows,
+            "bands": bands.height,
+            "calibration_year": baseline_year,
+            "calibration_rows": scored_calibration.height,
+            "calibration_exporters": scored_calibration["exporter"].n_unique(),
+            "seconds": round(potential_range_seconds, 2),
+        },
         "created_at": datetime.now(UTC).isoformat(),
     }
     return _Trained(
@@ -440,6 +488,8 @@ def _train_and_score(
         baseline=baseline,
         baseline_features=baseline_features,
         yearly=yearly.sort("hs6", "iso3", "year"),
+        potential_range_bands=bands,
+        potential_range_report=potential_range_report,
         metadata=metadata,
     )
 
@@ -526,6 +576,7 @@ def _evaluate(
         seed=seed,
     )
     print(f"Monotone-constraint comparison in {report['monotone_constraints']['seconds']:.0f} s", flush=True)
+    report["potential_range"] = trained.potential_range_report
     return report
 
 
