@@ -63,7 +63,10 @@ def _features_for(world, flows, keys: list[tuple]) -> pl.DataFrame:
 
 
 def _same(before: pl.DataFrame, after: pl.DataFrame, row: int, names) -> bool:
-    return all(before[n][row] == pytest.approx(after[n][row], rel=1e-6, nan_ok=True) for n in names)
+    def close(a, b) -> bool:  # missing (None) only matches missing
+        return a == b if a is None or b is None else a == pytest.approx(b, rel=1e-6, nan_ok=True)
+
+    return all(close(before[n][row], after[n][row]) for n in names)
 
 
 # --- Leave-one-out supply and demand ----------------------------------------------------
@@ -93,7 +96,10 @@ def test_no_feature_is_built_from_the_pairs_trade_in_other_products(world):
     """Moving the UK's other-Product exports from Japan to Canada leaves UK–Japan whisky unchanged.
 
     A feature such as total bilateral trade would move with that shift. Every feature here
-    depends only on the target Product, the two countries, the year and policy.
+    depends only on the target Product, the two countries, the year and policy. Relatedness
+    is the exception by design: it reads what the UK exports to every *other* Market, which
+    this move changes, while it never reads Japan's Flows at all (see
+    test_relatedness_and_market_trends.py), so it cannot carry the pair's trade either.
     """
     moves = {}
     for hs6 in sorted(set(world.products["hs6"]) - {WHISKY}):
@@ -105,7 +111,7 @@ def test_no_feature_is_built_from_the_pairs_trade_in_other_products(world):
     before = _features_for(world, world.flows, [TARGET])
     after = _features_for(world, _set_flows(world.flows, moves), [TARGET])
 
-    assert _same(before, after, 0, FEATURES)
+    assert _same(before, after, 0, [f for f in FEATURES if f != "relatedness"])
 
 
 # --- Training rows: non-zero Flows plus sampled relevant zeros ----------------------------

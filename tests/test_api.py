@@ -331,6 +331,15 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
     assert [point["year"] for point in body["history"]] == sorted(point["year"] for point in body["history"])
 
 
+def test_explain_describes_relatedness_import_growth_and_reexports_in_plain_english(client):
+    factors = {f["label"]: f["value_text"] for f in client.get(f"/explain/{FIXTURE_HS6}/JPN").json()["factors"]}
+
+    assert "How close this Product is to what the UK already exports well" in factors
+    assert "How fast Japan's imports of this Product are growing" in factors
+    assert "How much of this Product Japan re-exports" in factors
+    assert factors["How much of this Product Japan re-exports"] != "Yes"
+
+
 def test_explain_matches_the_ranking_row_of_the_pair(client):
     explained = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
     ranked = client.get(f"/opportunities/by-product/{FIXTURE_HS6}").json()["opportunities"]
