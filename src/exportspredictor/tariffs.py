@@ -130,7 +130,13 @@ def download(
     folder = raw_dir(root)
     availability = read_availability(_cached(folder / "availability.xml", AVAILABILITY_URL, fetch))
     _cached(folder / "countries.xml", COUNTRIES_URL, fetch)
-    wanted = availability.filter(pl.col("year").is_in(years))
+    # A few countries are listed under two WITS codes in one year (Sudan as 729 and 736):
+    # keep the entry with the most partners, as the cache holds one file per ISO3 and year.
+    wanted = (
+        availability.filter(pl.col("year").is_in(years))
+        .sort(pl.col("partners").list.len(), descending=True)
+        .unique(["reporter", "year"], keep="first", maintain_order=True)
+    )
     todo = [
         row for row in wanted.iter_rows(named=True)
         if not reporter_year_path(root, row["reporter"], row["year"]).exists()

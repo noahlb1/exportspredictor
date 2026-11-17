@@ -245,10 +245,12 @@ def real_download():
 
 
 def test_the_real_download_covers_the_reporter_years_in_the_research_note(real_download):
-    cached = {int(folder.name): len(list(folder.glob("*.parquet")))
-              for folder in real_download.iterdir() if folder.is_dir()}
+    listed = tariffs.read_availability((real_download / "availability.xml").read_text(encoding="utf-8-sig"))
+    listed = listed.filter(pl.col("year").is_in(tariffs.TRAINS_YEARS))
+    cached = {(folder.stem, int(folder.parent.name)) for folder in real_download.glob("*/*.parquet")}
 
-    assert cached == RESEARCH_NOTE_REPORTERS
+    assert dict(listed.group_by("year").len().iter_rows()) == RESEARCH_NOTE_REPORTERS
+    assert cached == set(zip(listed["reporter"], listed["year"], strict=True))  # Sudan's two codes share one file
 
 
 def test_the_data_lineage_records_the_trains_pull_date(real_download):
@@ -271,3 +273,14 @@ def test_the_real_panel_puts_eu_members_on_the_eu_schedule_and_the_uk_on_its_own
     assert [schedule("DEU", 2015), schedule("GBR", 2015), schedule("GBR", 2021), schedule("GBR", 2024)] == \
         ["EUN", "EUN", "GBR", "GBR"]
     assert schedules.filter(pl.col("year") > 2021)["tariff_imputed"].all()
+
+
+def test_a_country_listed_under_two_codes_is_fetched_once_from_the_fuller_entry(tmp_path):
+    reporters = [REPORTER.format(code="729", iso3="SUD", year=2017, nomen="H5", partners="000;"),
+                 REPORTER.format(code="736", iso3="SDN", year=2017, nomen="H5", partners="000;826;")]
+    wits = FakeWits(AVAILABILITY.format(reporters="\n".join(reporters)), {})
+
+    tariffs.download(tmp_path, fetch=wits, workers=1)
+
+    assert [url for url in wits.calls if "/reporter/" in url] == [
+        tariffs.tariff_url("736", "000", 2017), tariffs.tariff_url("736", "826", 2017)]
