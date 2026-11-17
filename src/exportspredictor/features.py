@@ -82,7 +82,8 @@ MARKET_TREND_FEATURES = ["market_import_growth", "reexport_ratio"]
 # The Applied Tariff as ln(1 + t), with t the rate as a fraction (ADR 0006).
 TARIFF_FEATURES = ["log_applied_tariff"]
 POLICY_FEATURES = [*policy.POLICY_FEATURES, *TARIFF_FEATURES]
-FEATURES = [
+# Every feature `build_features` computes, in model column order.
+ALL_FEATURES = [
     *GRAVITY_FEATURES,
     *SUPPLY_FEATURES,
     *DEMAND_FEATURES,
@@ -91,11 +92,17 @@ FEATURES = [
     *MARKET_TREND_FEATURES,
     *POLICY_FEATURES,
 ]
+# Features the ablation (`experiments`, ticket #53) found to hurt: on 2022, the model without
+# Market import growth had lower deviance and a higher UK within-Product Spearman. It is still
+# computed and stored beside the features, but it is not a model input.
+ABLATED_FEATURES = ["market_import_growth"]
+# The model inputs, in column order.
+FEATURES = [f for f in ALL_FEATURES if f not in ABLATED_FEATURES]
 # +1 on every agreement and bloc flag: a Trade Agreement never lowers Export Potential. -1 on
 # the Applied Tariff: raising it never raises Export Potential (ADR 0002, ADR 0006).
 MONOTONE_CONSTRAINTS = {**{name: 1 for name in policy.POLICY_FEATURES}, **{name: -1 for name in TARIFF_FEATURES}}
 # Continuous features clipped to their training-year range at serving time.
-CLIPPED_FEATURES = [
+CLIPPED_FEATURES = [f for f in [
     "log_gdp_o",
     "log_gdp_d",
     "log_population_o",
@@ -106,7 +113,7 @@ CLIPPED_FEATURES = [
     *RELATEDNESS_FEATURES,
     *MARKET_TREND_FEATURES,
     *TARIFF_FEATURES,
-]
+] if f in FEATURES]
 # Row metadata carried beside the features, never a model input: `tariff_imputed` marks a
 # tariff carried forward from 2021 (ADR 0006), and `mfn_tariff` (percent) is the Importer's
 # MFN rate, which a Scenario restores when it removes a Trade Agreement.
@@ -263,7 +270,7 @@ def grid_pairs(grids: Iterable[pl.DataFrame | pl.LazyFrame]) -> pl.DataFrame:
 
 
 def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) -> pl.DataFrame:
-    """Return KEYS, FEATURES, `value_usd` and `weight` for each row.
+    """Return KEYS, ALL_FEATURES (FEATURES and the ablated ones), `value_usd` and `weight` for each row.
 
     `rows` are keyed by KEYS with the row's own Flow `value_usd` (0 for a zero cell);
     `flows` holds every Flow of the same years, from which the supply and demand

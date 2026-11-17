@@ -7,7 +7,7 @@ import polars as pl
 import pytest
 
 from exportspredictor import experiments, features
-from exportspredictor.features import FEATURES, training_rows
+from exportspredictor.features import ALL_FEATURES, training_rows
 from exportspredictor.fixture import UK
 
 
@@ -55,7 +55,9 @@ def test_the_ablation_drops_each_new_feature_in_turn(fixture_results):
     ablation = pl.DataFrame(fixture_results["ablation"])
 
     assert ablation["dropped"].to_list() == [None, *experiments.CANDIDATE_FEATURES]
-    assert ablation["features"].to_list() == [len(FEATURES)] + [len(FEATURES) - 1] * len(experiments.CANDIDATE_FEATURES)
+    assert ablation["features"].to_list() == [len(ALL_FEATURES)] + [len(ALL_FEATURES) - 1] * len(
+        experiments.CANDIDATE_FEATURES
+    )
     assert ablation["validation_deviance"].is_finite().all()
     assert ablation["validation_year"].unique().to_list() == [2022]
 
@@ -77,7 +79,7 @@ def test_a_feature_is_dropped_only_when_it_hurts_both_measures_and_the_applied_t
 
     assert "reexport_ratio" not in kept
     assert {"relatedness", "market_import_growth", "log_applied_tariff"} <= set(kept)
-    assert kept == [f for f in FEATURES if f != "reexport_ratio"]
+    assert kept == [f for f in ALL_FEATURES if f != "reexport_ratio"]
 
 
 def test_the_learning_curve_covers_every_rate_pair(fixture_results):

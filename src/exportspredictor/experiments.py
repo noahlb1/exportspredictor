@@ -10,12 +10,13 @@ each model on the validation year only:
 - **UK Spearman**: the within-Product Spearman rank correlation of the validation year's
   UK grid, for the held-out fold's pairs only (ADR 0001: out-of-fold).
 
-The **ablation** trains the model with every feature, then once without each of v2's new
-features (`CANDIDATE_FEATURES`). A feature hurts when the model without it is better on
-both measures; it is then dropped, except the Applied Tariff, which Scenarios need
-(`kept_features`). The **learning curve** trains on the kept features at every pair of
-non-UK rate and zero rate in the plan. The zero rate is varied below the rate the rows
-were built at with `features.subsample_zeros`, so one feature build serves every point.
+The **ablation** trains the model with every feature (`features.ALL_FEATURES`), then once
+without each of v2's new features (`CANDIDATE_FEATURES`). A feature hurts when the model
+without it is better on both measures; it is then dropped, except the Applied Tariff, which
+Scenarios need (`kept_features`), and `features.FEATURES` leaves it out
+(`features.ABLATED_FEATURES`). The **learning curve** trains on the kept features at every
+pair of non-UK rate and zero rate in the plan. The zero rate is varied below the rate the
+rows were built at with `features.subsample_zeros`, so one feature build serves every point.
 
 **The test year (2023) is never read.** The experiment rows are built (`build`) from the
 Flows of the validation year and the years before it only, read file by file, and every
@@ -47,6 +48,7 @@ from exportspredictor import baci, scope
 from exportspredictor.downloads import write_parquet
 from exportspredictor.evaluation import MIN_RANKED_ROWS, TWEEDIE_POWER, tweedie_deviance
 from exportspredictor.features import (
+    ALL_FEATURES,
     FEATURES,
     GROWTH_YEARS,
     MARKET_TREND_FEATURES,
@@ -206,7 +208,7 @@ def run_ablation(data: Data, plan: Plan) -> dict:
     non_uk_rate, zero_rate = plan.ablation_rates
     rows = []
     for dropped in [None, *CANDIDATE_FEATURES]:
-        kept = [f for f in FEATURES if f != dropped]
+        kept = [f for f in ALL_FEATURES if f != dropped]
         row = fitter.fit(kept, non_uk_rate=non_uk_rate, zero_rate=zero_rate)
         rows.append({"dropped": dropped, **row})
         _log(f"ablation without {dropped}: {row}")
@@ -248,14 +250,16 @@ def run_learning_curve(data: Data, plan: Plan, features: Sequence[str] = FEATURE
 
 
 def kept_features(ablation: Sequence[Mapping]) -> list[str]:
-    """FEATURES without every feature that hurts: the model without it is better on both measures.
+    """ALL_FEATURES without every feature that hurts: the model without it is better on both measures.
+
+    `features.FEATURES` is set from this (`features.ABLATED_FEATURES`).
 
     `ablation` holds the full model (`dropped` None) and one row per dropped feature, each
     with `validation_deviance` and `uk_spearman`. The Applied Tariff is always kept.
     """
     full = next(row for row in ablation if row["dropped"] is None)
     hurt = {row["dropped"] for row in ablation if row["dropped"] is not None and _hurts(row, full)}
-    return [f for f in FEATURES if f not in hurt or f in ALWAYS_KEPT]
+    return [f for f in ALL_FEATURES if f not in hurt or f in ALWAYS_KEPT]
 
 
 def _hurts(row: Mapping, full: Mapping) -> bool:
@@ -493,7 +497,7 @@ def build(
         "exporter_scope": exporters,
         "zero_sampling_rate": rate,
         "zero_sampling_seed": seed,
-        "features": FEATURES,
+        "features": ALL_FEATURES,
         "proximity_years": fitted_on,
     }
     (out / SETTINGS_FILE).write_text(json.dumps(settings, indent=2), encoding="utf-8")
@@ -521,7 +525,7 @@ def real_data(root: Path | None = None) -> Data:
     root = Path(root or data_dir())
     folder = experiments_dir(root)
     settings = json.loads((folder / SETTINGS_FILE).read_text(encoding="utf-8"))
-    if settings["features"] != FEATURES:
+    if settings["features"] != ALL_FEATURES:
         raise ValueError(f"The experiment rows in {folder} hold other features; rebuild them (`experiments build`)")
     validation_year = settings["validation_year"]
     _check_years([validation_year])
