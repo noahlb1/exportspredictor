@@ -309,3 +309,12 @@ def feature_drift(reference: pl.DataFrame, current: pl.DataFrame, features: list
         )
         .sort("psi", descending=True)
     )
+
+
+if __name__ == "__main__":
+    # Write the model card into the newest artefact folder (a document, not a table: no new version).
+    from exportspredictor import artefacts as store
+    from exportspredictor.paths import artefacts_dir
+
+    folder = store.latest_folder(artefacts_dir())
+    print(write_model_card(store.load(folder), folder))

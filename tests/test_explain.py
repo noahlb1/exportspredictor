@@ -84,3 +84,19 @@ def test_history_holds_the_pairs_actual_exports_by_year(fixture_artefacts):
 def test_unknown_pair_raises(fixture_artefacts, hs6, iso3):
     with pytest.raises(UnknownPair):
         explain_pair(fixture_artefacts, hs6, iso3)
+
+
+def test_global_importance_is_the_mean_absolute_contribution_over_pairs(fixture_artefacts):
+    from exportspredictor.explain import global_importance
+
+    importance = global_importance(fixture_artefacts, sample=None)
+
+    pairs = list(_pairs(fixture_artefacts))
+    expected = {feature: 0.0 for feature in FEATURES}
+    for hs6, iso3 in pairs:
+        for factor in explain_pair(fixture_artefacts, hs6, iso3).factors:
+            expected[factor.feature] += abs(factor.contribution) / len(pairs)
+    got = dict(importance.select("feature", "mean_abs_contribution").iter_rows())
+    assert got == pytest.approx(expected, abs=1e-5)
+    assert importance["mean_abs_contribution"].to_list() == sorted(got.values(), reverse=True)
+    assert importance["pairs"].unique().to_list() == [len(pairs)]

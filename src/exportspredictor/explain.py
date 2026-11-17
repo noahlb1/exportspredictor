@@ -167,3 +167,31 @@ def usd(amount: float) -> str:
 def _market_name(artefacts: Artefacts, iso3: str) -> str:
     found = artefacts.markets.filter(pl.col("iso3") == iso3)
     return found["name"].item(0) if not found.is_empty() else iso3
+
+
+def global_importance(artefacts: Artefacts, *, sample: int | None = 20_000, seed: int = 0) -> pl.DataFrame:
+    """Global feature importance: mean absolute SHAP contribution (log scale) over Baseline pairs.
+
+    Each pair's contributions come from its own fold model, as in `explain_pair`. `sample`
+    limits the work to a random sample of pairs (None: every pair). Returns feature, label
+    (Market-neutral), mean_abs_contribution and pairs, largest first. A feature near zero
+    contributes nothing to any prediction (course: mean |SHAP| supports data minimisation).
+    """
+    rows = artefacts.baseline_features
+    if sample is not None and rows.height > sample:
+        rows = rows.sample(sample, seed=seed)
+    totals = np.zeros(len(FEATURES))
+    for fold, part in rows.group_by("fold"):
+        values = part.select(pl.col(FEATURES).cast(pl.Float32)).to_numpy()
+        matrix = xgb.DMatrix(values, feature_names=FEATURES, missing=np.nan)
+        contributions = artefacts.fold_models[int(fold[0])].predict(matrix, pred_contribs=True)
+        totals += np.abs(contributions[:, : len(FEATURES)]).sum(axis=0)
+    labels = factor_labels("the Market")
+    return pl.DataFrame(
+        {
+            "feature": FEATURES,
+            "label": [labels[f] for f in FEATURES],
+            "mean_abs_contribution": (totals / max(rows.height, 1)).tolist(),
+            "pairs": [rows.height] * len(FEATURES),
+        }
+    ).sort("mean_abs_contribution", descending=True)
