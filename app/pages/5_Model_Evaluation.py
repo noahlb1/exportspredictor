@@ -85,7 +85,8 @@ def _show_lift(lift: dict) -> None:
 
 
 def _effects_table(direction: dict, post_years: list[int]) -> pd.DataFrame:
-    rows = [*direction["by_year"], {**direction["pooled"], "year": _years(post_years)}]
+    pooled = [{**direction["pooled"], "year": _years(post_years)}] if len(post_years) > 1 else []
+    rows = [*direction["by_year"], *pooled]
     return pd.DataFrame(
         [
             {
@@ -106,7 +107,7 @@ def _show_event_backtest(backtest: dict, names: dict[str, str]) -> None:
         st.markdown(f"**{role}{event['title']}**, in force {event['in_force']}")
         st.markdown(event["text"])
         for direction in event["directions"]:
-            controls = ", ".join(names.get(code, code) for code in direction["controls"])
+            controls = "; ".join(names.get(code, code) for code in direction["controls"])
             st.markdown(f"*{direction['label']}*. Control Markets: {controls}.")
             st.dataframe(_effects_table(direction, event["post_years"]), hide_index=True)
         st.caption(
