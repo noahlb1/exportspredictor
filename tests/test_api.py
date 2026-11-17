@@ -88,6 +88,8 @@ def test_by_product_rows_have_the_documented_shape(client):
         "trade_agreement",
         "blocked_effect_usd",
         "blocked_opportunity",
+        "flagged_product",
+        "reexport_hub",
     }
 
 
@@ -318,6 +320,8 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
+        "flagged_product",
+        "reexport_hub",
         "factors",
         "history",
     }
@@ -397,7 +401,7 @@ def test_asking_for_an_excluded_product_returns_404_with_its_reason(client, path
     assert "Excluded Product" in detail and "pipelines" in detail
 
 
-@pytest.mark.parametrize("iso3", ["JPN", "CAN", "IND"])
+@pytest.mark.parametrize("iso3", ["JPN", "CAN", "IND", "HKG"])
 def test_no_ranking_contains_an_excluded_product(client, iso3):
     for rank_by in ("gap", "blocked"):
         body = client.get(f"/opportunities/by-market/{iso3}", params={"rank_by": rank_by}).json()
@@ -413,3 +417,53 @@ def test_product_search_marks_an_excluded_product_rather_than_hiding_it(client):
     assert crude["hs6"] == CRUDE_OIL
     assert crude["excluded"] is True and "pipelines" in crude["exclusion_reason"]
     assert whisky["excluded"] is False and whisky["exclusion_reason"] is None
+
+
+# --- Flagged Products and Re-export Hubs (ADR 0005) -------------------------------------
+
+JEWELLERY, HUB = "711319", "HKG"  # the fixture's Flagged Product and Re-export Hub
+
+
+def _all_rows(client, **params) -> list[dict]:
+    """Every ranking row of both views, over every Market and every Product."""
+    rows = []
+    for iso3 in ("JPN", "CAN", "IND", HUB):
+        rows += [{**row, "iso3": iso3} for row in _ranked(client, f"/opportunities/by-market/{iso3}", **params)]
+    for hs6 in ("220830", JEWELLERY):
+        rows += [{**row, "hs6": hs6} for row in _ranked(client, f"/opportunities/by-product/{hs6}", **params)]
+    return rows
+
+
+def test_every_ranking_row_flags_flagged_products_and_re_export_hubs(client):
+    rows = _all_rows(client)
+
+    for row in rows:
+        assert row["flagged_product"] is (row["hs6"] == JEWELLERY)
+        assert row["reexport_hub"] is (row["iso3"] == HUB)
+    assert any(row["flagged_product"] for row in rows) and any(row["reexport_hub"] for row in rows)
+
+
+def test_hide_filters_are_off_by_default(client):
+    by_market = _ranked(client, f"/opportunities/by-market/{HUB}")
+    by_product = _ranked(client, f"/opportunities/by-product/{JEWELLERY}")
+
+    assert JEWELLERY in {row["hs6"] for row in by_market}
+    assert len(by_market) == 5 and len(by_product) == 4
+    assert by_market == _ranked(client, f"/opportunities/by-market/{HUB}", hide_flagged=False, hide_hubs=False)
+
+
+@pytest.mark.parametrize(("flag", "field"), [("hide_flagged", "flagged_product"), ("hide_hubs", "reexport_hub")])
+def test_each_hide_filter_removes_exactly_the_flagged_rows(client, flag, field):
+    everything = _all_rows(client)
+    shown = _all_rows(client, **{flag: True})
+
+    assert shown == [row for row in everything if not row[field]]
+    assert len(shown) < len(everything)
+
+
+def test_an_explanation_carries_both_flags(client):
+    flagged_hub = client.get(f"/explain/{JEWELLERY}/{HUB}").json()
+    plain = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
+
+    assert (flagged_hub["flagged_product"], flagged_hub["reexport_hub"]) == (True, True)
+    assert (plain["flagged_product"], plain["reexport_hub"]) == (False, False)
