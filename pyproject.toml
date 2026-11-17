@@ -18,6 +18,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "altair>=5.4",
     "cupy-cuda13x[ctk]>=14.2.0",
     "hypothesis>=6.170.15",
     "ipykernel>=6.29",

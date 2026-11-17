@@ -39,7 +39,14 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import baci, backtests, conformal, constraints, evaluation
+from exportspredictor import (
+    baci,
+    backtests,
+    conformal,
+    constraints,
+    evaluation,
+    experiments,
+)
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.exclusions import (
     EXCLUSIONS,
@@ -160,12 +167,14 @@ def build_artefacts(
     seed: int = 0,
     row_budget: int | None = None,
     min_band_rows: int = FIXTURE_MIN_BAND_ROWS,
+    experiment_results: dict | None = None,
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
     `zero_sampling_rate` is the share of other Exporters' Zero Cells kept for training; it
     is recorded in the metadata. `row_budget` overrides the VRAM row budget.
-    `min_band_rows` is the Potential Range's minimum band size.
+    `min_band_rows` is the Potential Range's minimum band size. `experiment_results` (the
+    feature ablation and learning curve, `experiments.run`) are recorded in the metadata.
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
@@ -198,6 +207,7 @@ def build_artefacts(
         "zero_sampling_rate": zero_sampling_rate,
         "uk_zero_sampling_rate": 1.0,
         "zero_sampling_seed": seed,
+        "experiments": experiment_results,
     }
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
@@ -257,7 +267,8 @@ def build_real_artefacts(
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
     Years are read one at a time (`training`), so host memory stays far below 32 GB.
-    Backtest models are cached under the data root (`backtests.cache_dir`).
+    Backtest models are cached under the data root (`backtests.cache_dir`). The saved
+    feature ablation and learning curve (`experiments.save`) are recorded in the metadata.
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -313,6 +324,8 @@ def build_real_artefacts(
         "zero_sampling_rate": settings["zero_sampling_rate"],
         "uk_zero_sampling_rate": settings["uk_zero_sampling_rate"],
         "zero_sampling_seed": settings["zero_sampling_seed"],
+        # The feature ablation and learning curve that chose the features and rates (2022 only).
+        "experiments": experiments.load(root) if experiments.results_path(root).exists() else None,
     }
     test_grid = folder / f"uk_grid_{baseline_year - 1}.parquet"
     report = _evaluate(

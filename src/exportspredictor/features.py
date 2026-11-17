@@ -180,13 +180,40 @@ def training_rows(
         .filter(pl.col("exporter").cast(pl.String) != pl.col("importer").cast(pl.String))
     )
     if rate < 1:
-        threshold = int(rate * 2**64)
-        cells = cells.filter(is_uk | (pl.struct(KEYS).hash(seed) < pl.lit(threshold, pl.UInt64)))
+        cells = cells.filter(is_uk | _zero_cell_kept(rate, seed))
     zeros = cells.join(active, on=KEYS, how="anti").with_columns(
         value_usd=pl.lit(0.0), weight=pl.when(is_uk).then(1.0).otherwise(1.0 / rate)
     )
     rows = pl.concat([active.with_columns(weight=pl.lit(1.0)), zeros.select(*KEYS, "value_usd", "weight")])
     return rows.collect(engine="streaming")
+
+
+def _zero_cell_kept(rate: float, seed: int) -> pl.Expr:
+    """Whether a Zero Cell is in the sample at `rate`: a hash of its keys and `seed` below rate × 2^64.
+
+    A cell kept at one rate is kept at every higher rate, so samples at different rates nest.
+    """
+    return pl.struct(KEYS).hash(seed) < pl.lit(int(rate * 2**64), pl.UInt64)
+
+
+def subsample_zeros(
+    rows: pl.DataFrame, *, built_rate: float, rate: float, seed: int = 0, uk: str = baci.UK
+) -> pl.DataFrame:
+    """Training rows built at zero rate `built_rate`, cut to the rows `training_rows` would keep at `rate`.
+
+    Flows and UK Zero Cells are kept. Other Exporters' Zero Cells are kept by the same hash
+    rule as `training_rows` (same `seed`), and reweighted to 1/`rate`. Samples nest, so this
+    gives exactly the rows a build at `rate` would have written, without rebuilding the
+    features: the learning curve uses it to vary the zero rate below the built one.
+    """
+    if not 0 < rate <= built_rate:
+        raise ValueError(f"The zero rate must be in (0, {built_rate}], the rate the rows were built at; got {rate}")
+    if rate == built_rate:
+        return rows
+    other_zero = (pl.col("value_usd") == 0) & (pl.col("exporter").cast(pl.String) != uk)
+    return rows.filter(~other_zero | _zero_cell_kept(rate, seed)).with_columns(
+        weight=pl.when(other_zero).then(pl.lit(1.0 / rate)).otherwise(pl.col("weight"))
+    )
 
 
 def uk_grid(flows: pl.DataFrame, uk: str, *, pairs: pl.DataFrame | None = None) -> pl.DataFrame:
