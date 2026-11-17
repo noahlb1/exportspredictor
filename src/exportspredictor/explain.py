@@ -23,7 +23,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.features import FEATURES
+from exportspredictor.features import FEATURES, GROWTH_YEARS, REEXPORT_RATIO_CAP
 from exportspredictor.policy import TRADING_BLOCS
 
 _BLOC_NAMES = {"eu": "the EU", "cptpp": "CPTPP", "efta": "EFTA"}
@@ -47,6 +47,8 @@ class Factor:
 class HistoryPoint:
     year: int
     actual_exports_usd: float
+    export_potential_usd: float | None  # Gap Period years only
+    export_gap_usd: float | None  # Gap Period years only
 
 
 @dataclass(frozen=True)
@@ -57,9 +59,11 @@ class Explanation:
     fold: int  # the fold model used: the one that held the pair out and scored its Baseline
     base_value: float  # the model's average log Export Potential (SHAP bias term)
     log_export_potential: float  # base_value + sum of contributions
-    export_potential_usd: float  # exp(log_export_potential): the Baseline Export Potential
+    export_potential_usd: float  # exp(log_export_potential): the Baseline year's Export Potential
     factors: list[Factor]  # every model input, largest absolute contribution first
-    history: list[HistoryPoint]  # UK Actual Exports of the pair by year (non-zero years)
+    # By year: each Gap Period year's Actual Exports, Export Potential and Export Gap, and
+    # earlier years' non-zero Actual Exports
+    history: list[HistoryPoint]
 
 
 def factor_labels(market: str) -> dict[str, str]:
@@ -79,6 +83,9 @@ def factor_labels(market: str) -> dict[str, str]:
         "log_demand_loo": f"How much {market} imports this Product from other countries",
         "high_income_share_loo": f"Share of {market}'s imports of this Product that come from high-income countries",
         "sector": "The Product's Sector (HS2 chapter)",
+        "relatedness": f"How close this Product is to what {_UK} already exports well",
+        "market_import_growth": f"How fast {market}'s imports of this Product are growing",
+        "reexport_ratio": f"How much of this Product {market} re-exports",
         "trade_agreement": f"Trade Agreement between {_UK} and {market}",
         "customs_union": f"Customs Union between {_UK} and {market}",
     }
@@ -131,7 +138,12 @@ def explain_pair(artefacts: Artefacts, hs6: str, iso3: str) -> Explanation:
         log_export_potential=log_potential,
         export_potential_usd=math.exp(log_potential),
         factors=factors,
-        history=[HistoryPoint(int(y), float(v)) for y, v in history.select("year", "actual_exports_usd").iter_rows()],
+        history=[
+            HistoryPoint(int(y), float(actual), potential, gap)
+            for y, actual, potential, gap in history.select(
+                "year", "actual_exports_usd", "export_potential_usd", "export_gap_usd"
+            ).iter_rows()
+        ],
     )
 
 
@@ -153,6 +165,15 @@ def value_text(feature: str, value: float) -> str:
         return f"{value:.0%}"
     if feature == "sector":
         return f"Chapter {int(value):02d}"
+    if feature == "relatedness":
+        return f"{value:.0%} of its related Products are ones {_UK} exports competitively"
+    if feature == "market_import_growth":
+        return f"{math.expm1(value):+.0%} over {GROWTH_YEARS} years"
+    if feature == "reexport_ratio":
+        ratio = math.expm1(value)
+        if ratio >= REEXPORT_RATIO_CAP * 0.999:
+            return f"Exports {REEXPORT_RATIO_CAP:.0f}× or more what it imports from other countries"
+        return f"Exports {ratio:.0%} of what it imports from other countries"
     return "Yes" if value >= 0.5 else "No"
 
 

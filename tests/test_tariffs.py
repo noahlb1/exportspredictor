@@ -217,7 +217,8 @@ def test_a_trade_agreement_entering_force_after_2021_zeroes_the_carried_tariff(f
 
     in_2021 = rates.filter(pl.col("year") == 2021)
     assert (in_2021["applied_tariff"] > 0).any()  # before the agreement, UK goods pay MFN
-    assert rates.filter(pl.col("year") > 2021)["applied_tariff"].to_list() == [0.0] * 15
+    carried_years = rates.filter(pl.col("year") > 2021)["applied_tariff"]
+    assert carried_years.len() > 0 and (carried_years == 0).all()
     # The 2021 MFN rate stays available, so a Scenario can restore it.
     carried = rates.filter(pl.col("year") == 2024).sort("hs6")["mfn_tariff"]
     assert carried.to_list() == in_2021.sort("hs6")["mfn_tariff"].to_list()

@@ -73,26 +73,43 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 Run this before a release, against `podman compose up` with real artefacts. Tick each item.
 
 **UK Exports Predictor (home page)**
-- [ ] The page loads, and the banner states the Baseline year, that it is provisional, and the model version.
+- [ ] The page loads, and the banner states the Baseline year, that it is provisional, that Export Gaps are 2022–2024 averages, and the model version.
 - [ ] Every page has one caption, "Values are nominal US dollars, as reported by BACI", and no page shows a pound sign or a currency switch.
 - [ ] Stop the API (`podman compose stop api`) and reload: every page shows a clear "API is unavailable" message instead of an error. Start it again with `podman compose start api`.
+- [ ] The Leaderboard opens on Home without searching, listing UK Product–Market pairs by Export Gap, largest first, with no Excluded Product (e.g. no crude oil or gold) among them.
+- [ ] On the real artefact (about 1.2 M pairs), the Leaderboard loads, and responds to each filter change, within about a second.
+- [ ] The summary row shows the number of pairs and the total positive Export Gap ("2022–2024 average"); both change with the filters.
+- [ ] Each row shows its Opportunity Type (Expand, New Market or New Product), its Relative Export Gap, whether a UK Trade Agreement is in force, and any Flagged Product or Re-export Hub badge.
+- [ ] Switch "Rank by" to Relative Export Gap: a minimum Export Potential selector appears ($0, $100.0k, $1.0m, $10.0m, $100.0m; default $1.0m), pairs below it disappear, and pairs tied at 100% are ordered by Export Gap.
+- [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
+- [ ] "Excluded Products" under the filters lists each Excluded Product with its reason.
+- [ ] Export the Leaderboard to CSV and open it: the columns and rows match the table on screen.
+- [ ] Click **Why?** on a Leaderboard row: the Why? page opens for that pair and shows its Opportunity Type.
 
 **Product → Markets**
 - [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
-- [ ] Export Potential, Actual Exports and Export Gap appear side by side.
+- [ ] Export Potential, Actual Exports and Export Gap appear side by side, each headed "2022–2024 average".
 - [ ] Search text that matches nothing (e.g. `999999` or `zzz`) shows a clear "No Product matches" warning.
+- [ ] Open "Excluded Products" under the filters: each Excluded Product (e.g. `270900` crude oil, `710812` gold) is listed with its reason. Searching one (e.g. `gold`) marks it "(Excluded Product)", and choosing it shows why it is not ranked instead of a ranking.
 - [ ] Values are in USD: column headers say "(USD, nominal)".
 - [ ] Each row says whether a UK Trade Agreement is in force with the Market (e.g. Japan: Yes, India: No).
 - [ ] The Sector filter narrows the Product search; the region and minimum-Gap filters narrow the ranking.
+- [ ] Search a jewellery Product (e.g. `711319`): every row carries the "Flagged Product" caveat badge, and the Netherlands, Hong Kong and other Re-export Hubs carry "Re-export Hub". "Hide Flagged Products" and "Hide Re-export Hubs" are off by default; ticking one removes exactly those rows.
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
-- [ ] Switch "Rank by" to Blocked Opportunity value: Markets without a Trade Agreement rise to the top, and rows clearing 20% and $1M are flagged.
 
 **Market → Products**
 - [ ] Pick a Market (e.g. Japan): Products are ranked by Export Gap, and the page says whether a UK Trade Agreement is in force with it.
 - [ ] The region filter narrows the Market list; the Sector and minimum-Gap (USD) filters narrow the ranking, and a filter matching nothing says so.
-- [ ] Switch "Rank by" to Blocked Opportunity value for a Market without a UK Trade Agreement (e.g. India): Products are ranked by that value; for a Market with one (e.g. Japan) every value is 0.
 - [ ] Values are in USD: column headers say "(USD, nominal)".
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
+
+**Blocked Opportunities**
+- [ ] Open Blocked Opportunities from the sidebar: every UK pair is ranked by Blocked Opportunity value, largest first, with no "Rank by" toggle; the Leaderboard and ranking pages no longer offer that order.
+- [ ] Pairs with a Market that has a UK Trade Agreement in force (e.g. Japan) have a value of 0; rows clearing 20% and $1M are marked as Blocked Opportunities.
+- [ ] The summary shows the number of pairs, the number of Blocked Opportunities and their total value; all three change with the filters.
+- [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
+- [ ] Every caption describes the value as what the model associates with adding a Trade Agreement, not as a cause or a forecast.
+- [ ] Export the table to CSV and open it: the columns and rows match the table on screen.
 
 **Scenarios**
 - [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds, and the summary shows the total change, the change per Market and the top Products gaining, phrased as associations.
@@ -105,8 +122,9 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 **Why?**
 - [ ] On **Product → Markets** and **Market → Products**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
 - [ ] The factors are described in plain words (no raw feature names), each marked as raising or lowering Export Potential, phrased as associations.
-- [ ] The UK's Actual Exports for the last six years are shown, with 0 for years with none.
+- [ ] A year-by-year table shows the last six years' UK Actual Exports (0 for years with none) and, for 2022–2024, each year's Export Potential and Export Gap; the three yearly gaps average to the Export Gap shown above it.
 - [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.
+- [ ] Open Why? for a Flagged Product or a Re-export Hub (e.g. `711319` to Hong Kong): its caveats are shown under the heading.
 
 **Model Evaluation**
 - [ ] The plain-English accuracy headline renders, green if the model beats the naive baseline and amber with a plain warning if it does not, with the test year and the non-UK training sample stated below it.

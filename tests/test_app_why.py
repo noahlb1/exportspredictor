@@ -74,6 +74,25 @@ def test_why_page_shows_actual_exports_history_for_every_recent_year(monkeypatch
     assert "Actual Exports (USD, nominal)" in history.columns
 
 
+def test_why_page_shows_each_gap_period_years_export_potential_and_gap(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+    body = httpx.get(f"{api_url}/explain/220830/JPN").json()
+
+    history = page.dataframe[1].value
+    assert list(history.columns) == [
+        "Year",
+        "Export Potential (USD, nominal)",
+        "Actual Exports (USD, nominal)",
+        "Export Gap (USD, nominal)",
+    ]
+    gap_years = history[history["Year"] >= 2022]
+    assert list(gap_years["Year"]) == [2022, 2023, 2024]
+    assert gap_years["Export Gap (USD, nominal)"].mean() == pytest.approx(body["export_gap_usd"])
+    assert history[history["Year"] < 2022]["Export Gap (USD, nominal)"].isna().all()
+    text = " ".join(m.value for m in page.markdown) + " ".join(c.value for c in page.caption)
+    assert "2022–2024 average" in text
+
+
 def test_why_page_phrases_results_as_associations(monkeypatch, api_url):
     page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
 
@@ -132,3 +151,19 @@ def test_why_page_writes_values_in_dollars(monkeypatch, api_url):
 
     assert any(re.search(r"Export Potential \*\*\$[0-9,.]+(bn|m|k)?\*\*", m.value) for m in page.markdown)
     assert "Actual Exports (USD, nominal)" in page.dataframe[1].value.columns
+
+
+def test_why_page_shows_the_caveats_of_a_flagged_product_in_a_re_export_hub(monkeypatch, api_url):
+    flagged = _why(monkeypatch, api_url, hs6="711319", iso3="HKG")
+    plain = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    assert not flagged.exception
+    caveats = " ".join(w.value for w in flagged.warning)
+    assert "Flagged Product" in caveats and "Re-export Hub" in caveats
+    assert not any("Flagged Product" in w.value or "Re-export Hub" in w.value for w in plain.warning)
+
+
+def test_why_page_shows_the_pairs_opportunity_type(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    assert any("Opportunity Type: **Expand**" in element.value for element in page.markdown)

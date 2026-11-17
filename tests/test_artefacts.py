@@ -91,3 +91,9 @@ def test_load_refuses_a_format_2_folder_missing_a_table(fixture_artefacts, tmp_p
 
     with pytest.raises(store.UnreadableArtefacts, match="history"):
         store.load(folder)
+
+
+def test_excluded_products_round_trip(fixture_artefacts, tmp_path):
+    loaded = store.load(store.save(fixture_artefacts, tmp_path))
+
+    assert loaded.excluded_products.equals(fixture_artefacts.excluded_products)

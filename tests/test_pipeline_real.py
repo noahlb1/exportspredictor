@@ -1,5 +1,7 @@
 """The real-data training run, on a tiny data root laid out like the derived tables (CPU, seconds)."""
 
+import json
+
 import polars as pl
 import pytest
 
@@ -21,7 +23,7 @@ def trained(derived_data_root):
 def test_baseline_covers_every_uk_product_market_pair_of_the_baseline_year(trained, derived_data_root):
     grid = pl.read_parquet(features.features_dir(derived_data_root) / "uk_grid_2024.parquet")
 
-    assert trained.baseline.height == grid.height == 5 * 3
+    assert trained.baseline.height == grid.height == 5 * 4
     assert trained.baseline.select("hs6", "iso3").is_duplicated().sum() == 0
     assert trained.baseline.schema["hs6"] == pl.String
     assert (trained.baseline["export_potential_usd"] > 0).all()
@@ -65,7 +67,7 @@ def test_the_real_run_evaluates_on_the_test_year(trained):
     assert report["test_year"] == 2023
     assert report["test_training_years"] == [2021, 2022]
     assert report["non_uk_sampling_rate"] == 0.5
-    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 3
+    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 4
     assert report["headline"]["text"]
 
 
@@ -116,3 +118,35 @@ def test_backtests_are_added_to_the_newest_evaluated_artefact_with_cached_models
         )
     )
     assert again.evaluation["lift"]["lift"] == result.evaluation["lift"]["lift"]
+
+
+def test_baseline_and_history_hold_no_excluded_product(trained):
+    assert "270900" not in set(trained.baseline["hs6"]) | set(trained.history["hs6"])
+    assert trained.excluded_products["hs6"].to_list() == ["270900"]
+
+
+def test_feature_files_built_without_the_exclusions_are_refused(derived_data_root):
+    folder = features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
+    settings = json.loads((folder / "features.json").read_text())
+    del settings["excluded_products"]  # as v1's feature build wrote it
+    (folder / "features.json").write_text(json.dumps(settings))
+
+    with pytest.raises(ValueError, match="rebuild"):
+        pipeline.build_real_artefacts(derived_data_root, configs=CONFIGS, device="cpu", max_rounds=30)
+
+
+def test_feature_files_built_without_the_gap_period_union_are_refused(derived_data_root):
+    folder = features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
+    settings = json.loads((folder / "features.json").read_text())
+    del settings["gap_years"]  # grids built one year at a time, as before the Gap Period
+    (folder / "features.json").write_text(json.dumps(settings))
+
+    with pytest.raises(ValueError, match="Gap Period"):
+        pipeline.build_real_artefacts(derived_data_root, configs=CONFIGS, device="cpu", max_rounds=30)
+
+
+def test_the_real_run_scores_every_gap_period_year(trained):
+    assert trained.metadata["gap_years"] == [2022, 2024]
+    gap_rows = trained.history.filter(pl.col("year") >= 2022)
+    assert gap_rows.height == trained.baseline.height * 3
+    assert gap_rows["export_gap_usd"].is_not_null().all()

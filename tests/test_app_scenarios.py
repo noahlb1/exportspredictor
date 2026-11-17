@@ -72,21 +72,6 @@ def test_a_scenario_that_changes_nothing_says_so(monkeypatch, api_url):
     assert not page.dataframe
 
 
-def test_product_to_markets_can_rank_by_blocked_opportunity_value(monkeypatch, api_url):
-    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(PRODUCT_TO_MARKETS), default_timeout=30)
-    page.run()
-    page.text_input(key="product_query").input("220830").run()
-
-    page.radio(key="rank_by").set_value("blocked").run()
-
-    assert not page.exception
-    table = page.dataframe[0].value
-    assert next(iter(table["Market"])) == "India"
-    values = list(table["Blocked Opportunity value (USD, nominal)"])
-    assert values == sorted(values, reverse=True)
-
-
 def test_the_scenarios_page_states_the_event_backtest_result(monkeypatch, api_url, fixture_artefacts):
     page = _scenarios_page(monkeypatch, api_url)
 

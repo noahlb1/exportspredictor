@@ -7,7 +7,8 @@ records the fold it held out (`held_out_fold` attribute), and scoring returns ea
 `fold`, so Scenarios and explanations can use the same model as the Baseline.
 
 Training data comes in chunks (one feature table per year, see `training`), so the real
-~165 M rows never sit in memory at once.
+rows never sit in host memory at once. UK rows, Zero Cells included, are never sampled
+(ADR 0004), so fold model k trains on every UK pair outside fold k, zeros and all.
 """
 
 import hashlib
@@ -68,7 +69,7 @@ def train_fold_models(
     for k in range(n_folds):
         keep = outside_fold(uk, n_folds, k)
         prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed, keep=keep)
-        matrix = training_matrix(chunks, prepare)
+        matrix = training_matrix(chunks, prepare, device=device)
         model = xgb.train(model_params(params, device=device, seed=seed), matrix, num_boost_round=rounds)
         del matrix
         model.set_param({"device": "cpu"})

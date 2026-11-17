@@ -1,6 +1,7 @@
 """A tiny, deterministic synthetic world for tests, the fixture-mode notebook and local development.
 
-The world has 4 Exporters (including the UK), 3 Markets, 5 Products and 4 years.
+The world has 4 Exporters (including the UK), 4 Markets (one a Re-export Hub), 5 Products
+(one a Flagged Product, plus one Excluded Product) and 4 years.
 Flows follow a gravity-like rule: Exporter and Importer size, the Exporter's strength in
 the Product, and a positive association with a Trade Agreement, plus noise and some zeros.
 The UK–Japan Trade Agreement switches on part-way through, so the world contains a
@@ -16,7 +17,7 @@ import numpy as np
 import polars as pl
 
 from exportspredictor import tariffs
-from exportspredictor.features import Sources
+from exportspredictor.features import Sources, fit_proximity
 
 UK = "GBR"
 
@@ -25,15 +26,22 @@ MARKETS = {
     "JPN": ("Japan", "East Asia & Pacific", 1.2),
     "CAN": ("Canada", "North America", 0.9),
     "IND": ("India", "South Asia", 1.0),
+    "HKG": ("Hong Kong", "East Asia & Pacific", 0.8),  # a Re-export Hub
 }
 PRODUCTS = {
-    "030420": "Fish fillets, frozen",
+    "711319": "Articles of jewellery and parts thereof, of precious metal other than silver",  # a Flagged Product
     "220830": "Whiskies",
     "300490": "Medicaments, packaged for retail sale, n.e.s.",
     "851712": "Telephones for cellular networks or other wireless networks",
     "870323": "Motor cars, spark-ignition engine of 1,500-3,000 cc",
 }
 YEARS = [2021, 2022, 2023, 2024]
+# Proximity is fitted before the fixture's validation year (2022), as on real data.
+PROXIMITY_YEARS = [2021]
+# Large, so that leaving it out of the totals would visibly move other Products' RCA.
+_HUB = "HKG"
+EXCLUDED_PRODUCT = ("270900", "Petroleum oils and oils obtained from bituminous minerals; crude")
+_EXCLUDED_SCALE = 10.0
 
 # Trade Agreements in force, as (Exporter, Importer) -> first year in force.
 _AGREEMENTS = {
@@ -47,9 +55,10 @@ _AGREEMENTS = {
 }
 # MFN rates (percent) each Market applied in 2021, the last TRAINS year, per Product.
 _MFN_2021 = {
-    "JPN": {"030420": 3.5, "220830": 2.0, "300490": 1.0, "851712": 4.0, "870323": 6.0},
-    "CAN": {"030420": 1.0, "220830": 3.0, "300490": 2.0, "851712": 0.0, "870323": 6.1},
-    "IND": {"030420": 30.0, "220830": 150.0, "300490": 10.0, "851712": 20.0, "870323": 60.0},
+    "JPN": {"711319": 5.2, "220830": 2.0, "300490": 1.0, "851712": 4.0, "870323": 6.0, "270900": 0.0},
+    "CAN": {"711319": 8.5, "220830": 3.0, "300490": 2.0, "851712": 0.0, "870323": 6.1, "270900": 0.0},
+    "IND": {"711319": 20.0, "220830": 150.0, "300490": 10.0, "851712": 20.0, "870323": 60.0, "270900": 5.0},
+    "HKG": {"711319": 0.0, "220830": 0.0, "300490": 0.0, "851712": 0.0, "870323": 0.0, "270900": 0.0},  # a free port
 }
 # 2021 preferences, as TRAINS lists them: Market -> WITS partner codes granted 0%.
 # A36 and N04 are EU groups, which expand to the EU's members (here DEU and FRA).
@@ -60,18 +69,21 @@ _ZERO_SHARE = 0.1
 
 # Trading Bloc memberships in the fixture window (UK left the EU before 2021, joins CPTPP in 2025).
 _BLOCS = {"DEU": "eu", "FRA": "eu", "JPN": "cptpp", "CAN": "cptpp"}
-_HIGH_INCOME = frozenset({"GBR", "DEU", "FRA", "USA", "JPN", "CAN"})
+_HIGH_INCOME = frozenset({"GBR", "DEU", "FRA", "USA", "JPN", "CAN", "HKG"})
 # Population (millions) and distance (km) from the Exporter to each Market, rounded.
-_POPULATION = {"GBR": 67, "DEU": 83, "FRA": 68, "USA": 333, "JPN": 125, "CAN": 38, "IND": 1400}
+_POPULATION = {"GBR": 67, "DEU": 83, "FRA": 68, "USA": 333, "JPN": 125, "CAN": 38, "IND": 1400, "HKG": 7}
 _DISTANCE = {
-    "GBR": {"JPN": 9560, "CAN": 5370, "IND": 6700},
-    "DEU": {"JPN": 9100, "CAN": 6100, "IND": 6200},
-    "FRA": {"JPN": 9700, "CAN": 5650, "IND": 6600},
-    "USA": {"JPN": 10900, "CAN": 730, "IND": 12000},
+    "GBR": {"JPN": 9560, "CAN": 5370, "IND": 6700, "HKG": 9620},
+    "DEU": {"JPN": 9100, "CAN": 6100, "IND": 6200, "HKG": 9150},
+    "FRA": {"JPN": 9700, "CAN": 5650, "IND": 6600, "HKG": 9600},
+    "USA": {"JPN": 10900, "CAN": 730, "IND": 12000, "HKG": 12900},
 }
 _CONTIGUOUS = {("USA", "CAN")}
-_COMMON_LANGUAGE = {("GBR", "CAN"), ("GBR", "IND"), ("USA", "CAN"), ("USA", "IND"), ("FRA", "CAN")}
-_COLONIAL_TIE = {("GBR", "CAN"), ("GBR", "IND"), ("FRA", "CAN")}
+_COMMON_LANGUAGE = {
+    ("GBR", "CAN"), ("GBR", "IND"), ("USA", "CAN"), ("USA", "IND"), ("FRA", "CAN"),
+    ("GBR", "HKG"), ("USA", "HKG"),
+}
+_COLONIAL_TIE = {("GBR", "CAN"), ("GBR", "IND"), ("FRA", "CAN"), ("GBR", "HKG")}
 
 
 @dataclass(frozen=True)
@@ -97,6 +109,7 @@ class World:
             country_year=self.country_year,
             pairs=self.pairs,
             high_income=self.high_income,
+            proximity=fit_proximity(self.flows, PROXIMITY_YEARS),
         )
 
 
@@ -108,10 +121,13 @@ def build_world(seed: int = 0) -> World:
     }
     product_scale = {hs6: rng.normal(8.0, 0.5) for hs6 in PRODUCTS}
 
+    # The Re-export Hub was added later; its Flows have their own stream, so the others are unchanged.
+    hub_rng = np.random.default_rng([seed, 2])
     policy_rows, flow_rows = [], []
     for exporter, exporter_size in EXPORTERS.items():
         for importer, (_, _, importer_size) in MARKETS.items():
             start = _AGREEMENTS.get((exporter, importer))
+            draw = hub_rng if importer == _HUB else rng
             for year in YEARS:
                 agreement = int(start is not None and year >= start)
                 policy_rows.append((exporter, importer, year, agreement))
@@ -122,11 +138,12 @@ def build_world(seed: int = 0) -> World:
                         + importer_size
                         + strength[(exporter, hs6)]
                         + _AGREEMENT_EFFECT * agreement
-                        + rng.normal(0.0, 0.3)
+                        + draw.normal(0.0, 0.3)
                     )
-                    is_zero = rng.random() < _ZERO_SHARE
+                    is_zero = draw.random() < _ZERO_SHARE
                     value = 0.0 if is_zero else round(float(np.exp(log_value)), 2)
                     flow_rows.append((exporter, importer, hs6, year, value))
+    flow_rows += _excluded_product_flows(seed)
 
     flows = pl.DataFrame(
         flow_rows,
@@ -151,9 +168,9 @@ def build_world(seed: int = 0) -> World:
     ).with_columns(customs_union=pl.lit(0, pl.Int8))  # no fixture pair shares a Customs Union
     products = pl.DataFrame(
         {
-            "hs6": list(PRODUCTS),
-            "description": list(PRODUCTS.values()),
-            "sector": [hs6[:2] for hs6 in PRODUCTS],
+            "hs6": [*PRODUCTS, EXCLUDED_PRODUCT[0]],
+            "description": [*PRODUCTS.values(), EXCLUDED_PRODUCT[1]],
+            "sector": [hs6[:2] for hs6 in [*PRODUCTS, EXCLUDED_PRODUCT[0]]],
         }
     )
     markets = pl.DataFrame(
@@ -188,6 +205,21 @@ def _tariffs() -> tariffs.Tariffs:
     raw = pl.DataFrame(rows, schema=tariffs.RAW_SCHEMA, orient="row")
     no_concordance = pl.DataFrame(schema={"nomenclature": pl.String, "product": pl.String, "hs6": pl.String})
     return tariffs.panel(raw, no_concordance, _WITS_CODES, YEARS)
+
+
+def _excluded_product_flows(seed: int) -> list[tuple]:
+    """Crude oil Flows from every Exporter to every Market, from their own random stream."""
+    rng = np.random.default_rng([seed, 1])
+    hs6 = EXCLUDED_PRODUCT[0]
+    strength = {exporter: rng.normal(0.0, 1.0) for exporter in EXPORTERS}
+    return [
+        (exporter, importer, hs6, year, round(float(np.exp(
+            _EXCLUDED_SCALE + exporter_size + importer_size + strength[exporter] + rng.normal(0.0, 0.3)
+        )), 2))
+        for exporter, exporter_size in EXPORTERS.items()
+        for importer, (_, _, importer_size) in MARKETS.items()
+        for year in YEARS
+    ]
 
 
 def _blocs() -> pl.DataFrame:

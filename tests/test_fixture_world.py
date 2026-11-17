@@ -3,6 +3,11 @@
 import polars as pl
 from polars.testing import assert_frame_equal
 
+from exportspredictor.exclusions import (
+    REEXPORT_HUBS,
+    exclusion_reason,
+    is_flagged_product,
+)
 from exportspredictor.fixture import UK, build_world
 
 
@@ -11,11 +16,11 @@ def test_world_has_the_spec_dimensions():
 
     assert world.flows["exporter"].n_unique() == 4
     assert UK in world.flows["exporter"].unique().to_list()
-    assert world.flows["hs6"].n_unique() == 5
-    assert world.flows["importer"].n_unique() == 3
+    assert world.flows["hs6"].n_unique() == 6
+    assert world.flows["importer"].n_unique() == 4
     assert world.flows["year"].n_unique() == 4
-    assert world.products.height == 5
-    assert world.markets.height == 3
+    assert world.products.height == 6
+    assert world.markets.height == 4
 
 
 def test_world_is_deterministic():
@@ -53,3 +58,16 @@ def test_world_carries_every_feature_source_for_its_countries():
     assert {"trade_agreement", "customs_union"} <= set(world.policy.columns)
     assert {"iso3", "year", "eu", "cptpp", "efta"} == set(world.blocs.columns)
     assert world.high_income <= countries
+
+
+def test_world_has_exactly_one_excluded_product():
+    world = build_world()
+
+    assert [hs6 for hs6 in world.products["hs6"] if exclusion_reason(hs6)] == ["270900"]
+
+
+def test_world_has_a_flagged_product_and_a_re_export_hub():
+    world = build_world()
+
+    assert [hs6 for hs6 in world.products["hs6"] if is_flagged_product(hs6)] == ["711319"]
+    assert [iso3 for iso3 in world.markets["iso3"] if iso3 in REEXPORT_HUBS] == ["HKG"]

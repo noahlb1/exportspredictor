@@ -65,6 +65,15 @@ def test_the_write_up_covers_governance():
         assert topic in text, topic
 
 
+
+def test_the_training_section_explains_the_gap_period_and_why_2020_and_2021_are_left_out():
+    training = next(cells for heading, cells in _sections() if heading.startswith("## 5."))
+    text = " ".join(cell.source for cell in training if cell.cell_type == "markdown")
+
+    assert "### The Baseline table and the Gap Period" in text
+    assert "2022–2024" in text
+    assert "2020 and 2021 are left out" in text and "COVID" in text and "Brexit" in text
+
 def test_notebook_imports_from_the_package():
     assert any("from exportspredictor" in source for source in _code_cells())
 
@@ -77,4 +86,4 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
 
     loaded = store.load_latest(tmp_path)
     assert loaded.metadata["source"] == "fixture"
-    assert loaded.baseline.height == 15
+    assert loaded.baseline.height == 20

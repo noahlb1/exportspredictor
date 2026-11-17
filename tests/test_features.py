@@ -14,6 +14,7 @@ from exportspredictor.features import (
     SUPPLY_FEATURES,
     FeatureTransform,
     build_features,
+    grid_pairs,
     training_rows,
     uk_grid,
 )
@@ -23,6 +24,7 @@ YEAR = 2023
 WHISKY = "220830"
 TARGET = (UK, "JPN", WHISKY)  # UK whisky to Japan
 OTHER_MARKET = "CAN"
+CRUDE_OIL = "270900"  # the fixture world's Excluded Product (Sector 27)
 
 
 @pytest.fixture
@@ -62,7 +64,10 @@ def _features_for(world, flows, keys: list[tuple]) -> pl.DataFrame:
 
 
 def _same(before: pl.DataFrame, after: pl.DataFrame, row: int, names) -> bool:
-    return all(before[n][row] == pytest.approx(after[n][row], rel=1e-6, nan_ok=True) for n in names)
+    def close(a, b) -> bool:  # missing (None) only matches missing
+        return a == b if a is None or b is None else a == pytest.approx(b, rel=1e-6, nan_ok=True)
+
+    return all(close(before[n][row], after[n][row]) for n in names)
 
 
 # --- Leave-one-out supply and demand ----------------------------------------------------
@@ -92,7 +97,10 @@ def test_no_feature_is_built_from_the_pairs_trade_in_other_products(world):
     """Moving the UK's other-Product exports from Japan to Canada leaves UK–Japan whisky unchanged.
 
     A feature such as total bilateral trade would move with that shift. Every feature here
-    depends only on the target Product, the two countries, the year and policy.
+    depends only on the target Product, the two countries, the year and policy. Relatedness
+    is the exception by design: it reads what the UK exports to every *other* Market, which
+    this move changes, while it never reads Japan's Flows at all (see
+    test_relatedness_and_market_trends.py), so it cannot carry the pair's trade either.
     """
     moves = {}
     for hs6 in sorted(set(world.products["hs6"]) - {WHISKY}):
@@ -104,24 +112,24 @@ def test_no_feature_is_built_from_the_pairs_trade_in_other_products(world):
     before = _features_for(world, world.flows, [TARGET])
     after = _features_for(world, _set_flows(world.flows, moves), [TARGET])
 
-    assert _same(before, after, 0, FEATURES)
+    assert _same(before, after, 0, [f for f in FEATURES if f != "relatedness"])
 
 
 # --- Training rows: non-zero Flows plus sampled relevant zeros ----------------------------
 
-FISH = "030420"
+JEWELLERY = "711319"
 
 
 def _world_with_an_irrelevant_product(world) -> pl.DataFrame:
-    """The USA stops exporting fish in 2023, so its fish cells that year are not relevant zeros."""
-    usa_fish = (pl.col("exporter") == "USA") & (pl.col("hs6") == FISH) & (pl.col("year") == YEAR)
-    return world.flows.with_columns(value_usd=pl.when(usa_fish).then(0.0).otherwise("value_usd"))
+    """The USA stops exporting jewellery in 2023, so its jewellery cells that year are not relevant zeros."""
+    usa_jewellery = (pl.col("exporter") == "USA") & (pl.col("hs6") == JEWELLERY) & (pl.col("year") == YEAR)
+    return world.flows.with_columns(value_usd=pl.when(usa_jewellery).then(0.0).otherwise("value_usd"))
 
 
 def _relevant_zero_cells(flows: pl.DataFrame) -> set[tuple]:
     """Worked out cell by cell: the Exporter exports the Product to someone and the Importer
-    imports it from someone that year, but not from each other."""
-    active = {(e, i, k, y) for e, i, k, y, v in flows.iter_rows() if v > 0}
+    imports it from someone that year, but not from each other. Excluded Products have none."""
+    active = {(e, i, k, y) for e, i, k, y, v in flows.iter_rows() if v > 0 and k != CRUDE_OIL}
     exports = {(e, k, y) for e, _, k, y in active}
     imports = {(i, k, y) for _, i, k, y in active}
     exporters = {e for e, *_ in exports}
@@ -137,7 +145,7 @@ def _relevant_zero_cells(flows: pl.DataFrame) -> set[tuple]:
 
 def test_training_rows_keep_every_non_zero_flow_with_weight_one(world):
     rows = training_rows(world.flows, rate=0.5, seed=0)
-    non_zero = world.flows.filter(pl.col("value_usd") > 0)
+    non_zero = world.flows.filter((pl.col("value_usd") > 0) & (pl.col("hs6") != CRUDE_OIL))
 
     kept = rows.filter(pl.col("value_usd") > 0)
     assert kept.height == non_zero.height
@@ -148,15 +156,16 @@ def test_training_rows_keep_every_non_zero_flow_with_weight_one(world):
 def test_sampled_zeros_are_only_relevant_zeros_with_weight_one_over_rate(world):
     flows = _world_with_an_irrelevant_product(world)
     relevant = _relevant_zero_cells(flows)
-    irrelevant_usa_fish = {("USA", i, FISH, YEAR) for i in ["JPN", "CAN", "IND"]}
-    assert not (irrelevant_usa_fish & relevant)  # the test world has irrelevant zeros
+    irrelevant_usa_jewellery = {("USA", i, JEWELLERY, YEAR) for i in ["JPN", "CAN", "IND", "HKG"]}
+    assert not (irrelevant_usa_jewellery & relevant)  # the test world has irrelevant zeros
 
     zeros = training_rows(flows, rate=1.0, seed=0).filter(pl.col("value_usd") == 0)
 
     assert set(zeros.select(KEYS).iter_rows()) == relevant  # rate 1 keeps every relevant zero
     sampled = training_rows(flows, rate=0.25, seed=3).filter(pl.col("value_usd") == 0)
     assert set(sampled.select(KEYS).iter_rows()) <= relevant
-    assert (sampled["weight"] == 4.0).all()
+    # Other Exporters' zeros carry 1/rate; UK Zero Cells are never sampled (test_training_scope).
+    assert (sampled.filter(pl.col("exporter") != UK)["weight"] == 4.0).all()
 
 
 def test_zero_weights_reproduce_the_number_of_relevant_zeros_on_average(world):
@@ -190,11 +199,31 @@ def test_uk_grid_has_every_product_and_market_with_actual_exports(world):
 
     grid = uk_grid(flows, UK)
 
-    assert grid.height == 5 * 3  # 5 Products x 3 Markets, the UK never its own Market
+    # 5 Products x 4 Markets: the UK is never its own Market, and crude oil is excluded.
+    assert grid.height == 5 * 4
     assert set(grid["exporter"]) == {UK}
     assert grid.select("importer", "hs6").is_duplicated().sum() == 0
     assert grid.filter(_is(*TARGET))["value_usd"][0] == _value(flows, *TARGET)
 
+
+
+def test_the_gap_period_grid_scores_a_pair_in_a_year_its_product_was_not_traded(world):
+    # Nobody trades whisky in 2023: the plain 2023 grid has no whisky row, but the Gap
+    # Period scores the union of its years' pairs in every year, with $0 Actual Exports.
+    flows = world.flows.filter(pl.col("year").is_between(2022, 2023))
+    no_whisky_2023 = flows.filter(~((pl.col("year") == YEAR) & (pl.col("hs6") == WHISKY)))
+    years = {y: no_whisky_2023.filter(pl.col("year") == y) for y in (2022, YEAR)}
+    assert WHISKY not in set(uk_grid(years[YEAR], UK)["hs6"])
+
+    pairs = grid_pairs(uk_grid(year_flows, UK) for year_flows in years.values())
+    grid = uk_grid(years[YEAR], UK, pairs=pairs)
+
+    assert pairs.height == grid.height == 5 * 4
+    whisky = build_features(grid, years[YEAR], world.sources).filter(pl.col("hs6") == WHISKY)
+    assert whisky.height == 4
+    assert (whisky["value_usd"] == 0).all()
+    assert (whisky["log_supply_loo"] == 0).all()
+    assert whisky["log_gdp_d"].is_not_null().all()
 
 # --- Transforms are fitted on training years only -----------------------------------------
 
@@ -235,3 +264,49 @@ def test_transform_round_trips_through_metadata(world):
     fitted = FeatureTransform.fit(_all_year_features(world, world.flows), TRAINING_YEARS)
 
     assert FeatureTransform.from_dict(fitted.to_dict()) == fitted
+
+
+# --- Excluded Products: dropped as rows, still counted in totals (ADR 0005) ---------------
+
+
+def test_the_fixture_world_trades_an_excluded_product(world):
+    assert world.flows.filter((pl.col("hs6") == CRUDE_OIL) & (pl.col("value_usd") > 0)).height > 0
+
+
+def test_excluded_products_appear_in_no_training_row_and_no_uk_grid_row(world):
+    rows = training_rows(world.flows, rate=1.0)
+    grid = uk_grid(world.flows, UK)
+
+    assert CRUDE_OIL not in set(rows["hs6"])
+    assert CRUDE_OIL not in set(grid["hs6"])
+    assert rows.filter(pl.col("value_usd") > 0).height == world.flows.filter(
+        (pl.col("value_usd") > 0) & (pl.col("hs6") != CRUDE_OIL)
+    ).height
+
+
+def test_rca_and_aggregates_of_other_products_are_unchanged_by_the_exclusion(world):
+    """Features of a non-Excluded row are what they would be with every Product as a row,
+    because the totals (Exporter total, world totals in RCA, supply and demand) still count
+    the Excluded Product's Flows."""
+    year_flows = world.flows.filter(pl.col("year") == YEAR)
+    built = build_features(training_rows(year_flows, rate=1.0), year_flows, world.sources).filter(_is(*TARGET))
+    without_exclusion = _features_for(world, world.flows, [TARGET])
+
+    assert _same(built, without_exclusion, 0, FEATURES)
+    # Crude oil really is in the totals: dropping its Flows would move the UK's whisky RCA.
+    no_crude = world.flows.filter(pl.col("hs6") != CRUDE_OIL)
+    assert not _same(without_exclusion, _features_for(world, no_crude, [TARGET]), 0, ["rca_loo"])
+
+
+# --- Flagged Products and Re-export Hubs: trained and scored as normal (ADR 0005) ----------
+
+JEWELLERY_HUB = (UK, "HKG", JEWELLERY)
+
+
+def test_training_rows_and_the_uk_grid_keep_flagged_products_and_re_export_hubs(world):
+    rows = training_rows(world.flows, rate=1.0)
+    grid = uk_grid(world.flows, UK)
+
+    assert JEWELLERY in set(rows["hs6"]) and "HKG" in set(rows["importer"])
+    assert rows.filter(_is(*JEWELLERY_HUB)).height == world.flows.filter(_is(*JEWELLERY_HUB)).height
+    assert grid.filter(_is(*JEWELLERY_HUB)).height == 1

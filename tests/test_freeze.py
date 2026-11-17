@@ -78,7 +78,7 @@ def test_the_uk_grid_covers_every_pair_each_scored_by_the_fold_model_that_held_i
     grid = _table(frozen, "uk_grid")
     pairs = v1.test_grid.select(pl.col("hs6").cast(pl.String), iso3=pl.col("importer").cast(pl.String))
 
-    assert grid.height == pairs.height == 5 * 3
+    assert grid.height == pairs.height == 5 * 4
     assert grid.select("hs6", "iso3").sort("hs6", "iso3").equals(pairs.sort("hs6", "iso3"))
     expected_folds = assign_folds(grid.select("hs6", "iso3"))["fold"]
     assert (grid["fold"] == expected_folds).all()

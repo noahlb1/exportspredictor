@@ -59,8 +59,8 @@ def test_page_shows_markets_ranked_by_export_gap(monkeypatch, api_url):
 
     assert not page.exception
     table = page.dataframe[0].value
-    assert list(table["Market"]) and set(table["Market"]) == {"Japan", "Canada", "India"}
-    gaps = list(table["Export Gap (USD, nominal)"])
+    assert list(table["Market"]) and set(table["Market"]) == {"Japan", "Canada", "India", "Hong Kong"}
+    gaps = list(table["Export Gap, 2022–2024 average (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
 
 
@@ -69,6 +69,18 @@ def test_page_shows_baseline_year_banner(monkeypatch, api_url):
 
     banner = " ".join(element.value for element in page.info)
     assert "2024" in banner and "provisional" in banner
+    assert "Export Gaps are 2022–2024 averages" in banner
+
+
+@pytest.mark.parametrize("market_page", [False, True], ids=["product", "market"])
+def test_ranking_values_are_labelled_as_gap_period_averages(monkeypatch, api_url, market_page):
+    page = _market_page(monkeypatch, api_url, "JPN") if market_page else _run_page(monkeypatch, api_url, "220830")
+
+    columns = list(page.dataframe[0].value.columns)
+    for value in ("Export Potential", "Actual Exports", "Export Gap"):
+        assert f"{value}, 2022–2024 average (USD, nominal)" in columns
+    # The Blocked Opportunity value is a 2024 Scenario Effect, not an average.
+    assert "Blocked Opportunity value (USD, nominal)" in columns
 
 
 def test_searching_by_everyday_words_finds_the_product(monkeypatch, api_url):
@@ -125,8 +137,8 @@ def test_market_page_ranks_products_by_export_gap(monkeypatch, api_url):
     assert not page.exception
     assert any("Japan" in element.value for element in page.subheader)
     table = page.dataframe[0].value
-    assert set(table["HS6"]) == {"030420", "220830", "300490", "851712", "870323"}
-    gaps = list(table["Export Gap (USD, nominal)"])
+    assert set(table["HS6"]) == {"711319", "220830", "300490", "851712", "870323"}
+    gaps = list(table["Export Gap, 2022–2024 average (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
 
 
@@ -144,6 +156,7 @@ def test_product_page_shows_which_markets_have_a_uk_trade_agreement(monkeypatch,
         "Japan": "Yes",
         "Canada": "Yes",
         "India": "No",
+        "Hong Kong": "No",
     }
 
 
@@ -188,7 +201,7 @@ def test_min_gap_filter_drops_smaller_gaps(monkeypatch, api_url):
 
     table = page.dataframe[0].value
     assert 0 < len(table) < len(everything)
-    assert (table["Export Gap (USD, nominal)"] >= 0).all()
+    assert (table["Export Gap, 2022–2024 average (USD, nominal)"] >= 0).all()
 
 
 def test_filters_that_match_nothing_say_so(monkeypatch, api_url):
@@ -220,7 +233,8 @@ def test_csv_export_matches_the_ranking_on_screen(monkeypatch, api_url, download
     page = make_page(monkeypatch, api_url)
 
     on_screen = page.dataframe[0].value.drop(columns="Why?")  # links are navigation, not data
-    exported = pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str, "Sector": str})
+    # keep_default_na: a row without caveats exports an empty Caveats cell, not a missing value
+    exported = pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str, "Sector": str}, keep_default_na=False)
     pd.testing.assert_frame_equal(exported, on_screen.reset_index(drop=True), check_dtype=False)
     assert len(page.get("download_button")) == 1
 
@@ -234,12 +248,35 @@ def test_market_page_api_down_shows_a_clear_message(monkeypatch):
     assert any("API" in element.value for element in page.error)
 
 
-def test_market_page_can_rank_by_blocked_opportunity_value(monkeypatch, api_url):
-    page = _market_page(monkeypatch, api_url, "IND")
+# --- Flagged Products and Re-export Hubs: caveat badges and hide filters (ADR 0005) -------
 
-    page.radio(key="rank_by").set_value("blocked").run()
+JEWELLERY = "711319"  # the fixture's Flagged Product; Hong Kong is its Re-export Hub
 
-    assert not page.exception
-    values = list(page.dataframe[0].value["Blocked Opportunity value (USD, nominal)"])
-    assert values == sorted(values, reverse=True) and values[0] > 0
-    assert "Blocked Opportunity value" in _captions(page)
+
+def _caveats(table: pd.DataFrame, key: str) -> dict[str, str]:
+    return dict(zip(table[key], table["Caveats"]))
+
+
+def test_ranking_rows_show_caveat_badges_for_flagged_products_and_re_export_hubs(monkeypatch, api_url):
+    whisky = _caveats(_run_page(monkeypatch, api_url, "220830").dataframe[0].value, "Market")
+    jewellery = _caveats(_run_page(monkeypatch, api_url, JEWELLERY).dataframe[0].value, "Market")
+
+    assert whisky == {"Japan": "", "Canada": "", "India": "", "Hong Kong": "Re-export Hub"}
+    assert jewellery["Japan"] == "Flagged Product"
+    assert jewellery["Hong Kong"] == "Flagged Product, Re-export Hub"
+
+
+def test_hide_filters_are_off_by_default_and_hide_the_flagged_rows(monkeypatch, api_url):
+    page = _run_page(monkeypatch, api_url, "220830")
+    assert page.checkbox(key="hide_flagged").value is False
+    assert page.checkbox(key="hide_hubs").value is False
+
+    page.checkbox(key="hide_hubs").check().run()
+
+    assert set(page.dataframe[0].value["Market"]) == {"Japan", "Canada", "India"}
+
+    market_page = _market_page(monkeypatch, api_url, "JPN")
+    assert JEWELLERY in set(market_page.dataframe[0].value["HS6"])
+    market_page.checkbox(key="hide_flagged").check().run()
+
+    assert set(market_page.dataframe[0].value["HS6"]) == {"220830", "300490", "851712", "870323"}

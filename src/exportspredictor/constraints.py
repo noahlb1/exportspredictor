@@ -85,7 +85,7 @@ def compare(
             uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed,
             keep=lambda table, held_out=held_out: held_out(table.filter(in_sectors)),
         )
-        matrix = training_matrix([chunks[y] for y in years], prepare)
+        matrix = training_matrix([chunks[y] for y in years], prepare, device=device)
         constrained = model_params(params, device=device, seed=seed)
         unconstrained = {key: value for key, value in constrained.items() if key != "monotone_constraints"}
         models = {
