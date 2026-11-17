@@ -39,8 +39,8 @@ STATUS = {
 
 @st.cache_resource(show_spinner="Loading the artefact…")
 def pairs() -> pl.DataFrame:
-    folder = sorted(p for p in artefacts_dir().iterdir() if p.is_dir())[-1]
-    read = lambda name: pl.read_parquet(folder / f"{name}.parquet")  # noqa: E731
+    folder = max(p for p in artefacts_dir().iterdir() if p.is_dir())
+    read = lambda name: pl.read_parquet(folder / f"{name}.parquet")
     baseline = read("baseline")
     ta = read("baseline_features").select("hs6", "iso3", trade_agreement=pl.col("trade_agreement") == 1)
     sold_anywhere = baseline.group_by("hs6").agg(uk_total=pl.col("actual_exports_usd").sum())

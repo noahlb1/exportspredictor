@@ -16,6 +16,6 @@ st.markdown(
 )
 
 # PROTOTYPE (throwaway, wayfinder "Top Opportunities landing view"): landing-view variants.
-from app.prototype_landing import render  # noqa: E402
+from app.prototype_landing import render
 
 render()
