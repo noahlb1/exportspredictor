@@ -3,7 +3,11 @@
 import polars as pl
 from polars.testing import assert_frame_equal
 
-from exportspredictor.exclusions import REEXPORT_HUBS, exclusion_reason, is_flagged_product
+from exportspredictor.exclusions import (
+    REEXPORT_HUBS,
+    exclusion_reason,
+    is_flagged_product,
+)
 from exportspredictor.fixture import UK, build_world
 
 
