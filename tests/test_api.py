@@ -445,6 +445,8 @@ def test_evaluation_includes_lift_and_the_event_backtest(client):
 
     lift = body["lift"]
     assert lift["lift"] is not None and len(lift["ci"]) == 2 and "tendency" in lift["text"]
+    assert len(lift["size_matched"]["ci"]) == 2 and "lift" in lift["size_matched"]
+    assert lift["gap_years"] == [2021, 2022] and lift["held_out_from"] == "v1"
     event = body["event_backtest"]["events"][0]
     direction = event["directions"][0]
     assert direction["controls"] and direction["pooled"]["observed"] is not None

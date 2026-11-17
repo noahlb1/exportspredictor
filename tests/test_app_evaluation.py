@@ -123,6 +123,19 @@ def test_page_shows_lift_with_its_interval_as_a_tendency(page, fixture_artefacts
     assert "Lift" in _text(page)
 
 
+def test_page_shows_size_matched_lift_next_to_raw_lift_and_explains_the_difference(page, fixture_artefacts):
+    lift = fixture_artefacts.evaluation["lift"]
+    tables = [element.value for element in page.dataframe]
+    figures = next(t for t in tables if "Lift" in t.columns and "95% interval" in t.columns)
+    text = _text(page)
+
+    assert list(figures["Measure"]) == ["Raw Lift", "Size-matched Lift"]
+    assert list(figures["Lift"]) == [pytest.approx(lift["lift"]), pytest.approx(lift["size_matched"]["lift"])]
+    assert "mostly reflects pair size" in text
+    assert "tendency" in text
+    assert "2021–2022" in text  # the Gap Period the Export Gaps are averaged over
+
+
 def test_page_shows_the_event_backtest_predicted_against_observed_with_its_control_group(page, fixture_artefacts):
     backtest = fixture_artefacts.evaluation["event_backtest"]
     tables = [element.value for element in page.dataframe]

@@ -46,6 +46,7 @@ from exportspredictor import (
     constraints,
     evaluation,
     experiments,
+    freeze,
 )
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.exclusions import (
@@ -121,12 +122,14 @@ HISTORY_YEARS = 6  # Actual Exports history: the Baseline year and the five befo
 # The fixture world has about 60 calibration rows, so its bands need far fewer than real data's 1,000.
 FIXTURE_MIN_BAND_ROWS = 12
 
-# The fixture's backtests, inside its four years: Lift from a 2021–2022 model on 2022 gaps,
-# grown by 2023; the UK–Japan agreement of 2022 as the Event Backtest, with a 2021 model.
-# The fixture has no high-income Market without a UK agreement, so controls ignore income.
+# The fixture's backtests, inside its four years: Lift from a 2021–2022 model on gaps averaged
+# over a 2021–2022 Gap Period, grown by 2023; the UK–Japan agreement of 2022 as the Event
+# Backtest, with a 2021 model. The fixture has no high-income Market without a UK agreement,
+# so controls ignore income.
 FIXTURE_BACKTESTS = backtests.Plan(
     lift=backtests.LiftSettings(
-        training_years=(2021, 2022), gap_year=2022, outcome_year=2023, min_growth_share=0.05, min_growth_usd=0.0
+        training_years=(2021, 2022), gap_years=(2021, 2022), outcome_year=2023, min_growth_share=0.05,
+        min_growth_usd=0.0,
     ),
     event=backtests.Event(
         name="uk_japan",
@@ -142,6 +145,11 @@ FIXTURE_BACKTESTS = backtests.Plan(
     high_income_controls=False,
     resamples=200,
 )
+
+
+# The fixture's stand-in for v1's frozen held-out Lift Exporters: MEX is outside the fixture's
+# Exporter scope, so the Lift model holds out FRA alone.
+FIXTURE_V1_LIFT_EXPORTERS = ("FRA", "MEX")
 
 
 @dataclass(frozen=True)
@@ -215,6 +223,7 @@ def build_artefacts(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
         seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
         constraint_plan=constraints.FIXTURE_PLAN,
+        lift_held_out=backtests.lift_exporters(FIXTURE_V1_LIFT_EXPORTERS, scope=scope, uk=UK),
     )
     return Artefacts(
         metadata=metadata,
@@ -265,12 +274,15 @@ def build_real_artefacts(
     min_band_rows: int = conformal.MIN_BAND_ROWS,
     backtest_plan: backtests.Plan = backtests.REAL_PLAN,
     constraint_plan: constraints.Plan = constraints.REAL_PLAN,
+    v1_frozen: Path | None = None,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
     Years are read one at a time (`training`), so host memory stays far below 32 GB.
-    Backtest models are cached under the data root (`backtests.cache_dir`). The saved
-    feature ablation and learning curve (`experiments.save`) are recorded in the metadata.
+    Backtest models are cached under the data root (`backtests.cache_dir`). The Lift model
+    holds out v1's frozen held-out Exporters within scope, read from `v1_frozen`
+    (default: `freeze.v1_folder()`). The saved feature ablation and learning curve
+    (`experiments.save`) are recorded in the metadata.
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -338,6 +350,9 @@ def build_real_artefacts(
         high_income=load_sources(root)[0].high_income,
         backtest_cache=backtests.cache_dir(root),
         constraint_plan=constraint_plan,
+        lift_held_out=backtests.lift_exporters(
+            freeze.lift_held_out_exporters(v1_frozen or freeze.v1_folder()), scope=settings["exporter_scope"], uk=UK
+        ),
     )
     return Artefacts(
         metadata=metadata,
@@ -541,6 +556,7 @@ def _evaluate(
     backtest_plan: backtests.Plan,
     high_income,
     constraint_plan: constraints.Plan,
+    lift_held_out: Sequence[str],
     backtest_chunks: Mapping[int, Chunk] | None = None,
     backtest_cache: Path | None = None,
 ) -> dict:
@@ -579,7 +595,7 @@ def _evaluate(
     report |= backtests.run(
         backtest_chunks or training, backtest_plan, uk=UK, params=metadata["params"], rounds=metadata["rounds"],
         device=device, non_uk_rate=non_uk_rate, seed=seed, high_income=high_income, test_models=test_models,
-        cache=backtest_cache,
+        cache=backtest_cache, lift_held_out=lift_held_out,
     )
     print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
     report["monotone_constraints"] = constraints.compare(

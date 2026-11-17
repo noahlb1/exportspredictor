@@ -12,11 +12,11 @@ CONFIGS = [{"max_depth": 2, "eta": 0.3}, {"max_depth": 3, "eta": 0.3}]
 
 
 @pytest.fixture
-def trained(derived_data_root):
+def trained(derived_data_root, v1_frozen):
     features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
     return pipeline.build_real_artefacts(
         derived_data_root, version="real-test", configs=CONFIGS, device="cpu", max_rounds=30, non_uk_rate=0.5,
-        backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN,
+        backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
     )
 
 
@@ -94,7 +94,9 @@ def test_an_existing_artefact_is_evaluated_into_a_new_version_with_its_models_co
     assert (evaluation.test_models_dir(derived_data_root, trained.metadata) / evaluation.TEST_MODELS_FILE).exists()
 
 
-def test_backtests_are_added_to_the_newest_evaluated_artefact_with_cached_models(trained, derived_data_root, tmp_path):
+def test_backtests_are_added_to_the_newest_evaluated_artefact_with_cached_models(
+    trained, derived_data_root, tmp_path, v1_frozen
+):
     from dataclasses import replace
 
     from exportspredictor import artefacts as store
@@ -104,17 +106,21 @@ def test_backtests_are_added_to_the_newest_evaluated_artefact_with_cached_models
     old = replace(trained, metadata={**trained.metadata, "version": "20000101T000000Z"}, evaluation=evaluated)
     store.save(old, tmp_path)
 
-    folder = backtests.add_to_latest(derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu")
+    folder = backtests.add_to_latest(
+        derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu", v1_frozen=v1_frozen
+    )
 
     result = store.load_latest(tmp_path)
     assert result.version == folder.name != old.version
     assert result.evaluation["test_year"] == 2023  # the accuracy report is kept
     assert result.evaluation["lift"]["ci"] and result.evaluation["event_backtest"]["events"]
+    assert result.evaluation["lift"]["held_out_exporters"] == ["FRA"]  # v1's list within scope
     cached = sorted(p.name.split("_")[0] for p in backtests.cache_dir(derived_data_root).iterdir())
     assert cached == ["lift", "uk"]  # the Lift and the Event Backtest models; a re-run reads them
     again = store.load(
         backtests.add_to_latest(
-            derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu", version="99990101T000000Z"
+            derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu", version="99990101T000000Z",
+            v1_frozen=v1_frozen,
         )
     )
     assert again.evaluation["lift"]["lift"] == result.evaluation["lift"]["lift"]

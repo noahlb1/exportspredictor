@@ -245,7 +245,7 @@ class LiftDecile(BaseModel):
 
 
 class Lift(BaseModel):
-    """How much more often the top tenth of pairs by Export Gap grew materially than random pairs (#21)."""
+    """How much more often the top tenth of pairs by Gap Period Export Gap grew materially than random pairs (#21, #57)."""
 
     lift: float | None
     ci: list[float | None]
@@ -255,10 +255,10 @@ class Lift(BaseModel):
     base_rate: float | None
     size_matched: SizeMatchedLift
     by_decile: list[LiftDecile]
-    held_out_share: float
-    held_out_exporters: list[str]
+    held_out_exporters: list[str]  # v1's frozen held-out list, within v2's Exporter scope
+    held_out_from: str
     training_years: list[int]
-    gap_year: int
+    gap_years: list[int]  # the Gap Period the Export Gaps are averaged over
     outcome_year: int
     min_growth_share: float
     min_growth_usd: float
