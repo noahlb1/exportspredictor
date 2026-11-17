@@ -62,7 +62,12 @@ def test_by_product_rows_have_the_documented_shape(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
+        "export_potential_gbp",
+        "actual_exports_gbp",
+        "export_gap_gbp",
+        "trade_agreement",
         "blocked_effect_usd",
+        "blocked_effect_gbp",
         "blocked_opportunity",
     }
 
@@ -146,6 +151,114 @@ def test_evaluation_is_404_when_the_artefact_has_none(fixture_artefacts, tmp_pat
 
     assert response.status_code == 404
     assert "evaluation" in response.json()["detail"].lower()
+
+
+def test_by_market_returns_every_product_sorted_by_export_gap(client):
+    body = client.get("/opportunities/by-market/JPN").json()
+
+    gaps = [row["export_gap_usd"] for row in body["opportunities"]]
+    assert gaps == sorted(gaps, reverse=True)
+    assert {row["hs6"] for row in body["opportunities"]} == {"030420", "220830", "300490", "851712", "870323"}
+    assert body["market"] == {"iso3": "JPN", "name": "Japan", "region": "East Asia & Pacific"}
+    assert body["baseline_year"] == 2024
+    assert body["artefact_version"] == "fixture-test"
+
+
+def test_by_market_rows_name_the_product(client):
+    rows = client.get("/opportunities/by-market/JPN").json()["opportunities"]
+
+    assert {"hs6": "220830", "description": "Whiskies", "sector": "22"}.items() <= next(
+        row for row in rows if row["hs6"] == "220830"
+    ).items()
+
+
+def test_unknown_market_returns_404_with_a_message(client):
+    response = client.get("/opportunities/by-market/XYZ")
+
+    assert response.status_code == 404
+    assert "XYZ" in response.json()["detail"]
+
+
+def _ranked(client, path, **params) -> list[dict]:
+    response = client.get(path, params=params)
+    assert response.status_code == 200, response.text
+    return response.json()["opportunities"]
+
+
+def test_sector_filter_keeps_only_that_sectors_products(client):
+    rows = _ranked(client, "/opportunities/by-market/JPN", sector="85")
+
+    assert [row["hs6"] for row in rows] == ["851712"]
+
+
+def test_region_filter_keeps_only_that_regions_markets(client):
+    rows = _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}", region="South Asia")
+
+    assert [row["iso3"] for row in rows] == ["IND"]
+
+
+def test_filters_apply_on_both_views(client):
+    # Japan is not in South Asia, and whisky is not in Sector 85.
+    assert _ranked(client, "/opportunities/by-market/JPN", region="South Asia") == []
+    assert _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}", sector="85") == []
+
+
+def test_min_gap_filter_drops_smaller_export_gaps(client):
+    everything = _ranked(client, "/opportunities/by-market/JPN")
+    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap=0)
+
+    assert rows and all(row["export_gap_usd"] >= 0 for row in rows)
+    assert rows == [row for row in everything if row["export_gap_usd"] >= 0]
+    assert len(rows) < len(everything)
+
+
+def test_limit_keeps_the_top_of_the_ranking(client):
+    everything = _ranked(client, "/opportunities/by-market/JPN")
+
+    assert _ranked(client, "/opportunities/by-market/JPN", limit=2) == everything[:2]
+
+
+# Bank of England series XUAAUSS: the 2024 annual average of the spot rate, US$ into sterling.
+USD_PER_GBP_2024 = 1.2783
+
+
+@pytest.mark.parametrize("path", ["/opportunities/by-market/JPN", f"/opportunities/by-product/{FIXTURE_HS6}"])
+def test_rankings_state_the_gbp_rate_and_its_year(client, path):
+    body = client.get(path).json()
+
+    assert body["gbp_rate"]["usd_per_gbp"] == USD_PER_GBP_2024
+    assert body["gbp_rate"]["year"] == 2024
+    assert "Bank of England" in body["gbp_rate"]["source"]
+
+
+@pytest.mark.parametrize("path", ["/opportunities/by-market/JPN", f"/opportunities/by-product/{FIXTURE_HS6}"])
+def test_ranking_values_come_in_usd_and_gbp(client, path):
+    for row in client.get(path).json()["opportunities"]:
+        for value in ("export_potential", "actual_exports", "export_gap"):
+            assert row[f"{value}_gbp"] == pytest.approx(row[f"{value}_usd"] / USD_PER_GBP_2024)
+
+
+def test_min_gap_can_be_given_in_gbp(client):
+    everything = _ranked(client, "/opportunities/by-market/JPN")
+    threshold_gbp = 5000
+
+    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap_gbp=threshold_gbp)
+
+    assert rows == [row for row in everything if row["export_gap_usd"] >= threshold_gbp * USD_PER_GBP_2024]
+    assert 0 < len(rows) < len(everything)
+
+
+def test_rows_show_whether_a_uk_trade_agreement_is_in_force_with_the_market(client):
+    # The fixture's UK Trade Agreements: Japan from 2022, Canada from 2021; none with India.
+    rows = _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}")
+
+    assert {row["iso3"]: row["trade_agreement"] for row in rows} == {"JPN": True, "CAN": True, "IND": False}
+
+
+def test_every_row_of_a_market_shows_its_trade_agreement(client):
+    assert {row["trade_agreement"] for row in _ranked(client, "/opportunities/by-market/JPN")} == {True}
+    assert {row["trade_agreement"] for row in _ranked(client, "/opportunities/by-market/IND")} == {False}
+
 
 def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
     response = client.get(f"/explain/{FIXTURE_HS6}/JPN")

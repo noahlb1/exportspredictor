@@ -147,3 +147,31 @@ def test_an_unknown_rank_by_returns_422(client):
     response = client.get(f"/opportunities/by-product/{FIXTURE_HS6}", params={"rank_by": "size"})
 
     assert response.status_code == 422
+
+
+def test_by_market_can_rank_by_blocked_opportunity_value(client):
+    body = client.get("/opportunities/by-market/IND", params={"rank_by": "blocked"}).json()
+
+    assert body["rank_by"] == "blocked"
+    values = [row["blocked_effect_usd"] for row in body["opportunities"]]
+    assert values == sorted(values, reverse=True)
+    assert values[0] > 0  # India has no UK Trade Agreement, so adding one has an effect
+
+
+def test_by_market_blocked_value_is_zero_where_an_agreement_exists(client):
+    rows = client.get("/opportunities/by-market/JPN", params={"rank_by": "blocked"}).json()["opportunities"]
+
+    assert {row["blocked_effect_usd"] for row in rows} == {0}
+    assert not any(row["blocked_opportunity"] for row in rows)
+
+
+def test_by_market_rank_by_then_limit_keeps_the_top_blocked_values(client):
+    everything = client.get("/opportunities/by-market/IND", params={"rank_by": "blocked"}).json()["opportunities"]
+
+    top = client.get("/opportunities/by-market/IND", params={"rank_by": "blocked", "limit": 2}).json()["opportunities"]
+
+    assert top == everything[:2]
+
+
+def test_by_market_unknown_rank_by_returns_422(client):
+    assert client.get("/opportunities/by-market/JPN", params={"rank_by": "size"}).status_code == 422

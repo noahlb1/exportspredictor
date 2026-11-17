@@ -23,7 +23,7 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 import json
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,6 +32,7 @@ import xgboost as xgb
 
 from exportspredictor import baci, evaluation
 from exportspredictor.artefacts import Artefacts, new_version
+from exportspredictor.currency import gbp_rate
 from exportspredictor.features import (
     FEATURES,
     MONOTONE_CONSTRAINTS,
@@ -266,6 +267,7 @@ def _train_and_score(
     baseline = with_blocked_effects(baseline, blocked_effects(baseline_features, baseline, models))
     metadata = {
         "baseline_year": baseline_year,
+        "gbp_rate": gbp_rate(baseline_year),
         "validation_year": validation_year,
         "test_year": test_year,
         "tuning_years": tuning_years,
@@ -348,10 +350,38 @@ def _history(uk_flows: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def main() -> None:
+def refresh(bundle: Artefacts, *, version: str | None = None) -> Artefacts:
+    """A new version of a saved bundle with its derived metadata recomputed; no retraining.
+
+    The fold models and tables are reused as they are. Use it when a derived value (such as
+    the GBP rate) is added after the models were trained.
+    """
+    metadata = {
+        **bundle.metadata,
+        "version": version or new_version(),
+        "refreshed_from": bundle.version,
+        "gbp_rate": gbp_rate(bundle.baseline_year),
+    }
+    return replace(bundle, metadata=metadata)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """`python -m exportspredictor.pipeline` trains and saves a real bundle (about 30 min on GPU).
+
+    `python -m exportspredictor.pipeline refresh` instead saves a refreshed copy of the newest
+    saved bundle (`refresh`), in seconds.
+    """
+    import sys
+
     from exportspredictor import artefacts
     from exportspredictor.paths import artefacts_dir
 
+    argv = sys.argv[1:] if argv is None else argv
+    if list(argv) == ["refresh"]:
+        bundle = refresh(artefacts.load_latest(artefacts_dir()))
+        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "gbp_rate")}), flush=True)
+        print(artefacts.save(bundle, artefacts_dir()), flush=True)
+        return
     bundle = build_real_artefacts()
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}
     print(json.dumps(summary), flush=True)

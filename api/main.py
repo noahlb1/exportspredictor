@@ -6,14 +6,18 @@ Tests inject an artefact root with `create_app(root)`; the module-level `app` re
 
 To add an endpoint: add a route in `create_app`, get the bundle with `Depends(loaded)` (it
 answers 503 until artefacts load), and declare a response model in `api/schemas.py`.
+Both ranking views go through `_ranking` (and the package's `rank_opportunities`), so a
+ranking option or row field is added there once.
 """
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
 import polars as pl
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from api.schemas import (
     Evaluation,
@@ -21,12 +25,15 @@ from api.schemas import (
     FactorOut,
     Health,
     HistoryOut,
+    MarketOpportunities,
     MarketOpportunity,
     MarketOut,
     PresetOut,
     ProductOpportunities,
+    ProductOpportunity,
     ProductOut,
     RankBy,
+    RankingQuery,
     ScenarioRequest,
     ScenarioResponse,
 )
@@ -36,6 +43,7 @@ from exportspredictor.evaluation import LIMITATIONS
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
+from exportspredictor.rankings import rank_opportunities
 
 
 def loaded(request: Request) -> store.Artefacts:
@@ -77,29 +85,25 @@ def create_app(artefacts_root: Path | None = None) -> FastAPI:
         return [MarketOut(**{k: row[k] for k in MarketOut.model_fields}) for row in artefacts.markets.sort("name").iter_rows(named=True)]
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
-    def by_product(
-        hs6: str,
-        rank_by: RankBy = Query("gap", description="gap: Export Gap; blocked: Blocked Opportunity value"),
-        artefacts: store.Artefacts = Depends(loaded),
-    ):
+    def by_product(hs6: str, query: Annotated[RankingQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
+        """Markets ranked for one Product."""
         product = artefacts.products.filter(pl.col("hs6") == hs6)
         if product.is_empty():
             raise HTTPException(status_code=404, detail=f"Unknown Product: {hs6}")
-        rows = rank(
-            artefacts.baseline.filter(pl.col("hs6") == hs6).join(
-                artefacts.markets.rename({"name": "market"}), on="iso3", how="left"
-            ),
-            rank_by,
-        )
         return ProductOpportunities(
-            artefact_version=artefacts.version,
-            baseline_year=artefacts.baseline_year,
-            rank_by=rank_by,
+            **_ranking(artefacts, query, MarketOpportunity, hs6=hs6),
             product=ProductOut(**product.row(0, named=True)),
-            opportunities=[
-                MarketOpportunity(**{k: row[k] for k in MarketOpportunity.model_fields})
-                for row in rows.iter_rows(named=True)
-            ],
+        )
+
+    @app.get("/opportunities/by-market/{iso3}", response_model=MarketOpportunities)
+    def by_market(iso3: str, query: Annotated[RankingQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
+        """Products ranked for one Market."""
+        market = artefacts.markets.filter(pl.col("iso3") == iso3)
+        if market.is_empty():
+            raise HTTPException(status_code=404, detail=f"Unknown Market: {iso3}")
+        return MarketOpportunities(
+            **_ranking(artefacts, query, ProductOpportunity, iso3=iso3),
+            market=MarketOut(**market.row(0, named=True)),
         )
 
     @app.get("/evaluation", response_model=Evaluation)
@@ -174,6 +178,30 @@ def create_app(artefacts_root: Path | None = None) -> FastAPI:
     return app
 
 
+def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:
+    """The fields both ranking views share: metadata and the filtered rows, ranked by `query.rank_by`."""
+    rows = rank(
+        rank_opportunities(
+            artefacts,
+            **subject,
+            sector=query.sector,
+            region=query.region,
+            min_gap_usd=query.min_gap,
+            min_gap_gbp=query.min_gap_gbp,
+        ),
+        query.rank_by,
+    )
+    if query.limit is not None:
+        rows = rows.head(query.limit)
+    return {
+        "artefact_version": artefacts.version,
+        "baseline_year": artefacts.baseline_year,
+        "rank_by": query.rank_by,
+        "gbp_rate": artefacts.gbp_rate,
+        "opportunities": [row_model(**{k: row[k] for k in row_model.model_fields}) for row in rows.iter_rows(named=True)],
+    }
+
+
 RANK_COLUMNS = {"gap": "export_gap_usd", "blocked": "blocked_effect_usd"}
 
 
@@ -181,7 +209,7 @@ def rank(rows: pl.DataFrame, rank_by: str) -> pl.DataFrame:
     """Ranking rows (Baseline columns) with the Blocked Opportunity flag, sorted by `rank_by`, largest first."""
     return rows.with_columns(
         blocked_opportunity=scenarios.is_blocked("blocked_effect_usd", "export_potential_usd")
-    ).sort(RANK_COLUMNS[rank_by], descending=True)
+    ).sort(RANK_COLUMNS[rank_by], descending=True, maintain_order=True)
 
 
 def scenario_response(

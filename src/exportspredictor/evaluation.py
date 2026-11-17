@@ -69,6 +69,8 @@ METRIC_INFO = {
 }
 HEADLINE_METRIC = "spearman_within_product"
 HEADLINE_SCOPE = "uk_out_of_fold"
+# A headline win smaller than this is reported as "only slightly better".
+NARROW_MARGIN = 0.05
 _PREDICTORS = {"model": "export_potential_usd", "naive": "naive_usd"}
 
 LIMITATIONS = [
@@ -248,7 +250,11 @@ def headline(overall: dict, test_year: int) -> dict:
     beats = model is not None and naive is not None and model > naive
     scale = "(1 would be a perfect ranking, 0 no better than chance)"
     if beats:
-        verdict = f"That is better than the naive baseline (the UK's world market share times each Market's imports), which scores {naive:.2f}."
+        degree = "only slightly better" if model - naive < NARROW_MARGIN else "better"
+        verdict = (
+            f"That is {degree} than the naive baseline (the UK's world market share times each Market's imports), "
+            f"which scores {naive:.2f}."
+        )
     else:
         verdict = (
             f"The model does not beat the naive baseline on this measure: the UK's world market share times each "

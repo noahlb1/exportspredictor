@@ -2,7 +2,7 @@
 
 Layout of `<root>/<version>/`:
 
-    metadata.json      version, baseline_year, n_folds, features, ... (free-form beyond those)
+    metadata.json      version, baseline_year, gbp_rate, n_folds, features, ... (free-form beyond those)
     models/fold_<k>.ubj
     baseline.parquet   one row per UK Product–Market pair in the Baseline year
     baseline_features.parquet  the same pairs' model inputs and fold (for Scenarios, explanations)
@@ -23,6 +23,8 @@ from pathlib import Path
 
 import polars as pl
 import xgboost as xgb
+
+from exportspredictor import currency
 
 METADATA_FILE = "metadata.json"
 EVALUATION_FILE = "evaluation.json"
@@ -52,6 +54,14 @@ class Artefacts:
     @property
     def baseline_year(self) -> int:
         return self.metadata["baseline_year"]
+
+    @property
+    def gbp_rate(self) -> dict:
+        """The USD → GBP rate for £ values: usd_per_gbp, year, source.
+
+        Folders saved before the rate was recorded fall back to the Baseline year's rate.
+        """
+        return self.metadata.get("gbp_rate") or currency.gbp_rate(self.baseline_year)
 
 
 def new_version() -> str:

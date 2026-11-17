@@ -79,13 +79,18 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
 - [ ] Export Potential, Actual Exports and Export Gap appear side by side.
 - [ ] Search text that matches nothing (e.g. `999999` or `zzz`) shows a clear "No Product matches" warning.
+- [ ] Values show in £ by default, with the conversion rate and year stated under the table; switching to USD changes the columns.
+- [ ] Each row says whether a UK Trade Agreement is in force with the Market (e.g. Japan: Yes, India: No).
+- [ ] The Sector filter narrows the Product search; the region and minimum-Gap filters narrow the ranking.
+- [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
 - [ ] Switch "Rank by" to Blocked Opportunity value: Markets without a Trade Agreement rise to the top, and rows clearing 20% and $1M are flagged.
-- [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen. (CSV export arrives with #17.)
 
-**Market → Products** (arrives with #17)
-- [ ] Pick a Market: Products are ranked by Export Gap, with Sector, region and minimum-Gap filters working.
+**Market → Products**
+- [ ] Pick a Market (e.g. Japan): Products are ranked by Export Gap, and the page says whether a UK Trade Agreement is in force with it.
+- [ ] The region filter narrows the Market list; the Sector and minimum-Gap (£) filters narrow the ranking, and a filter matching nothing says so.
+- [ ] Switch "Rank by" to Blocked Opportunity value for a Market without a UK Trade Agreement (e.g. India): Products are ranked by that value; for a Market with one (e.g. Japan) every value is 0.
 - [ ] Values show in £, with the conversion rate and year stated.
-- [ ] Export the ranking to CSV and open it.
+- [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
 
 **Scenarios**
 - [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds, and the summary shows the total change, the change per Market and the top Products gaining, phrased as associations.
@@ -95,7 +100,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
 
 **Why?**
-- [ ] On **Product → Markets**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
+- [ ] On **Product → Markets** and **Market → Products**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
 - [ ] The factors are described in plain words (no raw feature names), each marked as raising or lowering Export Potential, phrased as associations.
 - [ ] The UK's Actual Exports for the last six years are shown, with 0 for years with none.
 - [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.

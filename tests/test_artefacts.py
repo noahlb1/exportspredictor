@@ -66,3 +66,12 @@ def test_a_folder_without_an_evaluation_still_loads(fixture_artefacts, tmp_path)
 
     assert not (folder / "evaluation.json").exists()
     assert store.load(folder).evaluation is None
+
+
+def test_folders_saved_before_the_gbp_rate_use_the_baseline_years_rate(fixture_artefacts):
+    metadata = {k: v for k, v in fixture_artefacts.metadata.items() if k != "gbp_rate"}
+
+    older = replace(fixture_artefacts, metadata=metadata)
+
+    assert older.gbp_rate["usd_per_gbp"] == 1.2783
+    assert older.gbp_rate["year"] == 2024

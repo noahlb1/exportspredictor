@@ -74,6 +74,15 @@ def test_headline_says_plainly_when_the_model_does_not_beat_the_naive_baseline()
     assert "better than the naive baseline" in better["text"]
 
 
+def test_headline_says_when_the_win_over_the_naive_baseline_is_narrow():
+    narrow = evaluation.headline({"model_spearman_within_product": 0.54, "naive_spearman_within_product": 0.52}, 2023)
+    clear = evaluation.headline({"model_spearman_within_product": 0.70, "naive_spearman_within_product": 0.52}, 2023)
+
+    assert narrow["beats_naive"] is True
+    assert "only slightly better than the naive baseline" in narrow["text"]
+    assert "only slightly" not in clear["text"]
+
+
 def test_stability_of_identical_rankings_is_perfect():
     table = pl.DataFrame(
         {
