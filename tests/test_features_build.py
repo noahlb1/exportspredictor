@@ -60,3 +60,17 @@ def test_build_scores_the_union_of_the_gap_period_grids_in_each_gap_year(derived
     assert grid.filter(pl.col("hs6").cast(pl.String) == "220830")["value_usd"].to_list() == [0.0] * 4
     settings = json.loads((out / "features.json").read_text())
     assert settings["gap_years"] == [2022, 2024]
+
+
+def test_build_adds_relatedness_import_growth_and_the_reexport_ratio(derived_data_root):
+    out = features.build(derived_data_root, years=[2024], rate=1.0)
+
+    grid = pl.read_parquet(out / "uk_grid_2024.parquet")
+    training = pl.read_parquet(out / "training_2024.parquet")
+    for table in (grid, training):
+        for name in ("relatedness", "market_import_growth", "reexport_ratio"):
+            assert table[name].null_count() < table.height, name
+    assert grid["market_import_growth"].null_count() == 0  # 2021 is on disk: three years earlier
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["proximity_years"] == [2021]  # the fixture's only year before 2022
+    assert pl.read_parquet(out / "proximity.parquet").height > 0

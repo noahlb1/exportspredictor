@@ -88,7 +88,7 @@ def test_each_gap_years_uk_score_comes_from_the_fold_model_that_held_the_pair_ou
     for year in (2022, 2023, 2024):
         year_flows = world.flows.filter(pl.col("year") == year)
         grid = assign_folds(
-            transform.apply(build_features(uk_grid(year_flows, UK), year_flows, world.sources)).rename(
+            transform.apply(build_features(uk_grid(year_flows, UK), world.flows, world.sources)).rename(
                 {"importer": "iso3"}
             )
         )

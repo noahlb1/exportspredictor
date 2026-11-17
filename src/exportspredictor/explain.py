@@ -23,7 +23,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.features import FEATURES
+from exportspredictor.features import FEATURES, GROWTH_YEARS, REEXPORT_RATIO_CAP
 from exportspredictor.policy import TRADING_BLOCS
 
 _BLOC_NAMES = {"eu": "the EU", "cptpp": "CPTPP", "efta": "EFTA"}
@@ -83,6 +83,9 @@ def factor_labels(market: str) -> dict[str, str]:
         "log_demand_loo": f"How much {market} imports this Product from other countries",
         "high_income_share_loo": f"Share of {market}'s imports of this Product that come from high-income countries",
         "sector": "The Product's Sector (HS2 chapter)",
+        "relatedness": f"How close this Product is to what {_UK} already exports well",
+        "market_import_growth": f"How fast {market}'s imports of this Product are growing",
+        "reexport_ratio": f"How much of this Product {market} re-exports",
         "trade_agreement": f"Trade Agreement between {_UK} and {market}",
         "customs_union": f"Customs Union between {_UK} and {market}",
     }
@@ -162,6 +165,15 @@ def value_text(feature: str, value: float) -> str:
         return f"{value:.0%}"
     if feature == "sector":
         return f"Chapter {int(value):02d}"
+    if feature == "relatedness":
+        return f"{value:.0%} of its related Products are ones {_UK} exports competitively"
+    if feature == "market_import_growth":
+        return f"{math.expm1(value):+.0%} over {GROWTH_YEARS} years"
+    if feature == "reexport_ratio":
+        ratio = math.expm1(value)
+        if ratio >= REEXPORT_RATIO_CAP * 0.999:
+            return f"Exports {REEXPORT_RATIO_CAP:.0f}× or more what it imports from other countries"
+        return f"Exports {ratio:.0%} of what it imports from other countries"
     return "Yes" if value >= 0.5 else "No"
 
 

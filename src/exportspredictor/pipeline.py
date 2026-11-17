@@ -143,9 +143,10 @@ def build_artefacts(
     baseline_year = baseline_year or int(flows["year"].max())
     training = fixture_training(world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed)
     # Every Gap Period year is scored over the union of the Gap Period's grids, as `features.build` writes them.
+    # `build_features` gets every year's Flows: Market import growth reads year t-3.
     year_flows = {year: flows.filter(pl.col("year") == year) for year in gap_years(baseline_year)}
     pairs = grid_pairs(uk_grid(f, UK) for f in year_flows.values())
-    grids = {year: build_features(uk_grid(f, UK, pairs=pairs), f, sources) for year, f in year_flows.items()}
+    grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in year_flows.items()}
     trained = _train_and_score(
         training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed,
@@ -191,7 +192,7 @@ def fixture_training(
         if year < baseline_year:
             year_flows = flows.filter(pl.col("year") == year)
             rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed)
-            training[year] = build_features(rows, year_flows, world.sources)
+            training[year] = build_features(rows, flows, world.sources)
     return training
 
 
@@ -222,6 +223,11 @@ def build_real_artefacts(
         raise ValueError(
             f"The feature files in {folder} were built excluding {built_without}, not the current Excluded "
             "Products; rebuild them with `python -m exportspredictor.features`"
+        )
+    if settings.get("features") != FEATURES:
+        raise ValueError(
+            f"The feature files in {folder} hold {settings.get('features')}, not the current features; "
+            "rebuild them with `python -m exportspredictor.features`"
         )
     if settings.get("gap_years") != gap_period(baseline_year):
         raise ValueError(
