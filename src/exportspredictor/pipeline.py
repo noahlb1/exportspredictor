@@ -39,7 +39,16 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import baci, backtests, conformal, constraints, evaluation, freeze
+from exportspredictor import (
+    baci,
+    backtests,
+    comparison,
+    conformal,
+    constraints,
+    evaluation,
+    fixture,
+    freeze,
+)
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.exclusions import (
     EXCLUSIONS,
@@ -140,6 +149,33 @@ FIXTURE_BACKTESTS = backtests.Plan(
 # The fixture's stand-in for v1's frozen held-out Lift Exporters: MEX is outside the fixture's
 # Exporter scope, so the Lift model holds out FRA alone.
 FIXTURE_V1_LIFT_EXPORTERS = ("FRA", "MEX")
+# The synthetic frozen v1's manifest fields (`freeze.write` adds the tables' checksums).
+FIXTURE_V1_MANIFEST = {
+    "tag": "fixture",
+    "commit": None,
+    "source_models": {"artefact": "fixture"},
+    "test_year": FIXTURE_BACKTESTS.lift.outcome_year,
+    "lift_years": list(FIXTURE_BACKTESTS.lift.gap_years),
+    "event": FIXTURE_BACKTESTS.event.name,
+    "event_post_years": list(FIXTURE_BACKTESTS.event.post_years),
+}
+
+
+def fixture_v1_frozen(world: World) -> comparison.Frozen:
+    """The fixture's synthetic frozen v1 (`fixture.frozen_v1_tables`), shaped for its backtest plan.
+
+    `freeze.write(folder, frozen.tables, frozen.manifest)` writes it as a frozen folder.
+    """
+    event = FIXTURE_BACKTESTS.event
+    tables = fixture.frozen_v1_tables(
+        world,
+        test_year=FIXTURE_V1_MANIFEST["test_year"],
+        lift_years=FIXTURE_BACKTESTS.lift.gap_years,
+        lift_held_out=FIXTURE_V1_LIFT_EXPORTERS,
+        event_directions=[(d.label, d.exporters, d.importers) for d in event.directions],
+        event_years=event.post_years,
+    )
+    return comparison.Frozen(manifest=dict(FIXTURE_V1_MANIFEST), tables=tables)
 
 
 @dataclass(frozen=True)
@@ -167,12 +203,14 @@ def build_artefacts(
     seed: int = 0,
     row_budget: int | None = None,
     min_band_rows: int = FIXTURE_MIN_BAND_ROWS,
+    v1_frozen: comparison.Frozen | None = None,
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
     `zero_sampling_rate` is the share of other Exporters' Zero Cells kept for training; it
     is recorded in the metadata. `row_budget` overrides the VRAM row budget.
-    `min_band_rows` is the Potential Range's minimum band size.
+    `min_band_rows` is the Potential Range's minimum band size. `v1_frozen` is the frozen v1
+    the evaluation compares with (default: the fixture's synthetic one, `fixture_v1_frozen`).
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
@@ -206,11 +244,18 @@ def build_artefacts(
         "uk_zero_sampling_rate": 1.0,
         "zero_sampling_seed": seed,
     }
+    frozen = v1_frozen or fixture_v1_frozen(world)
+    v1 = comparison.Inputs(
+        frozen=frozen,
+        rows=comparison.feature_rows(frozen, scope=scope, uk=UK, flows=flows, sources=sources),
+        flows=flows,
+    )
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
         seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
         constraint_plan=constraints.FIXTURE_PLAN,
-        lift_held_out=backtests.lift_exporters(FIXTURE_V1_LIFT_EXPORTERS, scope=scope, uk=UK),
+        lift_held_out=backtests.lift_exporters(frozen.lift_held_out_exporters, scope=scope, uk=UK),
+        v1=v1,
     )
     return Artefacts(
         metadata=metadata,
@@ -543,12 +588,15 @@ def _evaluate(
     lift_held_out: Sequence[str],
     backtest_chunks: Mapping[int, Chunk] | None = None,
     backtest_cache: Path | None = None,
+    v1: comparison.Inputs | None = None,
 ) -> dict:
     """Evaluate on the test year, run Lift and the Event Backtests (`backtests`), then compare
     the monotone-constrained model with an unconstrained one (`constraints`).
 
     The test-year fold models are trained with the tuned configuration; the backtest
-    models use it too. `backtest_chunks` defaults to `training`.
+    models use it too. `backtest_chunks` defaults to `training`. With `v1`, the report
+    gains the pre-registered `v1_comparison` (`comparison.compare`), scored by the same
+    test-year fold models.
     """
     test_year = metadata["test_year"]
     started = time.perf_counter()
@@ -599,6 +647,22 @@ def _evaluate(
     report["potential_range"] = {
         **trained.potential_range_report, "text": conformal.coverage_text(trained.potential_range_report)
     }
+    if v1 is not None:
+        report["v1_comparison"] = comparison.compare(
+            v1.frozen,
+            v2={
+                name: evaluation.score_rows(rows, test_models.models, test_models.transform, UK)
+                for name, rows in v1.rows.items()
+            },
+            flows=v1.flows,
+            lift_v2=report["lift"],
+            event_v2=report["event_backtest"]["events"][0],
+            lift_settings=backtest_plan.lift,
+            scope=metadata["exporter_scope"],
+            uk=UK,
+            test_year=test_year,
+            seed=seed,
+        )
     return report
 
 

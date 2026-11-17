@@ -789,3 +789,11 @@ def test_explain_carries_the_tariff_carried_forward_caveat_and_the_yearly_mark(c
     imputed = {point["year"]: point["tariff_imputed"] for point in body["history"]}
     assert imputed[2021] is False
     assert imputed[2022] is imputed[2023] is imputed[2024] is True
+
+
+def test_evaluation_never_serves_the_v1_comparison(client, fixture_artefacts):
+    assert "v1_comparison" in fixture_artefacts.evaluation
+
+    body = client.get("/evaluation").json()
+
+    assert "v1_comparison" not in body
