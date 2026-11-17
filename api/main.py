@@ -12,6 +12,9 @@ Both ranking views go through `_ranking`, which calls the package's `rank_opport
 Loading: artefacts load at startup. If none exist yet, `/health` answers 503 and the load
 is retried at most once every `retry_seconds` (default 30 s) when a request arrives, so
 artefacts saved later are picked up without a restart and without a disk scan per request.
+The API serves the lexically newest folder only. If that folder cannot be read (another
+artefact format, such as v1, or a missing table), the API stays not ready and `/health`
+gives the reason; it does not fall back to an older folder.
 """
 
 import logging
@@ -86,12 +89,14 @@ def create_app(
     app.state.retry_seconds = retry_seconds
     app.state.clock = clock
     app.state.last_attempt = None
+    app.state.load_error = None
 
-    @app.get("/health", response_model=Health)
+    @app.get("/health", response_model=Health, response_model_exclude_none=True)
     def health(request: Request):
         artefacts = _try_load(request.app)
         if artefacts is None:
-            return JSONResponse(status_code=503, content=Health(ready=False).model_dump())
+            content = Health(ready=False, reason=request.app.state.load_error).model_dump(exclude_none=True)
+            return JSONResponse(status_code=503, content=content)
         return Health(ready=True, artefact_version=artefacts.version, baseline_year=artefacts.baseline_year)
 
     @app.get("/products", response_model=list[ProductOut])
@@ -298,9 +303,11 @@ def _try_load(app: FastAPI) -> store.Artefacts | None:
     state.last_attempt = now
     try:
         state.artefacts = store.load_latest(state.artefacts_root)
-    except store.ArtefactsNotFound as error:
+    except (store.ArtefactsNotFound, store.UnreadableArtefacts) as error:
+        state.load_error = str(error)
         log.warning("%s; retrying at most every %.0f s", error, state.retry_seconds)
         return None
+    state.load_error = None
     return state.artefacts
 
 

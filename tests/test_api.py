@@ -1,5 +1,7 @@
 """API contract tests: FastAPI TestClient against fixture artefacts (the main seam)."""
 
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -38,6 +40,20 @@ def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
     # ... but once the retry interval has passed, the artefacts load.
     assert after.status_code == 200
     assert after.json()["ready"] is True
+
+
+def test_health_is_not_ready_when_the_newest_folder_is_v1(fixture_artefacts, tmp_path):
+    store.save(fixture_artefacts, tmp_path)
+    v1 = {k: v for k, v in fixture_artefacts.metadata.items() if k != "artefact_format"}
+    store.save(replace(fixture_artefacts, metadata={**v1, "version": "zzz-v1"}), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["ready"] is False
+    assert "zzz-v1" in response.json()["reason"]
+    assert "no artefact_format" in response.json()["reason"]
 
 
 def test_opportunities_need_loaded_artefacts(tmp_path):
