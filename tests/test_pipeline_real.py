@@ -75,7 +75,8 @@ def test_an_existing_artefact_is_evaluated_into_a_new_version_with_its_models_co
     from exportspredictor import evaluation
 
     old = replace(trained, metadata={**trained.metadata, "version": "20000101T000000Z"}, evaluation=None)
-    store.save(old, tmp_path)
+    source = store.save(old, tmp_path)
+    (source / "other_step.parquet").write_bytes(b"a table this code does not know")
 
     folder = evaluation.add_to_latest(derived_data_root, tmp_path, device="cpu")
 
@@ -84,5 +85,7 @@ def test_an_existing_artefact_is_evaluated_into_a_new_version_with_its_models_co
     assert evaluated.metadata["copied_from"] == old.version
     assert evaluated.baseline.equals(trained.baseline)
     assert evaluated.evaluation["test_year"] == 2023
+    assert (folder / "other_step.parquet").read_bytes() == b"a table this code does not know"
+    assert sorted(p.name for p in (folder / "models").iterdir()) == [f"fold_{k}.ubj" for k in range(5)]
     # The test-year models are cached under the data root, so a re-run does not retrain.
     assert (evaluation.test_models_dir(derived_data_root, trained.metadata) / evaluation.TEST_MODELS_FILE).exists()

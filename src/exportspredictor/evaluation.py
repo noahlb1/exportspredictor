@@ -39,7 +39,7 @@ import json
 import math
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -538,13 +538,14 @@ def add_to_latest(root: Path | None = None, artefacts_root: Path | None = None, 
     trained (or read from the cache). Returns the new folder.
     """
     artefacts_root = Path(artefacts_root or artefacts_dir())
-    bundle = store.load_latest(artefacts_root)
+    source = store.latest_folder(artefacts_root)
+    bundle = store.load(source)
     started = time.perf_counter()
     test_models = real_test_models(bundle, root, device=device)
     report = evaluate_real(bundle, test_models, root)
     report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
     metadata = {**bundle.metadata, "version": store.new_version(), "copied_from": bundle.version}
-    return store.save(replace(bundle, metadata=metadata, evaluation=report), artefacts_root)
+    return store.copy_version(source, artefacts_root, metadata=metadata, evaluation=report)
 
 
 if __name__ == "__main__":
