@@ -7,7 +7,8 @@ records the fold it held out (`held_out_fold` attribute), and scoring returns ea
 `fold`, so Scenarios and explanations can use the same model as the Baseline.
 
 Training data comes in chunks (one feature table per year, see `training`), so the real
-~165 M rows never sit in memory at once.
+rows never sit in host memory at once. UK rows, Zero Cells included, are never sampled
+(ADR 0004), so fold model k trains on every UK pair outside fold k, zeros and all.
 """
 
 import hashlib

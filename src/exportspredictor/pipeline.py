@@ -2,6 +2,9 @@
 
 Both paths run the same steps (`_train_and_score`), so the fixture tests what real data runs:
 
+0. **Fit the row budget** (ADR 0004): count the training years' UK and other rows, then
+   derive the largest non-UK sampling rate that fits the VRAM row budget, or refuse a
+   given rate that does not, before any training.
 1. **Tune** on the validation year (Baseline year − 2, i.e. 2022): one model per
    hyperparameter configuration, trained on the years before it, with early stopping on
    it. The test year (Baseline year − 1) is never read here.

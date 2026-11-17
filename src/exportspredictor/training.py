@@ -76,15 +76,39 @@ def scan_chunks(chunks: Sequence[Chunk]) -> pl.LazyFrame:
 # --- The row budget (ADR 0004) -------------------------------------------------------------
 #
 # Training runs in-core on the 10 GB GPU, so the rows of every training matrix must fit in
-# VRAM. Peak VRAM grows linearly with rows, and per row with the feature count; the
-# constants are fitted to the measured GPU check (`GPU_CHECK`, ticket #52).
-VRAM_BUDGET_BYTES = 8 * 2**30  # of the 10 GiB, leaving room for the desktop and fragmentation
-VRAM_FIXED_BYTES = 512 * 2**20  # CUDA context and XGBoost's own buffers, whatever the rows
-ROW_BYTES = 40.0  # per row: label, weight, gradients, predictions, row partition
+# VRAM. Peak VRAM grows linearly with rows (`GPU_CHECK`): about 300 MiB fixed plus 72.9
+# bytes a row with 22 features, measured on a device-built matrix of up to 107 M rows.
+# The per-feature share is XGBoost's compressed bin index (about 12 bits a feature for
+# 256 bins); the rest of a row's cost (label, weight, gradients, predictions, row
+# partition) does not depend on the feature count.
+VRAM_BUDGET_BYTES = 7680 * 2**20  # peak above idle: the desktop holds about 2 of the 10 GiB
+VRAM_FIXED_BYTES = 300 * 2**20  # CUDA context and XGBoost's own buffers, whatever the rows
 FEATURE_BYTES = 1.5  # per row and feature: the compressed histogram index
+ROW_BYTES = 72.86 - 22 * FEATURE_BYTES  # per row, whatever the features
 RATE_STEP = 1e-4  # the derived non-UK rate is a multiple of this
 SAMPLE_SDS = 4  # headroom for hash sampling: a sample this many standard deviations large still fits
-GPU_CHECK: dict = {}
+# Short GPU runs (the row-budget check, and the experiments of ticket #53) train on this
+# Sector subset: the three large UK Sectors of `constraints.REAL_PLAN` (beverages,
+# pharmaceuticals, vehicles) plus fish, plastics, knitted apparel and electrical machinery,
+# so that food, chemicals, textiles and machinery all appear and the subset has tens of
+# millions of rows.
+SECTOR_SUBSET = ("03", "22", "30", "39", "61", "85", "87")
+# The GPU check (ticket #52, `scripts/gpu_check.py`): v1's configuration on a device-built
+# matrix of the Sector subset's 2012–2021 rows (top-100 scope, every UK Zero Cell, 5% of
+# other Zero Cells) fed four times. Recorded in every artefact's metadata.
+GPU_CHECK = {
+    "measured": "2026-11-17",
+    "gpu": "RTX 3080 10 GB",
+    "xgboost_version": "3.4.1",
+    "rows": 107_464_440,
+    "features": 22,
+    "peak_vram_mib": 7670,  # above the idle desktop's 1.9 GiB; peaks while training, not while building
+    "build_peak_vram_mib": 4165,
+    "build_seconds": 32.1,
+    "seconds_per_round": 0.2875,
+    "bytes_per_row": 72.86,
+    "fixed_bytes": 300 * 2**20,
+}
 
 
 class RowBudgetExceeded(ValueError):
@@ -178,39 +202,52 @@ class _ChunkIter(xgb.DataIter):
 
     On a CUDA device each chunk is copied to the GPU as CuPy arrays, so the
     `QuantileDMatrix` is sketched and compressed on the device and no host copy of the
-    whole matrix is kept: that is what lets about 110 M rows train in-core (ADR 0004).
+    whole matrix is kept (ADR 0004). The previous chunk's device memory is handed back
+    before the next is copied, so only one chunk is ever on the device beside the matrix.
     """
 
     def __init__(self, chunks: Sequence[Chunk], prepare: Prepare, device: str = "cpu"):
         self._chunks, self._prepare, self._i = list(chunks), prepare, 0
-        self._array = _device_array(device)
+        self.device = _Device(device)
         super().__init__()
 
     def reset(self) -> None:
         self._i = 0
 
     def next(self, input_data) -> bool:
+        self.device.release()  # XGBoost has dropped the previous chunk by now
         while self._i < len(self._chunks):
             table = self._prepare(read_chunk(self._chunks[self._i]))
             self._i += 1
             if table.height:
                 input_data(
-                    data=self._array(table.select(FEATURES).to_numpy().astype(np.float32)),
-                    label=self._array(table["value_usd"].to_numpy().astype(np.float32)),
-                    weight=self._array(table["weight"].to_numpy().astype(np.float32)),
+                    data=self.device.array(table.select(FEATURES).to_numpy()),
+                    label=self.device.array(table["value_usd"].to_numpy()),
+                    weight=self.device.array(table["weight"].to_numpy()),
                     feature_names=FEATURES,
                 )
                 return True
         return False
 
 
-def _device_array(device: str) -> Callable[[np.ndarray], object]:
-    """Host arrays as they are for the CPU, or copied to the GPU as CuPy arrays for CUDA."""
-    if not device.startswith("cuda"):
-        return lambda array: array
-    import cupy  # only where training runs on the GPU; the API never trains
+class _Device:
+    """Where a matrix's chunks go: float32 host arrays for the CPU, CuPy arrays for CUDA."""
 
-    return cupy.asarray
+    def __init__(self, device: str):
+        self._cupy = None
+        if device.startswith("cuda"):
+            import cupy  # only where training runs on the GPU; the API never trains
+
+            self._cupy = cupy
+
+    def array(self, array: np.ndarray):
+        array = np.ascontiguousarray(array, dtype=np.float32)  # row-major, as XGBoost reads it
+        return array if self._cupy is None else self._cupy.asarray(array)
+
+    def release(self) -> None:
+        """Hand device memory CuPy holds but no array uses back to the driver, for XGBoost."""
+        if self._cupy is not None:
+            self._cupy.get_default_memory_pool().free_all_blocks()
 
 
 def training_matrix(
@@ -221,7 +258,10 @@ def training_matrix(
     device: str = "cpu",
 ) -> xgb.QuantileDMatrix:
     """A QuantileDMatrix built chunk by chunk, on `device`; `prepare` filters or transforms each chunk first."""
-    return xgb.QuantileDMatrix(_ChunkIter(chunks, prepare or (lambda t: t), device), ref=ref)
+    chunk_iter = _ChunkIter(chunks, prepare or (lambda t: t), device)
+    matrix = xgb.QuantileDMatrix(chunk_iter, ref=ref)
+    chunk_iter.device.release()
+    return matrix
 
 
 def preparer(
