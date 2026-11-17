@@ -31,7 +31,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor import baci, backtests, constraints, evaluation
-from exportspredictor.artefacts import Artefacts, new_version
+from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.features import (
     FEATURES,
     MONOTONE_CONSTRAINTS,
@@ -317,6 +317,7 @@ def _train_and_score(
     # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
     baseline = with_blocked_effects(baseline, blocked_effects(baseline_features, baseline, models))
     metadata = {
+        "artefact_format": ARTEFACT_FORMAT,
         "baseline_year": baseline_year,
         "validation_year": validation_year,
         "test_year": test_year,
