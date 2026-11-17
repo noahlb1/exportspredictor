@@ -195,3 +195,26 @@ def test_stability_compares_the_baseline_with_the_test_year(report):
 def test_the_evaluation_records_the_training_sample_rates(report):
     assert report["non_uk_sampling_rate"] == 1.0  # the fixture keeps every row
     assert report["zero_sampling_rate"] == pytest.approx(0.5)
+
+
+def test_accuracy_adds_an_income_level_breakdown_when_markets_carry_it():
+    # Income level stands in for reporting quality in the bias review: poorer countries report later and less fully.
+    scored = pl.DataFrame(
+        {
+            "exporter": ["GBR"] * 6,
+            "importer": ["JPN", "JPN", "JPN", "IND", "IND", "IND"],
+            "hs6": ["220830", "300490", "870323"] * 2,
+            "value_usd": [10.0, 20.0, 30.0, 30.0, 20.0, 10.0],
+            "weight": [1.0] * 6,
+            "export_potential_usd": [11.0, 19.0, 31.0, 29.0, 21.0, 9.0],
+            "naive_usd": [10.0] * 6,
+        }
+    )
+    markets = pl.DataFrame(
+        {"iso3": ["JPN", "IND"], "region": ["East Asia & Pacific", "South Asia"], "income_level": ["High income", "Lower middle income"]}
+    )
+
+    result = evaluation.accuracy(scored, markets)
+
+    assert {row["group"]: row["rows"] for row in result["by_income"]} == {"High income": 3, "Lower middle income": 3}
+    assert "by_income" not in evaluation.accuracy(scored, markets.drop("income_level"))

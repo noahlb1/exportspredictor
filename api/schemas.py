@@ -116,6 +116,7 @@ class ScopeAccuracy(BaseModel):
     overall: AccuracyRow
     by_sector: list[AccuracyRow]  # weakest first (lowest within-Product rank correlation)
     by_region: list[AccuracyRow]  # weakest first
+    by_income: list[AccuracyRow] = []  # weakest first; World Bank income level of the Market (reporting quality)
 
 
 class Headline(BaseModel):

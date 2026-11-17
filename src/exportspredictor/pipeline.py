@@ -226,7 +226,8 @@ def build_real_artefacts(
     }
     test_grid = folder / f"uk_grid_{baseline_year - 1}.parquet"
     report = _evaluate(
-        training, test_grid, trained, metadata, markets=markets, device=device, non_uk_rate=non_uk_rate, seed=seed,
+        training, test_grid, trained, metadata, markets=evaluation.markets_with_income(markets, root),
+        device=device, non_uk_rate=non_uk_rate, seed=seed,
         backtest_plan=backtest_plan,
         backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
         high_income=load_sources(root)[0].high_income,
