@@ -2,7 +2,8 @@
 
 Layout of `<root>/<version>/`:
 
-    metadata.json      version, baseline_year, gbp_rate, n_folds, features, ... (free-form beyond those)
+    metadata.json      artefact_format, version, baseline_year, n_folds, features, ...
+                       (free-form beyond those)
     models/fold_<k>.ubj
     baseline.parquet   one row per UK Product–Market pair in the Baseline year
     baseline_features.parquet  the same pairs' model inputs and fold (for Scenarios, explanations)
@@ -10,6 +11,10 @@ Layout of `<root>/<version>/`:
     products.parquet   Product lookup (hs6, description, sector)
     markets.parquet    Market lookup (iso3, name, region)
     evaluation.json    accuracy on the test year, stability and later checks (optional)
+
+`artefact_format` is 2. `load` refuses any other format, including v1 folders (which
+carry none), and a folder missing any table above, so the API never serves a bundle it
+cannot read.
 
 Version names sort chronologically (default: a UTC timestamp), so the newest folder is
 the lexically greatest one that holds a metadata file.
@@ -24,15 +29,18 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import currency
-
 METADATA_FILE = "metadata.json"
 EVALUATION_FILE = "evaluation.json"
+ARTEFACT_FORMAT = 2
 _TABLES = ("baseline", "baseline_features", "history", "products", "markets")
 
 
 class ArtefactsNotFound(FileNotFoundError):
     """No artefact folder with a metadata file exists under the given root."""
+
+
+class UnreadableArtefacts(ValueError):
+    """An artefact folder of another format, or one missing a table this code reads."""
 
 
 @dataclass(frozen=True)
@@ -54,14 +62,6 @@ class Artefacts:
     @property
     def baseline_year(self) -> int:
         return self.metadata["baseline_year"]
-
-    @property
-    def gbp_rate(self) -> dict:
-        """The USD → GBP rate for £ values: usd_per_gbp, year, source.
-
-        Folders saved before the rate was recorded fall back to the Baseline year's rate.
-        """
-        return self.metadata.get("gbp_rate") or currency.gbp_rate(self.baseline_year)
 
 
 def new_version() -> str:
@@ -85,9 +85,16 @@ def save(artefacts: Artefacts, root: Path) -> Path:
 
 
 def load(folder: Path) -> Artefacts:
-    """Load one artefact folder."""
+    """Load one artefact folder; `UnreadableArtefacts` if it is not a complete format-2 folder."""
     folder = Path(folder)
     metadata = json.loads((folder / METADATA_FILE).read_text(encoding="utf-8"))
+    found = metadata.get("artefact_format")
+    if found != ARTEFACT_FORMAT:
+        named = "no artefact_format" if found is None else f"artefact format {found}"
+        raise UnreadableArtefacts(f"{folder} has {named}; this code reads only artefact format {ARTEFACT_FORMAT}")
+    missing = [name for name in _TABLES if not (folder / f"{name}.parquet").exists()]
+    if missing:
+        raise UnreadableArtefacts(f"{folder} is missing the table(s) {', '.join(missing)}")
     models = []
     for k in range(metadata["n_folds"]):
         model = xgb.Booster()

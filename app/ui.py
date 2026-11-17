@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
+from exportspredictor.currency import USD_CAPTION, USD_UNIT
 
 # HS2 chapters of the 2012 edition (chapter 77 is reserved and unused).
 SECTORS = [f"{chapter:02d}" for chapter in range(1, 98) if chapter != 77]
@@ -20,7 +21,6 @@ _VALUES = {
     "export_gap": "Export Gap",
     "blocked_effect": "Blocked Opportunity value",
 }
-_CURRENCIES = {"GBP": ("gbp", "£"), "USD": ("usd", "USD")}
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -31,7 +31,10 @@ def fetch(path: str, api_url: str, **params) -> dict | list:
 
 
 def banner() -> dict | None:
-    """Show the Baseline-year and caveat banner. Returns health, or None if the API is down."""
+    """Show the Baseline-year and caveat banner and the page's one currency caption.
+
+    Returns health, or None if the API is down.
+    """
     try:
         health = client.get("/health")
     except client.ApiUnavailable as error:
@@ -46,13 +49,14 @@ def banner() -> dict | None:
         "Figures are associations the model has learned, not causes. "
         f"Model version {health['artefact_version']}."
     )
+    st.caption(USD_CAPTION)
     return health
 
 
 def ranking_filters() -> dict:
     """The ranking order and the Sector, region and minimum-Gap filters, shared by both ranking pages.
 
-    Returns the API query parameters that are set (`rank_by`, `sector`, `region`, `min_gap_gbp`).
+    Returns the API query parameters that are set (`rank_by`, `sector`, `region`, `min_gap_usd`).
     """
     markets = fetch("/markets", client.api_url())
     regions = sorted({market["region"] for market in markets})
@@ -63,12 +67,14 @@ def ranking_filters() -> dict:
     region = region_column.selectbox(
         "Market region", [None, *regions], format_func=lambda r: "All regions" if r is None else r, key="region"
     )
-    min_gap_gbp = gap_column.number_input("Minimum Export Gap (£)", value=None, step=1_000_000.0, key="min_gap_gbp")
+    min_gap_usd = gap_column.number_input(
+        f"Minimum Export Gap ({USD_UNIT})", value=None, step=1_000_000.0, key="min_gap_usd"
+    )
     orders = rank_orders()
     rank_by = st.radio(
         "Rank by", list(orders), format_func=lambda name: orders[name]["title"], key="rank_by", horizontal=True
     )
-    params = {"rank_by": rank_by, "sector": sector, "region": region, "min_gap_gbp": min_gap_gbp}
+    params = {"rank_by": rank_by, "sector": sector, "region": region, "min_gap_usd": min_gap_usd}
     return {name: value for name, value in params.items() if value is not None}
 
 
@@ -114,19 +120,6 @@ def rank_orders() -> dict[str, dict]:
     return {order["name"]: order for order in fetch("/opportunities/rank-by", client.api_url())}
 
 
-def currency_choice() -> tuple[str, str]:
-    """The £/USD switch every page with money values shows (£ first). Returns (field suffix, unit label)."""
-    currency = st.radio("Values in", list(_CURRENCIES), horizontal=True, key="currency")
-    return _CURRENCIES[currency]
-
-
-def rate_caption(rate: dict) -> str:
-    """The sentence stating the USD/GBP rate a response's £ values use."""
-    return (
-        f"£ values use £1 = ${rate['usd_per_gbp']:.4f}, the {rate['year']} annual average ({rate['source']})."
-    )
-
-
 def market_picker(region: str | None = None) -> str | None:
     """Pick a Market by name, from one region if given. Returns its ISO3 code, or None."""
     markets = [m for m in fetch("/markets", client.api_url()) if region is None or m["region"] == region]
@@ -137,16 +130,14 @@ def market_picker(region: str | None = None) -> str | None:
 
 
 def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: str | None = None, iso3: str | None = None) -> None:
-    """The ranking table with its £ rate, a currency switch, a Why? link per row and a CSV export.
+    """The ranking table in nominal USD, with a Why? link per row and a CSV export.
 
     `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
     ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
     holds exactly the table's data columns (the Why? links are page navigation, not data).
     """
-    suffix, unit = currency_choice()
     order = rank_orders()[body["rank_by"]]
-    st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {rate_caption(body['gbp_rate'])}")
-    st.caption(f"{order['title']}: {order['description']}")
+    st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']}")
     rows = body["opportunities"]
     if not rows:
         st.info("No Opportunities match these filters.")
@@ -155,14 +146,14 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     table = raw[list(columns)].rename(columns=columns)
     table["UK Trade Agreement in force"] = raw["trade_agreement"].map({True: "Yes", False: "No"})
     for field, heading in _VALUES.items():
-        table[f"{heading} ({unit})"] = raw[f"{field}_{suffix}"]
+        table[f"{heading} ({USD_UNIT})"] = raw[f"{field}_usd"]
     table["Blocked Opportunity"] = raw["blocked_opportunity"]
     links = [why_link(hs6 or row["hs6"], iso3 or row["iso3"]) for row in rows]
     st.dataframe(
         table.assign(**{"Why?": links}),
         hide_index=True,
         column_config={
-            **{f"{heading} ({unit})": st.column_config.NumberColumn(format="localized") for heading in _VALUES.values()},
+            **{f"{heading} ({USD_UNIT})": st.column_config.NumberColumn(format="localized") for heading in _VALUES.values()},
             "Why?": why_column(),
         },
     )

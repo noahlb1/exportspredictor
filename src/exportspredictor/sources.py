@@ -4,9 +4,10 @@ Sources with a published version (BACI, CEPII Gravity, the World Bank WDI's "las
 date) record it. Sources without one (the WTO RTA-IS export, the IMF DataMapper API, the
 HMRC archive) record the date their raw file was downloaded: the file's modification date
 (UTC), which the write-then-rename download leaves at the moment the download finished.
-The Bank of England rate table is copied into `currency`, so it records the copy date.
-TRAINS has no version either; its pull date is the date the last complete download
-finished, which the download's manifest records.
+The Bank of England rate table (used only to convert HMRC's £ for the cross-check) is
+copied into `currency`, so it records the copy date. TRAINS has no version either; its
+pull date is the date the last complete download finished, which the download's
+manifest records.
 
 `source_versions` is stored in artefact metadata as `sources` (`pipeline.refresh` adds it
 to a saved artefact without retraining).

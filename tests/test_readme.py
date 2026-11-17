@@ -35,3 +35,9 @@ def test_readme_documents_the_one_command_run_and_the_rebuild_script():
     assert "podman compose up" in text
     assert "scripts/rebuild.py" in text
     assert "uv sync" in text
+
+
+def test_checklist_checks_values_are_in_usd_with_no_pounds():
+    checklist = _checklist()
+    assert "Values are nominal US dollars, as reported by BACI" in checklist
+    assert "£" not in checklist

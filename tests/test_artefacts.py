@@ -68,10 +68,26 @@ def test_a_folder_without_an_evaluation_still_loads(fixture_artefacts, tmp_path)
     assert store.load(folder).evaluation is None
 
 
-def test_folders_saved_before_the_gbp_rate_use_the_baseline_years_rate(fixture_artefacts):
-    metadata = {k: v for k, v in fixture_artefacts.metadata.items() if k != "gbp_rate"}
+def test_fixture_artefacts_are_saved_as_format_2(fixture_artefacts, tmp_path):
+    folder = store.save(fixture_artefacts, tmp_path)
 
-    older = replace(fixture_artefacts, metadata=metadata)
+    assert json.loads((folder / "metadata.json").read_text())["artefact_format"] == 2
 
-    assert older.gbp_rate["usd_per_gbp"] == 1.2783
-    assert older.gbp_rate["year"] == 2024
+
+@pytest.mark.parametrize(("artefact_format", "named"), [(1, "format 1"), (None, "no artefact_format")])
+def test_load_refuses_folders_of_another_format(fixture_artefacts, tmp_path, artefact_format, named):
+    metadata = {k: v for k, v in fixture_artefacts.metadata.items() if k != "artefact_format"}
+    if artefact_format is not None:
+        metadata["artefact_format"] = artefact_format
+    folder = store.save(replace(fixture_artefacts, metadata=metadata), tmp_path)
+
+    with pytest.raises(store.UnreadableArtefacts, match=named):
+        store.load(folder)
+
+
+def test_load_refuses_a_format_2_folder_missing_a_table(fixture_artefacts, tmp_path):
+    folder = store.save(fixture_artefacts, tmp_path)
+    (folder / "history.parquet").unlink()
+
+    with pytest.raises(store.UnreadableArtefacts, match="history"):
+        store.load(folder)
