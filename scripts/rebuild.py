@@ -36,6 +36,7 @@ STEPS = [
     Step("BACI Flows and lookups (download, convert to Parquet)", [PY, "-m", "exportspredictor.baci"]),
     Step("Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet)", [PY, "-m", "exportspredictor.gravity"]),
     Step("Trade Agreement and Trading Bloc features (WTO RTA-IS download, build)", [PY, "-m", "exportspredictor.policy"]),
+    Step("Applied Tariffs (TRAINS download via WITS, HS17/HS07 -> HS12, EU schedule, gap fill)", [PY, "-m", "exportspredictor.tariffs"]),
     Step("Feature table (training rows with sampled zeros, UK grid; per year)", [PY, "-m", "exportspredictor.features"]),
     Step("HMRC OTS 2023 exports for the BACI cross-check (download, HS 2022 -> 2012)", [PY, "-m", "exportspredictor.hmrc"]),
     # The notebook runs on real data here (it defaults to fixture mode, as the tests run it).

@@ -101,6 +101,10 @@ DATA_SOURCES = [
      "only; never a model input."), "raw/hmrc"),
     ("UN Statistics Division HS 2022 → HS 2012 conversion table", ("Puts HMRC's 2023 codes on BACI's revision "
      "for the cross-check."), "raw/hmrc"),
+    ("UNCTAD TRAINS via the WITS API (reported rates, 2012–2021)", ("HS6 MFN and preferential rates: the "
+     "Applied Tariff, carried forward from 2021 to 2022–2024."), "raw/trains"),
+    ("UN Statistics Division HS 2017 and HS 2007 → HS 2012 correlation tables", ("Put TRAINS reporter-years "
+     "on BACI's revision."), "raw/unsd"),
 ]
 
 # Raw folders under the data root and the source each belongs to, for `data_lineage`.
@@ -112,6 +116,8 @@ _RAW_SOURCES = {
     "imf_weo": "IMF World Economic Outlook",
     "wto": "WTO RTA-IS",
     "hmrc": "HMRC OTS 2023 and UN HS concordance",
+    "trains": "UNCTAD TRAINS",
+    "unsd": "UN HS concordances",
 }
 
 
