@@ -11,6 +11,7 @@ SCOPES = {
     "all_exporters": "All Exporters (every Flow of the test year, plus sampled zero cells)",
 }
 WEAKEST_SHOWN = 5
+TARIFF_GROUPS = {"observed": "Observed", "imputed": "Carried forward from 2021"}
 
 
 def _metric_table(overall: dict, metrics: dict) -> pd.DataFrame:
@@ -100,6 +101,43 @@ def _effects_table(direction: dict, post_years: list[int]) -> pd.DataFrame:
     )
 
 
+def _tariff_table(rows: list[dict]) -> pd.DataFrame:
+    table = _breakdown_table(rows, "Applied Tariff")
+    table["Applied Tariff"] = [TARIFF_GROUPS[row["group"]] for row in rows]
+    return table
+
+
+def _show_tariff_split(report: dict) -> None:
+    st.subheader("Observed against carried-forward tariffs")
+    st.markdown(report["tariff_split_text"])
+    for scope, label in SCOPES.items():
+        split = report["accuracy"][scope].get("by_tariff")
+        if split:
+            st.markdown(f"**{label}**")
+            st.dataframe(_tariff_table(split), hide_index=True)
+    st.caption(
+        "Tariff data end in 2021, so later years reuse each pair's 2021 Applied Tariff, or 0 where a Trade "
+        "Agreement entered force after 2021. Splitting the test rows this way shows what carrying 2021 forward costs."
+    )
+
+
+def _show_potential_range(coverage: dict) -> None:
+    st.subheader("How often Actual Exports fall inside the Potential Range")
+    st.markdown(coverage["text"])
+    by_exporter = pd.DataFrame(
+        [
+            {"Exporter": row["exporter"], "Coverage": row["coverage"], "Rows": row["rows"]}
+            for row in coverage["by_exporter"]
+        ]
+    )
+    st.dataframe(by_exporter, hide_index=True)
+    st.caption(
+        f"The Potential Range is calibrated on other Exporters' rows, never the UK's, and checked here on a held-out "
+        f"half of them, per Exporter. Coverage near {coverage['target']:.0%} for every Exporter supports the "
+        f"assumption that UK pairs vary as other Exporters' pairs do; it does not prove it."
+    )
+
+
 def _show_event_backtest(backtest: dict, names: dict[str, str]) -> None:
     st.subheader("Scenario Effects against a real Trade Agreement (Event Backtest)")
     for event in backtest["events"]:
@@ -114,7 +152,7 @@ def _show_event_backtest(backtest: dict, names: dict[str, str]) -> None:
             f"The model was trained on {_years(event['training_years'])} only, before the agreement. \"Predicted\" "
             f"is its Scenario Effect: Export Potential with the agreement on against off. \"Observed\" is the change "
             f"from {_years(event['pre_years'])} relative to the change in the control Markets. "
-            f"{event['control_rule']} {event['caveat']}"
+            f"{event.get('states', '')} {event['control_rule']} {event['caveat']}"
         )
 
 
@@ -176,8 +214,14 @@ if banner() is not None:
             st.dataframe(_breakdown_table(accuracy["by_region"], "Region"), hide_index=True)
         st.caption("Sorted weakest first, by the model's rank correlation within each Product.")
 
+        if report.get("tariff_split_text"):
+            _show_tariff_split(report)
+
         st.subheader("Stability of the rankings")
         st.markdown(report["stability"]["text"])
+
+        if report.get("potential_range"):
+            _show_potential_range(report["potential_range"])
 
         if report.get("lift"):
             _show_lift(report["lift"])

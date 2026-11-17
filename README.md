@@ -132,6 +132,8 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] The plain-English accuracy headline renders, green if the model beats the naive baseline and amber with a plain warning if it does not, with the test year and the non-UK training sample stated below it.
 - [ ] The metric tables (model against naive baseline) render for UK pairs and for all Exporters.
 - [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
-- [ ] The stability sentence and the known-limitations panel (goods only, no tariffs, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) render.
+- [ ] "Observed against carried-forward tariffs" splits the test rows by Applied Tariff (observed, carried forward from 2021) for both scopes, with a sentence saying how they split (on 2023 every row is carried forward).
+- [ ] The stability sentence renders, followed by the Potential Range's held-out coverage against its 80% target and a coverage table per Exporter.
+- [ ] The known-limitations panel (goods only, tariffs carried forward from 2021, Excluded Products, the top-100 Exporter scope, nominal US dollars, what the Potential Range assumes, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) renders, with no "no tariffs" entry.
 - [ ] The Lift section states how many times more often the largest Export Gaps grew, with a 95% interval, worded as a tendency, and shows the growth share for each tenth of Export Gaps.
-- [ ] The Event Backtest shows, for EU exports to Japan and Japan's exports to the EU, a table of predicted against observed change per year, names the control Markets, and states the COVID caveat; the UK–Australia/New Zealand secondary check follows.
+- [ ] The Event Backtest shows, for EU exports to Japan and Japan's exports to the EU, a table of predicted against observed change per year, names the control Markets, says the Applied Tariff is 0 with the agreement on and the MFN rate with it off, and states the COVID caveat; the UK–Australia/New Zealand secondary check follows.

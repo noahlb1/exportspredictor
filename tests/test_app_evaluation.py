@@ -57,6 +57,39 @@ def test_page_lists_every_known_limitation(page):
         assert limitation["title"] in text
 
 
+def test_page_shows_the_imputed_observed_tariff_split(page, fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    tables = [element.value for element in page.dataframe]
+    split = next(t for t in tables if "Applied Tariff" in t.columns)
+
+    assert list(split["Applied Tariff"]) == ["Observed", "Carried forward from 2021"]
+    imputed = report["accuracy"]["uk_out_of_fold"]["by_tariff"][1]["rows"]
+    assert list(split["Rows"]) == [0, imputed]
+    assert report["tariff_split_text"] in _text(page)
+
+
+def test_page_shows_the_potential_range_coverage(page, fixture_artefacts):
+    coverage = fixture_artefacts.evaluation["potential_range"]
+    tables = [element.value for element in page.dataframe]
+
+    assert "Potential Range" in _text(page)
+    assert f"{coverage['coverage']:.0%}" in _text(page) and f"{coverage['target']:.0%}" in _text(page)
+    assert any("Coverage" in t.columns and "Exporter" in t.columns for t in tables)
+
+
+def test_page_drops_no_tariffs_and_lists_v2s_limitations(page):
+    text = _text(page)
+
+    assert "No tariffs" not in text
+    for title in ["Tariffs carried forward from 2021", "Excluded Products", "Trained on the top 100 Exporters",
+                  "Values are nominal US dollars", "What the Potential Range assumes"]:
+        assert title in text, title
+
+
+def test_page_says_how_the_event_backtest_sets_the_tariff(page, fixture_artefacts):
+    assert fixture_artefacts.evaluation["event_backtest"]["events"][0]["states"] in _text(page)
+
+
 def test_page_states_the_test_year_and_how_the_models_were_trained(page):
     text = _text(page)
 

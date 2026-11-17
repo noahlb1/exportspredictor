@@ -209,6 +209,8 @@ class ScopeAccuracy(BaseModel):
     by_sector: list[AccuracyRow]  # weakest first (lowest within-Product rank correlation)
     by_region: list[AccuracyRow]  # weakest first
     by_income: list[AccuracyRow] = []  # weakest first; World Bank income level of the Market (reporting quality)
+    # "observed" then "imputed" (Applied Tariff carried forward from 2021, ADR 0006); an empty side has rows 0
+    by_tariff: list[AccuracyRow] = []
 
 
 class Headline(BaseModel):
@@ -294,6 +296,7 @@ class EventResult(BaseModel):
     post_years: list[int]
     control_rule: str
     caveat: str
+    states: str = ""  # what "agreement on" and "off" set, the Applied Tariff included
     directions: list[EventDirection]
     text: str
 
@@ -327,6 +330,7 @@ class Evaluation(BaseModel):
     naive_baseline: str
     accuracy: dict[str, ScopeAccuracy]  # "all_exporters" and "uk_out_of_fold"
     headline: Headline
+    tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None
     event_backtest: EventBacktest | None = None

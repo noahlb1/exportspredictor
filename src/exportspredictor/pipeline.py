@@ -580,7 +580,9 @@ def _evaluate(
         seed=seed,
     )
     print(f"Monotone-constraint comparison in {report['monotone_constraints']['seconds']:.0f} s", flush=True)
-    report["potential_range"] = trained.potential_range_report
+    report["potential_range"] = {
+        **trained.potential_range_report, "text": conformal.coverage_text(trained.potential_range_report)
+    }
     return report
 
 

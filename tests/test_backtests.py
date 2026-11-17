@@ -194,6 +194,50 @@ def test_no_event_backtest_model_sees_data_from_after_its_event(fixture_world):
     assert report["directions"][0]["by_year"] != distorted_report["directions"][0]["by_year"]
 
 
+def test_the_on_and_off_rows_differ_only_in_policy_columns_the_tariff_included(fixture_world):
+    from exportspredictor import features, policy
+    from exportspredictor.training import read_chunk
+
+    chunks = pipeline.fixture_training(fixture_world)
+    post = read_chunk(chunks[2023]).filter(
+        pl.col("exporter").cast(pl.String) == UK, pl.col("importer").cast(pl.String) == "JPN"
+    )
+    # Pretend the pair pays its MFN rate, so the "on" state visibly changes the tariff.
+    post = post.with_columns(log_applied_tariff=(pl.col("mfn_tariff") / 100).log1p().cast(pl.Float32))
+
+    on, off = backtests.agreement_states(post)
+
+    assert on.columns == off.columns == post.columns and on.height == off.height == post.height
+    fixed = [c for c in post.columns if c not in features.POLICY_FEATURES]
+    assert on.select(fixed).equals(post.select(fixed)) and off.select(fixed).equals(post.select(fixed))
+    assert on["trade_agreement"].to_list() == [1] * post.height
+    assert off["trade_agreement"].to_list() == [0] * post.height
+    assert on["log_applied_tariff"].to_list() == [0.0] * post.height  # zeroed under the agreement
+    mfn = post.select((pl.col("mfn_tariff") / 100).log1p().cast(pl.Float32))["mfn_tariff"]
+    assert off["log_applied_tariff"].to_list() == mfn.to_list()  # MFN restored without it
+    for flag in policy.POLICY_FEATURES:
+        if flag != "trade_agreement":
+            assert on[flag].equals(post[flag]) and off[flag].equals(post[flag])
+
+
+def test_the_off_state_keeps_the_tariff_where_no_mfn_rate_is_known():
+    rows = pl.DataFrame(
+        {"trade_agreement": [1, 1], "log_applied_tariff": [0.1, None], "mfn_tariff": [None, 12.0]},
+        schema_overrides={"trade_agreement": pl.Int8, "log_applied_tariff": pl.Float32},
+    )
+
+    on, off = backtests.agreement_states(rows)
+
+    assert on["log_applied_tariff"].to_list() == [0.0, 0.0]
+    assert off["log_applied_tariff"].to_list() == pytest.approx([0.1, 0.11332869])
+    assert on.schema == off.schema == rows.schema
+
+
+def test_the_event_backtest_says_how_the_tariff_moves_with_the_agreement(report):
+    for event in report["event_backtest"]["events"]:
+        assert "tariff" in event["states"] and "MFN" in event["states"]
+
+
 def test_a_backtest_model_refuses_years_from_its_event_onwards(fixture_world):
     chunks = pipeline.fixture_training(fixture_world)
 

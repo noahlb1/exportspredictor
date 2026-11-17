@@ -19,9 +19,10 @@ over many pairs, not a promise about any one Opportunity.
 **Event Backtests** check Scenario Effects against a real Trade Agreement. The primary one
 is the EU–Japan Economic Partnership Agreement (in force 1 February 2019): a model trained
 on 2012–2018 only, a period before the agreement, predicts the post-period Flows with the
-agreement on and off. The model's Scenario Effect is compared with an observed
-difference-in-differences: the change in EU exports to Japan from the pre-period
-(2016–2018) to each post year, relative to the change in EU exports to similar Markets
+agreement on and off: on sets the Trade Agreement flag and zeroes the Applied Tariff,
+off clears the flag and restores the Importer's MFN rate (ADR 0006). The model's
+Scenario Effect is compared with an observed difference-in-differences: the change in EU
+exports to Japan from the pre-period (2016–2018) to each post year, relative to the change in EU exports to similar Markets
 with no Trade Agreement with the EU (the control group). Japan's exports to the EU are
 checked the same way. COVID hit 2020, and differently by Market, so the 2020 and 2021
 comparisons are noisier. The UK–Australia and UK–New Zealand agreements (May 2023) are a
@@ -48,7 +49,7 @@ import numpy as np
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor.features import FEATURES, FeatureTransform
+from exportspredictor.features import FEATURES, TARIFF_FEATURES, FeatureTransform
 from exportspredictor.training import (
     Chunk,
     model_params,
@@ -524,6 +525,8 @@ def lift_text(result: dict) -> str:
 
 # --- Event Backtests ----------------------------------------------------------------------------
 
+(TARIFF,) = TARIFF_FEATURES
+
 
 @dataclass(frozen=True)
 class Direction:
@@ -584,9 +587,8 @@ def event_backtest(
         if not controls:
             raise ValueError(f"No control Markets for {d.label}")
         post = treated.filter(pl.col("year").is_in(list(event.post_years)))
-        flag = post.schema["trade_agreement"]
-        on = model.predict(post.with_columns(trade_agreement=pl.lit(1, flag)))
-        off = model.predict(post.with_columns(trade_agreement=pl.lit(0, flag)))
+        on_rows, off_rows = agreement_states(post)
+        on, off = model.predict(on_rows), model.predict(off_rows)
         predicted = post.select("hs6", "year", "weight").with_columns(
             on_usd=pl.Series(on, dtype=pl.Float64), off_usd=pl.Series(off, dtype=pl.Float64)
         )
@@ -614,10 +616,34 @@ def event_backtest(
         "post_years": list(event.post_years),
         "control_rule": _control_rule(event, high_income is not None),
         "caveat": event.caveat,
+        "states": AGREEMENT_STATES,
         "directions": directions,
     }
     report["text"] = event_text(report)
     return report
+
+
+AGREEMENT_STATES = (
+    "With the agreement on, the Trade Agreement flag is set and the Applied Tariff is 0; with it off, the flag is "
+    "cleared and the Importer's MFN tariff is restored (the pair's own tariff where no MFN rate is known). These are "
+    "the states a Trade Agreement Scenario compares (ADR 0006)."
+)
+
+
+def agreement_states(rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """The rows with the Trade Agreement on (Applied Tariff 0) and off (the Importer's MFN rate restored).
+
+    Only policy columns change: `trade_agreement` and `log_applied_tariff`, as a Trade
+    Agreement Scenario changes them (ADR 0006). `mfn_tariff` is in percent; where it is
+    missing the off state keeps the row's own tariff.
+    """
+    flag = rows.schema["trade_agreement"]
+    tariff = pl.col(TARIFF)
+    dtype = rows.schema[TARIFF]
+    mfn = (pl.col("mfn_tariff").cast(pl.Float64) / 100).log1p().cast(dtype)
+    on = rows.with_columns(trade_agreement=pl.lit(1, flag), **{TARIFF: pl.lit(0.0, dtype)})
+    off = rows.with_columns(trade_agreement=pl.lit(0, flag), **{TARIFF: mfn.fill_null(tariff)})
+    return on, off
 
 
 def _check_event(treated: pl.DataFrame, event: Event) -> None:
