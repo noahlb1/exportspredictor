@@ -53,7 +53,7 @@ def _healthcheck(services, api_url: str) -> int:
     command = services["api"]["healthcheck"]["test"]
     assert command[:2] == ["CMD", "python"]
     script = [part.replace("http://localhost:8000", api_url) for part in command[2:]]
-    return subprocess.run([sys.executable, *script], capture_output=True, timeout=30).returncode
+    return subprocess.run([sys.executable, *script], capture_output=True, timeout=30, check=False).returncode
 
 
 def test_healthcheck_passes_when_artefacts_are_loaded(services, live_api, fixture_artefacts_dir):

@@ -131,7 +131,7 @@ def test_by_product_can_rank_by_blocked_opportunity_value(client):
 
     rows = body["opportunities"]
     assert body["rank_by"] == "blocked"
-    assert [row["iso3"] for row in rows][0] == "IND"  # the only Market without a Trade Agreement
+    assert next(row["iso3"] for row in rows) == "IND"  # the only Market without a Trade Agreement
     values = [row["blocked_effect_usd"] for row in rows]
     assert values == sorted(values, reverse=True)
     assert {row["iso3"]: row["blocked_effect_usd"] for row in rows}["JPN"] == 0

@@ -18,7 +18,7 @@ def _load_script():
 
 def test_list_prints_the_steps_in_order_without_running_them():
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--list"], capture_output=True, text=True, timeout=60, cwd=REPO
+        [sys.executable, str(SCRIPT), "--list"], capture_output=True, text=True, timeout=60, cwd=REPO, check=False
     )
 
     assert result.returncode == 0

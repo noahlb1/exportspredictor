@@ -82,7 +82,7 @@ def test_product_to_markets_can_rank_by_blocked_opportunity_value(monkeypatch, a
 
     assert not page.exception
     table = page.dataframe[0].value
-    assert list(table["Market"])[0] == "India"
+    assert next(iter(table["Market"])) == "India"
     values = list(table["Blocked Opportunity value (£)"])
     assert values == sorted(values, reverse=True)
 

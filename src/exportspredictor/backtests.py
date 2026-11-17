@@ -49,7 +49,14 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.features import FEATURES, FeatureTransform
-from exportspredictor.training import Chunk, model_params, preparer, read_chunk, scan_chunks, training_matrix
+from exportspredictor.training import (
+    Chunk,
+    model_params,
+    preparer,
+    read_chunk,
+    scan_chunks,
+    training_matrix,
+)
 
 MODEL_FILE = "backtest_model.json"
 HELD_OUT_SHARE = 0.2

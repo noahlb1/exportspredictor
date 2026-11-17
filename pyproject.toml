@@ -24,6 +24,7 @@ dev = [
     "nbformat>=5.10",
     "pytest>=8.3",
     "pyyaml>=6.0",
+    "ruff>=0.17.5",
 ]
 
 [build-system]
@@ -32,6 +33,14 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/exportspredictor", "api", "app"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency injection is declared in argument defaults.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.lint.per-file-ignores]
+# Streamlit names pages after their files (Home.py, pages/1_Product_to_Markets.py).
+"app/**/*.py" = ["N999"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

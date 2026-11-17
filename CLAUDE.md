@@ -39,6 +39,7 @@ These encode the project's core integrity. Each one exists because breaking it s
   | RAM | 32 GB | Peak for feature builds. Use compact types and never build the dense Exporter × Importer × Product grid. |
   | Disk | about 690 GB free | Not a constraint. |
 - Python is managed with `uv`. Containers are run with `podman compose`.
+- **Gotchas** of this machine (uv off PATH, worktrees and the shared `.venv`, shared data and artefacts, long GPU runs, `gh` bodies): `docs/agents/environment.md`.
 
 ## Agent skills
 

@@ -30,7 +30,7 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import backtests, baci, constraints, evaluation
+from exportspredictor import baci, backtests, constraints, evaluation
 from exportspredictor.artefacts import Artefacts, new_version
 from exportspredictor.currency import gbp_rate
 from exportspredictor.features import (

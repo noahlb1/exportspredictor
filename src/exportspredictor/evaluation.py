@@ -182,7 +182,7 @@ def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
     """
     has_income = "income_level" in markets.columns
     regions = markets.select(
-        _i=pl.col("iso3").cast(pl.String), region=pl.col("region"), *(["income_level"] if has_income else [])
+        *(["income_level"] if has_income else []), _i=pl.col("iso3").cast(pl.String), region=pl.col("region")
     )
     frame = (
         scored.with_columns(

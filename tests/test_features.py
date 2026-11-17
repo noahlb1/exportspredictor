@@ -8,9 +8,9 @@ import polars as pl
 import pytest
 
 from exportspredictor.features import (
-    KEYS,
     DEMAND_FEATURES,
     FEATURES,
+    KEYS,
     SUPPLY_FEATURES,
     FeatureTransform,
     build_features,
