@@ -30,7 +30,7 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import backtests, baci, evaluation
+from exportspredictor import backtests, baci, constraints, evaluation
 from exportspredictor.artefacts import Artefacts, new_version
 from exportspredictor.currency import gbp_rate
 from exportspredictor.features import (
@@ -48,6 +48,7 @@ from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
 from exportspredictor.scenarios import blocked_effects, with_blocked_effects
+from exportspredictor.sources import source_versions
 from exportspredictor.training import Chunk, model_params, read_chunk, scan_chunks, tune
 
 # The fixture world has only a few dozen relevant zeros, so it keeps half of them. Real
@@ -145,6 +146,7 @@ def build_artefacts(
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
         seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
+        constraint_plan=constraints.FIXTURE_PLAN,
     )
     return Artefacts(
         metadata=metadata,
@@ -189,6 +191,7 @@ def build_real_artefacts(
     non_uk_rate: float = REAL_NON_UK_RATE,
     seed: int = 0,
     backtest_plan: backtests.Plan = backtests.REAL_PLAN,
+    constraint_plan: constraints.Plan = constraints.REAL_PLAN,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
@@ -220,6 +223,7 @@ def build_real_artefacts(
     metadata = {
         "version": version or new_version(),
         "source": f"BACI {baci.BACI_VERSION}",
+        "sources": source_versions(root),
         **trained.metadata,
         "zero_sampling_rate": settings["zero_sampling_rate"],
         "zero_sampling_seed": settings["zero_sampling_seed"],
@@ -232,6 +236,7 @@ def build_real_artefacts(
         backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
         high_income=load_sources(root)[0].high_income,
         backtest_cache=backtests.cache_dir(root),
+        constraint_plan=constraint_plan,
     )
     return Artefacts(
         metadata=metadata,
@@ -354,10 +359,12 @@ def _evaluate(
     seed: int,
     backtest_plan: backtests.Plan,
     high_income,
+    constraint_plan: constraints.Plan,
     backtest_chunks: Mapping[int, Chunk] | None = None,
     backtest_cache: Path | None = None,
 ) -> dict:
-    """Evaluate on the test year, then run Lift and the Event Backtests (`backtests`).
+    """Evaluate on the test year, run Lift and the Event Backtests (`backtests`), then compare
+    the monotone-constrained model with an unconstrained one (`constraints`).
 
     The test-year fold models are trained with the tuned configuration; the backtest
     models use it too. `backtest_chunks` defaults to `training`.
@@ -394,6 +401,20 @@ def _evaluate(
         cache=backtest_cache,
     )
     print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
+    report["monotone_constraints"] = constraints.compare(
+        {y: chunk for y, chunk in training.items() if y in metadata["training_years"]},
+        trained.baseline_features,
+        plan=constraint_plan,
+        uk=UK,
+        params=metadata["params"],
+        rounds=metadata["rounds"],
+        transform=FeatureTransform.from_dict(metadata["feature_transform"]),
+        n_folds=metadata["n_folds"],
+        non_uk_rate=non_uk_rate,
+        device=device,
+        seed=seed,
+    )
+    print(f"Monotone-constraint comparison in {report['monotone_constraints']['seconds']:.0f} s", flush=True)
     return report
 
 
@@ -411,17 +432,19 @@ def _history(uk_flows: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def refresh(bundle: Artefacts, *, version: str | None = None) -> Artefacts:
+def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | None = None) -> Artefacts:
     """A new version of a saved bundle with its derived metadata recomputed; no retraining.
 
     The fold models and tables are reused as they are. Use it when a derived value (such as
-    the GBP rate) is added after the models were trained.
+    the GBP rate, or the source versions read from the raw downloads under `data_root`) is
+    added after the models were trained.
     """
     metadata = {
         **bundle.metadata,
         "version": version or new_version(),
         "refreshed_from": bundle.version,
         "gbp_rate": gbp_rate(bundle.baseline_year),
+        "sources": source_versions(data_root),
     }
     return replace(bundle, metadata=metadata)
 
@@ -439,9 +462,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     argv = sys.argv[1:] if argv is None else argv
     if list(argv) == ["refresh"]:
-        bundle = refresh(artefacts.load_latest(artefacts_dir()))
-        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "gbp_rate")}), flush=True)
-        print(artefacts.save(bundle, artefacts_dir()), flush=True)
+        source = artefacts.latest_folder(artefacts_dir())
+        bundle = refresh(artefacts.load(source))
+        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "gbp_rate", "sources")}), flush=True)
+        # Copied file for file, so files this step does not know about (e.g. the model card) survive.
+        print(artefacts.copy_version(source, artefacts_dir(), metadata=bundle.metadata), flush=True)
         return
     bundle = build_real_artefacts()
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}

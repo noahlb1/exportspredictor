@@ -23,13 +23,19 @@ def test_health_reports_version_and_baseline_year_once_loaded(client):
 
 
 def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
-    with TestClient(create_app(tmp_path)) as client:
+    now = [0.0]
+    with TestClient(create_app(tmp_path, retry_seconds=60, clock=lambda: now[0])) as client:
         before = client.get("/health")
         store.save(fixture_artefacts, tmp_path)
+        within_interval = client.get("/health")
+        now[0] = 61.0
         after = client.get("/health")
 
     assert before.status_code == 503
     assert before.json()["ready"] is False
+    # A failed load is not retried on every request (no disk scan per call) ...
+    assert within_interval.status_code == 503
+    # ... but once the retry interval has passed, the artefacts load.
     assert after.status_code == 200
     assert after.json()["ready"] is True
 
@@ -203,9 +209,9 @@ def test_filters_apply_on_both_views(client):
     assert _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}", sector="85") == []
 
 
-def test_min_gap_filter_drops_smaller_export_gaps(client):
+def test_min_gap_usd_filter_drops_smaller_export_gaps(client):
     everything = _ranked(client, "/opportunities/by-market/JPN")
-    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap=0)
+    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap_usd=0)
 
     assert rows and all(row["export_gap_usd"] >= 0 for row in rows)
     assert rows == [row for row in everything if row["export_gap_usd"] >= 0]
@@ -276,6 +282,10 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
+        "export_potential_gbp",
+        "actual_exports_gbp",
+        "export_gap_gbp",
+        "gbp_rate",
         "factors",
         "history",
     }
@@ -329,3 +339,14 @@ def test_evaluation_includes_lift_and_the_event_backtest(client):
     assert direction["controls"] and direction["pooled"]["observed"] is not None
     assert direction["pooled"]["predicted"] is not None
     assert body["event_backtest"]["text"] and body["event_backtest"]["caveat"]
+
+
+def test_explain_returns_gbp_alongside_usd_with_the_rate_and_year(client):
+    body = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
+
+    assert body["gbp_rate"]["usd_per_gbp"] == USD_PER_GBP_2024
+    assert body["gbp_rate"]["year"] == 2024
+    for value in ("export_potential", "actual_exports", "export_gap"):
+        assert body[f"{value}_gbp"] == pytest.approx(body[f"{value}_usd"] / USD_PER_GBP_2024)
+    for point in body["history"]:
+        assert point["actual_exports_gbp"] == pytest.approx(point["actual_exports_usd"] / USD_PER_GBP_2024)

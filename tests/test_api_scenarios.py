@@ -53,6 +53,9 @@ def test_top_pairs_are_sorted_by_scenario_effect(client):
         "scenario_potential_usd",
         "effect_usd",
         "effect_share",
+        "baseline_potential_gbp",
+        "scenario_potential_gbp",
+        "effect_gbp",
         "blocked_opportunity",
     }
 
@@ -175,3 +178,46 @@ def test_by_market_rank_by_then_limit_keeps_the_top_blocked_values(client):
 
 def test_by_market_unknown_rank_by_returns_422(client):
     assert client.get("/opportunities/by-market/JPN", params={"rank_by": "size"}).status_code == 422
+
+
+USD_PER_GBP_2024 = 1.2783  # Bank of England XUAAUSS, 2024 annual average
+
+
+def test_scenarios_return_gbp_alongside_usd_with_the_rate_and_year(client):
+    body = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0, "min_effect_usd": 0}).json()
+
+    assert body["gbp_rate"]["usd_per_gbp"] == USD_PER_GBP_2024
+    assert body["gbp_rate"]["year"] == 2024
+    for row in [body["total"], *body["markets"], *body["products"], *body["top_pairs"], *body["blocked_opportunities"]]:
+        for value in ("baseline_potential", "scenario_potential", "effect"):
+            assert row[f"{value}_gbp"] == pytest.approx(row[f"{value}_usd"] / USD_PER_GBP_2024)
+    assert "£" in body["summary"] and "$" in body["summary"]
+
+
+def test_scenario_top_pairs_can_be_asked_for_one_market(client):
+    everywhere = client.post("/scenarios", json={"preset": "cptpp", "limit": 1}).json()
+    canada = client.post("/scenarios", json={"preset": "cptpp", "limit": 1, "market": "CAN"}).json()
+    japan = client.post("/scenarios", json={"preset": "cptpp", "limit": 1, "market": "JPN"}).json()
+
+    # With limit 1 the global top pair is in one Market only; each Market still gets its own.
+    assert len(everywhere["top_pairs"]) == 1
+    assert [row["iso3"] for row in canada["top_pairs"]] == ["CAN"]
+    assert [row["iso3"] for row in japan["top_pairs"]] == ["JPN"]
+    assert canada["markets"] == everywhere["markets"]  # the per-Market totals are unchanged
+    assert canada["market"] == "CAN"
+
+
+def test_scenario_drill_down_market_must_be_known(client):
+    assert client.post("/scenarios", json={"preset": "cptpp", "market": "ZZZ"}).status_code == 422
+
+
+def test_default_thresholds_are_served(client):
+    assert client.get("/scenarios/thresholds").json() == {"min_effect_share": 0.2, "min_effect_usd": 1_000_000}
+
+
+def test_rank_orders_are_served_with_titles(client):
+    body = client.get("/opportunities/rank-by").json()
+
+    assert [order["name"] for order in body] == ["gap", "blocked"]
+    assert body[1]["title"] == "Blocked Opportunity value"
+    assert "20%" in body[1]["description"]

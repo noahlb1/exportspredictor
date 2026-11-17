@@ -34,6 +34,7 @@ import numpy as np
 import polars as pl
 import xgboost as xgb
 
+from exportspredictor.currency import format_change
 from exportspredictor.features import FEATURES, POLICY_FEATURES
 
 DEFAULT_MIN_SHARE = 0.2
@@ -159,6 +160,34 @@ class ScenarioResult:
     ) -> pl.DataFrame:
         """Pairs whose Scenario Effect clears both Blocked Opportunity thresholds."""
         return self.pairs.filter(is_blocked("effect_usd", "baseline_potential_usd", min_share, min_usd))
+
+    def summary(self, *, blocked: int, year: int, usd_per_gbp: float) -> str:
+        """One sentence, worded as an association, never as a cause or a forecast.
+
+        `blocked` is the number of Blocked Opportunities, `year` the Baseline year, and the
+        effect is given in GBP (at `usd_per_gbp`) and in USD.
+        """
+        if self.changes_nothing and self.scenario.preset == "leave":
+            return (
+                f"This Scenario changes nothing: in the {year} Baseline the UK belongs to no tracked "
+                "Trading Bloc, so there is none to leave and no Scenario Effect."
+            )
+        if self.changes_nothing:
+            return (
+                "This Scenario changes nothing: the trade-policy conditions it sets are already those of the "
+                f"{year} Baseline (for example, the Trade Agreement already exists), so there is no Scenario Effect."
+            )
+        total = self.total()
+        markets = self.pairs["iso3"].n_unique()
+        market_word = "Market" if markets == 1 else "Markets"
+        blocked_word = "Blocked Opportunity" if blocked == 1 else "Blocked Opportunities"
+        effect_gbp = format_change(total["effect_usd"] / usd_per_gbp, "£")
+        return (
+            f"The model associates this Scenario with a change of {effect_gbp} "
+            f"({format_change(total['effect_usd'])}, {total['effect_share']:+.1%}) in UK Export Potential "
+            f"across {markets} {market_word}, against the {year} Baseline, with {blocked} {blocked_word}. "
+            "This is a learned association, not a forecast."
+        )
 
 
 def is_blocked(effect: str, baseline: str, min_share: float = DEFAULT_MIN_SHARE, min_usd: float = DEFAULT_MIN_USD) -> pl.Expr:

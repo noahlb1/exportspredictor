@@ -66,7 +66,7 @@ def train_fold_models(
     """
     models = []
     for k in range(n_folds):
-        keep = _outside_fold(uk, n_folds, k)
+        keep = outside_fold(uk, n_folds, k)
         prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed, keep=keep)
         matrix = training_matrix(chunks, prepare)
         model = xgb.train(model_params(params, device=device, seed=seed), matrix, num_boost_round=rounds)
@@ -96,7 +96,7 @@ def _with_fold(rows: pl.DataFrame, n_folds: int) -> pl.DataFrame:
     return assign_folds(rows.rename({"importer": "iso3"}), n_folds).rename({"iso3": "importer"})
 
 
-def _outside_fold(uk: str, n_folds: int, k: int):
+def outside_fold(uk: str, n_folds: int, k: int):
     """Row filter for fold model k: every non-UK row, and UK rows whose pair is not in fold k."""
 
     def keep(table: pl.DataFrame) -> pl.DataFrame:

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import polars as pl
 
+from exportspredictor.downloads import download, write_parquet
 from exportspredictor.paths import data_dir
 
 RTA_EXPORT_URL = "https://rtais.wto.org/UI/ExportAllRTAList.aspx"
@@ -154,19 +155,8 @@ def download_rta_export(root: Path | None = None, *, force: bool = False) -> Pat
 
     Writes to `<name>.part` first and renames when complete, so no reader sees half a file.
     """
-    import httpx
-
     target = rta_export_path(root)
-    if target.exists() and not force:
-        return target
-    target.parent.mkdir(parents=True, exist_ok=True)
-    part = target.with_name(target.name + ".part")
-    with httpx.stream("GET", RTA_EXPORT_URL, follow_redirects=True, timeout=120) as response:
-        response.raise_for_status()
-        with part.open("wb") as out:
-            for chunk in response.iter_bytes():
-                out.write(chunk)
-    part.replace(target)
+    download(RTA_EXPORT_URL, target, timeout=120, replace=force)
     return target
 
 
@@ -435,12 +425,9 @@ def build(root: Path | None = None, years: list[int] = DEFAULT_YEARS, source: Pa
     """
     rtas = read_rta_export(source or download_rta_export(root))
     paths = policy_paths(root)
-    paths["agreements"].parent.mkdir(parents=True, exist_ok=True)
     tables = {"agreements": pair_agreements(rtas, years), "trading_blocs": bloc_membership(rtas, years)}
     for name, table in tables.items():
-        part = paths[name].with_name(paths[name].name + ".part")
-        table.write_parquet(part)
-        part.replace(paths[name])
+        write_parquet(table, paths[name])
     return paths
 
 

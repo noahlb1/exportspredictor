@@ -26,13 +26,13 @@ positive Flows exist in BACI: a missing row means zero or unreported.
 import json
 import re
 import shutil
-import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import polars as pl
 
+from exportspredictor.downloads import download, write_parquet, writing
 from exportspredictor.paths import data_dir
 
 BACI_VERSION = "V202601"
@@ -98,7 +98,7 @@ def prepare(
     countries_path = root / "raw" / "worldbank" / "countries.json"
 
     for url, target in ((baci_url, archive_path), (countries_url, countries_path)):
-        if _download(url, target):
+        if download(url, target):
             report.downloaded.append(target.name)
 
     with zipfile.ZipFile(archive_path) as archive:
@@ -120,8 +120,8 @@ def prepare(
     lookups = lookups_dir(root)
     if not ((lookups / "products.parquet").exists() and (lookups / "markets.parquet").exists()):
         lookups.mkdir(parents=True, exist_ok=True)
-        _write_atomic(_products_lookup(product_codes), lookups / "products.parquet")
-        _write_atomic(_markets_lookup(country_codes, countries_path), lookups / "markets.parquet")
+        write_parquet(_products_lookup(product_codes), lookups / "products.parquet")
+        write_parquet(_markets_lookup(country_codes, countries_path), lookups / "markets.parquet")
         report.built_lookups = True
     return report
 
@@ -165,26 +165,11 @@ def summarise_flows(flows: pl.LazyFrame | pl.DataFrame, uk: str = UK) -> pl.Data
     )
 
 
-def _download(url: str, target: Path) -> bool:
-    if target.exists():
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    part = target.with_name(target.name + ".part")
-    request = urllib.request.Request(url, headers={"User-Agent": "exportspredictor-data-build"})
-    with urllib.request.urlopen(request) as response, open(part, "wb") as out:
-        shutil.copyfileobj(response, out, length=1 << 20)
-    part.replace(target)
-    return True
-
-
 def _extract(archive: zipfile.ZipFile, name: str, target: Path) -> bool:
     if target.exists():
         return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    part = target.with_name(target.name + ".part")
-    with archive.open(name) as source, open(part, "wb") as out:
+    with writing(target) as part, archive.open(name) as source, open(part, "wb") as out:
         shutil.copyfileobj(source, out, length=1 << 20)
-    part.replace(target)
     return True
 
 
@@ -207,23 +192,22 @@ def _convert_year(
     tmp = target.parent / ".tmp"
     csv_path = tmp / name
     _extract(archive, name, csv_path)
-    part = target.with_name(target.name + ".part")
     to_iso3 = {"old": country_codes["country_code"], "new": country_codes["country_iso3"]}
-    (
-        pl.scan_csv(
-            csv_path,
-            schema={"t": pl.Int16, "i": pl.UInt16, "j": pl.UInt16, "k": pl.String, "v": pl.Float64, "q": pl.Float64},
+    with writing(target) as part:
+        (
+            pl.scan_csv(
+                csv_path,
+                schema={"t": pl.Int16, "i": pl.UInt16, "j": pl.UInt16, "k": pl.String, "v": pl.Float64, "q": pl.Float64},
+            )
+            .select(
+                year="t",
+                exporter=pl.col("i").replace_strict(**to_iso3, return_dtype=pl.String).cast(countries),
+                importer=pl.col("j").replace_strict(**to_iso3, return_dtype=pl.String).cast(countries),
+                hs6=pl.col("k").str.zfill(6).cast(hs6),
+                value_usd=pl.col("v") * 1000.0,
+            )
+            .sink_parquet(part, compression="zstd")
         )
-        .select(
-            year="t",
-            exporter=pl.col("i").replace_strict(**to_iso3, return_dtype=pl.String).cast(countries),
-            importer=pl.col("j").replace_strict(**to_iso3, return_dtype=pl.String).cast(countries),
-            hs6=pl.col("k").str.zfill(6).cast(hs6),
-            value_usd=pl.col("v") * 1000.0,
-        )
-        .sink_parquet(part, compression="zstd")
-    )
-    part.replace(target)
     csv_path.unlink()
     shutil.rmtree(tmp, ignore_errors=True)
 
@@ -270,12 +254,6 @@ def _repair_double_encoding(text: str) -> str:
         return text.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
         return text
-
-
-def _write_atomic(frame: pl.DataFrame, target: Path) -> None:
-    part = target.with_name(target.name + ".part")
-    frame.write_parquet(part)
-    part.replace(target)
 
 
 if __name__ == "__main__":

@@ -1,16 +1,44 @@
 """Opportunity rankings: the Markets for one Product, or the Products for one Market.
 
 Both ranking views (the API's `/opportunities/by-product` and `/opportunities/by-market`)
-go through `rank_opportunities`, so a new ranking option or row field is added here once.
+go through `rank_opportunities`, which filters, sorts and limits once. A new ranking order
+is one entry in `RANK_BY`; a new row field is added in `rank_opportunities`.
 """
+
+from dataclasses import dataclass
 
 import polars as pl
 
 from exportspredictor.artefacts import Artefacts
+from exportspredictor.currency import with_gbp
+from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, is_blocked
 
-RANKED_BY = "export_gap_usd"
-# Each in _usd and _gbp. blocked_effect: the Scenario Effect of adding a Trade Agreement where none exists.
-VALUES = ("export_potential", "actual_exports", "export_gap", "blocked_effect")
+
+@dataclass(frozen=True)
+class RankOrder:
+    """One way to order a ranking: the `rank_by` key, the USD column it sorts by, and its wording."""
+
+    name: str
+    column: str
+    title: str
+    description: str
+
+
+RANK_BY = {
+    order.name: order
+    for order in [
+        RankOrder("gap", "export_gap_usd", "Export Gap", "Export Potential minus Actual Exports, largest first."),
+        RankOrder(
+            "blocked",
+            "blocked_effect_usd",
+            "Blocked Opportunity value",
+            "The Scenario Effect the model associates with adding a Trade Agreement where none exists "
+            f"(0 where one does). Flagged rows clear {DEFAULT_MIN_SHARE:.0%} of Baseline Export Potential "
+            f"and ${DEFAULT_MIN_USD / 1e6:g}M.",
+        ),
+    ]
+}
+DEFAULT_RANK_BY = "gap"
 
 
 def rank_opportunities(
@@ -22,16 +50,21 @@ def rank_opportunities(
     region: str | None = None,
     min_gap_usd: float | None = None,
     min_gap_gbp: float | None = None,
+    rank_by: str = DEFAULT_RANK_BY,
     limit: int | None = None,
 ) -> pl.DataFrame:
-    """The Baseline's UK Product–Market pairs for one Product or one Market, largest Export Gap first.
+    """The Baseline's UK Product–Market pairs for one Product or one Market, ordered by `rank_by`.
 
     Each row names its Product (hs6, description, sector) and Market (iso3, market, region),
     says whether a UK Trade Agreement with the Market is in force in the Baseline year
-    (`trade_agreement`, the policy feature the model saw), and gives Export Potential, Actual Exports and Export Gap in USD and in GBP (at
-    `artefacts.gbp_rate`). Filters keep rows of one Sector (HS2 chapter), one Market region,
-    or an Export Gap of at least `min_gap_usd` / `min_gap_gbp`; `limit` keeps the top rows.
+    (`trade_agreement`, the policy feature the model saw), gives Export Potential, Actual
+    Exports, Export Gap and Blocked Opportunity value in USD and in GBP (at
+    `artefacts.gbp_rate`), and flags a Blocked Opportunity at the default thresholds
+    (`blocked_opportunity`). Filters keep rows of one Sector (HS2 chapter), one Market region,
+    or an Export Gap of at least `min_gap_usd` / `min_gap_gbp`. Rows are sorted by the
+    `RANK_BY[rank_by]` column, largest first (ties by hs6, iso3); `limit` then keeps the top rows.
     """
+    order = RANK_BY[rank_by]
     usd_per_gbp = artefacts.gbp_rate["usd_per_gbp"]
     rows = artefacts.baseline
     policy = artefacts.baseline_features.select("hs6", "iso3", pl.col("trade_agreement") == 1)
@@ -51,7 +84,9 @@ def rank_opportunities(
         rows = rows.filter(pl.col("sector") == sector)
     if region is not None:
         rows = rows.filter(pl.col("region") == region)
-    rows = rows.with_columns(
-        (pl.col(f"{value}_usd") / usd_per_gbp).alias(f"{value}_gbp") for value in VALUES
-    ).sort(RANKED_BY, "hs6", "iso3", descending=[True, False, False])
+    rows = (
+        with_gbp(rows, usd_per_gbp)
+        .with_columns(blocked_opportunity=is_blocked("blocked_effect_usd", "export_potential_usd"))
+        .sort(order.column, "hs6", "iso3", descending=[True, False, False])
+    )
     return rows if limit is None else rows.head(limit)

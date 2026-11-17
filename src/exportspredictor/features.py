@@ -38,6 +38,7 @@ from pathlib import Path
 import polars as pl
 
 from exportspredictor import baci, policy
+from exportspredictor.downloads import write_parquet
 from exportspredictor.paths import data_dir
 
 KEYS = ["exporter", "importer", "hs6", "year"]
@@ -339,8 +340,14 @@ def build(
     out.mkdir(parents=True, exist_ok=True)
     for year in years:
         flows = load_year_flows(year, to_iso3, root)
-        _write(build_features(training_rows(flows, rate=rate, seed=seed), flows, sources), out / f"training_{year}.parquet")
-        _write(build_features(uk_grid(flows, uk), flows, sources), out / f"uk_grid_{year}.parquet")
+        write_parquet(
+            build_features(training_rows(flows, rate=rate, seed=seed), flows, sources),
+            out / f"training_{year}.parquet",
+            compression="zstd",
+        )
+        write_parquet(
+            build_features(uk_grid(flows, uk), flows, sources), out / f"uk_grid_{year}.parquet", compression="zstd"
+        )
         del flows
     settings = {
         "baci_version": baci.BACI_VERSION,
@@ -351,12 +358,6 @@ def build(
     }
     (out / SETTINGS_FILE).write_text(json.dumps(settings, indent=2), encoding="utf-8")
     return out
-
-
-def _write(frame: pl.DataFrame, target: Path) -> None:
-    part = target.with_name(target.name + ".part")
-    frame.write_parquet(part, compression="zstd")
-    part.replace(target)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """HMRC Overseas Trade Statistics (OTS): a 2023 cross-check of BACI's UK export totals.
 
 BACI's UK Flows are not HMRC's figures. BACI blends the UK's export report with each
-partner's import report, recasts every year to HS 2012 and works in USD. HMRC's OTS is
+Importer's import report, recasts every year to HS 2012 and works in USD. HMRC's OTS is
 what the UK itself declared, in £, in that year's Combined Nomenclature (CN8; 2023 uses
 HS 2022 at six digits). This module puts OTS 2023 on BACI's footing and measures the
 difference (docs/research/baci-hs12-feasibility.md, section 4):
@@ -11,7 +11,7 @@ difference (docs/research/baci-hs12-feasibility.md, section 4):
 2. `allocate` sums them over ports and months to HS6 × Market, converts HS 2022 codes to
    HS 2012 with the UN Statistics Division's conversion table, and maps HMRC's two-letter
    country codes to ISO3. Records HMRC does not attribute to a Product (chapter 99:
-   low-value consignments and suppressed commodity codes, and the chapter-only
+   low-value consignments and HMRC's suppressed "commodity codes", and the chapter-only
    estimates) or to a Market (country codes such as "ZY", "QV" and "YY") keep a null
    `hs6` or `iso3`, so totals still add up;
 3. `crosscheck` compares the result with BACI's UK Flows of the same year, in USD at the
@@ -24,12 +24,13 @@ writes `derived/hmrc_ots_2023.parquet`.
 
 import re
 import urllib.parse
-import urllib.request
 import zipfile
 from pathlib import Path
 
 import polars as pl
 
+from exportspredictor.downloads import download as download_file
+from exportspredictor.downloads import fetch, write_parquet
 from exportspredictor.paths import data_dir
 
 YEAR = 2023
@@ -47,7 +48,7 @@ _FIELDS = {
     "month": (1, 6),  # PERREF: the month the trade belongs to
     "line_type": (7, 7),  # 1 declared, 2 below-threshold allocation, 3/4 non-response estimates
     "comcode": (14, 21),  # CN8, or a chapter / blank for estimates, or 990.. for suppressed codes
-    "country": (30, 31),  # COD-ALPHA: country of ultimate destination
+    "country": (30, 31),  # COD-ALPHA, HMRC's "country of ultimate destination": the Market
     "value_gbp": (45, 56),  # STAT-VALUE, whole £, FOB
 }
 
@@ -110,7 +111,7 @@ def read_concordance(path: Path) -> pl.DataFrame:
 def allocate(records: pl.DataFrame, concordance: pl.DataFrame, markets: pl.DataFrame) -> pl.DataFrame:
     """OTS records summed to HS 2012 Product × Market: hs6, iso3, value_gbp.
 
-    `hs6` is null for value HMRC does not attribute to a declared commodity code
+    `hs6` is null for value HMRC does not attribute to a declared CN8 code (HMRC's "commodity code")
     (estimates, chapter 99), and `iso3` is null for value it does not attribute to a
     Market. Nothing is dropped, so the column sums to HMRC's total.
     """
@@ -220,14 +221,13 @@ def download(root: Path | None = None) -> dict[str, Path]:
     folder = raw_dir(root)
     archive, concordance = folder / ARCHIVE_NAME, folder / CONCORDANCE_NAME
     if not archive.exists():
-        page = _get(ARCHIVE_PAGE).decode("utf-8", errors="replace")
+        page = fetch(ARCHIVE_PAGE).decode("utf-8", errors="replace")
         # The archive page links each year's zip under a /media/<id>/ path that changes with releases.
         match = re.search(rf'href="([^"]*/{re.escape(ARCHIVE_NAME)})"', page)
         if match is None:
             raise RuntimeError(f"No link to {ARCHIVE_NAME} on {ARCHIVE_PAGE}; download it into {folder} by hand")
-        _save(urllib.parse.urljoin(ARCHIVE_PAGE, match.group(1)), archive)
-    if not concordance.exists():
-        _save(CONCORDANCE_URL, concordance)
+        download_file(urllib.parse.urljoin(ARCHIVE_PAGE, match.group(1)), archive)
+    download_file(CONCORDANCE_URL, concordance)
     return {"archive": archive, "concordance": concordance}
 
 
@@ -240,30 +240,12 @@ def build(root: Path | None = None) -> Path:
         read_concordance(files["concordance"]),
         market_codes(root / "raw" / "worldbank" / "countries.json"),
     )
-    target = root / "derived" / DERIVED_NAME
-    target.parent.mkdir(parents=True, exist_ok=True)
-    part = target.with_name(target.name + ".part")
-    ots.write_parquet(part)
-    part.replace(target)
-    return target
+    return write_parquet(ots, root / "derived" / DERIVED_NAME)
 
 
 def load(root: Path | None = None) -> pl.DataFrame:
     """The allocated OTS table written by `build`."""
     return pl.read_parquet((root or data_dir()) / "derived" / DERIVED_NAME)
-
-
-def _get(url: str) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "exportspredictor-data-build"})
-    with urllib.request.urlopen(request, timeout=300) as response:
-        return response.read()
-
-
-def _save(url: str, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    part = target.with_name(target.name + ".part")
-    part.write_bytes(_get(url))
-    part.replace(target)
 
 
 if __name__ == "__main__":

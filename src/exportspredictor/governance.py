@@ -130,6 +130,7 @@ def model_card(artefacts: Artefacts) -> dict:
         "metrics": _metrics(report),
         "limitations": [*_result_limitations(metadata, report), *LIMITATIONS],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
+        "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
         "decisions": [{"title": t, "text": x} for t, x in DECISIONS],
     }
 
@@ -233,6 +234,11 @@ def render_model_card(card: dict) -> str:
     ]
     lines += ["", "## Limitations", "", *[f"- **{x['title']}.** {x['text']}" for x in card["limitations"]], ""]
     lines += ["## Data sources", "", *[f"- **{s['name']}** ({s['location']}): {s['use']}" for s in card["data_sources"]], ""]
+    if card["source_versions"]:
+        lines += ["## Source versions", "", *[
+            f"- **{s['source']}**: {s['version']}; downloaded {s['downloaded'] or 'not found'}"
+            for s in card["source_versions"]
+        ], ""]
     lines += ["## Decisions behind the model", "", *[f"- **{d['title']}.** {d['text']}" for d in card["decisions"]], ""]
     return "\n".join(lines)
 
