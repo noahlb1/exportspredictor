@@ -24,4 +24,5 @@ if banner() is not None:
             else:
                 product = body["product"]
                 st.subheader(f"{product['hs6']} – {product['description']}")
-                show_ranking(body, {"market": "Market", "region": "Region"}, file_name=f"markets_for_{hs6}")
+                st.caption("Open **Why?** on a row to see which factors raised or lowered its Export Potential.")
+                show_ranking(body, {"market": "Market", "region": "Region"}, file_name=f"markets_for_{hs6}", hs6=hs6)

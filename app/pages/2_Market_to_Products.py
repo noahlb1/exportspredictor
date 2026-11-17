@@ -24,15 +24,18 @@ if banner() is not None:
             else:
                 market = body["market"]
                 st.subheader(f"{market['name']} ({market['region']})")
-                # Every row of one Market shares its UK Trade Agreement status; fixed per Market.
-                in_force = any(row["trade_agreement"] for row in body["opportunities"])
-                st.markdown(
-                    f"The UK has a Trade Agreement in force with {market['name']} in {body['baseline_year']}."
-                    if in_force
-                    else f"There is no UK Trade Agreement in force with {market['name']} in {body['baseline_year']}."
-                )
+                # Every row of one Market shares its UK Trade Agreement status (none when filtered out).
+                rows = body["opportunities"]
+                if rows:
+                    st.markdown(
+                        f"The UK has a Trade Agreement in force with {market['name']} in {body['baseline_year']}."
+                        if rows[0]["trade_agreement"]
+                        else f"There is no UK Trade Agreement in force with {market['name']} in {body['baseline_year']}."
+                    )
+                st.caption("Open **Why?** on a row to see which factors raised or lowered its Export Potential.")
                 show_ranking(
                     body,
                     {"hs6": "HS6", "description": "Product", "sector": "Sector"},
                     file_name=f"products_for_{iso3}",
+                    iso3=iso3,
                 )

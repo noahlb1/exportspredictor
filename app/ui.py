@@ -4,6 +4,8 @@ Both ranking pages render through `ranking_filters` and `show_ranking`, so a ran
 column or row link is added here once.
 """
 
+from urllib.parse import urlencode
+
 import pandas as pd
 import streamlit as st
 
@@ -99,10 +101,12 @@ def market_picker(region: str | None = None) -> str | None:
     )
 
 
-def show_ranking(body: dict, columns: dict[str, str], file_name: str) -> None:
-    """The ranking table with its £ rate, a currency switch and a CSV export of exactly that table.
+def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: str | None = None, iso3: str | None = None) -> None:
+    """The ranking table with its £ rate, a currency switch, a Why? link per row and a CSV export.
 
-    `columns` maps the row fields that name each row (e.g. `market`) to their headings.
+    `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
+    ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
+    holds exactly the table's data columns (the Why? links are page navigation, not data).
     """
     rate = body["gbp_rate"]
     currency = st.radio("Values in", list(_CURRENCIES), horizontal=True, key="currency")
@@ -121,11 +125,30 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str) -> None:
     table["UK Trade Agreement in force"] = raw["trade_agreement"].map({True: "Yes", False: "No"})
     for field, heading in _VALUES.items():
         table[f"{heading} ({unit})"] = raw[f"{field}_{suffix}"]
+    links = [why_link(hs6 or row["hs6"], iso3 or row["iso3"]) for row in rows]
     st.dataframe(
-        table,
+        table.assign(**{"Why?": links}),
         hide_index=True,
-        column_config={f"{heading} ({unit})": st.column_config.NumberColumn(format="localized") for heading in _VALUES.values()},
+        column_config={
+            **{f"{heading} ({unit})": st.column_config.NumberColumn(format="localized") for heading in _VALUES.values()},
+            "Why?": why_column(),
+        },
     )
     st.download_button(
         "Download CSV", table.to_csv(index=False), file_name=f"{file_name}.csv", mime="text/csv", key="csv"
+    )
+
+
+WHY_PAGE_PATH = "/Why"  # the URL path Streamlit gives app/pages/4_Why.py
+
+
+def why_link(hs6: str, iso3: str) -> str:
+    """The Why? page URL for one Product–Market pair. Every ranking row links here."""
+    return f"{WHY_PAGE_PATH}?{urlencode({'hs6': hs6, 'iso3': iso3})}"
+
+
+def why_column() -> "st.column_config.LinkColumn":
+    """The ranking-table column config for the `Why?` links built by `why_link`."""
+    return st.column_config.LinkColumn(
+        "Why?", display_text="Why?", help="Which factors raised or lowered this pair's Export Potential"
     )

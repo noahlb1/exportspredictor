@@ -240,7 +240,7 @@ def test_csv_export_matches_the_ranking_on_screen(monkeypatch, api_url, download
     page = make_page(monkeypatch, api_url)
     page.radio(key="currency").set_value("USD").run()
 
-    on_screen = page.dataframe[0].value
+    on_screen = page.dataframe[0].value.drop(columns="Why?")  # links are navigation, not data
     exported = pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str, "Sector": str})
     pd.testing.assert_frame_equal(exported, on_screen.reset_index(drop=True), check_dtype=False)
     assert len(page.get("download_button")) == 1

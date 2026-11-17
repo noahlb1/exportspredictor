@@ -1,0 +1,126 @@
+"""The Streamlit Why? page and its links from rankings, run with AppTest against a live local API."""
+
+import socket
+import threading
+import time
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+import pytest
+import uvicorn
+from streamlit.testing.v1 import AppTest
+
+from api.main import create_app
+
+APP_DIR = Path(__file__).resolve().parents[1] / "app"
+WHY = APP_DIR / "pages" / "4_Why.py"
+PRODUCT_TO_MARKETS = APP_DIR / "pages" / "1_Product_to_Markets.py"
+
+
+@pytest.fixture(scope="module")
+def api_url(fixture_artefacts_dir):
+    port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(create_app(fixture_artefacts_dir), host="127.0.0.1", port=port, log_level="warning")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{port}"
+    for _ in range(100):
+        try:
+            if httpx.get(f"{url}/health").status_code == 200:
+                break
+        except httpx.TransportError:
+            time.sleep(0.05)
+    yield url
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _why(monkeypatch, api_url: str, **query) -> AppTest:
+    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
+    page = AppTest.from_file(str(WHY), default_timeout=30)
+    for key, value in query.items():
+        page.query_params[key] = value
+    page.run()
+    return page
+
+
+def test_why_page_explains_the_pair_named_in_the_link(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    assert not page.exception
+    assert any("220830" in s.value and "Japan" in s.value for s in page.subheader)
+    factors = page.dataframe[0].value
+    assert list(factors.columns) == ["Factor", "Value for this pair", "Association with Export Potential"]
+    assert any("Japan" in label for label in factors["Factor"])
+    assert not any("_" in label for label in factors["Factor"])
+
+
+def test_why_page_shows_actual_exports_history_for_every_recent_year(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    history = page.dataframe[1].value
+    assert list(history["Year"]) == sorted(history["Year"])
+    assert max(history["Year"]) == 2024
+    assert "Actual Exports (USD)" in history.columns
+
+
+def test_why_page_phrases_results_as_associations(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    text = " ".join(m.value for m in page.markdown) + " ".join(c.value for c in page.caption)
+    assert "associat" in text and "not causes" in text
+
+
+def test_why_page_without_a_pair_lets_the_advisor_pick_one(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url)
+    page.text_input(key="product_query").input("220830").run()
+    page.selectbox(key="why_market").select("JPN").run()
+
+    assert not page.exception
+    assert any("Japan" in s.value for s in page.subheader)
+
+
+def test_why_page_unknown_pair_shows_a_message(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="999999", iso3="JPN")
+
+    assert not page.exception
+    assert any("999999" in w.value for w in page.warning)
+
+
+def test_product_to_markets_rows_link_to_why(monkeypatch, api_url):
+    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
+    page = AppTest.from_file(str(PRODUCT_TO_MARKETS), default_timeout=30)
+    page.run()
+    page.text_input(key="product_query").input("220830").run()
+
+    table = page.dataframe[0].value
+    links = {}
+    for market, link in zip(table["Market"], table["Why?"]):
+        url = urlparse(link)
+        assert url.path.endswith("Why")
+        links[market] = parse_qs(url.query)
+    assert links["Japan"] == {"hs6": ["220830"], "iso3": ["JPN"]}
+
+
+def test_market_to_products_rows_link_to_why(monkeypatch, api_url):
+    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
+    page = AppTest.from_file(str(PRODUCT_TO_MARKETS.with_name("2_Market_to_Products.py")), default_timeout=30)
+    page.run()
+    page.selectbox(key="iso3").set_value("JPN").run()
+
+    table = page.dataframe[0].value
+    links = {}
+    for hs6, link in zip(table["HS6"], table["Why?"]):
+        url = urlparse(link)
+        assert url.path.endswith("Why")
+        links[hs6] = parse_qs(url.query)
+    assert links["220830"] == {"hs6": ["220830"], "iso3": ["JPN"]}
