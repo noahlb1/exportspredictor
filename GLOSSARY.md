@@ -34,6 +34,18 @@ _Avoid_: partner, target country
 An Exporter, Importer, Product and year with no Flow, where the Exporter exports that Product to some Importer and the Importer imports it from some Exporter, but not from each other.
 _Avoid_: missing flow, null trade, empty pair
 
+**Excluded Product**:
+A Product left out of training, scoring and rankings, because its recorded Flows follow market or infrastructure geography the model cannot see, or its values are unreliable. Advisors are shown the list and the reason for each.
+_Avoid_: removed product, banned product
+
+**Flagged Product**:
+A Product scored and ranked as normal, but shown with a caveat that its values are volatile or entrepôt-driven.
+_Avoid_: warning product, suspect product
+
+**Re-export Hub**:
+A Market that re-exports much of what it imports, so part of its demand belongs to other Markets. It is shown with a caveat and can be filtered out.
+_Avoid_: entrepôt, transit country
+
 ### Prediction
 
 **Export Potential**:
