@@ -8,7 +8,7 @@ import pytest
 from exportspredictor.features import FEATURES, POLICY_FEATURES
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
-from exportspredictor.pipeline import build_artefacts
+from exportspredictor.pipeline import build_artefacts, refresh
 
 
 @pytest.fixture
@@ -118,3 +118,24 @@ def test_history_holds_uk_actual_exports_up_to_the_baseline_year(world, artefact
     assert sorted(history["year"].unique().to_list()) == [2021, 2022, 2023, 2024]
     assert history.height == uk.height
     assert history["actual_exports_usd"].sum() == pytest.approx(uk["value_usd"].sum())
+
+
+def test_metadata_records_the_baseline_years_gbp_rate(artefacts):
+    # Bank of England XUAAUSS, 2024 annual average.
+    assert artefacts.metadata["gbp_rate"] == {
+        "usd_per_gbp": 1.2783,
+        "year": 2024,
+        "source": "Bank of England, series XUAAUSS: annual average spot exchange rate, US$ into sterling",
+    }
+
+
+def test_refresh_adds_derived_metadata_to_a_saved_bundle_without_retraining(artefacts):
+    older = replace(artefacts, metadata={k: v for k, v in artefacts.metadata.items() if k != "gbp_rate"})
+
+    refreshed = refresh(older, version="refreshed")
+
+    assert refreshed.version == "refreshed"
+    assert refreshed.metadata["refreshed_from"] == "fixture-test"
+    assert refreshed.metadata["gbp_rate"]["usd_per_gbp"] == 1.2783
+    assert refreshed.fold_models is older.fold_models
+    assert refreshed.baseline is older.baseline

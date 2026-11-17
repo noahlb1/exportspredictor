@@ -52,3 +52,12 @@ def test_data_and_artefact_roots_come_from_env_vars(monkeypatch, tmp_path):
 
     assert data_dir() == tmp_path / "d"
     assert artefacts_dir() == tmp_path / "a"
+
+
+def test_folders_saved_before_the_gbp_rate_use_the_baseline_years_rate(fixture_artefacts):
+    metadata = {k: v for k, v in fixture_artefacts.metadata.items() if k != "gbp_rate"}
+
+    older = replace(fixture_artefacts, metadata=metadata)
+
+    assert older.gbp_rate["usd_per_gbp"] == 1.2783
+    assert older.gbp_rate["year"] == 2024

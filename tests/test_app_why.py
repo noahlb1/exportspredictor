@@ -109,3 +109,18 @@ def test_product_to_markets_rows_link_to_why(monkeypatch, api_url):
         assert url.path.endswith("Why")
         links[market] = parse_qs(url.query)
     assert links["Japan"] == {"hs6": ["220830"], "iso3": ["JPN"]}
+
+
+def test_market_to_products_rows_link_to_why(monkeypatch, api_url):
+    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
+    page = AppTest.from_file(str(PRODUCT_TO_MARKETS.with_name("2_Market_to_Products.py")), default_timeout=30)
+    page.run()
+    page.selectbox(key="iso3").set_value("JPN").run()
+
+    table = page.dataframe[0].value
+    links = {}
+    for hs6, link in zip(table["HS6"], table["Why?"]):
+        url = urlparse(link)
+        assert url.path.endswith("Why")
+        links[hs6] = parse_qs(url.query)
+    assert links["220830"] == {"hs6": ["220830"], "iso3": ["JPN"]}

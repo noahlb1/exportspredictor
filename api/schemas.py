@@ -19,32 +19,76 @@ class ProductOut(BaseModel):
     sector: str
 
 
-class MarketOpportunity(BaseModel):
+class MarketOut(BaseModel):
     iso3: str
-    market: str
+    name: str
     region: str
-    export_potential_usd: float
-    actual_exports_usd: float
-    export_gap_usd: float
-    blocked_effect_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
-    blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
 
 
 RankBy = Literal["gap", "blocked"]
 
 
-class ProductOpportunities(BaseModel):
+class RankingQuery(BaseModel):
+    """Query parameters both ranking views accept."""
+
+    rank_by: RankBy = Field("gap", description="gap: Export Gap; blocked: Blocked Opportunity value")
+    sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
+    region: str | None = Field(None, description="Market region, e.g. South Asia")
+    min_gap: float | None = Field(None, description="Minimum Export Gap, in USD")
+    min_gap_gbp: float | None = Field(None, description="Minimum Export Gap, in GBP")
+    limit: int | None = Field(None, ge=1, description="Keep only the top rows")
+
+
+class _Values(BaseModel):
+    """Export Potential, Actual Exports and Export Gap of one UK Product–Market pair."""
+
+    export_potential_usd: float
+    actual_exports_usd: float
+    export_gap_usd: float
+    export_potential_gbp: float
+    actual_exports_gbp: float
+    export_gap_gbp: float
+    trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
+    blocked_effect_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
+    blocked_effect_gbp: float
+    blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
+
+
+class MarketOpportunity(_Values):
+    iso3: str
+    market: str
+    region: str
+
+
+class ProductOpportunity(_Values):
+    hs6: str
+    description: str
+    sector: str
+
+
+class GbpRate(BaseModel):
+    """The rate GBP values use: the Baseline year's annual average."""
+
+    usd_per_gbp: float
+    year: int
+    source: str
+
+
+class _Ranking(BaseModel):
     artefact_version: str
     baseline_year: int
     rank_by: RankBy
+    gbp_rate: GbpRate
+
+
+class ProductOpportunities(_Ranking):
     product: ProductOut
-    opportunities: list[MarketOpportunity]  # every Market, sorted by `rank_by`, largest first
+    opportunities: list[MarketOpportunity]  # Markets, sorted by `rank_by`, largest first
 
 
-class MarketOut(BaseModel):
-    iso3: str
-    name: str
-    region: str
+class MarketOpportunities(_Ranking):
+    market: MarketOut
+    opportunities: list[ProductOpportunity]  # Products, sorted by `rank_by`, largest first
 
 
 class PresetOut(BaseModel):
