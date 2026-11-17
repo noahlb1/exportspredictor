@@ -38,6 +38,7 @@ from pathlib import Path
 import polars as pl
 
 from exportspredictor import baci, policy
+from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
 from exportspredictor.downloads import write_parquet
 from exportspredictor.paths import data_dir
 
@@ -93,7 +94,8 @@ class Sources:
 
 
 def training_rows(flows: pl.DataFrame | pl.LazyFrame, *, rate: float, seed: int = 0) -> pl.DataFrame:
-    """Every non-zero Flow (weight 1) plus a random sample of relevant zero cells (weight 1/rate).
+    """Every non-zero Flow (weight 1) plus a random sample of relevant zero cells (weight 1/rate),
+    leaving out Excluded Products.
 
     A relevant zero cell is an Exporter–Importer–Product–year where the Exporter exports the
     Product to someone and the Importer imports it from someone that year, but not from
@@ -105,7 +107,7 @@ def training_rows(flows: pl.DataFrame | pl.LazyFrame, *, rate: float, seed: int 
     """
     if not 0 < rate <= 1:
         raise ValueError(f"rate must be in (0, 1], got {rate}")
-    active = flows.lazy().filter(pl.col("value_usd") > 0).select(*KEYS, "value_usd")
+    active = flows.lazy().filter(pl.col("value_usd") > 0).select(*KEYS, "value_usd").pipe(drop_excluded)
     cells = (
         active.select("exporter", "hs6", "year")
         .unique()
@@ -123,11 +125,12 @@ def training_rows(flows: pl.DataFrame | pl.LazyFrame, *, rate: float, seed: int 
 def uk_grid(flows: pl.DataFrame, uk: str) -> pl.DataFrame:
     """Every Product × Market for the UK in each year of `flows`, with Actual Exports (0 if none).
 
-    Products are those traded in that year and Markets every Importer in that year except
-    the UK itself. Weight is 1: the grid is scored in full, never sampled.
+    Products are those traded in that year, except Excluded Products, and Markets every
+    Importer in that year except the UK itself. Weight is 1: the grid is scored in full,
+    never sampled.
     """
     active = flows.filter(pl.col("value_usd") > 0)
-    products = active.select("hs6", "year").unique()
+    products = active.select("hs6", "year").unique().pipe(drop_excluded)
     markets = active.filter(pl.col("importer") != uk).select("importer", "year").unique()
     uk_flows = active.filter(pl.col("exporter") == uk).select("importer", "hs6", "year", "value_usd")
     return (
@@ -146,6 +149,7 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
     `rows` are keyed by KEYS with the row's own Flow `value_usd` (0 for a zero cell);
     `flows` holds every Flow of the same years, from which the supply and demand
     aggregates are computed. Each row's own Flow is subtracted from them (leave-one-out).
+    `flows` keeps Excluded Products, so every total counts them (ADR 0005).
     """
     if "weight" not in rows.columns:
         rows = rows.with_columns(weight=pl.lit(1.0))
@@ -355,6 +359,7 @@ def build(
         "zero_sampling_rate": rate,
         "zero_sampling_seed": seed,
         "features": FEATURES,
+        "excluded_products": [exclusion.codes for exclusion in EXCLUSIONS],
     }
     (out / SETTINGS_FILE).write_text(json.dumps(settings, indent=2), encoding="utf-8")
     return out
