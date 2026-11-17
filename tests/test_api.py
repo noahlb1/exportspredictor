@@ -101,6 +101,9 @@ def test_by_product_rows_have_the_documented_shape(client):
         "blocked_opportunity",
         "flagged_product",
         "reexport_hub",
+        "potential_range_low_usd",
+        "potential_range_high_usd",
+        "uncertain",
     }
 
 
@@ -337,6 +340,9 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "opportunity_type",
         "flagged_product",
         "reexport_hub",
+        "potential_range_low_usd",
+        "potential_range_high_usd",
+        "uncertain",
         "factors",
         "history",
     }
@@ -698,3 +704,52 @@ def test_opportunity_type_filter_and_explanation_on_constructed_pairs(opportunit
     assert {row["hs6"] for row in rows} == {NEW_PRODUCT} and len(rows) == 4
     assert all(row["actual_exports_usd"] == 0 for row in rows)
     assert explanation["opportunity_type"] == "New Market"
+
+
+# --- The Potential Range and Uncertain Opportunities (ADR 0007) -------------------------
+
+
+def test_every_ranking_row_has_a_potential_range_from_zero_up_and_flags_uncertain_opportunities(client):
+    rows = _all_rows(client) + _top(client)["opportunities"]
+
+    for row in rows:
+        low, high = row["potential_range_low_usd"], row["potential_range_high_usd"]
+        assert 0 <= low <= high
+        inside = low <= row["actual_exports_usd"] <= high
+        assert row["uncertain"] is (row["export_gap_usd"] > 0 and inside)
+    assert any(row["uncertain"] for row in rows)
+    assert not all(row["uncertain"] for row in rows if row["export_gap_usd"] > 0)
+
+
+@pytest.mark.parametrize(
+    "path", ["/opportunities/top", f"/opportunities/by-product/{FIXTURE_HS6}", "/opportunities/by-market/JPN"]
+)
+def test_hide_uncertain_is_off_by_default_and_removes_exactly_the_uncertain_rows_keeping_the_order(client, path):
+    def rows(**params):
+        body = client.get(path, params=params)
+        assert body.status_code == 200, body.text
+        return body.json()["opportunities"]
+
+    everything = rows()
+    assert everything == rows(hide_uncertain=False)
+    for rank_by in ("gap", "relative"):
+        ranked = rows(rank_by=rank_by, min_potential_usd=0)
+        assert rows(rank_by=rank_by, min_potential_usd=0, hide_uncertain=True) == [
+            row for row in ranked if not row["uncertain"]
+        ]
+
+
+def test_hide_uncertain_removes_uncertain_opportunities_from_the_leaderboard_summary(client):
+    everything, shown = _top(client), _top(client, hide_uncertain=True)
+
+    assert shown["summary"]["pairs"] == everything["summary"]["pairs"] - sum(
+        row["uncertain"] for row in everything["opportunities"]
+    )
+    assert shown["summary"]["pairs"] < everything["summary"]["pairs"]
+
+
+def test_an_explanation_carries_the_pairs_potential_range_as_its_ranking_row_does(client):
+    for row in _ranked(client, "/opportunities/by-market/JPN"):
+        body = client.get(f"/explain/{row['hs6']}/JPN").json()
+        for field in ("potential_range_low_usd", "potential_range_high_usd", "uncertain"):
+            assert body[field] == row[field]

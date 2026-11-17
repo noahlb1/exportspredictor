@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
+from exportspredictor.conformal import UNCERTAIN_OPPORTUNITY_CAVEAT
 from exportspredictor.currency import USD_CAPTION, USD_UNIT, format_usd
 from exportspredictor.exclusions import FLAGGED_PRODUCT_CAVEAT, REEXPORT_HUB_CAVEAT
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
@@ -25,10 +26,11 @@ _VALUES = {
 }
 # The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's.
 _GAP_PERIOD_MEANS = ("export_potential", "actual_exports", "export_gap")
-# Caveat badges (ADR 0005): the row field that sets each, its badge and what it means.
+# Caveat badges (ADR 0005, 0007): the row field that sets each, its badge and what it means.
 CAVEATS = {
     "flagged_product": ("Flagged Product", FLAGGED_PRODUCT_CAVEAT),
     "reexport_hub": ("Re-export Hub", REEXPORT_HUB_CAVEAT),
+    "uncertain": ("Uncertain Opportunity", UNCERTAIN_OPPORTUNITY_CAVEAT),
 }
 
 
@@ -84,7 +86,7 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
     Returns the API query parameters that are set: `rank_by` (with `min_potential_usd`, chosen
     from the API's options, when the order ranks only pairs above a minimum Export Potential),
     `sector`, `region`, `opportunity_type`, `trade_agreement`, `min_gap_usd`, and
-    `hide_flagged` / `hide_hubs` when ticked (both off by default). With `market_filter`
+    `hide_flagged` / `hide_hubs` / `hide_uncertain` when ticked (all off by default). With `market_filter`
     (the Leaderboard), one Market can be chosen too (`market`). Without `rank_by_toggle` (the
     Blocked Opportunities page, which has one order) no `rank_by` is offered or returned.
     """
@@ -123,11 +125,14 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
             format_func=lambda iso3: "All Markets" if iso3 is None else names[iso3],
             key="market",
         )
-    flagged_column, hubs_column = st.columns(2)
+    flagged_column, hubs_column, uncertain_column = st.columns(3)
     hide_flagged = flagged_column.checkbox(
         "Hide Flagged Products", key="hide_flagged", help=CAVEATS["flagged_product"][1]
     )
     hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=CAVEATS["reexport_hub"][1])
+    hide_uncertain = uncertain_column.checkbox(
+        "Hide Uncertain Opportunities", key="hide_uncertain", help=CAVEATS["uncertain"][1]
+    )
     rank_by = min_potential_usd = options = None
     if rank_by_toggle:
         orders = rank_orders()
@@ -156,6 +161,7 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
         "min_gap_usd": min_gap_usd,
         "hide_flagged": hide_flagged or None,
         "hide_hubs": hide_hubs or None,
+        "hide_uncertain": hide_uncertain or None,
     }
     return {name: value for name, value in params.items() if value is not None}
 
@@ -249,7 +255,7 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
 
     Export Potential, Actual Exports, Export Gap and the Relative Export Gap are Gap Period
     means, labelled as such (e.g. "Export Gap, 2022–2024 average (USD, nominal)"); each row
-    shows its Opportunity Type.
+    shows its Opportunity Type and its Potential Range as "low–high".
 
     `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
     ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
@@ -274,6 +280,9 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
         table[heading] = raw[f"{field}_usd"]
     relative = f"Relative Export Gap, {averaged}"
     table[relative] = raw["relative_export_gap"]
+    table[f"Potential Range, {averaged} ({USD_UNIT})"] = [
+        f"{format_usd(row['potential_range_low_usd'])}–{format_usd(row['potential_range_high_usd'])}" for row in rows
+    ]
     table["Blocked Opportunity"] = raw["blocked_opportunity"]
     table["Caveats"] = [caveat_badges(row) for row in rows]
     links = [why_link(hs6 or row["hs6"], iso3 or row["iso3"]) for row in rows]
@@ -307,4 +316,39 @@ def why_column() -> "st.column_config.LinkColumn":
     """The ranking-table column config for the `Why?` links built by `why_link`."""
     return st.column_config.LinkColumn(
         "Why?", display_text="Why?", help="Which factors raised or lowered this pair's Export Potential"
+    )
+
+
+def potential_range_bar(body: dict) -> None:
+    """One pair's Potential Range as a bar, with its Export Potential and Actual Exports marked (Gap Period means)."""
+    low, high = body["potential_range_low_usd"], body["potential_range_high_usd"]
+    marks = [
+        {"marker": "Export Potential", "value_usd": body["export_potential_usd"]},
+        {"marker": "Actual Exports", "value_usd": body["actual_exports_usd"]},
+    ]
+    axis = {"title": f"{gap_period_label(body['gap_years'])} ({USD_UNIT})", "format": "~s"}
+    st.vega_lite_chart(
+        {
+            "height": 70,
+            "layer": [
+                {
+                    "data": {"values": [{"marker": "Potential Range", "low_usd": low, "high_usd": high}]},
+                    "mark": {"type": "bar", "height": 18, "opacity": 0.35, "tooltip": True},
+                    "encoding": {
+                        "x": {"field": "low_usd", "type": "quantitative", "axis": axis},
+                        "x2": {"field": "high_usd"},
+                    },
+                },
+                {
+                    "data": {"values": marks},
+                    "mark": {"type": "point", "filled": True, "size": 160, "tooltip": True},
+                    "encoding": {
+                        "x": {"field": "value_usd", "type": "quantitative"},
+                        "color": {"field": "marker", "type": "nominal", "title": None},
+                        "shape": {"field": "marker", "type": "nominal", "title": None},
+                    },
+                },
+            ],
+        },
+        width="stretch",
     )

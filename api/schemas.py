@@ -79,6 +79,9 @@ class RankingQuery(BaseModel):
     )
     hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
     hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
+    hide_uncertain: bool = Field(
+        False, description="Leave out Uncertain Opportunities (Actual Exports inside the Potential Range)"
+    )
     min_potential_usd: float | None = Field(
         None,
         ge=0,
@@ -113,6 +116,10 @@ class _Values(BaseModel):
     blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
     flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
     reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
+    # The Potential Range (ADR 0007): where Actual Exports fall 80% of the time for comparable pairs
+    potential_range_low_usd: float
+    potential_range_high_usd: float
+    uncertain: bool  # an Uncertain Opportunity: an Opportunity whose Actual Exports lie inside its range
 
 
 class MarketOpportunity(_Values):
@@ -446,6 +453,9 @@ class Explanation(BaseModel):
     opportunity_type: OpportunityType  # Expand, New Market or New Product, over the Gap Period
     flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
     reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
+    potential_range_low_usd: float  # the Potential Range around the Gap Period mean (ADR 0007)
+    potential_range_high_usd: float
+    uncertain: bool  # an Uncertain Opportunity
     factors: list[FactorOut]  # largest absolute contribution first
     # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
     # years with UK Actual Exports only

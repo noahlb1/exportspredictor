@@ -1,6 +1,7 @@
 """The Leaderboard on Home, run with AppTest against a live local API on fixture artefacts."""
 
 import io
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,7 @@ from streamlit.testing.v1 import AppTest
 HOME = Path(__file__).resolve().parents[1] / "app" / "Home.py"
 GAP = "Export Gap, 2022–2024 average (USD, nominal)"
 RELATIVE = "Relative Export Gap, 2022–2024 average"
+RANGE = "Potential Range, 2022–2024 average (USD, nominal)"
 
 
 @pytest.fixture
@@ -102,3 +104,21 @@ def test_the_excluded_products_list_is_reachable_from_the_leaderboard(monkeypatc
     page = _home(monkeypatch, fixture_api_url)
 
     assert any("Excluded Products" in expander.label for expander in page.expander)
+
+
+def test_the_leaderboard_shows_each_potential_range_badges_uncertain_opportunities_and_can_hide_them(
+    monkeypatch, fixture_api_url
+):
+    page = _home(monkeypatch, fixture_api_url)
+
+    table = page.dataframe[0].value
+    ranges = list(table[RANGE])
+    assert all(re.fullmatch(r"\$[0-9.,]+(bn|m|k)?–\$[0-9.,]+(bn|m|k)?", text) for text in ranges)
+    uncertain = table["Caveats"].str.contains("Uncertain Opportunity")
+    assert 0 < uncertain.sum() < len(table)
+    assert any("Uncertain Opportunit" in caption.value for caption in page.caption)
+
+    page.checkbox(key="hide_uncertain").check().run()
+    shown = page.dataframe[0].value
+    assert list(shown["HS6"] + shown["Market"]) == list((table["HS6"] + table["Market"])[~uncertain])
+    assert _metrics(page)["Product–Market pairs"] == str(len(table) - uncertain.sum())

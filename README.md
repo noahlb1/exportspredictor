@@ -83,6 +83,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Switch "Rank by" to Relative Export Gap: a minimum Export Potential selector appears ($0, $100.0k, $1.0m, $10.0m, $100.0m; default $1.0m), pairs below it disappear, and pairs tied at 100% are ordered by Export Gap.
 - [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
 - [ ] "Excluded Products" under the filters lists each Excluded Product with its reason.
+- [ ] Each Leaderboard row shows its Potential Range as "low–high"; Uncertain Opportunities carry the "Uncertain Opportunity" badge. "Hide Uncertain Opportunities" is off by default; ticking it removes exactly those rows and leaves the order of the rest unchanged.
 - [ ] Export the Leaderboard to CSV and open it: the columns and rows match the table on screen.
 - [ ] Click **Why?** on a Leaderboard row: the Why? page opens for that pair and shows its Opportunity Type.
 
@@ -125,6 +126,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] A year-by-year table shows the last six years' UK Actual Exports (0 for years with none) and, for 2022–2024, each year's Export Potential and Export Gap; the three yearly gaps average to the Export Gap shown above it.
 - [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.
 - [ ] Open Why? for a Flagged Product or a Re-export Hub (e.g. `711319` to Hong Kong): its caveats are shown under the heading.
+- [ ] The Why? page shows a range bar with Export Potential and Actual Exports marked on the Potential Range, described in plain words (comparable pairs, never a confidence interval); an Uncertain Opportunity carries its caveat.
 
 **Model Evaluation**
 - [ ] The plain-English accuracy headline renders, green if the model beats the naive baseline and amber with a plain warning if it does not, with the test year and the non-UK training sample stated below it.
