@@ -1,0 +1,54 @@
+"""Blocked Opportunities: every UK Product–Market pair ranked by Blocked Opportunity value.
+
+A page of its own, apart from the Leaderboard, because a Blocked Opportunity shows no Export
+Gap: the missing Trade Agreement already holds its Export Potential down. It has the
+Leaderboard's filters, summary and table, with one fixed order, and reads the API only.
+"""
+
+import streamlit as st
+
+from app import client
+from app.ui import (
+    banner,
+    excluded_products_list,
+    fetch,
+    ranking_filters,
+    show_ranking,
+)
+from exportspredictor.currency import format_usd
+
+ROWS_SHOWN = 500  # the top of the ranking sent to the page; the summary covers every filtered pair
+
+st.title("Blocked Opportunities")
+if banner() is not None:
+    st.markdown(
+        "UK Product–Market pairs where the model associates adding a UK Trade Agreement with a material rise "
+        "in Export Potential. A missing agreement is a Barrier the model has learned to associate with lower "
+        "Export Potential, so these pairs need not show an Export Gap; they point to trade-policy work rather "
+        "than export promotion. Each Blocked Opportunity value is a tendency the model has learned, not a forecast."
+    )
+    try:
+        filters = ranking_filters(market_filter=True, rank_by_toggle=False)
+        thresholds = fetch("/scenarios/thresholds", client.api_url())
+        body = fetch("/opportunities/blocked", client.api_url(), **filters, limit=ROWS_SHOWN)
+    except client.ApiUnavailable as error:
+        st.error(f"The API is unavailable: {error}")
+    else:
+        excluded_products_list()
+        summary = body["summary"]
+        pairs_column, count_column, value_column = st.columns(3)
+        pairs_column.metric("Product–Market pairs", f"{summary['pairs']:,}")
+        count_column.metric("Blocked Opportunities", f"{summary['blocked_opportunities']:,}")
+        value_column.metric("Total Blocked Opportunity value", format_usd(summary["blocked_effect_usd"]))
+        st.caption(
+            f"The Blocked Opportunity value is the change in {body['baseline_year']} Export Potential the model "
+            "associates with adding a UK Trade Agreement where none is in force; it is 0 where one is. "
+            f"A pair is a Blocked Opportunity when that value is at least {thresholds['min_effect_share']:.0%} of its "
+            f"{body['baseline_year']} Export Potential and at least {format_usd(thresholds['min_effect_usd'])}. "
+            "Try other agreements and thresholds on the Scenarios page."
+        )
+        if summary["pairs"] > len(body["opportunities"]):
+            st.caption(f"Showing the top {len(body['opportunities']):,} of {summary['pairs']:,} pairs.")
+        st.caption("Open **Why?** on a row to see which factors raised or lowered its Export Potential.")
+        columns = {"hs6": "HS6", "description": "Product", "sector": "Sector", "market": "Market", "region": "Region"}
+        show_ranking(body, columns, file_name="blocked_opportunities")

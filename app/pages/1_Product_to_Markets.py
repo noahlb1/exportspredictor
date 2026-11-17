@@ -1,4 +1,4 @@
-"""Product -> Markets: Markets ranked by the UK's Export Gap, or by Blocked Opportunity value, for one Product."""
+"""Product -> Markets: Markets ranked by the UK's Export Gap (or Relative Export Gap) for one Product."""
 
 import streamlit as st
 

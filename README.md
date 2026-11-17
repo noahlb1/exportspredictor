@@ -96,14 +96,20 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] The Sector filter narrows the Product search; the region and minimum-Gap filters narrow the ranking.
 - [ ] Search a jewellery Product (e.g. `711319`): every row carries the "Flagged Product" caveat badge, and the Netherlands, Hong Kong and other Re-export Hubs carry "Re-export Hub". "Hide Flagged Products" and "Hide Re-export Hubs" are off by default; ticking one removes exactly those rows.
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
-- [ ] Switch "Rank by" to Blocked Opportunity value: Markets without a Trade Agreement rise to the top, and rows clearing 20% and $1M are flagged.
 
 **Market → Products**
 - [ ] Pick a Market (e.g. Japan): Products are ranked by Export Gap, and the page says whether a UK Trade Agreement is in force with it.
 - [ ] The region filter narrows the Market list; the Sector and minimum-Gap (USD) filters narrow the ranking, and a filter matching nothing says so.
-- [ ] Switch "Rank by" to Blocked Opportunity value for a Market without a UK Trade Agreement (e.g. India): Products are ranked by that value; for a Market with one (e.g. Japan) every value is 0.
 - [ ] Values are in USD: column headers say "(USD, nominal)".
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
+
+**Blocked Opportunities**
+- [ ] Open Blocked Opportunities from the sidebar: every UK pair is ranked by Blocked Opportunity value, largest first, with no "Rank by" toggle; the Leaderboard and ranking pages no longer offer that order.
+- [ ] Pairs with a Market that has a UK Trade Agreement in force (e.g. Japan) have a value of 0; rows clearing 20% and $1M are marked as Blocked Opportunities.
+- [ ] The summary shows the number of pairs, the number of Blocked Opportunities and their total value; all three change with the filters.
+- [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
+- [ ] Every caption describes the value as what the model associates with adding a Trade Agreement, not as a cause or a forecast.
+- [ ] Export the table to CSV and open it: the columns and rows match the table on screen.
 
 **Scenarios**
 - [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds, and the summary shows the total change, the change per Market and the top Products gaining, phrased as associations.

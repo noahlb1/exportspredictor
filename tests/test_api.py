@@ -453,8 +453,8 @@ def test_asking_for_an_excluded_product_returns_404_with_its_reason(client, path
 
 @pytest.mark.parametrize("iso3", ["JPN", "CAN", "IND", "HKG"])
 def test_no_ranking_contains_an_excluded_product(client, iso3):
-    for rank_by in ("gap", "blocked"):
-        body = client.get(f"/opportunities/by-market/{iso3}", params={"rank_by": rank_by}).json()
+    for path, params in [(f"/opportunities/by-market/{iso3}", {}), ("/opportunities/blocked", {"market": iso3})]:
+        body = client.get(path, params=params).json()
 
         hs6s = {row["hs6"] for row in body["opportunities"]}
         assert hs6s and CRUDE_OIL not in hs6s

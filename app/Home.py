@@ -26,7 +26,8 @@ if banner() is not None:
     st.header("Leaderboard")
     st.markdown(
         "Every UK Product–Market pair, ranked by how far UK goods exports fall short of what the UK's "
-        "fundamentals suggest. Filter to your portfolio, or look up one Product or Market in the sidebar."
+        "fundamentals suggest. Filter to your portfolio, or look up one Product or Market in the sidebar. "
+        "Pairs the model associates with gains from a new UK Trade Agreement are on the Blocked Opportunities page."
     )
     try:
         filters = ranking_filters(market_filter=True)

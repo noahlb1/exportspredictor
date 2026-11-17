@@ -6,9 +6,9 @@ Tests inject an artefact root with `create_app(root)`; the module-level `app` re
 
 To add an endpoint: add a route in `create_app`, get the bundle with `Depends(loaded)` (it
 answers 503 until artefacts load), and declare a response model in `api/schemas.py`.
-Every ranking view (the Leaderboard, by Product, by Market) goes through `_ranked`, which
+Every ranking view (the Leaderboard, Blocked Opportunities, by Product, by Market) goes through `_ranked`, which
 calls the package's `rank_opportunities` (the one filter, sort and limit); ranking orders
-live in `exportspredictor.rankings.RANK_BY`.
+live in `exportspredictor.rankings.RANK_BY` (and `BLOCKED`, the Blocked Opportunities order).
 
 Loading: artefacts load at startup. If none exist yet, `/health` answers 503 and the load
 is retried at most once every `retry_seconds` (default 30 s) when a request arrives, so
@@ -31,6 +31,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.schemas import (
+    BlockedOpportunities,
+    BlockedQuery,
+    BlockedSummary,
     Evaluation,
     ExcludedProductOut,
     Explanation,
@@ -63,11 +66,13 @@ from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
+    BLOCKED,
     DEFAULT_MIN_POTENTIAL_USD,
     MIN_POTENTIAL_USD_OPTIONS,
     RANK_BY,
     rank_opportunities,
     summarise,
+    summarise_blocked,
 )
 
 RETRY_SECONDS = 30.0
@@ -158,6 +163,21 @@ def create_app(
             **_metadata(artefacts),
             rank_by=query.rank_by,
             summary=LeaderboardSummary(**summarise(rows)),
+            opportunities=[_pick(LeaderboardOpportunity, row) for row in shown.iter_rows(named=True)],
+        )
+
+    @app.get("/opportunities/blocked", response_model=BlockedOpportunities)
+    def blocked(query: Annotated[BlockedQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
+        """The Blocked Opportunities page: every UK pair ranked by Blocked Opportunity value, with a summary."""
+        if query.market is not None:
+            _market(artefacts, query.market)
+        rows = _ranked(artefacts, query.model_copy(update={"limit": None}), iso3=query.market)
+        shown = rows if query.limit is None else rows.head(query.limit)
+        return BlockedOpportunities(
+            **_metadata(artefacts),
+            rank_by=BLOCKED.name,
+            order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
+            summary=BlockedSummary(**summarise_blocked(rows)),
             opportunities=[_pick(LeaderboardOpportunity, row) for row in shown.iter_rows(named=True)],
         )
 

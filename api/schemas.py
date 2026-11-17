@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from exportspredictor import scenarios
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.rankings import (
+    BLOCKED,
     DEFAULT_MIN_POTENTIAL_USD,
     DEFAULT_RANK_BY,
     RANK_BY,
@@ -93,6 +94,12 @@ class LeaderboardQuery(RankingQuery):
     market: str | None = Field(None, description="One Market, by ISO3 code, e.g. JPN")
 
 
+class BlockedQuery(LeaderboardQuery):
+    """The Leaderboard's filters for the Blocked Opportunities page, which has one fixed order."""
+
+    rank_by: Literal[BLOCKED.name] = Field(BLOCKED.name, description=f"Always {BLOCKED.name}: {BLOCKED.title}")
+
+
 class _Values(BaseModel):
     """Export Potential, Actual Exports and Export Gap of one UK Product–Market pair: Gap Period means."""
 
@@ -144,6 +151,19 @@ class _Ranking(BaseModel):
 class Leaderboard(_Ranking):
     summary: LeaderboardSummary
     opportunities: list[LeaderboardOpportunity]  # UK Product–Market pairs, sorted by `rank_by`, largest first
+
+
+class BlockedSummary(LeaderboardSummary):
+    blocked_opportunities: int  # the filtered pairs that clear the default Blocked Opportunity thresholds
+    blocked_effect_usd: float  # the sum of their Blocked Opportunity values (2024 Scenario Effects)
+
+
+class BlockedOpportunities(Leaderboard):
+    """The Blocked Opportunities page: every UK pair ranked by Blocked Opportunity value."""
+
+    rank_by: Literal[BLOCKED.name]
+    order: RankOrderOut  # the order's title and (associational) description, for the page caption
+    summary: BlockedSummary
 
 
 class ProductOpportunities(_Ranking):
