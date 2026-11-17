@@ -167,8 +167,9 @@ def gravity_pairs(gravity: pl.LazyFrame, *, proxies: dict[str, str] = GRAVITY_PR
 # --- Sources: download and read -------------------------------------------------------
 
 YEARS = list(range(2012, 2025))
-GRAVITY_ZIP = "Gravity_csv_V202211.zip"
-GRAVITY_CSV = "Gravity_V202211.csv"
+GRAVITY_VERSION = "V202211"
+GRAVITY_ZIP = f"Gravity_csv_{GRAVITY_VERSION}.zip"
+GRAVITY_CSV = f"Gravity_{GRAVITY_VERSION}.csv"
 GRAVITY_URL = f"https://www.cepii.fr/DATA_DOWNLOAD/gravity/data/{GRAVITY_ZIP}"
 # World Bank WDI indicator -> our variable: GDP in current USD, total population.
 WDI_INDICATORS = {"NY.GDP.MKTP.CD": "gdp_usd", "SP.POP.TOTL": "population"}

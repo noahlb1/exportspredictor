@@ -48,6 +48,7 @@ from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
 from exportspredictor.scenarios import blocked_effects, with_blocked_effects
+from exportspredictor.sources import source_versions
 from exportspredictor.training import Chunk, model_params, read_chunk, scan_chunks, tune
 
 # The fixture world has only a few dozen relevant zeros, so it keeps half of them. Real
@@ -220,6 +221,7 @@ def build_real_artefacts(
     metadata = {
         "version": version or new_version(),
         "source": f"BACI {baci.BACI_VERSION}",
+        "sources": source_versions(root),
         **trained.metadata,
         "zero_sampling_rate": settings["zero_sampling_rate"],
         "zero_sampling_seed": settings["zero_sampling_seed"],
@@ -411,17 +413,19 @@ def _history(uk_flows: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def refresh(bundle: Artefacts, *, version: str | None = None) -> Artefacts:
+def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | None = None) -> Artefacts:
     """A new version of a saved bundle with its derived metadata recomputed; no retraining.
 
     The fold models and tables are reused as they are. Use it when a derived value (such as
-    the GBP rate) is added after the models were trained.
+    the GBP rate, or the source versions read from the raw downloads under `data_root`) is
+    added after the models were trained.
     """
     metadata = {
         **bundle.metadata,
         "version": version or new_version(),
         "refreshed_from": bundle.version,
         "gbp_rate": gbp_rate(bundle.baseline_year),
+        "sources": source_versions(data_root),
     }
     return replace(bundle, metadata=metadata)
 
@@ -439,9 +443,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     argv = sys.argv[1:] if argv is None else argv
     if list(argv) == ["refresh"]:
-        bundle = refresh(artefacts.load_latest(artefacts_dir()))
-        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "gbp_rate")}), flush=True)
-        print(artefacts.save(bundle, artefacts_dir()), flush=True)
+        source = artefacts.latest_folder(artefacts_dir())
+        bundle = refresh(artefacts.load(source))
+        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "gbp_rate", "sources")}), flush=True)
+        # Copied file for file, so files this step does not know about (e.g. the model card) survive.
+        print(artefacts.copy_version(source, artefacts_dir(), metadata=bundle.metadata), flush=True)
         return
     bundle = build_real_artefacts()
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}
