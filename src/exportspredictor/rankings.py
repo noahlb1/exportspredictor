@@ -74,6 +74,7 @@ def rank_opportunities(
     trade_agreement: bool | None = None,
     hide_flagged: bool = False,
     hide_hubs: bool = False,
+    hide_uncertain: bool = False,
     rank_by: str = DEFAULT_RANK_BY,
     min_potential_usd: float | None = None,
     limit: int | None = None,
@@ -87,13 +88,15 @@ def rank_opportunities(
     Opportunity Type, the Baseline year's Export Potential and the Blocked Opportunity value
     in nominal USD, flags a Blocked Opportunity at the default thresholds against the Baseline
     year (`blocked_opportunity`), and carries the Baseline's `flagged_product` and
-    `reexport_hub` caveat flags (ADR 0005).
+    `reexport_hub` caveat flags (ADR 0005) and its Potential Range with the `uncertain`
+    (Uncertain Opportunity) flag (ADR 0007).
 
     Filters keep the rows of one Product (`hs6`), one Market (`iso3`), one Sector (HS2
     chapter), one Market region, one Opportunity Type, an Export Gap of at least
     `min_gap_usd`, or pairs with (`trade_agreement=True`) or without (`False`) a UK Trade
     Agreement in force; `hide_flagged` drops Flagged Products and `hide_hubs` drops Re-export
-    Hubs (both off by default, as they are ranked as normal). An order with a minimum Export
+    Hubs and `hide_uncertain` drops Uncertain Opportunities (all off by default, as they are
+    ranked as normal). An order with a minimum Export
     Potential (Relative Export Gap) keeps only pairs whose Export Potential is at least
     `min_potential_usd` (default `DEFAULT_MIN_POTENTIAL_USD`); other orders ignore it. Rows
     are sorted by the `RANK_BY[rank_by]` column and its tie-breaks, largest first (then hs6,
@@ -119,6 +122,8 @@ def rank_opportunities(
         rows = rows.filter(~pl.col("flagged_product"))
     if hide_hubs:
         rows = rows.filter(~pl.col("reexport_hub"))
+    if hide_uncertain:
+        rows = rows.filter(~pl.col("uncertain"))
     if order.min_potential:
         floor = DEFAULT_MIN_POTENTIAL_USD if min_potential_usd is None else min_potential_usd
         rows = rows.filter((pl.col("export_potential_usd") >= floor) & pl.col(order.column).is_not_null())

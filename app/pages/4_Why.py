@@ -8,7 +8,15 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch, gap_period_label, product_picker, show_caveats
+from app.ui import (
+    banner,
+    fetch,
+    gap_period_label,
+    potential_range_bar,
+    product_picker,
+    show_caveats,
+)
+from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_UNIT, format_usd
 
 TOP_FACTORS = 8
@@ -53,6 +61,15 @@ if banner() is not None:
                 f"Opportunity Type: **{body['opportunity_type']}**. "
                 f"Baseline year {body['baseline_year']} Export Potential, which the factors below explain: "
                 f"**{format_usd(body['baseline_export_potential_usd'])}**."
+            )
+            potential_range_bar(body)
+            st.markdown(
+                potential_range_text(
+                    body["potential_range_low_usd"],
+                    body["potential_range_high_usd"],
+                    body["actual_exports_usd"],
+                    uncertain=body["uncertain"],
+                )
             )
             st.markdown(
                 "Each factor below is something the model associates with higher or lower UK exports "

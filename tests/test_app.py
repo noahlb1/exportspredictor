@@ -265,7 +265,12 @@ JEWELLERY = "711319"  # the fixture's Flagged Product; Hong Kong is its Re-expor
 
 
 def _caveats(table: pd.DataFrame, key: str) -> dict[str, str]:
-    return dict(zip(table[key], table["Caveats"]))
+    """The Flagged Product and Re-export Hub badges per row (the Uncertain Opportunity badge left out)."""
+    adr_0005 = ("Flagged Product", "Re-export Hub")
+    return {
+        name: ", ".join(badge for badge in caveats.split(", ") if badge in adr_0005)
+        for name, caveats in zip(table[key], table["Caveats"], strict=True)
+    }
 
 
 def test_ranking_rows_show_caveat_badges_for_flagged_products_and_re_export_hubs(monkeypatch, api_url):

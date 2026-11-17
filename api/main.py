@@ -204,6 +204,9 @@ def create_app(
                 "opportunity_type",
                 "flagged_product",
                 "reexport_hub",
+                "potential_range_low_usd",
+                "potential_range_high_usd",
+                "uncertain",
             )
             .row(0, named=True)
         )
@@ -303,6 +306,7 @@ def _ranked(artefacts: store.Artefacts, query: RankingQuery, **subject) -> pl.Da
         trade_agreement=query.trade_agreement,
         hide_flagged=query.hide_flagged,
         hide_hubs=query.hide_hubs,
+        hide_uncertain=query.hide_uncertain,
         rank_by=query.rank_by,
         min_potential_usd=query.min_potential_usd,
         limit=query.limit,
