@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from api.schemas import (
     Evaluation,
+    ExcludedProductOut,
     Explanation,
     FactorOut,
     Health,
@@ -40,6 +41,7 @@ from api.schemas import (
     MarketOut,
     PresetOut,
     ProductOpportunities,
+    ProductMatch,
     ProductOpportunity,
     ProductOut,
     RankingQuery,
@@ -99,10 +101,19 @@ def create_app(
             return JSONResponse(status_code=503, content=content)
         return Health(ready=True, artefact_version=artefacts.version, baseline_year=artefacts.baseline_year)
 
-    @app.get("/products", response_model=list[ProductOut])
+    @app.get("/products", response_model=list[ProductMatch])
     def products(q: str = Query("", description="HS6 code (or prefix) or words"), limit: int = Query(20, ge=1, le=200), artefacts: store.Artefacts = Depends(loaded)):
-        """Products matching a code or words, best first; an empty list when nothing matches."""
-        return [_pick(ProductOut, row) for row in search_products(artefacts.products, q, limit=limit).iter_rows(named=True)]
+        """Products matching a code or words, best first; an empty list when nothing matches.
+
+        Excluded Products are listed too, marked `excluded` with their `exclusion_reason`.
+        """
+        found = search_products(artefacts.products, q, limit=limit, excluded=artefacts.excluded_products)
+        return [_pick(ProductMatch, row) for row in found.iter_rows(named=True)]
+
+    @app.get("/products/excluded", response_model=list[ExcludedProductOut])
+    def excluded_products(artefacts: store.Artefacts = Depends(loaded)):
+        """The Excluded Products (ADR 0005), each with the reason it is left out, by HS6 code."""
+        return [_pick(ExcludedProductOut, row) for row in artefacts.excluded_products.iter_rows(named=True)]
 
     @app.get("/markets", response_model=list[MarketOut])
     def markets(artefacts: store.Artefacts = Depends(loaded)):
@@ -213,10 +224,17 @@ def _pick(model: type[BaseModel], row: dict) -> BaseModel:
 
 
 def _product(artefacts: store.Artefacts, hs6: str) -> ProductOut:
-    """The Product, or 404."""
+    """The Product, or 404: for an unknown Product, or an Excluded Product (with its reason)."""
     found = artefacts.products.filter(pl.col("hs6") == hs6)
     if found.is_empty():
         raise HTTPException(status_code=404, detail=f"Unknown Product: {hs6}")
+    excluded = artefacts.excluded_products.filter(pl.col("hs6") == hs6)
+    if not excluded.is_empty():
+        row = excluded.row(0, named=True)
+        raise HTTPException(
+            status_code=404,
+            detail=f"{hs6} ({row['description']}) is an Excluded Product, so it is not scored or ranked. {row['reason']}",
+        )
     return _pick(ProductOut, found.row(0, named=True))
 
 
