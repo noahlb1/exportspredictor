@@ -2,6 +2,9 @@
 
 Both paths run the same steps (`_train_and_score`), so the fixture tests what real data runs:
 
+0. **Fit the row budget** (ADR 0004): count the training years' UK and other rows, then
+   derive the largest non-UK sampling rate that fits the VRAM row budget, or refuse a
+   given rate that does not, before any training.
 1. **Tune** on the validation year (Baseline year − 2, i.e. 2022): one model per
    hyperparameter configuration, trained on the years before it, with early stopping on
    it. The test year (Baseline year − 1) is never read here.
@@ -64,8 +67,20 @@ from exportspredictor.gap_period import (
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
 from exportspredictor.scenarios import blocked_effects, with_blocked_effects
+from exportspredictor.scope import exporter_scope
 from exportspredictor.sources import source_versions
-from exportspredictor.training import Chunk, model_params, read_chunk, scan_chunks, tune
+from exportspredictor.training import (
+    GPU_CHECK,
+    Chunk,
+    check_row_budget,
+    count_rows,
+    fit_non_uk_rate,
+    model_params,
+    read_chunk,
+    scan_chunks,
+    tune,
+)
+from exportspredictor.training import row_budget as vram_row_budget
 
 # The fixture world has only a few dozen relevant zeros, so it keeps half of them. Real
 # data uses `features.ZERO_SAMPLING_RATE`, chosen in the notebook.
@@ -84,10 +99,10 @@ REAL_CONFIGS = [
     {**_COMMON, "max_depth": 8, "tweedie_variance_power": 1.7},
 ]
 REAL_MAX_ROUNDS = 1500
-# Share of non-UK training rows kept (reweighted by 1/rate; UK rows are always kept). All
-# ~150 M rows of 2012–2023 fill the RTX 3080's 10 GB once training starts, so the real
-# run trains on a Horvitz–Thompson sample of them.
-REAL_NON_UK_RATE = 0.3
+# Share of non-UK training rows kept (reweighted by 1/rate; UK rows are always kept). None
+# derives it: the largest rate whose 2012–2023 rows fit the VRAM row budget (ADR 0004,
+# `training.fit_non_uk_rate`). A given rate is checked against the budget before training.
+REAL_NON_UK_RATE: float | None = None
 HISTORY_YEARS = 6  # Actual Exports history: the Baseline year and the five before it
 
 # The fixture's backtests, inside its four years: Lift from a 2021–2022 model on 2022 gaps,
@@ -134,15 +149,19 @@ def build_artefacts(
     configs: Sequence[dict] = FIXTURE_CONFIGS,
     max_rounds: int = FIXTURE_MAX_ROUNDS,
     seed: int = 0,
+    row_budget: int | None = None,
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
-    `zero_sampling_rate` is the share of relevant zero cells kept for training; it is
-    recorded in the metadata.
+    `zero_sampling_rate` is the share of other Exporters' Zero Cells kept for training; it
+    is recorded in the metadata. `row_budget` overrides the VRAM row budget.
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
-    training = fixture_training(world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed)
+    scope = exporter_scope(world.country_year, uk=UK)
+    training = fixture_training(
+        world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed, exporters=scope
+    )
     # Every Gap Period year is scored over the union of the Gap Period's grids, as `features.build` writes them.
     # `build_features` gets every year's Flows: Market import growth reads year t-3.
     year_flows = {year: flows.filter(pl.col("year") == year) for year in gap_years(baseline_year)}
@@ -150,14 +169,16 @@ def build_artefacts(
     grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in year_flows.items()}
     trained = _train_and_score(
         training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
-        n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed,
+        n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed, row_budget=row_budget,
     )
     recent = (pl.col("year") > baseline_year - HISTORY_YEARS) & (pl.col("year") <= baseline_year)
     metadata = {
         "version": version or new_version(),
         "source": source,
         **trained.metadata,
+        "exporter_scope": scope,
         "zero_sampling_rate": zero_sampling_rate,
+        "uk_zero_sampling_rate": 1.0,
         "zero_sampling_seed": seed,
     }
     report = _evaluate(
@@ -184,6 +205,7 @@ def fixture_training(
     baseline_year: int | None = None,
     zero_sampling_rate: float = FIXTURE_ZERO_SAMPLING_RATE,
     seed: int = 0,
+    exporters: Sequence[str] | None = None,
 ) -> dict[int, pl.DataFrame]:
     """The fixture world's training rows with features, one table per year before the Baseline year."""
     flows = world.flows
@@ -192,7 +214,7 @@ def fixture_training(
     for year in sorted(flows["year"].unique().to_list()):
         if year < baseline_year:
             year_flows = flows.filter(pl.col("year") == year)
-            rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed)
+            rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed, uk=UK, exporters=exporters)
             training[year] = build_features(rows, flows, world.sources)
     return training
 
@@ -206,8 +228,9 @@ def build_real_artefacts(
     max_rounds: int = REAL_MAX_ROUNDS,
     n_folds: int = N_FOLDS,
     device: str = "cuda",
-    non_uk_rate: float = REAL_NON_UK_RATE,
+    non_uk_rate: float | None = REAL_NON_UK_RATE,
     seed: int = 0,
+    row_budget: int | None = None,
     backtest_plan: backtests.Plan = backtests.REAL_PLAN,
     constraint_plan: constraints.Plan = constraints.REAL_PLAN,
 ) -> Artefacts:
@@ -235,11 +258,16 @@ def build_real_artefacts(
             f"The feature files in {folder} were built for the Gap Period {settings.get('gap_years')}, not "
             f"{gap_period(baseline_year)}; rebuild them with `python -m exportspredictor.features`"
         )
+    if "exporter_scope" not in settings:
+        raise ValueError(
+            f"The feature files in {folder} were built without the training scope (ADR 0004); "
+            "rebuild them with `python -m exportspredictor.features`"
+        )
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
     grids = {y: folder / f"uk_grid_{y}.parquet" for y in gap_years(baseline_year)}
     trained = _train_and_score(
         training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
-        n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed,
+        n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
     )
     history_years = [y for y in settings["years"] if baseline_year - HISTORY_YEARS < y <= baseline_year]
     history = _history(
@@ -260,13 +288,15 @@ def build_real_artefacts(
         "source": f"BACI {baci.BACI_VERSION}",
         "sources": source_versions(root),
         **trained.metadata,
+        "exporter_scope": settings["exporter_scope"],
         "zero_sampling_rate": settings["zero_sampling_rate"],
+        "uk_zero_sampling_rate": settings["uk_zero_sampling_rate"],
         "zero_sampling_seed": settings["zero_sampling_seed"],
     }
     test_grid = folder / f"uk_grid_{baseline_year - 1}.parquet"
     report = _evaluate(
         training, test_grid, trained, metadata, markets=evaluation.markets_with_income(markets, root),
-        device=device, non_uk_rate=non_uk_rate, seed=seed,
+        device=device, non_uk_rate=trained.metadata["non_uk_sampling_rate"], seed=seed,
         backtest_plan=backtest_plan,
         backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
         high_income=load_sources(root)[0].high_income,
@@ -295,8 +325,9 @@ def _train_and_score(
     max_rounds: int,
     n_folds: int,
     device: str,
-    non_uk_rate: float,
+    non_uk_rate: float | None,
     seed: int,
+    row_budget: int | None = None,
 ) -> _Trained:
     validation_year, test_year = baseline_year - 2, baseline_year - 1
     tuning_years = [y for y in sorted(training) if y < validation_year]
@@ -305,6 +336,17 @@ def _train_and_score(
         raise ValueError(f"Need training years before {validation_year} and {validation_year} itself")
     # The test year is reserved for the evaluation: tuning must never read it.
     assert test_year not in tuning_years and test_year != validation_year
+
+    # 0. Fit the row budget (ADR 0004) before any training: every matrix built below holds at
+    # most the rows of the training years, so derive or check the non-UK rate on those.
+    budget = row_budget if row_budget is not None else vram_row_budget(len(FEATURES))
+    counts = count_rows([training[y] for y in training_years], uk=UK)
+    derived = non_uk_rate is None
+    if derived:
+        non_uk_rate = fit_non_uk_rate(counts, budget)
+    else:
+        check_row_budget(counts, non_uk_rate, budget)
+    print(f"Training rows: {counts.uk:,} UK + {counts.non_uk:,} other at rate {non_uk_rate}", flush=True)
 
     # 1. Tune on the validation year (the test year, baseline_year - 1, is not read).
     started = time.perf_counter()
@@ -378,6 +420,10 @@ def _train_and_score(
         "features": FEATURES,
         "monotone_constraints": MONOTONE_CONSTRAINTS,
         "non_uk_sampling_rate": non_uk_rate,
+        "non_uk_sampling_rate_derived": derived,
+        "row_budget": budget,
+        "training_rows": {"uk": counts.uk, "non_uk": counts.non_uk, "expected": round(counts.expected(non_uk_rate))},
+        "gpu_check": GPU_CHECK,
         "feature_transform": transform.to_dict(),
         "params": params,
         "model_params": model_params(params, device=device, seed=seed),

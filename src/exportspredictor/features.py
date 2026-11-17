@@ -31,21 +31,21 @@ year at a time so that peak memory stays far below 32 GB, and writes under the d
     derived/features_<BACI version>/uk_grid_<year>.parquet    the full UK grid with features (Gap Period
                                                               years: the union of their grids)
     derived/features_<BACI version>/proximity.parquet         Product proximity (Relatedness)
-    derived/features_<BACI version>/features.json             rate, seed, years, feature list
+    derived/features_<BACI version>/features.json             scope, rates, seed, years, feature list
 
 Every table is keyed by standard ISO3 codes (BACI's `S19` becomes `TWN`), as the gravity
 and policy tables are.
 """
 
 import json
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-from exportspredictor import baci, policy
+from exportspredictor import baci, policy, scope
 from exportspredictor.downloads import write_parquet
 from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
 from exportspredictor.gap_period import gap_period, gap_years
@@ -101,9 +101,9 @@ CLIPPED_FEATURES = [
     *RELATEDNESS_FEATURES,
     *MARKET_TREND_FEATURES,
 ]
-# Share of relevant zero cells kept for training on real data. About 95 M relevant zeros a
-# year on BACI, so 2% keeps about 1.9 M a year, roughly one for every six non-zero Flows.
-ZERO_SAMPLING_RATE = 0.02
+# Share of other Exporters' Zero Cells kept for training on real data (ADR 0004: a starting
+# rate, settled by the learning curve). UK Zero Cells are always kept.
+ZERO_SAMPLING_RATE = 0.05
 _FLOAT_FEATURES = [*GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES]
 # Market import growth compares the year with this many years earlier.
 GROWTH_YEARS = 3
@@ -128,31 +128,51 @@ class Sources:
     proximity: pl.DataFrame | None = None
 
 
-def training_rows(flows: pl.DataFrame | pl.LazyFrame, *, rate: float, seed: int = 0) -> pl.DataFrame:
-    """Every non-zero Flow (weight 1) plus a random sample of relevant zero cells (weight 1/rate),
-    leaving out Excluded Products.
+def training_rows(
+    flows: pl.DataFrame | pl.LazyFrame,
+    *,
+    rate: float,
+    seed: int = 0,
+    uk: str = baci.UK,
+    exporters: Collection[str] | None = None,
+) -> pl.DataFrame:
+    """Every non-zero Flow (weight 1), every UK Zero Cell (weight 1) and a random sample of
+    other Exporters' Zero Cells (weight 1/rate), leaving out Excluded Products.
 
-    A relevant zero cell is an Exporter–Importer–Product–year where the Exporter exports the
+    A Zero Cell is an Exporter–Importer–Product–year where the Exporter exports the
     Product to someone and the Importer imports it from someone that year, but not from
     each other. The full grid of cells is never built: most cells are irrelevant, and
-    the relevant ones are about 95 M a year on BACI. Each relevant cell is kept with
+    the relevant ones are about 95 M a year on BACI. Each non-UK Zero Cell is kept with
     probability `rate`, decided by a hash of its keys and `seed`. So the sample is
     deterministic, a cell's fate never depends on other data, and the weights make
-    weighted totals unbiased (Horvitz–Thompson).
+    weighted totals unbiased (Horvitz–Thompson). UK Zero Cells are never sampled (ADR 0004).
+
+    `exporters` is the training scope (`scope.exporter_scope`): rows of other Exporters
+    are dropped, the UK's never. Every Importer is kept, and `flows` is not filtered, so
+    features built from it still count out-of-scope Exporters' Flows.
     """
     if not 0 < rate <= 1:
         raise ValueError(f"rate must be in (0, 1], got {rate}")
-    active = flows.lazy().filter(pl.col("value_usd") > 0).select(*KEYS, "value_usd").pipe(drop_excluded)
+    flows = flows.lazy()
+    active = flows.filter(pl.col("value_usd") > 0).select(*KEYS, "value_usd").pipe(drop_excluded)
+    is_uk = pl.col("exporter").cast(pl.String) == uk
+    if exporters is not None:
+        active = active.filter(is_uk | pl.col("exporter").cast(pl.String).is_in(sorted(set(exporters))))
     cells = (
         active.select("exporter", "hs6", "year")
         .unique()
-        .join(active.select("importer", "hs6", "year").unique(), on=["hs6", "year"])
+        .join(
+            flows.filter(pl.col("value_usd") > 0).pipe(drop_excluded).select("importer", "hs6", "year").unique(),
+            on=["hs6", "year"],
+        )
         .filter(pl.col("exporter").cast(pl.String) != pl.col("importer").cast(pl.String))
     )
     if rate < 1:
         threshold = int(rate * 2**64)
-        cells = cells.filter(pl.struct(KEYS).hash(seed) < pl.lit(threshold, pl.UInt64))
-    zeros = cells.join(active, on=KEYS, how="anti").with_columns(value_usd=pl.lit(0.0), weight=pl.lit(1.0 / rate))
+        cells = cells.filter(is_uk | (pl.struct(KEYS).hash(seed) < pl.lit(threshold, pl.UInt64)))
+    zeros = cells.join(active, on=KEYS, how="anti").with_columns(
+        value_usd=pl.lit(0.0), weight=pl.when(is_uk).then(1.0).otherwise(1.0 / rate)
+    )
     rows = pl.concat([active.with_columns(weight=pl.lit(1.0)), zeros.select(*KEYS, "value_usd", "weight")])
     return rows.collect(engine="streaming")
 
@@ -556,6 +576,7 @@ def build(
     rate: float = ZERO_SAMPLING_RATE,
     seed: int = 0,
     uk: str = baci.UK,
+    scope_size: int = scope.TOP_EXPORTERS,
     proximity_years: list[int] = PROXIMITY_YEARS,
     baseline_year: int = YEARS[-1],
 ) -> Path:
@@ -570,6 +591,7 @@ def build(
     in every Gap Period year (`gap_period`).
     """
     sources, to_iso3 = load_sources(root)
+    exporters = scope.exporter_scope(sources.country_year, uk=uk, n=scope_size)
     out = features_dir(root)
     out.mkdir(parents=True, exist_ok=True)
     fitted_on = [y for y in proximity_years if (baci.flows_dir(root) / f"flows_{y}.parquet").exists()]
@@ -584,7 +606,9 @@ def build(
         flows = load_year_flows(year, to_iso3, root)
         with_earlier = pl.concat([flows, load_year_flows(year - GROWTH_YEARS, to_iso3, root)])
         write_parquet(
-            build_features(training_rows(flows, rate=rate, seed=seed), with_earlier, sources),
+            build_features(
+                training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters), with_earlier, sources
+            ),
             out / f"training_{year}.parquet",
             compression="zstd",
         )
@@ -594,7 +618,9 @@ def build(
     settings = {
         "baci_version": baci.BACI_VERSION,
         "years": list(years),
+        "exporter_scope": exporters,
         "zero_sampling_rate": rate,
+        "uk_zero_sampling_rate": 1.0,
         "zero_sampling_seed": seed,
         "features": FEATURES,
         "excluded_products": [exclusion.codes for exclusion in EXCLUSIONS],

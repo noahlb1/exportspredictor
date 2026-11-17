@@ -418,7 +418,7 @@ def train_backtest_model(
 
     transform = FeatureTransform.fit(scan_chunks(chunks).filter(kept), years)
     prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed, keep=keep)
-    matrix = training_matrix(chunks, prepare)
+    matrix = training_matrix(chunks, prepare, device=device)
     model = xgb.train(model_params(params, device=device, seed=seed), matrix, num_boost_round=rounds)
     del matrix
     model.set_param({"device": "cpu"})
