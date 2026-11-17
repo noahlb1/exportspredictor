@@ -1,5 +1,6 @@
 """API contract tests: FastAPI TestClient against fixture artefacts (the main seam)."""
 
+import math
 from dataclasses import replace
 
 import pytest
@@ -17,11 +18,16 @@ def client(fixture_artefacts_dir):
         yield client
 
 
-def test_health_reports_version_and_baseline_year_once_loaded(client):
+def test_health_reports_version_baseline_year_and_gap_period_once_loaded(client):
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"ready": True, "artefact_version": "fixture-test", "baseline_year": 2024}
+    assert response.json() == {
+        "ready": True,
+        "artefact_version": "fixture-test",
+        "baseline_year": 2024,
+        "gap_years": [2022, 2024],
+    }
 
 
 def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
@@ -71,6 +77,7 @@ def test_by_product_returns_every_market_sorted_by_export_gap(client):
     assert {row["iso3"] for row in body["opportunities"]} == {"JPN", "CAN", "IND"}
     assert body["product"] == {"hs6": "220830", "description": "Whiskies", "sector": "22"}
     assert body["baseline_year"] == 2024
+    assert body["gap_years"] == [2022, 2024]  # the values are Gap Period means
     assert body["artefact_version"] == "fixture-test"
 
 
@@ -275,7 +282,7 @@ def test_no_response_carries_gbp_values_or_a_gbp_rate(client):
 
 def test_min_gap_usd_filters_rankings(client):
     everything = _ranked(client, "/opportunities/by-market/JPN")
-    threshold_usd = 5000
+    threshold_usd = sorted(row["export_gap_usd"] for row in everything)[len(everything) // 2]  # the median
 
     rows = _ranked(client, "/opportunities/by-market/JPN", min_gap_usd=threshold_usd)
 
@@ -309,6 +316,7 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
     assert set(body) == {
         "artefact_version",
         "baseline_year",
+        "gap_years",
         "product",
         "market",
         "fold",
@@ -317,6 +325,7 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
+        "baseline_export_potential_usd",
         "factors",
         "history",
     }
@@ -335,6 +344,32 @@ def test_explain_matches_the_ranking_row_of_the_pair(client):
     assert explained["export_gap_usd"] == pytest.approx(row["export_gap_usd"], rel=1e-3, abs=1e-3)
     total = explained["base_value"] + sum(f["contribution"] for f in explained["factors"])
     assert total == pytest.approx(explained["log_export_potential"], abs=1e-4)
+
+
+def test_every_pairs_yearly_export_gaps_average_to_its_reported_export_gap(client, fixture_artefacts):
+    for hs6, iso3 in fixture_artefacts.baseline.select("hs6", "iso3").iter_rows():
+        body = client.get(f"/explain/{hs6}/{iso3}").json()
+        gap_years = [p for p in body["history"] if p["export_gap_usd"] is not None]
+        ranked = client.get(f"/opportunities/by-product/{hs6}").json()["opportunities"]
+        row = next(r for r in ranked if r["iso3"] == iso3)
+
+        assert [p["year"] for p in gap_years] == [2022, 2023, 2024]
+        for point in gap_years:
+            assert point["export_gap_usd"] == pytest.approx(point["export_potential_usd"] - point["actual_exports_usd"])
+        mean = sum(p["export_gap_usd"] for p in gap_years) / 3
+        assert body["export_gap_usd"] == pytest.approx(mean, abs=1e-6)
+        assert row["export_gap_usd"] == pytest.approx(mean, abs=1e-6)
+        assert row["actual_exports_usd"] == pytest.approx(sum(p["actual_exports_usd"] for p in gap_years) / 3)
+
+
+def test_explain_separates_the_gap_period_means_from_the_baseline_year_it_explains(client):
+    body = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
+    latest = next(p for p in body["history"] if p["year"] == 2024)
+
+    assert body["gap_years"] == [2022, 2024]
+    assert body["baseline_export_potential_usd"] == pytest.approx(latest["export_potential_usd"])
+    assert body["baseline_export_potential_usd"] == pytest.approx(math.exp(body["log_export_potential"]), rel=1e-3)
+    assert body["export_potential_usd"] != pytest.approx(body["baseline_export_potential_usd"])
 
 
 def test_explain_directions_follow_the_sign_of_each_contribution(client):

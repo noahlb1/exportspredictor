@@ -47,6 +47,8 @@ class Factor:
 class HistoryPoint:
     year: int
     actual_exports_usd: float
+    export_potential_usd: float | None  # Gap Period years only
+    export_gap_usd: float | None  # Gap Period years only
 
 
 @dataclass(frozen=True)
@@ -57,9 +59,11 @@ class Explanation:
     fold: int  # the fold model used: the one that held the pair out and scored its Baseline
     base_value: float  # the model's average log Export Potential (SHAP bias term)
     log_export_potential: float  # base_value + sum of contributions
-    export_potential_usd: float  # exp(log_export_potential): the Baseline Export Potential
+    export_potential_usd: float  # exp(log_export_potential): the Baseline year's Export Potential
     factors: list[Factor]  # every model input, largest absolute contribution first
-    history: list[HistoryPoint]  # UK Actual Exports of the pair by year (non-zero years)
+    # By year: each Gap Period year's Actual Exports, Export Potential and Export Gap, and
+    # earlier years' non-zero Actual Exports
+    history: list[HistoryPoint]
 
 
 def factor_labels(market: str) -> dict[str, str]:
@@ -131,7 +135,12 @@ def explain_pair(artefacts: Artefacts, hs6: str, iso3: str) -> Explanation:
         log_export_potential=log_potential,
         export_potential_usd=math.exp(log_potential),
         factors=factors,
-        history=[HistoryPoint(int(y), float(v)) for y, v in history.select("year", "actual_exports_usd").iter_rows()],
+        history=[
+            HistoryPoint(int(y), float(actual), potential, gap)
+            for y, actual, potential, gap in history.select(
+                "year", "actual_exports_usd", "export_potential_usd", "export_gap_usd"
+            ).iter_rows()
+        ],
     )
 
 

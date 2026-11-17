@@ -71,7 +71,25 @@ def test_predict_reproduces_the_out_of_fold_baseline(fixture_artefacts):
 
     predicted = scenarios.predict(features, fixture_artefacts.fold_models)
 
-    assert predicted.to_list() == pytest.approx(baseline["export_potential_usd"].to_list(), rel=1e-6)
+    assert predicted.to_list() == pytest.approx(baseline["baseline_export_potential_usd"].to_list(), rel=1e-6)
+
+
+def test_scenario_effects_start_from_the_baseline_year_not_the_gap_period_mean(fixture_artefacts):
+    result = scenarios.run(
+        fixture_artefacts.baseline_features,
+        fixture_artefacts.baseline,
+        fixture_artefacts.fold_models,
+        scenarios.Scenario(add_agreements=("IND",)),
+    )
+    joined = result.pairs.join(fixture_artefacts.baseline, on=["hs6", "iso3"])
+
+    assert joined.height == 5
+    assert joined["baseline_potential_usd"].to_list() == pytest.approx(
+        joined["baseline_export_potential_usd"].to_list()
+    )
+    assert not joined["baseline_potential_usd"].equals(joined["export_potential_usd"])
+    blocked = joined["effect_usd"].to_list()
+    assert joined["blocked_effect_usd"].to_list() == pytest.approx(blocked)
 
 
 def test_blocked_values_can_be_rebuilt_from_saved_fold_models(fixture_artefacts, tmp_path):

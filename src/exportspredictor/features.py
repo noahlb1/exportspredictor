@@ -24,7 +24,8 @@ gravity and policy tables (`Sources`). Leakage rules are built in:
 year at a time so that peak memory stays far below 32 GB, and writes under the data root:
 
     derived/features_<BACI version>/training_<year>.parquet   training rows with features
-    derived/features_<BACI version>/uk_grid_<year>.parquet    the full UK grid with features
+    derived/features_<BACI version>/uk_grid_<year>.parquet    the full UK grid with features (Gap Period
+                                                              years: the union of their grids)
     derived/features_<BACI version>/features.json             rate, seed, years, feature list
 
 Every table is keyed by standard ISO3 codes (BACI's `S19` becomes `TWN`), as the gravity
@@ -32,6 +33,7 @@ and policy tables are.
 """
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +42,7 @@ import polars as pl
 from exportspredictor import baci, policy
 from exportspredictor.downloads import write_parquet
 from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
+from exportspredictor.gap_period import gap_period, gap_years
 from exportspredictor.paths import data_dir
 
 KEYS = ["exporter", "importer", "hs6", "year"]
@@ -122,24 +125,49 @@ def training_rows(flows: pl.DataFrame | pl.LazyFrame, *, rate: float, seed: int 
     return rows.collect(engine="streaming")
 
 
-def uk_grid(flows: pl.DataFrame, uk: str) -> pl.DataFrame:
+def uk_grid(flows: pl.DataFrame, uk: str, *, pairs: pl.DataFrame | None = None) -> pl.DataFrame:
     """Every Product × Market for the UK in each year of `flows`, with Actual Exports (0 if none).
 
     Products are those traded in that year, except Excluded Products, and Markets every
     Importer in that year except the UK itself. Weight is 1: the grid is scored in full,
     never sampled.
+
+    `pairs` (hs6, importer), when given, replaces each year's Products × Markets: the Gap
+    Period scores the union of its years' grids (`grid_pairs`) in every one of its years.
     """
     active = flows.filter(pl.col("value_usd") > 0)
-    products = active.select("hs6", "year").unique().pipe(drop_excluded)
-    markets = active.filter(pl.col("importer") != uk).select("importer", "year").unique()
+    if pairs is None:
+        products = active.select("hs6", "year").unique().pipe(drop_excluded)
+        markets = active.filter(pl.col("importer") != uk).select("importer", "year").unique()
+        keys = products.join(markets, on="year")
+    else:
+        wanted = pairs.select(
+            pl.col("hs6").cast(flows.schema["hs6"]), pl.col("importer").cast(flows.schema["importer"])
+        )
+        keys = (
+            wanted.unique()
+            .pipe(drop_excluded)
+            .filter(pl.col("importer") != uk)
+            .join(flows.select("year").unique(), how="cross")
+        )
     uk_flows = active.filter(pl.col("exporter") == uk).select("importer", "hs6", "year", "value_usd")
     return (
-        products.join(markets, on="year")
+        keys
         .with_columns(exporter=pl.lit(uk).cast(flows.schema["exporter"]))
         .join(uk_flows, on=["importer", "hs6", "year"], how="left")
         .with_columns(pl.col("value_usd").fill_null(0.0), weight=pl.lit(1.0))
         .select(*KEYS, "value_usd", "weight")
         .sort(KEYS)
+    )
+
+
+def grid_pairs(grids: Iterable[pl.DataFrame | pl.LazyFrame]) -> pl.DataFrame:
+    """The union of the UK Product–Market pairs (hs6, importer) of several years' grids."""
+    return (
+        pl.concat([grid.lazy().select("hs6", "importer") for grid in grids])
+        .unique()
+        .sort("hs6", "importer")
+        .collect()
     )
 
 
@@ -332,16 +360,20 @@ def build(
     rate: float = ZERO_SAMPLING_RATE,
     seed: int = 0,
     uk: str = baci.UK,
+    baseline_year: int = YEARS[-1],
 ) -> Path:
     """Write the training rows and the UK grid, with features, for each year; return the folder.
 
-    Each year is built from that year's Flows alone, so a year's file never depends on
-    another year's data. Transforms are not applied here: they are fitted on the training
-    years when the model is trained (`FeatureTransform`).
+    Each year's features are built from that year's Flows alone. Transforms are not applied
+    here: they are fitted on the training years when the model is trained (`FeatureTransform`).
+    The grids of the Gap Period ending with `baseline_year` all hold the union of those
+    years' pairs, so every pair is scored in every Gap Period year (`gap_period`).
     """
     sources, to_iso3 = load_sources(root)
     out = features_dir(root)
     out.mkdir(parents=True, exist_ok=True)
+    gap = [y for y in gap_years(baseline_year) if y in years]
+    pairs = grid_pairs(uk_grid(load_year_flows(y, to_iso3, root), uk) for y in gap) if gap else None
     for year in years:
         flows = load_year_flows(year, to_iso3, root)
         write_parquet(
@@ -349,10 +381,9 @@ def build(
             out / f"training_{year}.parquet",
             compression="zstd",
         )
-        write_parquet(
-            build_features(uk_grid(flows, uk), flows, sources), out / f"uk_grid_{year}.parquet", compression="zstd"
-        )
-        del flows
+        grid = uk_grid(flows, uk, pairs=pairs if year in gap else None)
+        write_parquet(build_features(grid, flows, sources), out / f"uk_grid_{year}.parquet", compression="zstd")
+        del flows, grid
     settings = {
         "baci_version": baci.BACI_VERSION,
         "years": list(years),
@@ -360,6 +391,7 @@ def build(
         "zero_sampling_seed": seed,
         "features": FEATURES,
         "excluded_products": [exclusion.codes for exclusion in EXCLUSIONS],
+        "gap_years": gap_period(baseline_year),
     }
     (out / SETTINGS_FILE).write_text(json.dumps(settings, indent=2), encoding="utf-8")
     return out
