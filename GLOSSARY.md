@@ -46,6 +46,10 @@ _Avoid_: warning product, suspect product
 A Market that re-exports much of what it imports, so part of its demand belongs to other Markets. It is shown with a caveat and can be filtered out.
 _Avoid_: entrepôt, transit country
 
+**Relatedness**:
+How close a Product is to the Products an Exporter already exports competitively, judged by which Products tend to be exported competitively together across the world.
+_Avoid_: density, product space, proximity
+
 ### Prediction
 
 **Export Potential**:
@@ -85,7 +89,7 @@ The Scenario Effect the model associates with adding a Trade Agreement to a UK P
 _Avoid_: blocked gap, unlock value
 
 **Barrier**:
-A trade-policy condition that suppresses Export Potential, namely a tariff or the absence of a Trade Agreement.
+A trade-policy condition that suppresses Export Potential, namely an Applied Tariff or the absence of a Trade Agreement.
 _Avoid_: blocker, obstacle, friction
 
 **Lift**:
@@ -117,6 +121,10 @@ _Avoid_: impact, uplift
 **Trade Agreement**:
 A bilateral or plurilateral preferential trade deal in force between two countries.
 _Avoid_: FTA (except as a type of Trade Agreement), deal
+
+**Applied Tariff**:
+The import duty a Market charges on a Product from a given Exporter: the lower of its preferential rate for that Exporter and its most-favoured-nation rate.
+_Avoid_: duty, tariff rate
 
 **Trading Bloc**:
 A named group of countries whose membership implies Trade Agreements with every other member, such as the EU or CPTPP.
