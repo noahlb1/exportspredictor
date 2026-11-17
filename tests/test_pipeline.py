@@ -160,3 +160,18 @@ def test_the_artefact_lists_excluded_products_with_reasons(artefacts):
     assert "pipelines" in table["reason"][0]
     # The Product lookup keeps it, so a search can say it is excluded rather than unknown.
     assert CRUDE_OIL in set(artefacts.products["hs6"])
+
+
+def test_baseline_flags_flagged_products_and_re_export_hubs(artefacts):
+    flags = {
+        (row["hs6"], row["iso3"]): (row["flagged_product"], row["reexport_hub"])
+        for row in artefacts.baseline.iter_rows(named=True)
+    }
+
+    assert flags[("711319", "HKG")] == (True, True)  # gold jewellery to Hong Kong
+    assert flags[("711319", "JPN")] == (True, False)
+    assert flags[("220830", "HKG")] == (False, True)
+    assert flags[("220830", "JPN")] == (False, False)
+    assert artefacts.baseline.schema["flagged_product"] == pl.Boolean
+    assert sum(flagged for flagged, _ in flags.values()) == 4  # one Product in every Market
+    assert sum(hub for _, hub in flags.values()) == 5  # every Product in one Market

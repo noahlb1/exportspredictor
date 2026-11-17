@@ -36,6 +36,7 @@ from exportspredictor.exclusions import (
     EXCLUSIONS,
     drop_excluded,
     excluded_products,
+    flag_columns,
     is_excluded,
 )
 from exportspredictor.features import (
@@ -328,7 +329,7 @@ def _train_and_score(
         "iso3",
         "export_potential_usd",
         actual_exports_usd="value_usd",
-    ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
+    ).with_columns(*flag_columns(), export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
     baseline_features = scored.select("hs6", "iso3", "fold", *FEATURES)
     # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
     baseline = with_blocked_effects(baseline, blocked_effects(baseline_features, baseline, models))

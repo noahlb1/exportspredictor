@@ -269,3 +269,17 @@ def test_rca_and_aggregates_of_other_products_are_unchanged_by_the_exclusion(wor
     # Crude oil really is in the totals: dropping its Flows would move the UK's whisky RCA.
     no_crude = world.flows.filter(pl.col("hs6") != CRUDE_OIL)
     assert not _same(without_exclusion, _features_for(world, no_crude, [TARGET]), 0, ["rca_loo"])
+
+
+# --- Flagged Products and Re-export Hubs: trained and scored as normal (ADR 0005) ----------
+
+JEWELLERY_HUB = (UK, "HKG", JEWELLERY)
+
+
+def test_training_rows_and_the_uk_grid_keep_flagged_products_and_re_export_hubs(world):
+    rows = training_rows(world.flows, rate=1.0)
+    grid = uk_grid(world.flows, UK)
+
+    assert JEWELLERY in set(rows["hs6"]) and "HKG" in set(rows["importer"])
+    assert rows.filter(_is(*JEWELLERY_HUB)).height == world.flows.filter(_is(*JEWELLERY_HUB)).height
+    assert grid.filter(_is(*JEWELLERY_HUB)).height == 1
