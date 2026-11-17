@@ -80,6 +80,14 @@ _Avoid_: percentage gap, headroom ratio
 How far the UK already trades an Opportunity: **Expand** (the UK already exports the Product to this Market), **New Market** (the UK exports the Product, but not to this Market) or **New Product** (the UK exports the Product to no Market).
 _Avoid_: entry mode, opportunity status
 
+**Potential Range**:
+The range within which Actual Exports fall 80% of the time for Product–Market pairs with the same Export Potential. It describes how much comparable pairs vary around their Export Potential, not how precisely Export Potential itself is known.
+_Avoid_: confidence interval, error bars, margin
+
+**Uncertain Opportunity**:
+An Opportunity whose Actual Exports lie inside its Potential Range, so its Export Gap is within the variation normally seen among comparable pairs. It is still ranked, with a caveat.
+_Avoid_: weak lead, low-confidence opportunity, false positive
+
 **Blocked Opportunity**:
 A UK Product–Market pair whose Export Potential rises materially in a Scenario that removes a Barrier. It is distinct from an Opportunity, because the Barrier already holds Export Potential down, so it shows no Export Gap.
 _Avoid_: hidden opportunity, latent demand
