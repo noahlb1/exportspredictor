@@ -18,8 +18,11 @@ from app.ui import (
 )
 from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_UNIT, format_usd
+from exportspredictor.tariffs import LAST_TRAINS_YEAR
 
 TOP_FACTORS = 8
+# The history's mark of each year's Applied Tariff (ADR 0006); blank for a year with no row.
+TARIFF_MARKS = {True: f"Carried forward from {LAST_TRAINS_YEAR}", False: "From tariff data"}
 
 st.title("Why?")
 
@@ -52,6 +55,8 @@ if banner() is not None:
             product, market = body["product"], body["market"]
             st.subheader(f"{product['hs6']} – {product['description']} → {market['name']}")
             show_caveats(body)
+            if body["tariff_caveat"]:
+                st.warning(body["tariff_caveat"])
             averaged = gap_period_label(body["gap_years"])
             st.markdown(
                 f"{averaged[0].upper()}{averaged[1:]}: "
@@ -110,7 +115,9 @@ if banner() is not None:
             baseline_year = body["baseline_year"]
             points = {point["year"]: point for point in body["history"]}
             years = list(range(baseline_year - 5, baseline_year + 1))
-            empty = {"actual_exports_usd": 0.0, "export_potential_usd": None, "export_gap_usd": None}
+            empty = {
+                "actual_exports_usd": 0.0, "export_potential_usd": None, "export_gap_usd": None, "tariff_imputed": None
+            }
             yearly = [points.get(year, empty) for year in years]
             st.dataframe(
                 pd.DataFrame(
@@ -121,7 +128,9 @@ if banner() is not None:
                         f"Export Gap ({USD_UNIT})": [p["export_gap_usd"] for p in yearly],
                     },
                     dtype=float,
-                ).astype({"Year": int}),
+                ).astype({"Year": int}).assign(
+                    **{"Applied Tariff": [TARIFF_MARKS.get(p["tariff_imputed"], "") for p in yearly]}
+                ),
                 hide_index=True,
             )
             first, last = body["gap_years"]

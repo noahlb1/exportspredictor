@@ -8,10 +8,12 @@ Layout of `<root>/<version>/`:
     baseline.parquet   one row per UK Product–Market pair: Gap Period means of Export Potential,
                        Actual Exports and Export Gap; the Baseline year's Export Potential;
                        the Blocked Opportunity value; its Flagged Product and Re-export Hub
-                       flags (ADR 0005); its Potential Range and Uncertain Opportunity flag (ADR 0007)
+                       flags (ADR 0005); its Potential Range and Uncertain Opportunity flag (ADR 0007);
+                       whether its Baseline-year Applied Tariff is carried forward from 2021 (ADR 0006)
     baseline_features.parquet  the same pairs' Baseline-year model inputs and fold (for Scenarios, explanations)
     history.parquet    per pair and year, last six years: UK Actual Exports (non-zero only before
-                       the Gap Period) and, in Gap Period years, Export Potential and Export Gap
+                       the Gap Period) and, in Gap Period years, Export Potential and Export Gap;
+                       every year marks a carried-forward Applied Tariff (tariff_imputed)
     products.parquet   Product lookup (hs6, description, sector)
     markets.parquet    Market lookup (iso3, name, region)
     excluded_products.parquet  Excluded Products (hs6, description, sector, reason), ADR 0005
@@ -63,10 +65,10 @@ class Artefacts:
     fold_models: list[xgb.Booster]
     # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd (Gap Period means),
     # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_effect_usd,
-    # potential_range_low_usd, potential_range_high_usd, uncertain
+    # potential_range_low_usd, potential_range_high_usd, uncertain, tariff_imputed
     baseline: pl.DataFrame
     baseline_features: pl.DataFrame  # hs6, iso3, fold, FEATURES (transformed, as the models saw them)
-    history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd
+    history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd, tariff_imputed
     products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
     markets: pl.DataFrame
     excluded_products: pl.DataFrame  # hs6, description, sector, reason (`exclusions.excluded_products`)

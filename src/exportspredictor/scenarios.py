@@ -118,7 +118,7 @@ def apply(baseline_features: pl.DataFrame, scenario: Scenario) -> pl.DataFrame:
         changed = changed.with_columns(
             pl.when(condition).then(pl.lit(value)).otherwise(pl.col(column)).cast(changed.schema[column]).alias(column)
         )
-    differs = pl.any_horizontal(*(changed[c] != baseline_features[c] for c in POLICY_FEATURES))
+    differs = pl.any_horizontal(*(changed[c].ne_missing(baseline_features[c]) for c in POLICY_FEATURES))
     after = changed.filter(differs)
     check_only_policy_changed(baseline_features, after)
     return after

@@ -25,6 +25,7 @@ import xgboost as xgb
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.features import FEATURES, GROWTH_YEARS, REEXPORT_RATIO_CAP
 from exportspredictor.policy import TRADING_BLOCS
+from exportspredictor.tariffs import TARIFF_CARRIED_FORWARD_CAVEAT
 
 _BLOC_NAMES = {"eu": "the EU", "cptpp": "CPTPP", "efta": "EFTA"}
 _UK = "the UK"
@@ -49,6 +50,7 @@ class HistoryPoint:
     actual_exports_usd: float
     export_potential_usd: float | None  # Gap Period years only
     export_gap_usd: float | None  # Gap Period years only
+    tariff_imputed: bool  # the year's Applied Tariff is carried forward from 2021 (ADR 0006)
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,9 @@ class Explanation:
     # By year: each Gap Period year's Actual Exports, Export Potential and Export Gap, and
     # earlier years' non-zero Actual Exports
     history: list[HistoryPoint]
+    # TARIFF_CARRIED_FORWARD_CAVEAT when the Baseline year's Applied Tariff is known and carried
+    # forward from 2021; None otherwise
+    tariff_caveat: str | None
 
 
 def factor_labels(market: str) -> dict[str, str]:
@@ -88,6 +93,7 @@ def factor_labels(market: str) -> dict[str, str]:
         "reexport_ratio": f"How much of this Product {market} re-exports",
         "trade_agreement": f"Trade Agreement between {_UK} and {market}",
         "customs_union": f"Customs Union between {_UK} and {market}",
+        "log_applied_tariff": f"The tariff {market} charges on this Product from {_UK}",
     }
     for bloc in TRADING_BLOCS:
         name = _BLOC_NAMES.get(bloc, bloc.upper())
@@ -129,6 +135,8 @@ def explain_pair(artefacts: Artefacts, hs6: str, iso3: str) -> Explanation:
         reverse=True,
     )
     history = artefacts.history.filter((pl.col("hs6") == hs6) & (pl.col("iso3") == iso3)).sort("year")
+    imputed = artefacts.baseline.filter((pl.col("hs6") == hs6) & (pl.col("iso3") == iso3))["tariff_imputed"]
+    tariff_known = not math.isnan(values[0, FEATURES.index("log_applied_tariff")])
     return Explanation(
         hs6=hs6,
         iso3=iso3,
@@ -139,11 +147,12 @@ def explain_pair(artefacts: Artefacts, hs6: str, iso3: str) -> Explanation:
         export_potential_usd=math.exp(log_potential),
         factors=factors,
         history=[
-            HistoryPoint(int(y), float(actual), potential, gap)
-            for y, actual, potential, gap in history.select(
-                "year", "actual_exports_usd", "export_potential_usd", "export_gap_usd"
+            HistoryPoint(int(y), float(actual), potential, gap, bool(carried))
+            for y, actual, potential, gap, carried in history.select(
+                "year", "actual_exports_usd", "export_potential_usd", "export_gap_usd", "tariff_imputed"
             ).iter_rows()
         ],
+        tariff_caveat=TARIFF_CARRIED_FORWARD_CAVEAT if tariff_known and imputed.any() else None,
     )
 
 
@@ -174,6 +183,8 @@ def value_text(feature: str, value: float) -> str:
         if ratio >= REEXPORT_RATIO_CAP * 0.999:
             return f"Exports {REEXPORT_RATIO_CAP:.0f}× or more what it imports from other countries"
         return f"Exports {ratio:.0%} of what it imports from other countries"
+    if feature == "log_applied_tariff":
+        return f"{math.expm1(value) * 100:,.1f}".removesuffix(".0") + "%"
     return "Yes" if value >= 0.5 else "No"
 
 

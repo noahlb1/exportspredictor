@@ -343,6 +343,7 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain",
+        "tariff_caveat",
         "factors",
         "history",
     }
@@ -753,3 +754,19 @@ def test_an_explanation_carries_the_pairs_potential_range_as_its_ranking_row_doe
         body = client.get(f"/explain/{row['hs6']}/JPN").json()
         for field in ("potential_range_low_usd", "potential_range_high_usd", "uncertain"):
             assert body[field] == row[field]
+
+
+def test_explain_names_the_applied_tariff_and_its_rate_in_plain_english(client):
+    factors = {f["label"]: f["value_text"] for f in client.get(f"/explain/{FIXTURE_HS6}/IND").json()["factors"]}
+
+    # India's 150% MFN rate on whisky, carried forward from 2021 to the 2024 Baseline.
+    assert factors["The tariff India charges on this Product from the UK"] == "150%"
+
+
+def test_explain_carries_the_tariff_carried_forward_caveat_and_the_yearly_mark(client):
+    body = client.get("/explain/300490/IND").json()  # medicaments: India 10%, UK exports in 2021
+
+    assert "carried forward from 2021" in body["tariff_caveat"]
+    imputed = {point["year"]: point["tariff_imputed"] for point in body["history"]}
+    assert imputed[2021] is False
+    assert imputed[2022] is imputed[2023] is imputed[2024] is True

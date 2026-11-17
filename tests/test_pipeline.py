@@ -178,7 +178,9 @@ def test_history_holds_uk_actual_exports_up_to_the_baseline_year(world, artefact
     history = artefacts.history
     uk = world.flows.filter(pl.col("exporter") == UK, pl.col("value_usd") > 0, pl.col("hs6") != CRUDE_OIL)
 
-    assert history.columns == ["hs6", "iso3", "year", "actual_exports_usd", "export_potential_usd", "export_gap_usd"]
+    assert history.columns == [
+        "hs6", "iso3", "year", "actual_exports_usd", "export_potential_usd", "export_gap_usd", "tariff_imputed"
+    ]
     assert sorted(history["year"].unique().to_list()) == [2021, 2022, 2023, 2024]
     # Before the Gap Period only years with a Flow are kept, and they carry no score.
     before = history.filter(pl.col("year") < 2022)

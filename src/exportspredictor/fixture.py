@@ -110,6 +110,7 @@ class World:
             pairs=self.pairs,
             high_income=self.high_income,
             proximity=fit_proximity(self.flows, PROXIMITY_YEARS),
+            tariffs=self.tariffs,
         )
 
 

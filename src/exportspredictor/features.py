@@ -50,6 +50,8 @@ from exportspredictor.downloads import write_parquet
 from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
 from exportspredictor.gap_period import gap_period, gap_years
 from exportspredictor.paths import data_dir
+from exportspredictor.tariffs import Tariffs, applied_tariffs
+from exportspredictor.tariffs import load as load_tariffs
 
 KEYS = ["exporter", "importer", "hs6", "year"]
 
@@ -77,7 +79,9 @@ RELATEDNESS_FEATURES = ["relatedness"]
 # Market import growth over GROWTH_YEARS, and the Market's exports of the Product over its
 # imports of it (log-capped), both leaving out the row's own Exporter.
 MARKET_TREND_FEATURES = ["market_import_growth", "reexport_ratio"]
-POLICY_FEATURES = list(policy.POLICY_FEATURES)
+# The Applied Tariff as ln(1 + t), with t the rate as a fraction (ADR 0006).
+TARIFF_FEATURES = ["log_applied_tariff"]
+POLICY_FEATURES = [*policy.POLICY_FEATURES, *TARIFF_FEATURES]
 FEATURES = [
     *GRAVITY_FEATURES,
     *SUPPLY_FEATURES,
@@ -87,8 +91,9 @@ FEATURES = [
     *MARKET_TREND_FEATURES,
     *POLICY_FEATURES,
 ]
-# +1 on every policy feature: a Trade Agreement never lowers Export Potential (ADR 0002).
-MONOTONE_CONSTRAINTS = {name: 1 for name in POLICY_FEATURES}
+# +1 on every agreement and bloc flag: a Trade Agreement never lowers Export Potential. -1 on
+# the Applied Tariff: raising it never raises Export Potential (ADR 0002, ADR 0006).
+MONOTONE_CONSTRAINTS = {**{name: 1 for name in policy.POLICY_FEATURES}, **{name: -1 for name in TARIFF_FEATURES}}
 # Continuous features clipped to their training-year range at serving time.
 CLIPPED_FEATURES = [
     "log_gdp_o",
@@ -100,7 +105,12 @@ CLIPPED_FEATURES = [
     *DEMAND_FEATURES,
     *RELATEDNESS_FEATURES,
     *MARKET_TREND_FEATURES,
+    *TARIFF_FEATURES,
 ]
+# Row metadata carried beside the features, never a model input: `tariff_imputed` marks a
+# tariff carried forward from 2021 (ADR 0006), and `mfn_tariff` (percent) is the Importer's
+# MFN rate, which a Scenario restores when it removes a Trade Agreement.
+TARIFF_METADATA = ["tariff_imputed", "mfn_tariff"]
 # Share of other Exporters' Zero Cells kept for training on real data (ADR 0004: a starting
 # rate, settled by the learning curve). UK Zero Cells are always kept.
 ZERO_SAMPLING_RATE = 0.05
@@ -126,6 +136,8 @@ class Sources:
     high_income: frozenset[str]  # ISO3 codes of high-income countries
     # hs6, hs6_neighbour, proximity (from `fit_proximity`); without it Relatedness is missing
     proximity: pl.DataFrame | None = None
+    # The Applied Tariff panel (`tariffs.load`); without it the Applied Tariff is missing
+    tariffs: Tariffs | None = None
 
 
 def training_rows(
@@ -309,12 +321,15 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
         table.pipe(_attach_gravity, sources)
         .pipe(_attach_policy, sources)
         .pipe(_attach_relatedness, active, sources.proximity)
+        .pipe(_attach_tariffs, sources)
         .select(
             *KEYS,
             *(pl.col(f).cast(pl.Float32) for f in _FLOAT_FEATURES),
             *PRODUCT_FEATURES,
             *(pl.col(f).cast(pl.Float32) for f in [*RELATEDNESS_FEATURES, *MARKET_TREND_FEATURES]),
-            *POLICY_FEATURES,
+            *policy.POLICY_FEATURES,
+            *(pl.col(f).cast(pl.Float32) for f in TARIFF_FEATURES),
+            *TARIFF_METADATA,
             "value_usd",
             "weight",
         )
@@ -391,6 +406,39 @@ def _attach_policy(table: pl.DataFrame, sources: Sources) -> pl.DataFrame:
     agreements = sources.agreements.select("exporter", "importer", "year", *policy.PAIR_FEATURES)
     flags = policy.attach_policy(keys, agreements, sources.blocs)
     return table.join(flags.rename({"exporter": "_o", "importer": "_d"}), on=["_o", "_d", "year"], how="left")
+
+
+def _attach_tariffs(table: pl.DataFrame, sources: Sources) -> pl.DataFrame:
+    """Add `log_applied_tariff` = ln(1 + t/100) and TARIFF_METADATA (`tariffs.applied_tariffs`).
+
+    The same function serves training rows and the UK grid. The panel is first cut to the
+    schedules these rows' years read, so a year's rows never join the whole panel.
+    """
+    if sources.tariffs is None:
+        return table.with_columns(
+            log_applied_tariff=pl.lit(None, pl.Float64),
+            tariff_imputed=pl.lit(None, pl.Boolean),
+            mfn_tariff=pl.lit(None, pl.Float64),
+        )
+    panel = sources.tariffs
+    years = table["year"].unique().cast(pl.Int64).to_list()
+    schedules = panel.schedules.filter(pl.col("year").cast(pl.Int64).is_in(years))
+    used = schedules.select("schedule", "source_year").unique()
+    cut = Tariffs(
+        schedules=schedules,
+        mfn=panel.mfn.join(used, on=["schedule", "source_year"], how="semi"),
+        preferences=panel.preferences.join(used, on=["schedule", "source_year"], how="semi"),
+    )
+    keys = table.with_row_index("_row").select(
+        "_row", "year", exporter="_o", importer="_d", hs6=pl.col("hs6").cast(pl.String)
+    )
+    applied = applied_tariffs(keys, cut, sources.agreements).select(
+        "_row",
+        "tariff_imputed",
+        "mfn_tariff",
+        log_applied_tariff=(pl.col("applied_tariff") / 100).log1p(),
+    )
+    return table.with_row_index("_row").join(applied, on="_row", how="left").drop("_row")
 
 
 # --- Relatedness ---------------------------------------------------------------------------
@@ -552,6 +600,7 @@ def load_sources(root: Path | None = None) -> tuple[Sources, dict[str, str]]:
         country_year=pl.read_parquet(derived / "country_year.parquet"),
         pairs=pl.read_parquet(derived / "gravity_pairs.parquet"),
         high_income=frozenset(to_iso3.get(code, code) for code in high_income),
+        tariffs=load_tariffs(root),
     )
     return sources, to_iso3
 

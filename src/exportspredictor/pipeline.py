@@ -73,6 +73,7 @@ from exportspredictor.paths import data_dir
 from exportspredictor.scenarios import blocked_effects, with_blocked_effects
 from exportspredictor.scope import exporter_scope
 from exportspredictor.sources import source_versions
+from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import (
     GPU_CHECK,
     Chunk,
@@ -139,7 +140,7 @@ class _Trained:
     models: list[xgb.Booster]
     baseline: pl.DataFrame
     baseline_features: pl.DataFrame
-    yearly: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd
+    yearly: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd, tariff_imputed
     potential_range_bands: pl.DataFrame
     potential_range_report: dict  # held-out coverage and the share of Opportunities that are uncertain
     metadata: dict
@@ -414,6 +415,7 @@ def _train_and_score(
                 year=pl.lit(year, pl.Int16),
                 actual_exports_usd="value_usd",
                 export_potential_usd="export_potential_usd",
+                tariff_imputed="tariff_imputed",
             )
             for year, table in scored.items()
         ]
@@ -421,7 +423,9 @@ def _train_and_score(
     baseline = (
         export_gaps(yearly)
         .join(
-            scored[baseline_year].select("hs6", "iso3", baseline_export_potential_usd="export_potential_usd"),
+            scored[baseline_year].select(
+                "hs6", "iso3", "tariff_imputed", baseline_export_potential_usd="export_potential_usd"
+            ),
             on=["hs6", "iso3"],
         )
         .with_columns(*flag_columns())
@@ -585,10 +589,12 @@ def _history(uk_flows: pl.DataFrame, yearly: pl.DataFrame) -> pl.DataFrame:
 
     Gap Period years come from `yearly` (every scored pair, $0 Actual Exports included), so a
     pair's yearly Export Gaps average to its Export Gap. Earlier years keep non-zero Actual
-    Exports only, with no score. Excluded Products are never included.
+    Exports only, with no score. Excluded Products are never included. `tariff_imputed` marks
+    a year whose Applied Tariff is carried forward from 2021 (ADR 0006).
     """
     gap = yearly.select(
-        "hs6", "iso3", pl.col("year").cast(pl.Int16), "actual_exports_usd", "export_potential_usd", "export_gap_usd"
+        "hs6", "iso3", pl.col("year").cast(pl.Int16), "actual_exports_usd", "export_potential_usd", "export_gap_usd",
+        "tariff_imputed",
     )
     earlier = (
         uk_flows.filter(pl.col("value_usd") > 0, ~pl.col("year").is_in(gap["year"].unique().to_list()))
@@ -600,6 +606,7 @@ def _history(uk_flows: pl.DataFrame, yearly: pl.DataFrame) -> pl.DataFrame:
             actual_exports_usd=pl.col("value_usd"),
             export_potential_usd=pl.lit(None, pl.Float64),
             export_gap_usd=pl.lit(None, pl.Float64),
+            tariff_imputed=pl.col("year") > LAST_TRAINS_YEAR,
         )
     )
     return pl.concat([earlier, gap]).sort("hs6", "iso3", "year")

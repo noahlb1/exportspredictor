@@ -49,6 +49,11 @@ COUNTRIES_URL = f"{WITS_API}/wits/datasource/trn/country/ALL"
 
 TRAINS_YEARS = list(range(2012, 2022))
 LAST_TRAINS_YEAR = 2021  # TRAINS has no later year; 2022–2024 carry it forward
+# Shown with a pair whose Baseline-year Applied Tariff is carried forward (ADR 0006).
+TARIFF_CARRIED_FORWARD_CAVEAT = (
+    f"Applied Tariff carried forward from {LAST_TRAINS_YEAR}: tariff data end in {LAST_TRAINS_YEAR}, so later "
+    f"years use the {LAST_TRAINS_YEAR} rate, or 0 where a Trade Agreement entered force after {LAST_TRAINS_YEAR}."
+)
 YEARS = list(range(2012, 2025))
 MAX_GAP_YEARS = 3
 MFN_PARTNER = "000"  # TRAINS' "World": the MFN schedule
