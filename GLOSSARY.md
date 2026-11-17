@@ -68,6 +68,10 @@ _Avoid_: hit rate, conversion
 A check of Scenario Effects against a real trade-policy change that formed and took effect within about two years, comparing predicted with observed change against unaffected pairs.
 _Avoid_: validation event, natural experiment
 
+**Control Market**:
+In an Event Backtest, a similar Market that had no Trade Agreement with the same Exporters throughout the period compared, whose change stands in for what the affected Flows would otherwise have done.
+_Avoid_: comparison country, untreated unit
+
 ### Scenarios
 
 **Baseline**:

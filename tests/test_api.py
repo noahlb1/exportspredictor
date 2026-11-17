@@ -317,3 +317,15 @@ def test_explain_needs_loaded_artefacts(tmp_path):
         response = client.get(f"/explain/{FIXTURE_HS6}/JPN")
 
     assert response.status_code == 503
+
+
+def test_evaluation_includes_lift_and_the_event_backtest(client):
+    body = client.get("/evaluation").json()
+
+    lift = body["lift"]
+    assert lift["lift"] is not None and len(lift["ci"]) == 2 and "tendency" in lift["text"]
+    event = body["event_backtest"]["events"][0]
+    direction = event["directions"][0]
+    assert direction["controls"] and direction["pooled"]["observed"] is not None
+    assert direction["pooled"]["predicted"] is not None
+    assert body["event_backtest"]["text"] and body["event_backtest"]["caveat"]

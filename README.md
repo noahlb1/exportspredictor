@@ -98,6 +98,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Blocked Opportunities unlocked by the Scenario are listed, and changing the thresholds changes the list.
 - [ ] Pick a Market in the drill-down: its most affected Product–Market pairs are listed, largest effect first.
 - [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
+- [ ] The page states the EU–Japan Event Backtest result (predicted against observed) above the Scenario choice.
 
 **Why?**
 - [ ] On **Product → Markets** and **Market → Products**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
@@ -110,4 +111,5 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] The metric tables (model against naive baseline) render for UK pairs and for all Exporters.
 - [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
 - [ ] The stability sentence and the known-limitations panel (goods only, no tariffs, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) render.
-- [ ] Lift and the Event Backtest render (arrive with #21).
+- [ ] The Lift section states how many times more often the largest Export Gaps grew, with a 95% interval, worded as a tendency, and shows the growth share for each tenth of Export Gaps.
+- [ ] The Event Backtest shows, for EU exports to Japan and Japan's exports to the EU, a table of predicted against observed change per year, names the control Markets, and states the COVID caveat; the UK–Australia/New Zealand secondary check follows.

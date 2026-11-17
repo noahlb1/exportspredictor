@@ -30,7 +30,7 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import baci, evaluation
+from exportspredictor import backtests, baci, evaluation
 from exportspredictor.artefacts import Artefacts, new_version
 from exportspredictor.currency import gbp_rate
 from exportspredictor.features import (
@@ -39,6 +39,7 @@ from exportspredictor.features import (
     FeatureTransform,
     build_features,
     features_dir,
+    load_sources,
     training_rows,
     uk_grid,
 )
@@ -72,6 +73,28 @@ REAL_MAX_ROUNDS = 1500
 REAL_NON_UK_RATE = 0.3
 HISTORY_YEARS = 6  # Actual Exports history: the Baseline year and the five before it
 
+# The fixture's backtests, inside its four years: Lift from a 2021–2022 model on 2022 gaps,
+# grown by 2023; the UK–Japan agreement of 2022 as the Event Backtest, with a 2021 model.
+# The fixture has no high-income Market without a UK agreement, so controls ignore income.
+FIXTURE_BACKTESTS = backtests.Plan(
+    lift=backtests.LiftSettings(
+        training_years=(2021, 2022), gap_year=2022, outcome_year=2023, min_growth_share=0.05, min_growth_usd=0.0
+    ),
+    event=backtests.Event(
+        name="uk_japan",
+        title="The fixture's UK–Japan Trade Agreement",
+        in_force="2022",
+        event_year=2022,
+        training_years=(2021,),
+        pre_years=(2021,),
+        post_years=(2022, 2023),
+        directions=(backtests.Direction("UK exports to Japan", (UK,), ("JPN",)),),
+        caveat="The fixture world is synthetic; this only shows the Event Backtest working end to end.",
+    ),
+    high_income_controls=False,
+    resamples=200,
+)
+
 
 @dataclass(frozen=True)
 class _Trained:
@@ -101,12 +124,7 @@ def build_artefacts(
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
-    training = {}
-    for year in sorted(flows["year"].unique().to_list()):
-        if year < baseline_year:
-            year_flows = flows.filter(pl.col("year") == year)
-            rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed)
-            training[year] = build_features(rows, year_flows, sources)
+    training = fixture_training(world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed)
     grids = {}
     for year in (baseline_year - 1, baseline_year):
         year_flows = flows.filter(pl.col("year") == year)
@@ -125,7 +143,8 @@ def build_artefacts(
         "zero_sampling_seed": seed,
     }
     report = _evaluate(
-        training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0, seed=seed
+        training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
+        seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
     )
     return Artefacts(
         metadata=metadata,
@@ -139,6 +158,25 @@ def build_artefacts(
     )
 
 
+def fixture_training(
+    world: World,
+    *,
+    baseline_year: int | None = None,
+    zero_sampling_rate: float = FIXTURE_ZERO_SAMPLING_RATE,
+    seed: int = 0,
+) -> dict[int, pl.DataFrame]:
+    """The fixture world's training rows with features, one table per year before the Baseline year."""
+    flows = world.flows
+    baseline_year = baseline_year or int(flows["year"].max())
+    training = {}
+    for year in sorted(flows["year"].unique().to_list()):
+        if year < baseline_year:
+            year_flows = flows.filter(pl.col("year") == year)
+            rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed)
+            training[year] = build_features(rows, year_flows, world.sources)
+    return training
+
+
 def build_real_artefacts(
     root: Path | None = None,
     *,
@@ -150,10 +188,12 @@ def build_real_artefacts(
     device: str = "cuda",
     non_uk_rate: float = REAL_NON_UK_RATE,
     seed: int = 0,
+    backtest_plan: backtests.Plan = backtests.REAL_PLAN,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
     Years are read one at a time (`training`), so host memory stays far below 32 GB.
+    Backtest models are cached under the data root (`backtests.cache_dir`).
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -185,7 +225,13 @@ def build_real_artefacts(
         "zero_sampling_seed": settings["zero_sampling_seed"],
     }
     test_grid = folder / f"uk_grid_{baseline_year - 1}.parquet"
-    report = _evaluate(training, test_grid, trained, metadata, markets=markets, device=device, non_uk_rate=non_uk_rate, seed=seed)
+    report = _evaluate(
+        training, test_grid, trained, metadata, markets=markets, device=device, non_uk_rate=non_uk_rate, seed=seed,
+        backtest_plan=backtest_plan,
+        backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
+        high_income=load_sources(root)[0].high_income,
+        backtest_cache=backtests.cache_dir(root),
+    )
     return Artefacts(
         metadata=metadata,
         fold_models=trained.models,
@@ -305,8 +351,16 @@ def _evaluate(
     device: str,
     non_uk_rate: float,
     seed: int,
+    backtest_plan: backtests.Plan,
+    high_income,
+    backtest_chunks: Mapping[int, Chunk] | None = None,
+    backtest_cache: Path | None = None,
 ) -> dict:
-    """Train the test-year fold models with the tuned configuration and evaluate them on the test year."""
+    """Evaluate on the test year, then run Lift and the Event Backtests (`backtests`).
+
+    The test-year fold models are trained with the tuned configuration; the backtest
+    models use it too. `backtest_chunks` defaults to `training`.
+    """
     test_year = metadata["test_year"]
     started = time.perf_counter()
     test_models = evaluation.train_test_models(
@@ -333,6 +387,12 @@ def _evaluate(
     )
     report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
     print(f"Evaluated on {test_year} in {report['evaluation_seconds']:.0f} s", flush=True)
+    report |= backtests.run(
+        backtest_chunks or training, backtest_plan, uk=UK, params=metadata["params"], rounds=metadata["rounds"],
+        device=device, non_uk_rate=non_uk_rate, seed=seed, high_income=high_income, test_models=test_models,
+        cache=backtest_cache,
+    )
+    print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
     return report
 
 

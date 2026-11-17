@@ -41,6 +41,13 @@ if banner() is not None:
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
         st.stop()
+    try:
+        backtest = fetch("/evaluation", client.api_url()).get("event_backtest")
+    except client.NotFound:
+        backtest = None
+    if backtest:
+        st.info(f"**How the model's Scenario Effects compared with a real Trade Agreement.** {backtest['text']}")
+        st.caption(f"{backtest['caveat']} The Model Evaluation page has the details.")
     preset_info = {preset["name"]: preset for preset in presets}
     market_names = {market["iso3"]: market["name"] for market in markets}
 

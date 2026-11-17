@@ -51,6 +51,73 @@ def _weakest(rows: list[dict]) -> str:
     return ", ".join(f"{row['group']} ({row['model_spearman_within_product']:.2f})" for row in ranked[:WEAKEST_SHOWN])
 
 
+def _pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:+.0%}"
+
+
+def _interval(ci: list) -> str:
+    low, high = ci
+    return "n/a" if low is None else f"{_pct(low)} to {_pct(high)}"
+
+
+def _years(years: list[int]) -> str:
+    return str(years[0]) if len(years) == 1 else f"{years[0]}–{years[-1]}"
+
+
+def _show_lift(lift: dict) -> None:
+    st.subheader("Do large Export Gaps point at growth? (Lift)")
+    st.markdown(lift["text"])
+    held = len(lift["held_out_exporters"])
+    st.caption(
+        f"Lift is measured on {held} Exporters ({lift['held_out_share']:.0%}, chosen at random) that a model trained "
+        f"on {_years(lift['training_years'])} never saw. Each of their Product–Market pairs is ranked by its "
+        f"{lift['gap_year']} Export Gap, and a pair counts as grown when its Flow rose by at least "
+        f"{lift['min_growth_share']:.0%} and ${lift['min_growth_usd']:,.0f} by {lift['outcome_year']}. The interval "
+        f"comes from resampling whole Exporters. It describes a tendency across many pairs, not a forecast."
+    )
+    deciles = pd.DataFrame(
+        {
+            "Export Gap tenth (1 = largest gaps)": [str(row["decile"]) for row in lift["by_decile"]],
+            "Share that grew materially": [row["rate"] for row in lift["by_decile"]],
+        }
+    )
+    st.bar_chart(deciles, x="Export Gap tenth (1 = largest gaps)", y="Share that grew materially")
+
+
+def _effects_table(direction: dict, post_years: list[int]) -> pd.DataFrame:
+    pooled = [{**direction["pooled"], "year": _years(post_years)}] if len(post_years) > 1 else []
+    rows = [*direction["by_year"], *pooled]
+    return pd.DataFrame(
+        [
+            {
+                "Year": str(row["year"]),
+                "Predicted by the model": _pct(row["predicted"]),
+                "Observed (difference-in-differences)": _pct(row["observed"]),
+                "Observed 95% interval": _interval(row["observed_ci"]),
+            }
+            for row in rows
+        ]
+    )
+
+
+def _show_event_backtest(backtest: dict, names: dict[str, str]) -> None:
+    st.subheader("Scenario Effects against a real Trade Agreement (Event Backtest)")
+    for event in backtest["events"]:
+        role = "Secondary check: " if event["role"] == "secondary" else ""
+        st.markdown(f"**{role}{event['title']}**, in force {event['in_force']}")
+        st.markdown(event["text"])
+        for direction in event["directions"]:
+            controls = "; ".join(names.get(code, code) for code in direction["controls"])
+            st.markdown(f"*{direction['label']}*. Control Markets: {controls}.")
+            st.dataframe(_effects_table(direction, event["post_years"]), hide_index=True)
+        st.caption(
+            f"The model was trained on {_years(event['training_years'])} only, before the agreement. \"Predicted\" "
+            f"is its Scenario Effect: Export Potential with the agreement on against off. \"Observed\" is the change "
+            f"from {_years(event['pre_years'])} relative to the change in the control Markets. "
+            f"{event['control_rule']} {event['caveat']}"
+        )
+
+
 st.title("Model Evaluation")
 
 if banner() is not None:
@@ -112,7 +179,11 @@ if banner() is not None:
         st.subheader("Stability of the rankings")
         st.markdown(report["stability"]["text"])
 
-        # Lift and the Event Backtest (#21) go here.
+        if report.get("lift"):
+            _show_lift(report["lift"])
+        if report.get("event_backtest"):
+            names = {market["iso3"]: market["name"] for market in fetch("/markets", client.api_url())}
+            _show_event_backtest(report["event_backtest"], names)
 
         st.subheader("Known limitations")
         with st.container(border=True):

@@ -81,3 +81,21 @@ def test_page_says_so_when_the_artefact_has_no_evaluation(monkeypatch, live_api,
         page = _run(monkeypatch, url)
 
     assert any("no evaluation" in element.value.lower() for element in page.warning)
+
+
+def test_page_shows_lift_with_its_interval_as_a_tendency(page, fixture_artefacts):
+    lift = fixture_artefacts.evaluation["lift"]
+
+    assert lift["text"] in _text(page)
+    assert "Lift" in _text(page)
+
+
+def test_page_shows_the_event_backtest_predicted_against_observed_with_its_control_group(page, fixture_artefacts):
+    backtest = fixture_artefacts.evaluation["event_backtest"]
+    tables = [element.value for element in page.dataframe]
+    effects = next(t for t in tables if "Observed (difference-in-differences)" in t.columns)
+
+    assert "Predicted by the model" in effects.columns
+    assert list(effects["Year"]) == ["2022", "2023", "2022–2023"]
+    assert "India" in _text(page)  # the control Market, by name
+    assert backtest["caveat"] in _text(page)
