@@ -170,13 +170,30 @@ def test_evaluation_returns_the_report_with_headline_breakdowns_and_limitations(
     assert body["test_year"] == 2023
     assert set(body["accuracy"]) == {"all_exporters", "uk_out_of_fold"}
     for scope in body["accuracy"].values():
-        assert set(scope) == {"overall", "by_sector", "by_region", "by_income"}  # by_income empty without income levels
+        # by_income is empty without income levels
+        assert set(scope) == {"overall", "by_sector", "by_region", "by_income", "by_tariff"}
         assert scope["by_sector"] and scope["by_region"]
     assert body["headline"]["text"]
     assert isinstance(body["headline"]["beats_naive"], bool)
     assert body["stability"]["years"] == [2023, 2024]
     titles = " ".join(item["title"] for item in body["limitations"]).lower()
     assert "goods only" in titles and "tariffs" in titles
+
+
+def test_evaluation_returns_the_imputed_observed_split_and_v2s_limitations(client):
+    body = client.get("/evaluation").json()
+
+    for scope in body["accuracy"].values():
+        split = scope["by_tariff"]
+        assert [row["group"] for row in split] == ["observed", "imputed"]
+        assert sum(row["rows"] for row in split) == scope["overall"]["rows"]
+    assert "2021" in body["tariff_split_text"]
+    titles = [item["title"] for item in body["limitations"]]
+    assert "No tariffs" not in titles
+    assert {"Tariffs carried forward from 2021", "Excluded Products", "Trained on the top 100 Exporters",
+            "Values are nominal US dollars", "What the Potential Range assumes"} <= set(titles)
+    assert 0 <= body["potential_range"]["coverage"] <= 1
+    assert "MFN" in body["event_backtest"]["events"][0]["states"]
 
 
 def test_evaluation_is_404_when_the_artefact_has_none(fixture_artefacts, tmp_path):
