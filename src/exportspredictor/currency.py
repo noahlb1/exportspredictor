@@ -1,15 +1,16 @@
-"""The USD → GBP rate used to show values in £: the Baseline year's annual average.
+"""Money in nominal US dollars, and the Bank of England rates for the HMRC cross-check.
 
-Model values are in USD (BACI's unit). Advisors talk in £, so rankings also give GBP at one
-stated rate: the Bank of England's annual average of the daily spot rate, US$ into
-sterling (series XUAAUSS), for the Baseline year. One rate per year keeps every figure in
-a ranking comparable, and an annual average matches BACI's annual Flows.
+Every value the model, the API, the app and the notebook show is in nominal US dollars,
+BACI's unit (`USD_CAPTION`). There is no £ output. The Bank of England table below is kept
+only to convert HMRC's £ declarations into USD at each year's own annual average, for the
+HMRC cross-check (`exportspredictor.hmrc.crosscheck`).
 
 The table is copied from the Bank of England database
 (https://www.bankofengland.co.uk/boeapps/database/, series XUAAUSS), downloaded 2026-11-17.
 """
 
-import polars as pl
+USD_CAPTION = "Values are nominal US dollars, as reported by BACI"
+USD_UNIT = "USD, nominal"  # the unit in column headers, e.g. "Export Gap (USD, nominal)"
 
 GBP_RATE_SERIES = "XUAAUSS"
 GBP_RATE_DOWNLOADED = "2026-11-17"  # when the table below was copied from the Bank of England database
@@ -34,25 +35,18 @@ USD_PER_GBP = {
 }
 
 
-def gbp_rate(year: int) -> dict:
-    """The rate for `year`, as stored in artefact metadata (`gbp_rate`): usd_per_gbp, year, source."""
-    if year not in USD_PER_GBP:
-        raise KeyError(f"No USD/GBP annual average for {year}; add it to currency.USD_PER_GBP")
-    return {"usd_per_gbp": USD_PER_GBP[year], "year": year, "source": GBP_RATE_SOURCE}
-
-
-def with_gbp(rows: pl.DataFrame, usd_per_gbp: float) -> pl.DataFrame:
-    """`rows` with a `<name>_gbp` column added for each `<name>_usd` column."""
-    return rows.with_columns(
-        (pl.col(c) / usd_per_gbp).alias(c.removesuffix("_usd") + "_gbp") for c in rows.columns if c.endswith("_usd")
-    )
-
-
-def format_change(value: float, symbol: str = "$") -> str:
-    """A signed, rounded amount of money, e.g. +$1.2bn or -£350.0m."""
-    sign = "-" if value < 0 else "+"
-    value = abs(value)
+def _amount(value: float) -> str:
     for unit, size in (("bn", 1e9), ("m", 1e6), ("k", 1e3)):
         if value >= size:
-            return f"{sign}{symbol}{value / size:,.1f}{unit}"
-    return f"{sign}{symbol}{value:,.0f}"
+            return f"${value / size:,.1f}{unit}"
+    return f"${value:,.0f}"
+
+
+def format_usd(value: float) -> str:
+    """A rounded amount of US dollars, e.g. $1.2bn, $350.0m, -$4.5k."""
+    return ("-" if value < 0 else "") + _amount(abs(value))
+
+
+def format_change(value: float) -> str:
+    """A signed, rounded amount of US dollars, e.g. +$1.2bn or -$350.0m."""
+    return ("-" if value < 0 else "+") + _amount(abs(value))

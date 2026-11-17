@@ -74,13 +74,14 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 
 **UK Exports Predictor (home page)**
 - [ ] The page loads, and the banner states the Baseline year, that it is provisional, and the model version.
+- [ ] Every page has one caption, "Values are nominal US dollars, as reported by BACI", and no page shows a pound sign or a currency switch.
 - [ ] Stop the API (`podman compose stop api`) and reload: every page shows a clear "API is unavailable" message instead of an error. Start it again with `podman compose start api`.
 
 **Product → Markets**
 - [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
 - [ ] Export Potential, Actual Exports and Export Gap appear side by side.
 - [ ] Search text that matches nothing (e.g. `999999` or `zzz`) shows a clear "No Product matches" warning.
-- [ ] Values show in £ by default, with the conversion rate and year stated under the table; switching to USD changes the columns.
+- [ ] Values are in USD: column headers say "(USD, nominal)".
 - [ ] Each row says whether a UK Trade Agreement is in force with the Market (e.g. Japan: Yes, India: No).
 - [ ] The Sector filter narrows the Product search; the region and minimum-Gap filters narrow the ranking.
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
@@ -88,9 +89,9 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 
 **Market → Products**
 - [ ] Pick a Market (e.g. Japan): Products are ranked by Export Gap, and the page says whether a UK Trade Agreement is in force with it.
-- [ ] The region filter narrows the Market list; the Sector and minimum-Gap (£) filters narrow the ranking, and a filter matching nothing says so.
+- [ ] The region filter narrows the Market list; the Sector and minimum-Gap (USD) filters narrow the ranking, and a filter matching nothing says so.
 - [ ] Switch "Rank by" to Blocked Opportunity value for a Market without a UK Trade Agreement (e.g. India): Products are ranked by that value; for a Market with one (e.g. Japan) every value is 0.
-- [ ] Values show in £, with the conversion rate and year stated.
+- [ ] Values are in USD: column headers say "(USD, nominal)".
 - [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
 
 **Scenarios**

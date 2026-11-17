@@ -51,7 +51,6 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
-from exportspredictor.currency import with_gbp
 from exportspredictor.evaluation import LIMITATIONS
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
@@ -146,13 +145,11 @@ def create_app(
             explanation = explain_pair(artefacts, hs6, iso3)
         except UnknownPair as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        usd_per_gbp = artefacts.gbp_rate["usd_per_gbp"]
-        values = with_gbp(
-            artefacts.baseline.filter((pl.col("hs6") == hs6) & (pl.col("iso3") == iso3)).select(
-                "export_potential_usd", "actual_exports_usd", "export_gap_usd"
-            ),
-            usd_per_gbp,
-        ).row(0, named=True)
+        values = (
+            artefacts.baseline.filter((pl.col("hs6") == hs6) & (pl.col("iso3") == iso3))
+            .select("export_potential_usd", "actual_exports_usd", "export_gap_usd")
+            .row(0, named=True)
+        )
         return Explanation(
             **_metadata(artefacts),
             **values,
@@ -172,12 +169,7 @@ def create_app(
                 for f in explanation.factors
             ],
             history=[
-                HistoryOut(
-                    year=h.year,
-                    actual_exports_usd=h.actual_exports_usd,
-                    actual_exports_gbp=h.actual_exports_usd / usd_per_gbp,
-                )
-                for h in explanation.history
+                HistoryOut(year=h.year, actual_exports_usd=h.actual_exports_usd) for h in explanation.history
             ],
         )
 
@@ -229,8 +221,8 @@ def _market(artefacts: store.Artefacts, iso3: str) -> MarketOut:
 
 
 def _metadata(artefacts: store.Artefacts) -> dict:
-    """The response metadata every value-carrying response shares: version, year and £ rate."""
-    return {"artefact_version": artefacts.version, "baseline_year": artefacts.baseline_year, "gbp_rate": artefacts.gbp_rate}
+    """The response metadata every value-carrying response shares: version and Baseline year."""
+    return {"artefact_version": artefacts.version, "baseline_year": artefacts.baseline_year}
 
 
 def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:
@@ -241,7 +233,6 @@ def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[Ba
         sector=query.sector,
         region=query.region,
         min_gap_usd=query.min_gap_usd,
-        min_gap_gbp=query.min_gap_gbp,
         rank_by=query.rank_by,
         limit=query.limit,
     )
@@ -255,13 +246,11 @@ def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[Ba
 def scenario_response(
     result: scenarios.ScenarioResult, request: ScenarioRequest, artefacts: store.Artefacts
 ) -> ScenarioResponse:
-    """Totals, per-Market and per-Product effects, top pairs and Blocked Opportunities, in USD and GBP."""
-    usd_per_gbp = artefacts.gbp_rate["usd_per_gbp"]
+    """Totals, per-Market and per-Product effects, top pairs and Blocked Opportunities, in nominal USD."""
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
     pairs = (
-        with_gbp(result.pairs, usd_per_gbp)
-        .with_columns(
+        result.pairs.with_columns(
             blocked_opportunity=scenarios.is_blocked(
                 "effect_usd", "baseline_potential_usd", request.min_effect_share, request.min_effect_usd
             )
@@ -271,19 +260,18 @@ def scenario_response(
     )
     blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
-    total = with_gbp(pl.DataFrame([result.total()]), usd_per_gbp).row(0, named=True)
+    total = result.total()
     return ScenarioResponse(
         **_metadata(artefacts),
         scenario=_pick(ScenarioIn, vars(result.scenario)),
         thresholds=_pick(Thresholds, request.model_dump()),
         market=request.market,
         changes_nothing=result.changes_nothing,
-        summary=result.summary(blocked=blocked.height, year=artefacts.baseline_year, usd_per_gbp=usd_per_gbp),
+        summary=result.summary(blocked=blocked.height, year=artefacts.baseline_year),
         total=total,
-        markets=with_gbp(result.by_market(), usd_per_gbp)
-        .join(markets, on="iso3", how="left", maintain_order="left")
-        .to_dicts(),
-        products=with_gbp(result.by_product().head(request.limit), usd_per_gbp)
+        markets=result.by_market().join(markets, on="iso3", how="left", maintain_order="left").to_dicts(),
+        products=result.by_product()
+        .head(request.limit)
         .join(products, on="hs6", how="left", maintain_order="left")
         .to_dicts(),
         top_pairs=top.head(request.limit).to_dicts(),

@@ -38,7 +38,9 @@ class RankOrderOut(BaseModel):
 
 
 class RankingQuery(BaseModel):
-    """Query parameters both ranking views accept."""
+    """Query parameters both ranking views accept; an unknown one (such as the old `min_gap_gbp`) is a 422."""
+
+    model_config = ConfigDict(extra="forbid")
 
     rank_by: RankBy = Field(
         DEFAULT_RANK_BY, description="; ".join(f"{order.name}: {order.title}" for order in RANK_BY.values())
@@ -46,7 +48,6 @@ class RankingQuery(BaseModel):
     sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
     region: str | None = Field(None, description="Market region, e.g. South Asia")
     min_gap_usd: float | None = Field(None, description="Minimum Export Gap, in USD")
-    min_gap_gbp: float | None = Field(None, description="Minimum Export Gap, in GBP")
     limit: int | None = Field(None, ge=1, description="Keep only the top rows")
 
 
@@ -56,12 +57,8 @@ class _Values(BaseModel):
     export_potential_usd: float
     actual_exports_usd: float
     export_gap_usd: float
-    export_potential_gbp: float
-    actual_exports_gbp: float
-    export_gap_gbp: float
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
     blocked_effect_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
-    blocked_effect_gbp: float
     blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
 
 
@@ -77,19 +74,10 @@ class ProductOpportunity(_Values):
     sector: str
 
 
-class GbpRate(BaseModel):
-    """The rate GBP values use: the Baseline year's annual average."""
-
-    usd_per_gbp: float
-    year: int
-    source: str
-
-
 class _Ranking(BaseModel):
     artefact_version: str
     baseline_year: int
     rank_by: RankBy
-    gbp_rate: GbpRate
 
 
 class ProductOpportunities(_Ranking):
@@ -297,9 +285,6 @@ class EffectTotals(BaseModel):
     scenario_potential_usd: float
     effect_usd: float
     effect_share: float
-    baseline_potential_gbp: float
-    scenario_potential_gbp: float
-    effect_gbp: float
 
 
 class MarketEffect(EffectTotals):
@@ -323,16 +308,12 @@ class PairEffect(BaseModel):
     scenario_potential_usd: float
     effect_usd: float
     effect_share: float
-    baseline_potential_gbp: float
-    scenario_potential_gbp: float
-    effect_gbp: float
     blocked_opportunity: bool
 
 
 class ScenarioResponse(BaseModel):
     artefact_version: str
     baseline_year: int
-    gbp_rate: GbpRate
     scenario: ScenarioIn
     thresholds: Thresholds
     market: str | None  # the drill-down Market `top_pairs` is limited to, if any
@@ -357,13 +338,11 @@ class FactorOut(BaseModel):
 class HistoryOut(BaseModel):
     year: int
     actual_exports_usd: float
-    actual_exports_gbp: float
 
 
 class Explanation(BaseModel):
     artefact_version: str
     baseline_year: int
-    gbp_rate: GbpRate
     product: ProductOut
     market: MarketOut
     fold: int  # the fold model that held the pair out, scored its Baseline and explains it
@@ -372,8 +351,5 @@ class Explanation(BaseModel):
     export_potential_usd: float
     actual_exports_usd: float
     export_gap_usd: float
-    export_potential_gbp: float
-    actual_exports_gbp: float
-    export_gap_gbp: float
     factors: list[FactorOut]  # largest absolute contribution first
     history: list[HistoryOut]  # UK Actual Exports by year; years with none are absent

@@ -80,8 +80,9 @@ DECISIONS = [
      ("Lift counts a pair as grown if its Flow rose at least 50% and $100,000 from 2017 to 2023, for Exporters the "
      "model never saw, with a size-matched Lift beside it. Event Backtests compare predicted with observed "
      "difference-in-differences against the 10 largest high-income Control Markets with no agreement.")),
-    ("Values in £ at one stated rate",
-     "USD values are converted at the Bank of England's annual average for the Baseline year (XUAAUSS)."),
+    ("Values in nominal US dollars",
+     ("Every value is in nominal USD, BACI's unit, so figures match international trade sources and need no "
+     "conversion. The Bank of England's annual averages (XUAAUSS) only convert HMRC's £ for the cross-check.")),
     ("Missing GDP and population stay missing after a stated chain of sources",
      ("WDI, then IMF WEO, then CEPII Gravity, then interpolation; 21 small territories (0.1% of value) stay "
      "missing and XGBoost routes them by learned defaults.")),
@@ -96,7 +97,7 @@ DATA_SOURCES = [
     ("IMF World Economic Outlook", "GDP and population where WDI has none (e.g. Taiwan).", "raw/imf_weo"),
     ("WTO Regional Trade Agreements database (RTA-IS)", ("Trade Agreements, Customs Unions and Trading Bloc "
      "memberships with per-member dates: the policy features."), "raw/wto"),
-    ("Bank of England, series XUAAUSS", "USD → GBP annual average rates.", "src/exportspredictor/currency.py"),
+    ("Bank of England, series XUAAUSS", "USD → GBP annual average rates, used only to convert HMRC's £ for the cross-check.", "src/exportspredictor/currency.py"),
     ("HMRC Overseas Trade Statistics, 2023 (Open Government Licence v3.0)", ("Cross-check of BACI's UK totals "
      "only; never a model input."), "raw/hmrc"),
     ("UN Statistics Division HS 2022 → HS 2012 conversion table", ("Puts HMRC's 2023 codes on BACI's revision "

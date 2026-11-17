@@ -161,11 +161,11 @@ class ScenarioResult:
         """Pairs whose Scenario Effect clears both Blocked Opportunity thresholds."""
         return self.pairs.filter(is_blocked("effect_usd", "baseline_potential_usd", min_share, min_usd))
 
-    def summary(self, *, blocked: int, year: int, usd_per_gbp: float) -> str:
+    def summary(self, *, blocked: int, year: int) -> str:
         """One sentence, worded as an association, never as a cause or a forecast.
 
-        `blocked` is the number of Blocked Opportunities, `year` the Baseline year, and the
-        effect is given in GBP (at `usd_per_gbp`) and in USD.
+        `blocked` is the number of Blocked Opportunities and `year` the Baseline year; the
+        effect is in nominal USD.
         """
         if self.changes_nothing and self.scenario.preset == "leave":
             return (
@@ -181,10 +181,9 @@ class ScenarioResult:
         markets = self.pairs["iso3"].n_unique()
         market_word = "Market" if markets == 1 else "Markets"
         blocked_word = "Blocked Opportunity" if blocked == 1 else "Blocked Opportunities"
-        effect_gbp = format_change(total["effect_usd"] / usd_per_gbp, "£")
         return (
-            f"The model associates this Scenario with a change of {effect_gbp} "
-            f"({format_change(total['effect_usd'])}, {total['effect_share']:+.1%}) in UK Export Potential "
+            f"The model associates this Scenario with a change of {format_change(total['effect_usd'])} "
+            f"({total['effect_share']:+.1%}) in UK Export Potential "
             f"across {markets} {market_word}, against the {year} Baseline, with {blocked} {blocked_word}. "
             "This is a learned association, not a forecast."
         )
