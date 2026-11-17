@@ -9,6 +9,7 @@ Layout of `<root>/<version>/`:
     history.parquet    UK Actual Exports per pair and year, non-zero only, last six years
     products.parquet   Product lookup (hs6, description, sector)
     markets.parquet    Market lookup (iso3, name, region)
+    evaluation.json    accuracy on the test year, stability and later checks (optional)
 
 Version names sort chronologically (default: a UTC timestamp), so the newest folder is
 the lexically greatest one that holds a metadata file.
@@ -23,6 +24,7 @@ import polars as pl
 import xgboost as xgb
 
 METADATA_FILE = "metadata.json"
+EVALUATION_FILE = "evaluation.json"
 _TABLES = ("baseline", "baseline_features", "history", "products", "markets")
 
 
@@ -39,6 +41,8 @@ class Artefacts:
     history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd
     products: pl.DataFrame
     markets: pl.DataFrame
+    # The evaluation report (`exportspredictor.evaluation`), JSON-ready; None if not evaluated.
+    evaluation: dict | None = None
 
     @property
     def version(self) -> str:
@@ -62,6 +66,8 @@ def save(artefacts: Artefacts, root: Path) -> Path:
         model.save_model(folder / "models" / f"fold_{k}.ubj")
     for name in _TABLES:
         getattr(artefacts, name).write_parquet(folder / f"{name}.parquet")
+    if artefacts.evaluation is not None:
+        (folder / EVALUATION_FILE).write_text(json.dumps(artefacts.evaluation, indent=2), encoding="utf-8")
     # Metadata goes last: its presence marks the folder as complete.
     (folder / METADATA_FILE).write_text(json.dumps(artefacts.metadata, indent=2), encoding="utf-8")
     return folder
@@ -77,7 +83,9 @@ def load(folder: Path) -> Artefacts:
         model.load_model(folder / "models" / f"fold_{k}.ubj")
         models.append(model)
     tables = {name: pl.read_parquet(folder / f"{name}.parquet") for name in _TABLES}
-    return Artefacts(metadata=metadata, fold_models=models, **tables)
+    evaluation_file = folder / EVALUATION_FILE
+    evaluation = json.loads(evaluation_file.read_text(encoding="utf-8")) if evaluation_file.exists() else None
+    return Artefacts(metadata=metadata, fold_models=models, **tables, evaluation=evaluation)
 
 
 def load_latest(root: Path) -> Artefacts:

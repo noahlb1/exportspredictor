@@ -56,3 +56,33 @@ def test_market_lookup_uses_standard_iso3_and_names_taiwan():
         ("JPN", "Japan", "East Asia & Pacific"),
         ("TWN", "Taiwan", "East Asia & Pacific"),
     ]
+
+
+def test_the_real_run_evaluates_on_the_test_year(trained):
+    report = trained.evaluation
+
+    assert report["test_year"] == 2023
+    assert report["test_training_years"] == [2021, 2022]
+    assert report["non_uk_sampling_rate"] == 0.5
+    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 3
+    assert report["headline"]["text"]
+
+
+def test_an_existing_artefact_is_evaluated_into_a_new_version_with_its_models_copied(trained, derived_data_root, tmp_path):
+    from dataclasses import replace
+
+    from exportspredictor import artefacts as store
+    from exportspredictor import evaluation
+
+    old = replace(trained, metadata={**trained.metadata, "version": "20000101T000000Z"}, evaluation=None)
+    store.save(old, tmp_path)
+
+    folder = evaluation.add_to_latest(derived_data_root, tmp_path, device="cpu")
+
+    evaluated = store.load_latest(tmp_path)
+    assert evaluated.version == folder.name != old.version
+    assert evaluated.metadata["copied_from"] == old.version
+    assert evaluated.baseline.equals(trained.baseline)
+    assert evaluated.evaluation["test_year"] == 2023
+    # The test-year models are cached under the data root, so a re-run does not retrain.
+    assert (evaluation.test_models_dir(derived_data_root, trained.metadata) / evaluation.TEST_MODELS_FILE).exists()

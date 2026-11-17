@@ -52,3 +52,17 @@ def test_data_and_artefact_roots_come_from_env_vars(monkeypatch, tmp_path):
 
     assert data_dir() == tmp_path / "d"
     assert artefacts_dir() == tmp_path / "a"
+
+
+def test_round_trip_keeps_the_evaluation_report(fixture_artefacts, tmp_path):
+    folder = store.save(fixture_artefacts, tmp_path)
+
+    assert (folder / "evaluation.json").exists()
+    assert store.load(folder).evaluation == fixture_artefacts.evaluation
+
+
+def test_a_folder_without_an_evaluation_still_loads(fixture_artefacts, tmp_path):
+    folder = store.save(replace(fixture_artefacts, evaluation=None), tmp_path)
+
+    assert not (folder / "evaluation.json").exists()
+    assert store.load(folder).evaluation is None
