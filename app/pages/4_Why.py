@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch, product_picker
+from app.ui import banner, fetch, product_picker, show_caveats
 from exportspredictor.currency import USD_UNIT, format_usd
 
 TOP_FACTORS = 8
@@ -43,6 +43,7 @@ if banner() is not None:
         else:
             product, market = body["product"], body["market"]
             st.subheader(f"{product['hs6']} – {product['description']} → {market['name']}")
+            show_caveats(body)
             st.markdown(
                 f"Baseline year {body['baseline_year']}: "
                 f"Export Potential **{format_usd(body['export_potential_usd'])}**, "

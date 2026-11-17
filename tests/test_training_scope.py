@@ -149,11 +149,13 @@ def test_rows_are_counted_by_uk_and_other_exporters(world, tmp_path):
 # --- Through the pipeline -----------------------------------------------------------------
 
 
-def test_the_artefact_records_the_scope_both_rates_and_the_row_budget(fixture_artefacts):
+def test_the_artefact_records_the_scope_both_rates_and_the_row_budget(fixture_world, fixture_artefacts):
     metadata = fixture_artefacts.metadata
 
-    # The fixture world has seven countries, so all are top-100 economies.
-    assert metadata["exporter_scope"] == ["CAN", "DEU", "FRA", UK, "IND", "JPN", "USA"]
+    # The fixture world has under 100 countries, so every one is a top-100 economy.
+    countries = sorted(set(fixture_world.country_year["iso3"]))
+    assert len(countries) < 100
+    assert metadata["exporter_scope"] == countries
     assert metadata["uk_zero_sampling_rate"] == 1.0
     assert metadata["zero_sampling_rate"] == pytest.approx(0.5)
     assert metadata["non_uk_sampling_rate"] == 1.0

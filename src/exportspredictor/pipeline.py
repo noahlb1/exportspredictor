@@ -39,6 +39,7 @@ from exportspredictor.exclusions import (
     EXCLUSIONS,
     drop_excluded,
     excluded_products,
+    flag_columns,
     is_excluded,
 )
 from exportspredictor.features import (
@@ -153,7 +154,7 @@ def build_artefacts(
     grids = {}
     for year in (baseline_year - 1, baseline_year):
         year_flows = flows.filter(pl.col("year") == year)
-        grids[year] = build_features(uk_grid(year_flows, UK), year_flows, sources)
+        grids[year] = build_features(uk_grid(year_flows, UK), flows, sources)  # all years: growth reads t-3
     grid = grids[baseline_year]
     trained = _train_and_score(
         training, grid, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
@@ -203,7 +204,7 @@ def fixture_training(
         if year < baseline_year:
             year_flows = flows.filter(pl.col("year") == year)
             rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed, uk=UK, exporters=exporters)
-            training[year] = build_features(rows, year_flows, world.sources)
+            training[year] = build_features(rows, flows, world.sources)
     return training
 
 
@@ -235,6 +236,11 @@ def build_real_artefacts(
         raise ValueError(
             f"The feature files in {folder} were built excluding {built_without}, not the current Excluded "
             "Products; rebuild them with `python -m exportspredictor.features`"
+        )
+    if settings.get("features") != FEATURES:
+        raise ValueError(
+            f"The feature files in {folder} hold {settings.get('features')}, not the current features; "
+            "rebuild them with `python -m exportspredictor.features`"
         )
     if "exporter_scope" not in settings:
         raise ValueError(
@@ -370,7 +376,7 @@ def _train_and_score(
         "iso3",
         "export_potential_usd",
         actual_exports_usd="value_usd",
-    ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
+    ).with_columns(*flag_columns(), export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
     baseline_features = scored.select("hs6", "iso3", "fold", *FEATURES)
     # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
     baseline = with_blocked_effects(baseline, blocked_effects(baseline_features, baseline, models))
