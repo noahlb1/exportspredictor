@@ -59,6 +59,8 @@ class RankingQuery(BaseModel):
     sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
     region: str | None = Field(None, description="Market region, e.g. South Asia")
     min_gap_usd: float | None = Field(None, description="Minimum Export Gap, in USD")
+    hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
+    hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
     limit: int | None = Field(None, ge=1, description="Keep only the top rows")
 
 
@@ -71,6 +73,8 @@ class _Values(BaseModel):
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
     blocked_effect_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
     blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
+    flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
+    reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
 
 
 class MarketOpportunity(_Values):
@@ -362,5 +366,7 @@ class Explanation(BaseModel):
     export_potential_usd: float
     actual_exports_usd: float
     export_gap_usd: float
+    flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
+    reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
     factors: list[FactorOut]  # largest absolute contribution first
     history: list[HistoryOut]  # UK Actual Exports by year; years with none are absent

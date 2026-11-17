@@ -1,7 +1,7 @@
 """A tiny, deterministic synthetic world for tests, the fixture-mode notebook and local development.
 
-The world has 4 Exporters (including the UK), 3 Markets, 5 Products (plus one Excluded
-Product) and 4 years.
+The world has 4 Exporters (including the UK), 4 Markets (one a Re-export Hub), 5 Products
+(one a Flagged Product, plus one Excluded Product) and 4 years.
 Flows follow a gravity-like rule: Exporter and Importer size, the Exporter's strength in
 the Product, and a positive association with a Trade Agreement, plus noise and some zeros.
 The UK–Japan Trade Agreement switches on part-way through, so the world contains a
@@ -22,9 +22,10 @@ MARKETS = {
     "JPN": ("Japan", "East Asia & Pacific", 1.2),
     "CAN": ("Canada", "North America", 0.9),
     "IND": ("India", "South Asia", 1.0),
+    "HKG": ("Hong Kong", "East Asia & Pacific", 0.8),  # a Re-export Hub
 }
 PRODUCTS = {
-    "030420": "Fish fillets, frozen",
+    "711319": "Articles of jewellery and parts thereof, of precious metal other than silver",  # a Flagged Product
     "220830": "Whiskies",
     "300490": "Medicaments, packaged for retail sale, n.e.s.",
     "851712": "Telephones for cellular networks or other wireless networks",
@@ -34,6 +35,7 @@ YEARS = [2021, 2022, 2023, 2024]
 # Proximity is fitted before the fixture's validation year (2022), as on real data.
 PROXIMITY_YEARS = [2021]
 # Large, so that leaving it out of the totals would visibly move other Products' RCA.
+_HUB = "HKG"
 EXCLUDED_PRODUCT = ("270900", "Petroleum oils and oils obtained from bituminous minerals; crude")
 _EXCLUDED_SCALE = 10.0
 
@@ -52,18 +54,21 @@ _ZERO_SHARE = 0.1
 
 # Trading Bloc memberships in the fixture window (UK left the EU before 2021, joins CPTPP in 2025).
 _BLOCS = {"DEU": "eu", "FRA": "eu", "JPN": "cptpp", "CAN": "cptpp"}
-_HIGH_INCOME = frozenset({"GBR", "DEU", "FRA", "USA", "JPN", "CAN"})
+_HIGH_INCOME = frozenset({"GBR", "DEU", "FRA", "USA", "JPN", "CAN", "HKG"})
 # Population (millions) and distance (km) from the Exporter to each Market, rounded.
-_POPULATION = {"GBR": 67, "DEU": 83, "FRA": 68, "USA": 333, "JPN": 125, "CAN": 38, "IND": 1400}
+_POPULATION = {"GBR": 67, "DEU": 83, "FRA": 68, "USA": 333, "JPN": 125, "CAN": 38, "IND": 1400, "HKG": 7}
 _DISTANCE = {
-    "GBR": {"JPN": 9560, "CAN": 5370, "IND": 6700},
-    "DEU": {"JPN": 9100, "CAN": 6100, "IND": 6200},
-    "FRA": {"JPN": 9700, "CAN": 5650, "IND": 6600},
-    "USA": {"JPN": 10900, "CAN": 730, "IND": 12000},
+    "GBR": {"JPN": 9560, "CAN": 5370, "IND": 6700, "HKG": 9620},
+    "DEU": {"JPN": 9100, "CAN": 6100, "IND": 6200, "HKG": 9150},
+    "FRA": {"JPN": 9700, "CAN": 5650, "IND": 6600, "HKG": 9600},
+    "USA": {"JPN": 10900, "CAN": 730, "IND": 12000, "HKG": 12900},
 }
 _CONTIGUOUS = {("USA", "CAN")}
-_COMMON_LANGUAGE = {("GBR", "CAN"), ("GBR", "IND"), ("USA", "CAN"), ("USA", "IND"), ("FRA", "CAN")}
-_COLONIAL_TIE = {("GBR", "CAN"), ("GBR", "IND"), ("FRA", "CAN")}
+_COMMON_LANGUAGE = {
+    ("GBR", "CAN"), ("GBR", "IND"), ("USA", "CAN"), ("USA", "IND"), ("FRA", "CAN"),
+    ("GBR", "HKG"), ("USA", "HKG"),
+}
+_COLONIAL_TIE = {("GBR", "CAN"), ("GBR", "IND"), ("FRA", "CAN"), ("GBR", "HKG")}
 
 
 @dataclass(frozen=True)
@@ -100,10 +105,13 @@ def build_world(seed: int = 0) -> World:
     }
     product_scale = {hs6: rng.normal(8.0, 0.5) for hs6 in PRODUCTS}
 
+    # The Re-export Hub was added later; its Flows have their own stream, so the others are unchanged.
+    hub_rng = np.random.default_rng([seed, 2])
     policy_rows, flow_rows = [], []
     for exporter, exporter_size in EXPORTERS.items():
         for importer, (_, _, importer_size) in MARKETS.items():
             start = _AGREEMENTS.get((exporter, importer))
+            draw = hub_rng if importer == _HUB else rng
             for year in YEARS:
                 agreement = int(start is not None and year >= start)
                 policy_rows.append((exporter, importer, year, agreement))
@@ -114,9 +122,9 @@ def build_world(seed: int = 0) -> World:
                         + importer_size
                         + strength[(exporter, hs6)]
                         + _AGREEMENT_EFFECT * agreement
-                        + rng.normal(0.0, 0.3)
+                        + draw.normal(0.0, 0.3)
                     )
-                    is_zero = rng.random() < _ZERO_SHARE
+                    is_zero = draw.random() < _ZERO_SHARE
                     value = 0.0 if is_zero else round(float(np.exp(log_value)), 2)
                     flow_rows.append((exporter, importer, hs6, year, value))
     flow_rows += _excluded_product_flows(seed)

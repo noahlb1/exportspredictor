@@ -26,7 +26,7 @@ def artefacts(fixture_artefacts):
 def test_baseline_has_one_row_per_uk_product_market_pair(artefacts):
     baseline = artefacts.baseline
 
-    assert baseline.height == 5 * 3
+    assert baseline.height == 5 * 4
     assert baseline.select("hs6", "iso3").is_duplicated().sum() == 0
 
 
@@ -36,7 +36,7 @@ def test_baseline_carries_actual_exports_from_the_baseline_year(world, artefacts
     )
     joined = artefacts.baseline.join(uk_2024, on=["hs6", "iso3"])
 
-    assert joined.height == 15
+    assert joined.height == 20
     assert (joined["actual_exports_usd"] == joined["expected"]).all()
 
 
@@ -160,3 +160,18 @@ def test_the_artefact_lists_excluded_products_with_reasons(artefacts):
     assert "pipelines" in table["reason"][0]
     # The Product lookup keeps it, so a search can say it is excluded rather than unknown.
     assert CRUDE_OIL in set(artefacts.products["hs6"])
+
+
+def test_baseline_flags_flagged_products_and_re_export_hubs(artefacts):
+    flags = {
+        (row["hs6"], row["iso3"]): (row["flagged_product"], row["reexport_hub"])
+        for row in artefacts.baseline.iter_rows(named=True)
+    }
+
+    assert flags[("711319", "HKG")] == (True, True)  # gold jewellery to Hong Kong
+    assert flags[("711319", "JPN")] == (True, False)
+    assert flags[("220830", "HKG")] == (False, True)
+    assert flags[("220830", "JPN")] == (False, False)
+    assert artefacts.baseline.schema["flagged_product"] == pl.Boolean
+    assert sum(flagged for flagged, _ in flags.values()) == 4  # one Product in every Market
+    assert sum(hub for _, hub in flags.values()) == 5  # every Product in one Market

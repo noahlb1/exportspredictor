@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
+from exportspredictor.fixture import PRODUCTS
 
 FIXTURE_HS6 = "220830"
 
@@ -68,7 +69,7 @@ def test_by_product_returns_every_market_sorted_by_export_gap(client):
 
     gaps = [row["export_gap_usd"] for row in body["opportunities"]]
     assert gaps == sorted(gaps, reverse=True)
-    assert {row["iso3"] for row in body["opportunities"]} == {"JPN", "CAN", "IND"}
+    assert {row["iso3"] for row in body["opportunities"]} == {"JPN", "CAN", "IND", "HKG"}
     assert body["product"] == {"hs6": "220830", "description": "Whiskies", "sector": "22"}
     assert body["baseline_year"] == 2024
     assert body["artefact_version"] == "fixture-test"
@@ -87,6 +88,8 @@ def test_by_product_rows_have_the_documented_shape(client):
         "trade_agreement",
         "blocked_effect_usd",
         "blocked_opportunity",
+        "flagged_product",
+        "reexport_hub",
     }
 
 
@@ -112,10 +115,10 @@ def test_products_search_finds_a_product_by_an_everyday_word(client):
 
 
 def test_products_search_matches_words_in_the_description(client):
-    body = client.get("/products", params={"q": "fish frozen"}).json()
+    body = client.get("/products", params={"q": "jewellery precious"}).json()
 
     assert body == [
-        {"hs6": "030420", "description": "Fish fillets, frozen", "sector": "03", "excluded": False, "exclusion_reason": None}
+        {"hs6": "711319", "description": PRODUCTS["711319"], "sector": "71", "excluded": False, "exclusion_reason": None}
     ]
 
 
@@ -141,7 +144,7 @@ def test_markets_lists_every_market_with_name_and_region(client):
         "name": "Japan",
         "region": "East Asia & Pacific",
     }
-    assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND"}
+    assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND", "HKG"}
 
 
 def test_evaluation_returns_the_report_with_headline_breakdowns_and_limitations(client):
@@ -178,7 +181,7 @@ def test_by_market_returns_every_product_sorted_by_export_gap(client):
 
     gaps = [row["export_gap_usd"] for row in body["opportunities"]]
     assert gaps == sorted(gaps, reverse=True)
-    assert {row["hs6"] for row in body["opportunities"]} == {"030420", "220830", "300490", "851712", "870323"}
+    assert {row["hs6"] for row in body["opportunities"]} == {"711319", "220830", "300490", "851712", "870323"}
     assert body["market"] == {"iso3": "JPN", "name": "Japan", "region": "East Asia & Pacific"}
     assert body["baseline_year"] == 2024
     assert body["artefact_version"] == "fixture-test"
@@ -290,10 +293,10 @@ def test_the_old_gbp_gap_filter_is_gone(client):
 
 
 def test_rows_show_whether_a_uk_trade_agreement_is_in_force_with_the_market(client):
-    # The fixture's UK Trade Agreements: Japan from 2022, Canada from 2021; none with India.
+    # The fixture's UK Trade Agreements: Japan from 2022, Canada from 2021; none with India or Hong Kong.
     rows = _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}")
 
-    assert {row["iso3"]: row["trade_agreement"] for row in rows} == {"JPN": True, "CAN": True, "IND": False}
+    assert {row["iso3"]: row["trade_agreement"] for row in rows} == {"JPN": True, "CAN": True, "IND": False, "HKG": False}
 
 
 def test_every_row_of_a_market_shows_its_trade_agreement(client):
@@ -317,6 +320,8 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
+        "flagged_product",
+        "reexport_hub",
         "factors",
         "history",
     }
@@ -405,7 +410,7 @@ def test_asking_for_an_excluded_product_returns_404_with_its_reason(client, path
     assert "Excluded Product" in detail and "pipelines" in detail
 
 
-@pytest.mark.parametrize("iso3", ["JPN", "CAN", "IND"])
+@pytest.mark.parametrize("iso3", ["JPN", "CAN", "IND", "HKG"])
 def test_no_ranking_contains_an_excluded_product(client, iso3):
     for rank_by in ("gap", "blocked"):
         body = client.get(f"/opportunities/by-market/{iso3}", params={"rank_by": rank_by}).json()
@@ -421,3 +426,53 @@ def test_product_search_marks_an_excluded_product_rather_than_hiding_it(client):
     assert crude["hs6"] == CRUDE_OIL
     assert crude["excluded"] is True and "pipelines" in crude["exclusion_reason"]
     assert whisky["excluded"] is False and whisky["exclusion_reason"] is None
+
+
+# --- Flagged Products and Re-export Hubs (ADR 0005) -------------------------------------
+
+JEWELLERY, HUB = "711319", "HKG"  # the fixture's Flagged Product and Re-export Hub
+
+
+def _all_rows(client, **params) -> list[dict]:
+    """Every ranking row of both views, over every Market and every Product."""
+    rows = []
+    for iso3 in ("JPN", "CAN", "IND", HUB):
+        rows += [{**row, "iso3": iso3} for row in _ranked(client, f"/opportunities/by-market/{iso3}", **params)]
+    for hs6 in ("220830", JEWELLERY):
+        rows += [{**row, "hs6": hs6} for row in _ranked(client, f"/opportunities/by-product/{hs6}", **params)]
+    return rows
+
+
+def test_every_ranking_row_flags_flagged_products_and_re_export_hubs(client):
+    rows = _all_rows(client)
+
+    for row in rows:
+        assert row["flagged_product"] is (row["hs6"] == JEWELLERY)
+        assert row["reexport_hub"] is (row["iso3"] == HUB)
+    assert any(row["flagged_product"] for row in rows) and any(row["reexport_hub"] for row in rows)
+
+
+def test_hide_filters_are_off_by_default(client):
+    by_market = _ranked(client, f"/opportunities/by-market/{HUB}")
+    by_product = _ranked(client, f"/opportunities/by-product/{JEWELLERY}")
+
+    assert JEWELLERY in {row["hs6"] for row in by_market}
+    assert len(by_market) == 5 and len(by_product) == 4
+    assert by_market == _ranked(client, f"/opportunities/by-market/{HUB}", hide_flagged=False, hide_hubs=False)
+
+
+@pytest.mark.parametrize(("flag", "field"), [("hide_flagged", "flagged_product"), ("hide_hubs", "reexport_hub")])
+def test_each_hide_filter_removes_exactly_the_flagged_rows(client, flag, field):
+    everything = _all_rows(client)
+    shown = _all_rows(client, **{flag: True})
+
+    assert shown == [row for row in everything if not row[field]]
+    assert len(shown) < len(everything)
+
+
+def test_an_explanation_carries_both_flags(client):
+    flagged_hub = client.get(f"/explain/{JEWELLERY}/{HUB}").json()
+    plain = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
+
+    assert (flagged_hub["flagged_product"], flagged_hub["reexport_hub"]) == (True, True)
+    assert (plain["flagged_product"], plain["reexport_hub"]) == (False, False)

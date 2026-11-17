@@ -152,13 +152,13 @@ def test_every_metric_is_reported_for_the_model_and_the_naive_baseline(report, s
 
 
 def test_uk_out_of_fold_covers_the_full_test_year_grid(report):
-    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 3
+    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 4
 
 
 def test_breakdowns_cover_every_sector_and_region(report):
     accuracy = report["accuracy"]["uk_out_of_fold"]
 
-    assert {row["group"] for row in accuracy["by_sector"]} == {"03", "22", "30", "85", "87"}
+    assert {row["group"] for row in accuracy["by_sector"]} == {"22", "30", "71", "85", "87"}
     assert {row["group"] for row in accuracy["by_region"]} == {"East Asia & Pacific", "North America", "South Asia"}
     for row in accuracy["by_sector"] + accuracy["by_region"]:
         assert set(row) >= {"group", "rows", *(f"model_{m}" for m in evaluation.METRICS)}
@@ -186,7 +186,7 @@ def test_stability_compares_the_baseline_with_the_test_year(report):
     stability = report["stability"]
 
     assert stability["years"] == [2023, 2024]
-    assert stability["pairs"] == 15
+    assert stability["pairs"] == 20
     assert -1 <= stability["spearman_potential"] <= 1
     assert 0 <= stability["top_overlap"] <= 1
     assert stability["text"]

@@ -158,7 +158,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(error)) from error
         values = (
             artefacts.baseline.filter((pl.col("hs6") == hs6) & (pl.col("iso3") == iso3))
-            .select("export_potential_usd", "actual_exports_usd", "export_gap_usd")
+            .select("export_potential_usd", "actual_exports_usd", "export_gap_usd", "flagged_product", "reexport_hub")
             .row(0, named=True)
         )
         return Explanation(
@@ -251,6 +251,8 @@ def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[Ba
         sector=query.sector,
         region=query.region,
         min_gap_usd=query.min_gap_usd,
+        hide_flagged=query.hide_flagged,
+        hide_hubs=query.hide_hubs,
         rank_by=query.rank_by,
         limit=query.limit,
     )
