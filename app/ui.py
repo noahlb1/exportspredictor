@@ -1,5 +1,8 @@
 """Shared page furniture: cached API reads and the persistent banner."""
 
+import json
+from urllib.parse import urlencode
+
 import streamlit as st
 
 from app import client
@@ -53,4 +56,30 @@ def product_picker() -> str | None:
         list(descriptions),
         format_func=lambda hs6: f"{hs6} – {descriptions[hs6]}",
         key="hs6",
+    )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def run_scenario(body_json: str, api_url: str) -> dict:
+    """Cached Scenario run; `body_json` is the request body as sorted JSON (the cache key)."""
+    del api_url
+    return client.post("/scenarios", json.loads(body_json))
+
+
+# The two ranking orders of the Opportunity pages (`rank_by` in the API).
+RANK_BY = {"gap": "Export Gap", "blocked": "Blocked Opportunity value"}
+
+
+WHY_PAGE_PATH = "/Why"  # the URL path Streamlit gives app/pages/4_Why.py
+
+
+def why_link(hs6: str, iso3: str) -> str:
+    """The Why? page URL for one Product–Market pair. Every ranking row links here."""
+    return f"{WHY_PAGE_PATH}?{urlencode({'hs6': hs6, 'iso3': iso3})}"
+
+
+def why_column() -> "st.column_config.LinkColumn":
+    """The ranking-table column config for the `Why?` links built by `why_link`."""
+    return st.column_config.LinkColumn(
+        "Why?", display_text="Why?", help="Which factors raised or lowered this pair's Export Potential"
     )

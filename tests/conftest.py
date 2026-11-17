@@ -37,25 +37,33 @@ def fixture_artefacts_dir(fixture_artefacts, tmp_path_factory):
     return root
 
 
+@contextmanager
+def serve_api(root):
+    """Run the API on a free local port over an artefact root; yields its base URL."""
+    port = free_port()
+    server = uvicorn.Server(uvicorn.Config(create_app(root), host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    while not server.started and thread.is_alive():
+        time.sleep(0.05)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
 @pytest.fixture
 def live_api():
     """Start the API on a free local port over an artefact root: `with live_api(root) as url:`."""
+    return serve_api
 
-    @contextmanager
-    def serve(root):
-        port = free_port()
-        server = uvicorn.Server(uvicorn.Config(create_app(root), host="127.0.0.1", port=port, log_level="warning"))
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        while not server.started and thread.is_alive():
-            time.sleep(0.05)
-        try:
-            yield f"http://127.0.0.1:{port}"
-        finally:
-            server.should_exit = True
-            thread.join(timeout=5)
 
-    return serve
+@pytest.fixture(scope="session")
+def fixture_api_url(fixture_artefacts_dir):
+    """The API serving the fixture artefacts for the whole session (for Streamlit page tests)."""
+    with serve_api(fixture_artefacts_dir) as url:
+        yield url
 
 
 def free_port() -> int:
