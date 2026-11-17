@@ -154,3 +154,133 @@ def test_control_markets_are_similar_markets_without_an_agreement_largest_first(
 
     # CAN has an agreement, IND is not high income, JPN is treated.
     assert controls == ["USA", "AUS"]
+
+
+# --- Backtest models on the fixture world --------------------------------------------------
+
+from dataclasses import replace  # noqa: E402
+
+from exportspredictor import pipeline  # noqa: E402
+from exportspredictor.fixture import UK  # noqa: E402
+
+PLAN = pipeline.FIXTURE_BACKTESTS
+EVENT = PLAN.event  # the fixture's UK–Japan agreement, in force from 2022
+
+
+def _train_event(chunks):
+    return backtests.train_backtest_model(
+        chunks, name=EVENT.name, training_years=EVENT.training_years, before=EVENT.event_year,
+        uk=UK, params={"max_depth": 2}, rounds=20, device="cpu",
+    )
+
+
+def test_no_event_backtest_model_sees_data_from_after_its_event(fixture_world):
+    after = pl.col("year") >= EVENT.event_year
+    distorted = replace(
+        fixture_world,
+        flows=fixture_world.flows.with_columns(
+            value_usd=pl.when(after).then(pl.col("value_usd") * 1000).otherwise("value_usd")
+        ),
+    )
+    chunks = pipeline.fixture_training(fixture_world)
+    distorted_chunks = pipeline.fixture_training(distorted)
+
+    model, distorted_model = _train_event(chunks), _train_event(distorted_chunks)
+
+    assert bytes(model.model.save_raw()) == bytes(distorted_model.model.save_raw())
+    # ...while the backtest itself does read the post-event years.
+    report = backtests.event_backtest(chunks, EVENT, model, high_income=None, resamples=20)
+    distorted_report = backtests.event_backtest(distorted_chunks, EVENT, distorted_model, high_income=None, resamples=20)
+    assert report["directions"][0]["by_year"] != distorted_report["directions"][0]["by_year"]
+
+
+def test_a_backtest_model_refuses_years_from_its_event_onwards(fixture_world):
+    chunks = pipeline.fixture_training(fixture_world)
+
+    with pytest.raises(backtests.LeakageError):
+        backtests.train_backtest_model(
+            chunks, name="late", training_years=[2021, 2022], before=2022, uk=UK, params={}, rounds=5, device="cpu"
+        )
+
+
+def test_an_event_backtest_refuses_a_model_trained_after_the_event(fixture_world):
+    chunks = pipeline.fixture_training(fixture_world)
+    late = backtests.train_backtest_model(
+        chunks, name="late", training_years=[2021, 2022], before=2023, uk=UK, params={}, rounds=5, device="cpu"
+    )
+
+    with pytest.raises(backtests.LeakageError):
+        backtests.event_backtest(chunks, EVENT, late, high_income=None, resamples=10)
+
+
+def test_the_lift_model_never_trains_on_the_held_out_exporters(fixture_world):
+    chunks = pipeline.fixture_training(fixture_world)
+    settings = PLAN.lift
+    held = backtests.held_out_exporters(fixture_world.flows["exporter"].unique(), share=settings.held_out_share)
+
+    def train(chunks):
+        return backtests.train_backtest_model(
+            chunks, name="lift", training_years=settings.training_years, before=settings.outcome_year,
+            uk=UK, params={"max_depth": 2}, rounds=20, device="cpu", held_out=held,
+        )
+
+    shifted = {
+        year: chunk.with_columns(
+            value_usd=pl.when(pl.col("exporter").is_in(held)).then(pl.col("value_usd") * 1000).otherwise("value_usd")
+        )
+        for year, chunk in chunks.items()
+    }
+    model = train(chunks)
+
+    assert model.held_out_exporters == held
+    assert bytes(model.model.save_raw()) == bytes(train(shifted).model.save_raw())
+
+
+# --- The backtests in the evaluation report -------------------------------------------------------
+
+
+@pytest.fixture
+def report(fixture_artefacts):
+    return fixture_artefacts.evaluation
+
+
+def test_lift_is_reported_with_a_confidence_interval_as_a_tendency(report):
+    lift = report["lift"]
+
+    low, high = lift["ci"]
+    assert low <= lift["lift"] <= high
+    assert lift["ci_level"] == 0.95
+    assert "tendency" in lift["text"] and "not a promise" in lift["text"]
+    assert lift["training_years"] == [2021, 2022] and lift["outcome_year"] == 2023
+    assert len(lift["held_out_exporters"]) == 1
+
+
+def test_the_event_backtest_reports_predicted_and_observed_effects_and_its_control_group(report):
+    event = report["event_backtest"]["events"][0]
+    direction = event["directions"][0]
+
+    assert event["role"] == "primary"
+    assert direction["controls"] == ["IND"]  # Canada already has a UK agreement
+    assert event["control_rule"]
+    for year in direction["by_year"]:
+        assert year["predicted"] is not None and year["observed"] is not None
+    assert direction["pooled"]["predicted"] >= 0  # monotone: switching the agreement on never lowers it
+    assert "difference-in-differences" in report["event_backtest"]["text"]
+    assert report["event_backtest"]["caveat"]
+
+
+def test_every_event_backtest_model_trained_only_before_its_event(report):
+    for event in report["event_backtest"]["events"]:
+        assert max(event["training_years"]) < event["event_year"]
+
+
+def test_the_real_plan_trains_before_each_event_and_reads_the_years_the_ticket_names():
+    plan = backtests.REAL_PLAN
+
+    assert plan.lift.training_years == tuple(range(2012, 2018))
+    assert (plan.lift.gap_year, plan.lift.outcome_year, plan.lift.held_out_share) == (2017, 2023, 0.2)
+    assert plan.event.training_years == tuple(range(2012, 2019)) and plan.event.event_year == 2019
+    assert plan.event.post_years == (2019, 2020, 2021)
+    assert "COVID" in plan.event.caveat
+    assert plan.secondary.event_year == 2023 and plan.secondary.post_years == (2024,)
+    assert max(plan.secondary.training_years) < plan.secondary.event_year

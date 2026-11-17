@@ -37,12 +37,21 @@ evaluation report as a new version. Trained models are cached under the data roo
 """
 
 import hashlib
+import json
 import math
-from collections.abc import Iterable
+import time
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import polars as pl
+import xgboost as xgb
 
+from exportspredictor.features import FEATURES, FeatureTransform
+from exportspredictor.training import Chunk, model_params, preparer, read_chunk, scan_chunks, training_matrix
+
+MODEL_FILE = "backtest_model.json"
 HELD_OUT_SHARE = 0.2
 TOP_DECILE = 1
 DECILES = 10
@@ -298,3 +307,533 @@ def compare(
         "bootstrap_unit": "Product",
         "resamples": resamples,
     }
+
+
+# --- Backtest models ------------------------------------------------------------------------
+
+
+class LeakageError(AssertionError):
+    """A backtest model would see, or has seen, data from its outcome or event years."""
+
+
+@dataclass(frozen=True)
+class BacktestModel:
+    """One model trained on the early years only, optionally without some Exporters."""
+
+    name: str
+    training_years: list[int]
+    held_out_exporters: list[str]
+    model: xgb.Booster
+    transform: FeatureTransform
+
+    def predict(self, rows: pl.DataFrame) -> np.ndarray:
+        """Export Potential (USD) for untransformed feature rows."""
+        if not rows.height:
+            return np.zeros(0)
+        data = self.transform.apply(rows).select(FEATURES).to_numpy().astype(np.float32)
+        return self.model.inplace_predict(data)
+
+    def save(self, folder: Path) -> Path:
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        self.model.save_model(folder / "model.ubj")
+        info = {
+            "name": self.name,
+            "training_years": self.training_years,
+            "held_out_exporters": self.held_out_exporters,
+            "transform": self.transform.to_dict(),
+        }
+        # Written last: its presence marks the folder as complete.
+        (folder / MODEL_FILE).write_text(json.dumps(info, indent=2), encoding="utf-8")
+        return folder
+
+    @classmethod
+    def load(cls, folder: Path) -> "BacktestModel":
+        folder = Path(folder)
+        info = json.loads((folder / MODEL_FILE).read_text(encoding="utf-8"))
+        model = xgb.Booster()
+        model.load_model(folder / "model.ubj")
+        return cls(
+            info["name"], info["training_years"], info["held_out_exporters"], model,
+            FeatureTransform.from_dict(info["transform"]),
+        )
+
+
+@dataclass(frozen=True)
+class FoldPredictor:
+    """Fold models (`evaluation.TestModels`) scoring UK rows out-of-fold and other rows by their mean."""
+
+    test_models: object  # evaluation.TestModels
+    uk: str
+
+    @property
+    def training_years(self) -> list[int]:
+        return list(self.test_models.training_years)
+
+    def predict(self, rows: pl.DataFrame) -> np.ndarray:
+        from exportspredictor.evaluation import score_rows
+
+        indexed = rows.with_row_index("_row")
+        scored = score_rows(indexed, self.test_models.models, self.test_models.transform, self.uk).sort("_row")
+        return scored["export_potential_usd"].to_numpy()
+
+
+def train_backtest_model(
+    training: Mapping[int, Chunk],
+    *,
+    name: str,
+    training_years: Sequence[int],
+    before: int,
+    uk: str,
+    params: dict,
+    rounds: int,
+    device: str = "cuda",
+    non_uk_rate: float = 1.0,
+    seed: int = 0,
+    held_out: Sequence[str] = (),
+) -> BacktestModel:
+    """Train one model on `training_years` only, without the `held_out` Exporters' Flows.
+
+    Raises LeakageError if any training year is `before` or later, so a model never sees
+    its event or outcome years. Only the training years' chunks are ever read. Hyperparameters
+    and the non-UK sample are those of the Baseline models.
+    """
+    years = sorted(training_years)
+    if not years or max(years) >= before:
+        raise LeakageError(f"Backtest model {name!r} would train on {years}, not only on years before {before}")
+    chunks = [training[y] for y in years]
+    held = sorted(held_out)
+    kept = ~pl.col("exporter").cast(pl.String).is_in(held)
+
+    def keep(table: pl.DataFrame) -> pl.DataFrame:
+        return table.filter(kept)
+
+    transform = FeatureTransform.fit(scan_chunks(chunks).filter(kept), years)
+    prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed, keep=keep)
+    matrix = training_matrix(chunks, prepare)
+    model = xgb.train(model_params(params, device=device, seed=seed), matrix, num_boost_round=rounds)
+    del matrix
+    model.set_param({"device": "cpu"})
+    return BacktestModel(name, years, held, model, transform)
+
+
+def _rows(chunk: Chunk, condition: pl.Expr) -> pl.DataFrame:
+    """The rows of one chunk that match `condition`, read lazily from a Parquet path."""
+    if isinstance(chunk, (str, Path)):
+        return pl.scan_parquet(chunk).filter(condition).collect()
+    return read_chunk(chunk).filter(condition)
+
+
+# --- Lift on held-out Exporters ----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LiftSettings:
+    training_years: tuple[int, ...]
+    gap_year: int
+    outcome_year: int
+    held_out_share: float = HELD_OUT_SHARE
+    min_growth_share: float = MIN_GROWTH_SHARE
+    min_growth_usd: float = MIN_GROWTH_USD
+
+
+def lift_backtest(
+    training: Mapping[int, Chunk],
+    settings: LiftSettings,
+    model: BacktestModel,
+    *,
+    resamples: int = RESAMPLES,
+    seed: int = 0,
+) -> dict:
+    """Lift of the held-out Exporters' top-decile Export Gaps in the gap year, by the outcome year."""
+    if max(model.training_years) >= settings.outcome_year:
+        raise LeakageError("The Lift model trained on its outcome year")
+    held = model.held_out_exporters
+    if not held:
+        raise ValueError("The Lift model holds out no Exporters")
+    is_held = pl.col("exporter").cast(pl.String).is_in(held)
+    keys = ["exporter", "importer", "hs6"]
+    gap_rows = _rows(training[settings.gap_year], is_held)
+    later = _rows(training[settings.outcome_year], is_held & (pl.col("value_usd") > 0)).select(
+        pl.col(keys).cast(pl.String), later_usd="value_usd"
+    )
+    pairs = (
+        gap_rows.select(*keys, "value_usd", "weight")
+        .with_columns(export_potential_usd=pl.Series(model.predict(gap_rows), dtype=pl.Float64))
+        .with_columns(pl.col(keys).cast(pl.String))
+        .join(later, on=keys, how="left")
+        .with_columns(pl.col("later_usd").fill_null(0.0))
+        .with_columns(
+            export_gap_usd=pl.col("export_potential_usd") - pl.col("value_usd"),
+            grew=grows_materially(
+                "value_usd", "later_usd", min_share=settings.min_growth_share, min_usd=settings.min_growth_usd
+            ),
+        )
+    )
+    result = lift(pairs, resamples=resamples, seed=seed)
+    result.update(
+        held_out_share=settings.held_out_share,
+        held_out_exporters=held,
+        training_years=model.training_years,
+        gap_year=settings.gap_year,
+        outcome_year=settings.outcome_year,
+        min_growth_share=settings.min_growth_share,
+        min_growth_usd=settings.min_growth_usd,
+    )
+    result["text"] = _lift_text(result)
+    return result
+
+
+def _lift_text(result: dict) -> str:
+    lift_value, (low, high) = result["lift"], result["ci"]
+    if lift_value is None:
+        return "Lift could not be measured: no held-out pair grew materially."
+    interval = "" if low is None else f" (95% confidence interval {low:.1f} to {high:.1f})"
+    growth = f"rose by at least {result['min_growth_share']:.0%} and ${result['min_growth_usd']:,.0f}"
+    matched = result["size_matched"]["lift"]
+    size = (
+        ""
+        if matched is None
+        else f" Compared with pairs of similar Export Potential instead of all pairs, the ratio is {matched:.1f}."
+    )
+    return (
+        f"For countries the model never trained on, the tenth of Product–Market pairs with the largest Export Gaps "
+        f"in {result['gap_year']} {growth} by {result['outcome_year']} {lift_value:.1f} times as often as pairs "
+        f"picked at random{interval}: {result['top_rate']:.0%} of them against {result['base_rate']:.0%}.{size} "
+        f"This is a tendency across many pairs, not a promise that any one Opportunity will grow."
+    )
+
+
+# --- Event Backtests ----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Direction:
+    label: str
+    exporters: tuple[str, ...]
+    importers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Event:
+    name: str
+    title: str
+    in_force: str
+    event_year: int  # first year the Trade Agreement is in force in the policy features
+    training_years: tuple[int, ...]
+    pre_years: tuple[int, ...]
+    post_years: tuple[int, ...]
+    directions: tuple[Direction, ...]
+    caveat: str
+    n_controls: int = 10
+
+
+def event_backtest(
+    training: Mapping[int, Chunk],
+    event: Event,
+    model,
+    *,
+    high_income: Iterable[str] | None,
+    resamples: int = RESAMPLES,
+    seed: int = 0,
+) -> dict:
+    """Predicted against observed effect of one real Trade Agreement, for each direction.
+
+    `model` has `training_years` and `predict(rows)` (a BacktestModel or a FoldPredictor);
+    it must have trained only on years before the event. `training` must hold the event's
+    pre and post years.
+    """
+    if max(model.training_years) >= event.event_year:
+        raise LeakageError(
+            f"The {event.name} backtest model trained on {model.training_years}, not only before {event.event_year}"
+        )
+    window = [*event.pre_years, *event.post_years]
+    exporters = sorted({c for d in event.directions for c in d.exporters})
+    rows = pl.concat(
+        [_rows(training[y], pl.col("exporter").cast(pl.String).is_in(exporters)) for y in window],
+        how="vertical_relaxed",
+    ).with_columns(pl.col("exporter", "importer").cast(pl.String))
+    directions = []
+    for d in event.directions:
+        own = rows.filter(pl.col("exporter").is_in(list(d.exporters)))
+        treated = own.filter(pl.col("importer").is_in(list(d.importers)))
+        _check_event(treated, event)
+        controls = control_markets(
+            own, exporters=d.exporters, treated=d.importers, pre_years=event.pre_years,
+            high_income=high_income, n=event.n_controls,
+        )
+        if not controls:
+            raise ValueError(f"No control Markets for {d.label}")
+        post = treated.filter(pl.col("year").is_in(list(event.post_years)))
+        flag = post.schema["trade_agreement"]
+        on = model.predict(post.with_columns(trade_agreement=pl.lit(1, flag)))
+        off = model.predict(post.with_columns(trade_agreement=pl.lit(0, flag)))
+        predicted = post.select("hs6", "year", "weight").with_columns(
+            on_usd=pl.Series(on, dtype=pl.Float64), off_usd=pl.Series(off, dtype=pl.Float64)
+        )
+        result = compare(
+            own.select("exporter", "importer", "hs6", "year", "value_usd"),
+            predicted,
+            exporters=d.exporters,
+            treated=d.importers,
+            controls=controls,
+            pre_years=event.pre_years,
+            post_years=event.post_years,
+            resamples=resamples,
+            seed=seed,
+        )
+        directions.append(
+            {"label": d.label, "exporters": list(d.exporters), "importers": list(d.importers), "controls": controls, **result}
+        )
+    report = {
+        "name": event.name,
+        "title": event.title,
+        "in_force": event.in_force,
+        "event_year": event.event_year,
+        "training_years": list(model.training_years),
+        "pre_years": list(event.pre_years),
+        "post_years": list(event.post_years),
+        "control_rule": _control_rule(event, high_income is not None),
+        "caveat": event.caveat,
+        "directions": directions,
+    }
+    report["text"] = _event_text(report)
+    return report
+
+
+def _check_event(treated: pl.DataFrame, event: Event) -> None:
+    """The treated pairs have no Trade Agreement before the event and one from it on."""
+    flags = treated.group_by(after=pl.col("year") >= event.event_year).agg(
+        lo=pl.col("trade_agreement").min(), hi=pl.col("trade_agreement").max()
+    )
+    for after, lo, hi in flags.iter_rows():
+        if (after and lo != 1) or (not after and hi != 0):
+            raise ValueError(f"The policy data do not show {event.title} switching on in {event.event_year}")
+
+
+def _control_rule(event: Event, high_income: bool) -> str:
+    income = "high-income " if high_income else ""
+    return (
+        f"The {event.n_controls} largest {income}Markets by imports from the same Exporters in "
+        f"{_years(event.pre_years)} that had no Trade Agreement with any of them in any year from "
+        f"{event.pre_years[0]} to {event.post_years[-1]}."
+    )
+
+
+def _years(years: Sequence[int]) -> str:
+    return str(years[0]) if len(years) == 1 else f"{years[0]}–{years[-1]}"
+
+
+def _pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:+.0%}"
+
+
+def _event_text(report: dict) -> str:
+    parts = []
+    for d in report["directions"]:
+        pooled = d["pooled"]
+        low, high = pooled["observed_ci"]
+        interval = "" if low is None else f" (95% interval {_pct(low)} to {_pct(high)})"
+        parts.append(
+            f"For {d['label']} in {_years(report['post_years'])}, the model associated the agreement with "
+            f"{_pct(pooled['predicted'])} in Export Potential; the observed difference-in-differences against "
+            f"{len(d['controls'])} similar Markets without an agreement was {_pct(pooled['observed'])}{interval}."
+        )
+    return (
+        f"{report['title']} (in force {report['in_force']}), with a model trained only on "
+        f"{_years(report['training_years'])}: " + " ".join(parts)
+    )
+
+
+# --- Running every backtest ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Plan:
+    """The backtests to run: Lift, the primary Event Backtest and an optional secondary one.
+
+    The secondary event is scored by the test-year fold models (`evaluation.TestModels`).
+    """
+
+    lift: LiftSettings
+    event: Event
+    secondary: Event | None = None
+    high_income_controls: bool = True
+    resamples: int = RESAMPLES
+
+
+def run(
+    training: Mapping[int, Chunk],
+    plan: Plan,
+    *,
+    uk: str,
+    params: dict,
+    rounds: int,
+    device: str = "cuda",
+    non_uk_rate: float = 1.0,
+    seed: int = 0,
+    high_income: Iterable[str] | None = None,
+    test_models=None,
+    cache: Path | None = None,
+) -> dict:
+    """Train (or read from `cache`) the backtest models; return the report's `lift` and `event_backtest` keys.
+
+    `training` maps each year to its feature table (training rows) and must cover every
+    year the plan reads. Models are cached under `cache` by their settings.
+    """
+    started = time.perf_counter()
+    exporters = _rows(training[plan.lift.gap_year], pl.lit(True)).select(pl.col("exporter").cast(pl.String).unique())
+    held = held_out_exporters(exporters["exporter"], share=plan.lift.held_out_share, seed=seed)
+    spec = {"params": params, "rounds": rounds, "non_uk_rate": non_uk_rate, "seed": seed, "features": FEATURES}
+
+    def model(name: str, years: Sequence[int], before: int, held_out: Sequence[str] = ()) -> BacktestModel:
+        folder = None
+        if cache is not None:
+            key_spec = {**spec, "name": name, "training_years": sorted(years), "held_out": sorted(held_out)}
+            key = hashlib.sha256(json.dumps(key_spec, sort_keys=True).encode()).hexdigest()[:12]
+            folder = Path(cache) / f"{name}_{key}"
+            if (folder / MODEL_FILE).exists():
+                return BacktestModel.load(folder)
+        trained = train_backtest_model(
+            training, name=name, training_years=years, before=before, uk=uk, params=params, rounds=rounds,
+            device=device, non_uk_rate=non_uk_rate, seed=seed, held_out=held_out,
+        )
+        if folder is not None:
+            trained.save(folder)
+        return trained
+
+    lift_model = model("lift", plan.lift.training_years, plan.lift.outcome_year, held)
+    lift_result = lift_backtest(training, plan.lift, lift_model, resamples=plan.resamples, seed=seed)
+    income = sorted(high_income) if plan.high_income_controls and high_income is not None else None
+    event_model = model(plan.event.name, plan.event.training_years, plan.event.event_year)
+    events = [
+        {
+            "role": "primary",
+            **event_backtest(training, plan.event, event_model, high_income=income, resamples=plan.resamples, seed=seed),
+        }
+    ]
+    if plan.secondary is not None:
+        if test_models is None:
+            raise ValueError("The secondary Event Backtest needs the test-year fold models")
+        predictor = FoldPredictor(test_models, uk)
+        secondary = event_backtest(training, plan.secondary, predictor, high_income=income, resamples=plan.resamples, seed=seed)
+        events.append({"role": "secondary", **secondary})
+    return {
+        "lift": lift_result,
+        "event_backtest": {
+            "events": events,
+            "text": events[0]["text"],
+            "caveat": events[0]["caveat"],
+            "seconds": round(time.perf_counter() - started, 2),
+        },
+    }
+
+
+# --- The real plan ----------------------------------------------------------------------------
+
+# The EU's 27 members after the UK left (all members throughout 2019–2021).
+EU27 = (
+    "AUT", "BEL", "BGR", "CYP", "CZE", "DEU", "DNK", "ESP", "EST", "FIN", "FRA", "GRC", "HRV", "HUN",
+    "IRL", "ITA", "LTU", "LUX", "LVA", "MLT", "NLD", "POL", "PRT", "ROU", "SVK", "SVN", "SWE",
+)
+
+EU_JAPAN = Event(
+    name="eu_japan",
+    title="The EU–Japan Economic Partnership Agreement",
+    in_force="1 February 2019",
+    event_year=2019,
+    training_years=tuple(range(2012, 2019)),
+    pre_years=(2016, 2017, 2018),
+    post_years=(2019, 2020, 2021),
+    directions=(
+        Direction("EU exports to Japan", EU27, ("JPN",)),
+        Direction("Japan's exports to the EU", ("JPN",), EU27),
+    ),
+    caveat=(
+        "COVID-19 disrupted trade in 2020 and 2021, unevenly across Markets, so the control Markets may not show "
+        "what EU–Japan trade would otherwise have done; 2019 is the cleanest year. The comparison assumes treated "
+        "and control trade would otherwise have moved in parallel. Values are nominal USD, so exchange-rate swings "
+        "move them, and Japan also joined CPTPP in December 2018."
+    ),
+)
+
+UK_AUSTRALIA_NZ = Event(
+    name="uk_australia_nz",
+    title="The UK–Australia and UK–New Zealand Free Trade Agreements",
+    in_force="31 May 2023",
+    event_year=2023,
+    training_years=tuple(range(2012, 2023)),  # the test-year fold models of `evaluation`
+    pre_years=(2021, 2022),
+    post_years=(2024,),
+    directions=(Direction("UK exports to Australia and New Zealand", ("GBR",), ("AUS", "NZL")),),
+    caveat=(
+        "A secondary check with one post year: 2023 is skipped because the agreements were in force for only "
+        "seven months of it, and 2024 is provisional. The pre-period starts in 2021, after the UK left the EU's "
+        "single market."
+    ),
+)
+
+REAL_PLAN = Plan(
+    lift=LiftSettings(training_years=tuple(range(2012, 2018)), gap_year=2017, outcome_year=2023),
+    event=EU_JAPAN,
+    secondary=UK_AUSTRALIA_NZ,
+)
+
+
+# --- Adding the backtests to a saved artefact ---------------------------------------------------
+
+
+def cache_dir(root: Path | None = None) -> Path:
+    """Where real backtest models are cached under the data root."""
+    from exportspredictor.features import features_dir
+
+    return features_dir(root).parent / "backtest_models"
+
+
+def add_to_latest(
+    root: Path | None = None,
+    artefacts_root: Path | None = None,
+    *,
+    plan: Plan = REAL_PLAN,
+    device: str = "cuda",
+) -> Path:
+    """Run the backtests for the newest evaluated artefact and save it again, with them, as a new version.
+
+    The backtest models use the artefact's tuned parameters, round count, non-UK sample and
+    seed, and are read from the cache when already trained; the secondary Event Backtest uses
+    the cached test-year models of `evaluation`. Everything else is copied file for file.
+    """
+    from exportspredictor import artefacts as store
+    from exportspredictor import baci, evaluation
+    from exportspredictor.features import features_dir, load_sources
+    from exportspredictor.paths import artefacts_dir, data_dir
+
+    root = Path(root or data_dir())
+    artefacts_root = Path(artefacts_root or artefacts_dir())
+    source = store.latest_folder(artefacts_root)
+    bundle = store.load(source)
+    if bundle.evaluation is None:
+        raise ValueError(f"Artefact {bundle.version} has no evaluation; run `python -m exportspredictor.evaluation` first")
+    metadata = bundle.metadata
+    folder = features_dir(root)
+    years = json.loads((folder / "features.json").read_text(encoding="utf-8"))["years"]
+    result = run(
+        {y: folder / f"training_{y}.parquet" for y in years},
+        plan,
+        uk=baci.UK,
+        params=metadata["params"],
+        rounds=metadata["rounds"],
+        device=device,
+        non_uk_rate=metadata["non_uk_sampling_rate"],
+        seed=metadata["model_params"].get("seed", 0),
+        high_income=load_sources(root)[0].high_income,
+        test_models=evaluation.real_test_models(bundle, root, device=device) if plan.secondary else None,
+        cache=cache_dir(root),
+    )
+    report = {**bundle.evaluation, **result}
+    new = {**metadata, "version": store.new_version(), "copied_from": bundle.version}
+    return store.copy_version(source, artefacts_root, metadata=new, evaluation=report)
+
+
+if __name__ == "__main__":
+    print(add_to_latest(), flush=True)
