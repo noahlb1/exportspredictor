@@ -186,6 +186,7 @@ def control_markets(
     pre_years: Iterable[int],
     high_income: Iterable[str] | None,
     n: int,
+    exclude: Iterable[str] = (),
 ) -> list[str]:
     """The control group: similar Markets with no Trade Agreement with the treated Exporters.
 
@@ -193,11 +194,11 @@ def control_markets(
     trade_agreement) over every year of the window. A control Market is not treated, not
     one of the Exporters, has no Trade Agreement with any of them in any window year, is
     high income (if `high_income` is given), and is among the `n` largest by the
-    pre-period imports from the Exporters.
+    pre-period imports from the Exporters. Markets in `exclude` are never controls.
     """
     exporters, treated = [str(c) for c in exporters], [str(c) for c in treated]
     frame = rows.with_columns(pl.col("exporter", "importer").cast(pl.String)).filter(
-        pl.col("exporter").is_in(exporters) & ~pl.col("importer").is_in([*treated, *exporters])
+        pl.col("exporter").is_in(exporters) & ~pl.col("importer").is_in([*treated, *exporters, *exclude])
     )
     if high_income is not None:
         frame = frame.filter(pl.col("importer").is_in(sorted(high_income)))
@@ -480,22 +481,32 @@ def lift_backtest(
         min_growth_share=settings.min_growth_share,
         min_growth_usd=settings.min_growth_usd,
     )
-    result["text"] = _lift_text(result)
+    result["text"] = lift_text(result)
     return result
 
 
-def _lift_text(result: dict) -> str:
+def lift_text(result: dict) -> str:
+    """The plain-English Lift result, with what the size-matched comparison adds, worded as a tendency."""
     lift_value, (low, high) = result["lift"], result["ci"]
     if lift_value is None:
         return "Lift could not be measured: no held-out pair grew materially."
     interval = "" if low is None else f" (95% confidence interval {low:.1f} to {high:.1f})"
     growth = f"rose by at least {result['min_growth_share']:.0%} and ${result['min_growth_usd']:,.0f}"
-    matched = result["size_matched"]["lift"]
-    size = (
-        ""
-        if matched is None
-        else f" Compared with pairs of similar Export Potential instead of all pairs, the ratio is {matched:.1f}."
-    )
+    matched, (m_low, m_high) = result["size_matched"]["lift"], result["size_matched"]["ci"]
+    if matched is None:
+        size = ""
+    else:
+        if m_low is not None and m_high < 1:
+            verdict = "less often than pairs of similar Export Potential"
+            meaning = "Much of the Lift comes from size: large gaps sit on large pairs, which grow by $100,000 more easily."
+        elif m_low is not None and m_low > 1:
+            verdict = "more often than pairs of similar Export Potential"
+            meaning = "So the Export Gap points at growth beyond what size alone explains."
+        else:
+            verdict = "about as often as pairs of similar Export Potential"
+            meaning = "So the Export Gap adds little beyond size."
+        m_interval = "" if m_low is None else f", 95% interval {m_low:.2f} to {m_high:.2f}"
+        size = f" They grew {verdict} (ratio {matched:.2f}{m_interval}). {meaning}"
     return (
         f"For countries the model never trained on, the tenth of Product–Market pairs with the largest Export Gaps "
         f"in {result['gap_year']} {growth} by {result['outcome_year']} {lift_value:.1f} times as often as pairs "
@@ -526,6 +537,7 @@ class Event:
     directions: tuple[Direction, ...]
     caveat: str
     n_controls: int = 10
+    excluded_controls: tuple[str, ...] = ()  # Markets that may not serve as controls, e.g. under sanctions
 
 
 def event_backtest(
@@ -560,7 +572,7 @@ def event_backtest(
         _check_event(treated, event)
         controls = control_markets(
             own, exporters=d.exporters, treated=d.importers, pre_years=event.pre_years,
-            high_income=high_income, n=event.n_controls,
+            high_income=high_income, n=event.n_controls, exclude=event.excluded_controls,
         )
         if not controls:
             raise ValueError(f"No control Markets for {d.label}")
@@ -597,7 +609,7 @@ def event_backtest(
         "caveat": event.caveat,
         "directions": directions,
     }
-    report["text"] = _event_text(report)
+    report["text"] = event_text(report)
     return report
 
 
@@ -616,7 +628,8 @@ def _control_rule(event: Event, high_income: bool) -> str:
     return (
         f"The {event.n_controls} largest {income}Markets by imports from the same Exporters in "
         f"{_years(event.pre_years)} that had no Trade Agreement with any of them in any year from "
-        f"{event.pre_years[0]} to {event.post_years[-1]}."
+        f"{event.pre_years[0]} to {event.post_years[-1]}"
+        + (f", leaving out {', '.join(event.excluded_controls)}." if event.excluded_controls else ".")
     )
 
 
@@ -628,16 +641,26 @@ def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:+.0%}"
 
 
-def _event_text(report: dict) -> str:
+def event_text(report: dict) -> str:
+    """The plain-English Event Backtest result: predicted against observed, and whether they agree."""
     parts = []
     for d in report["directions"]:
         pooled = d["pooled"]
         low, high = pooled["observed_ci"]
+        predicted = pooled["predicted"]
         interval = "" if low is None else f" (95% interval {_pct(low)} to {_pct(high)})"
+        if low is None or predicted is None:
+            verdict = ""
+        elif predicted > high:
+            verdict = " The model's effect is larger than what was observed, outside the interval."
+        elif predicted < low:
+            verdict = " The model's effect is smaller than what was observed, outside the interval."
+        else:
+            verdict = " The model's effect is within the observed interval."
         parts.append(
             f"For {d['label']} in {_years(report['post_years'])}, the model associated the agreement with "
-            f"{_pct(pooled['predicted'])} in Export Potential; the observed difference-in-differences against "
-            f"{len(d['controls'])} similar Markets without an agreement was {_pct(pooled['observed'])}{interval}."
+            f"{_pct(predicted)} in Export Potential; the observed difference-in-differences against "
+            f"{len(d['controls'])} similar Markets without an agreement was {_pct(pooled['observed'])}{interval}.{verdict}"
         )
     return (
         f"{report['title']} (in force {report['in_force']}), with a model trained only on "
@@ -766,6 +789,8 @@ UK_AUSTRALIA_NZ = Event(
     pre_years=(2021, 2022),
     post_years=(2024,),
     directions=(Direction("UK exports to Australia and New Zealand", ("GBR",), ("AUS", "NZL")),),
+    # Sanctions from 2022 cut UK exports to Russia and Belarus, which would flatter the comparison.
+    excluded_controls=("BLR", "RUS"),
     caveat=(
         "A secondary check with one post year: 2023 is skipped because the agreements were in force for only "
         "seven months of it, and 2024 is provisional. The pre-period starts in 2021, after the UK left the EU's "

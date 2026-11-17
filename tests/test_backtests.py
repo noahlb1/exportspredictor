@@ -284,3 +284,38 @@ def test_the_real_plan_trains_before_each_event_and_reads_the_years_the_ticket_n
     assert "COVID" in plan.event.caveat
     assert plan.secondary.event_year == 2023 and plan.secondary.post_years == (2024,)
     assert max(plan.secondary.training_years) < plan.secondary.event_year
+
+
+def test_event_text_says_when_the_model_overstates_the_observed_effect():
+    direction = {
+        "label": "EU exports to Japan", "controls": ["USA"],
+        "pooled": {"predicted": 0.45, "observed": 0.03, "observed_ci": [-0.06, 0.15]},
+    }
+    report = {"title": "T", "in_force": "2019", "training_years": [2012, 2018], "post_years": [2019, 2021], "directions": [direction]}
+
+    text = backtests.event_text(report)
+
+    assert "larger than" in text and "outside" in text
+
+
+def test_lift_text_says_when_large_gaps_do_no_better_than_pairs_of_similar_size():
+    result = {
+        "lift": 6.6, "ci": [4.8, 10.4], "top_rate": 0.045, "base_rate": 0.007, "gap_year": 2017, "outcome_year": 2023,
+        "min_growth_share": 0.5, "min_growth_usd": 1e5,
+        "size_matched": {"lift": 0.83, "ci": [0.80, 0.87], "expected_rate": 0.054},
+    }
+
+    text = backtests.lift_text(result)
+
+    assert "less often than pairs of similar Export Potential" in text
+    assert "tendency" in text
+
+
+def test_control_markets_leave_out_excluded_markets():
+    rows = pl.DataFrame(
+        {"exporter": ["GBR"] * 2, "importer": ["RUS", "USA"], "year": [2022] * 2, "value_usd": [9.0, 1.0], "trade_agreement": [0, 0]}
+    )
+
+    controls = backtests.control_markets(rows, exporters=["GBR"], treated=["AUS"], pre_years=[2022], high_income=None, n=5, exclude=["RUS"])
+
+    assert controls == ["USA"]
