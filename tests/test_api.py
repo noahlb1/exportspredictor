@@ -65,6 +65,7 @@ def test_by_product_rows_have_the_documented_shape(client):
         "export_potential_gbp",
         "actual_exports_gbp",
         "export_gap_gbp",
+        "trade_agreement",
     }
 
 
@@ -213,3 +214,15 @@ def test_min_gap_can_be_given_in_gbp(client):
 
     assert rows == [row for row in everything if row["export_gap_usd"] >= threshold_gbp * USD_PER_GBP_2024]
     assert 0 < len(rows) < len(everything)
+
+
+def test_rows_show_whether_a_uk_trade_agreement_is_in_force_with_the_market(client):
+    # The fixture's UK Trade Agreements: Japan from 2022, Canada from 2021; none with India.
+    rows = _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}")
+
+    assert {row["iso3"]: row["trade_agreement"] for row in rows} == {"JPN": True, "CAN": True, "IND": False}
+
+
+def test_every_row_of_a_market_shows_its_trade_agreement(client):
+    assert {row["trade_agreement"] for row in _ranked(client, "/opportunities/by-market/JPN")} == {True}
+    assert {row["trade_agreement"] for row in _ranked(client, "/opportunities/by-market/IND")} == {False}

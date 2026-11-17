@@ -40,6 +40,7 @@ class _Values(BaseModel):
     export_potential_gbp: float
     actual_exports_gbp: float
     export_gap_gbp: float
+    trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
 
 
 class MarketOpportunity(_Values):

@@ -26,16 +26,19 @@ def rank_opportunities(
     """The Baseline's UK Product–Market pairs for one Product or one Market, largest Export Gap first.
 
     Each row names its Product (hs6, description, sector) and Market (iso3, market, region),
-    and gives Export Potential, Actual Exports and Export Gap in USD and in GBP (at
+    says whether a UK Trade Agreement with the Market is in force in the Baseline year
+    (`trade_agreement`, the policy feature the model saw), and gives Export Potential, Actual Exports and Export Gap in USD and in GBP (at
     `artefacts.gbp_rate`). Filters keep rows of one Sector (HS2 chapter), one Market region,
     or an Export Gap of at least `min_gap_usd` / `min_gap_gbp`; `limit` keeps the top rows.
     """
     usd_per_gbp = artefacts.gbp_rate["usd_per_gbp"]
     rows = artefacts.baseline
+    policy = artefacts.baseline_features.select("hs6", "iso3", pl.col("trade_agreement") == 1)
     if hs6 is not None:
-        rows = rows.filter(pl.col("hs6") == hs6)
+        rows, policy = (t.filter(pl.col("hs6") == hs6) for t in (rows, policy))
     if iso3 is not None:
-        rows = rows.filter(pl.col("iso3") == iso3)
+        rows, policy = (t.filter(pl.col("iso3") == iso3) for t in (rows, policy))
+    rows = rows.join(policy, on=["hs6", "iso3"], how="left")
     if min_gap_usd is not None:
         rows = rows.filter(pl.col("export_gap_usd") >= min_gap_usd)
     if min_gap_gbp is not None:
