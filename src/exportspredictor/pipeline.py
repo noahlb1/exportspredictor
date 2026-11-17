@@ -27,6 +27,7 @@ import xgboost as xgb
 
 from exportspredictor import baci
 from exportspredictor.artefacts import Artefacts, new_version
+from exportspredictor.currency import gbp_rate
 from exportspredictor.features import (
     FEATURES,
     MONOTONE_CONSTRAINTS,
@@ -244,6 +245,7 @@ def _train_and_score(
     ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
     metadata = {
         "baseline_year": baseline_year,
+        "gbp_rate": gbp_rate(baseline_year),
         "validation_year": validation_year,
         "tuning_years": tuning_years,
         "training_years": training_years,

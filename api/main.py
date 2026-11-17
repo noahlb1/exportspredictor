@@ -106,11 +106,13 @@ def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[Ba
         sector=query.sector,
         region=query.region,
         min_gap_usd=query.min_gap,
+        min_gap_gbp=query.min_gap_gbp,
         limit=query.limit,
     )
     return {
         "artefact_version": artefacts.version,
         "baseline_year": artefacts.baseline_year,
+        "gbp_rate": artefacts.gbp_rate,
         "opportunities": [row_model(**{k: row[k] for k in row_model.model_fields}) for row in rows.iter_rows(named=True)],
     }
 

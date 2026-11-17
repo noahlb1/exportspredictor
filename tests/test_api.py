@@ -62,6 +62,9 @@ def test_by_product_rows_have_the_documented_shape(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
+        "export_potential_gbp",
+        "actual_exports_gbp",
+        "export_gap_gbp",
     }
 
 
@@ -180,3 +183,33 @@ def test_limit_keeps_the_top_of_the_ranking(client):
     everything = _ranked(client, "/opportunities/by-market/JPN")
 
     assert _ranked(client, "/opportunities/by-market/JPN", limit=2) == everything[:2]
+
+
+# Bank of England series XUAAUSS: the 2024 annual average of the spot rate, US$ into sterling.
+USD_PER_GBP_2024 = 1.2783
+
+
+@pytest.mark.parametrize("path", ["/opportunities/by-market/JPN", f"/opportunities/by-product/{FIXTURE_HS6}"])
+def test_rankings_state_the_gbp_rate_and_its_year(client, path):
+    body = client.get(path).json()
+
+    assert body["gbp_rate"]["usd_per_gbp"] == USD_PER_GBP_2024
+    assert body["gbp_rate"]["year"] == 2024
+    assert "Bank of England" in body["gbp_rate"]["source"]
+
+
+@pytest.mark.parametrize("path", ["/opportunities/by-market/JPN", f"/opportunities/by-product/{FIXTURE_HS6}"])
+def test_ranking_values_come_in_usd_and_gbp(client, path):
+    for row in client.get(path).json()["opportunities"]:
+        for value in ("export_potential", "actual_exports", "export_gap"):
+            assert row[f"{value}_gbp"] == pytest.approx(row[f"{value}_usd"] / USD_PER_GBP_2024)
+
+
+def test_min_gap_can_be_given_in_gbp(client):
+    everything = _ranked(client, "/opportunities/by-market/JPN")
+    threshold_gbp = 5000
+
+    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap_gbp=threshold_gbp)
+
+    assert rows == [row for row in everything if row["export_gap_usd"] >= threshold_gbp * USD_PER_GBP_2024]
+    assert 0 < len(rows) < len(everything)

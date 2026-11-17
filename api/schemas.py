@@ -27,6 +27,7 @@ class RankingQuery(BaseModel):
     sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
     region: str | None = Field(None, description="Market region, e.g. South Asia")
     min_gap: float | None = Field(None, description="Minimum Export Gap, in USD")
+    min_gap_gbp: float | None = Field(None, description="Minimum Export Gap, in GBP")
     limit: int | None = Field(None, ge=1, description="Keep only the top rows")
 
 
@@ -36,6 +37,9 @@ class _Values(BaseModel):
     export_potential_usd: float
     actual_exports_usd: float
     export_gap_usd: float
+    export_potential_gbp: float
+    actual_exports_gbp: float
+    export_gap_gbp: float
 
 
 class MarketOpportunity(_Values):
@@ -50,9 +54,18 @@ class ProductOpportunity(_Values):
     sector: str
 
 
+class GbpRate(BaseModel):
+    """The rate GBP values use: the Baseline year's annual average."""
+
+    usd_per_gbp: float
+    year: int
+    source: str
+
+
 class _Ranking(BaseModel):
     artefact_version: str
     baseline_year: int
+    gbp_rate: GbpRate
 
 
 class ProductOpportunities(_Ranking):

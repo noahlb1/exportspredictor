@@ -118,3 +118,12 @@ def test_history_holds_uk_actual_exports_up_to_the_baseline_year(world, artefact
     assert sorted(history["year"].unique().to_list()) == [2021, 2022, 2023, 2024]
     assert history.height == uk.height
     assert history["actual_exports_usd"].sum() == pytest.approx(uk["value_usd"].sum())
+
+
+def test_metadata_records_the_baseline_years_gbp_rate(artefacts):
+    # Bank of England XUAAUSS, 2024 annual average.
+    assert artefacts.metadata["gbp_rate"] == {
+        "usd_per_gbp": 1.2783,
+        "year": 2024,
+        "source": "Bank of England, series XUAAUSS: annual average spot exchange rate, US$ into sterling",
+    }
