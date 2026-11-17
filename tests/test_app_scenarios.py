@@ -56,7 +56,7 @@ def test_a_custom_scenario_shows_blocked_opportunities_and_a_drill_down(monkeypa
     page.selectbox(key="drill_market").set_value("IND").run()
     pairs = page.dataframe[-1].value
     assert len(pairs) == 5 and set(pairs["Market"]) == {"India"}
-    effects = list(pairs["Scenario Effect (£)"])
+    effects = list(pairs["Scenario Effect (USD, nominal)"])
     assert effects == sorted(effects, reverse=True)
 
 
@@ -83,7 +83,7 @@ def test_product_to_markets_can_rank_by_blocked_opportunity_value(monkeypatch, a
     assert not page.exception
     table = page.dataframe[0].value
     assert next(iter(table["Market"])) == "India"
-    values = list(table["Blocked Opportunity value (£)"])
+    values = list(table["Blocked Opportunity value (USD, nominal)"])
     assert values == sorted(values, reverse=True)
 
 
@@ -93,20 +93,6 @@ def test_the_scenarios_page_states_the_event_backtest_result(monkeypatch, api_ur
     assert not page.exception
     text = " ".join(element.value for element in [*page.markdown, *page.caption, *page.info])
     assert fixture_artefacts.evaluation["event_backtest"]["text"] in text
-
-
-def test_scenario_values_are_in_pounds_by_default_with_the_rate_stated(monkeypatch, api_url):
-    page = _scenarios_page(monkeypatch, api_url)
-    page.selectbox(key="preset").set_value("cptpp").run()
-    page.button(key="run").click().run()
-
-    assert "Scenario Effect (£)" in page.dataframe[0].value.columns
-    assert any("£1 = $1.2783" in c.value and "2024" in c.value for c in page.caption)
-    assert any("£" in element.value for element in page.markdown)  # the summary sentence
-
-    page.radio(key="currency").set_value("USD").run()
-
-    assert "Scenario Effect (USD)" in page.dataframe[0].value.columns
 
 
 def test_the_drill_down_asks_the_api_for_the_chosen_markets_own_top_pairs(monkeypatch, api_url):

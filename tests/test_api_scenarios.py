@@ -4,6 +4,8 @@ The fixture Baseline (2024) has UK Trade Agreements with Japan and Canada, none 
 India; Japan and Canada are CPTPP members, and the UK is in no Trading Bloc.
 """
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -53,9 +55,6 @@ def test_top_pairs_are_sorted_by_scenario_effect(client):
         "scenario_potential_usd",
         "effect_usd",
         "effect_share",
-        "baseline_potential_gbp",
-        "scenario_potential_gbp",
-        "effect_gbp",
         "blocked_opportunity",
     }
 
@@ -180,18 +179,11 @@ def test_by_market_unknown_rank_by_returns_422(client):
     assert client.get("/opportunities/by-market/JPN", params={"rank_by": "size"}).status_code == 422
 
 
-USD_PER_GBP_2024 = 1.2783  # Bank of England XUAAUSS, 2024 annual average
-
-
-def test_scenarios_return_gbp_alongside_usd_with_the_rate_and_year(client):
+def test_scenario_summary_states_the_effect_in_usd_only(client):
     body = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0, "min_effect_usd": 0}).json()
 
-    assert body["gbp_rate"]["usd_per_gbp"] == USD_PER_GBP_2024
-    assert body["gbp_rate"]["year"] == 2024
-    for row in [body["total"], *body["markets"], *body["products"], *body["top_pairs"], *body["blocked_opportunities"]]:
-        for value in ("baseline_potential", "scenario_potential", "effect"):
-            assert row[f"{value}_gbp"] == pytest.approx(row[f"{value}_usd"] / USD_PER_GBP_2024)
-    assert "£" in body["summary"] and "$" in body["summary"]
+    assert re.search(r"change of [+-]\$[0-9,.]+(bn|m|k)? ", body["summary"])
+    assert "£" not in body["summary"]
 
 
 def test_scenario_top_pairs_can_be_asked_for_one_market(client):

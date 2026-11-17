@@ -68,12 +68,8 @@ def test_by_product_rows_have_the_documented_shape(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
-        "export_potential_gbp",
-        "actual_exports_gbp",
-        "export_gap_gbp",
         "trade_agreement",
         "blocked_effect_usd",
-        "blocked_effect_gbp",
         "blocked_opportunity",
     }
 
@@ -224,34 +220,55 @@ def test_limit_keeps_the_top_of_the_ranking(client):
     assert _ranked(client, "/opportunities/by-market/JPN", limit=2) == everything[:2]
 
 
-# Bank of England series XUAAUSS: the 2024 annual average of the spot rate, US$ into sterling.
-USD_PER_GBP_2024 = 1.2783
+def _keys(value) -> set[str]:
+    """Every key in a JSON body, at any depth."""
+    if isinstance(value, dict):
+        return set(value) | {key for item in value.values() for key in _keys(item)}
+    if isinstance(value, list):
+        return {key for item in value for key in _keys(item)}
+    return set()
 
 
-@pytest.mark.parametrize("path", ["/opportunities/by-market/JPN", f"/opportunities/by-product/{FIXTURE_HS6}"])
-def test_rankings_state_the_gbp_rate_and_its_year(client, path):
-    body = client.get(path).json()
+def _every_response(client) -> list:
+    """One body from every endpoint (USD only: none may carry £ values or a £ rate)."""
+    gets = [
+        "/health",
+        "/products",
+        "/markets",
+        "/opportunities/rank-by",
+        f"/opportunities/by-product/{FIXTURE_HS6}",
+        "/opportunities/by-market/JPN",
+        "/evaluation",
+        f"/explain/{FIXTURE_HS6}/JPN",
+        "/scenarios/presets",
+        "/scenarios/thresholds",
+    ]
+    bodies = [client.get(path).json() for path in gets]
+    bodies.append(client.post("/scenarios", json={"add_agreements": ["IND"]}).json())
+    return bodies
 
-    assert body["gbp_rate"]["usd_per_gbp"] == USD_PER_GBP_2024
-    assert body["gbp_rate"]["year"] == 2024
-    assert "Bank of England" in body["gbp_rate"]["source"]
+
+def test_no_response_carries_gbp_values_or_a_gbp_rate(client):
+    for body in _every_response(client):
+        keys = {key.lower() for key in _keys(body)}
+        assert not {key for key in keys if "gbp" in key}
+        assert "£" not in str(body)
 
 
-@pytest.mark.parametrize("path", ["/opportunities/by-market/JPN", f"/opportunities/by-product/{FIXTURE_HS6}"])
-def test_ranking_values_come_in_usd_and_gbp(client, path):
-    for row in client.get(path).json()["opportunities"]:
-        for value in ("export_potential", "actual_exports", "export_gap"):
-            assert row[f"{value}_gbp"] == pytest.approx(row[f"{value}_usd"] / USD_PER_GBP_2024)
-
-
-def test_min_gap_can_be_given_in_gbp(client):
+def test_min_gap_usd_filters_rankings(client):
     everything = _ranked(client, "/opportunities/by-market/JPN")
-    threshold_gbp = 5000
+    threshold_usd = 5000
 
-    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap_gbp=threshold_gbp)
+    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap_usd=threshold_usd)
 
-    assert rows == [row for row in everything if row["export_gap_usd"] >= threshold_gbp * USD_PER_GBP_2024]
+    assert rows == [row for row in everything if row["export_gap_usd"] >= threshold_usd]
     assert 0 < len(rows) < len(everything)
+
+
+def test_the_old_gbp_gap_filter_is_gone(client):
+    response = client.get("/opportunities/by-market/JPN", params={"min_gap_gbp": 5000})
+
+    assert response.status_code == 422
 
 
 def test_rows_show_whether_a_uk_trade_agreement_is_in_force_with_the_market(client):
@@ -282,10 +299,6 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
-        "export_potential_gbp",
-        "actual_exports_gbp",
-        "export_gap_gbp",
-        "gbp_rate",
         "factors",
         "history",
     }
@@ -339,14 +352,3 @@ def test_evaluation_includes_lift_and_the_event_backtest(client):
     assert direction["controls"] and direction["pooled"]["observed"] is not None
     assert direction["pooled"]["predicted"] is not None
     assert body["event_backtest"]["text"] and body["event_backtest"]["caveat"]
-
-
-def test_explain_returns_gbp_alongside_usd_with_the_rate_and_year(client):
-    body = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
-
-    assert body["gbp_rate"]["usd_per_gbp"] == USD_PER_GBP_2024
-    assert body["gbp_rate"]["year"] == 2024
-    for value in ("export_potential", "actual_exports", "export_gap"):
-        assert body[f"{value}_gbp"] == pytest.approx(body[f"{value}_usd"] / USD_PER_GBP_2024)
-    for point in body["history"]:
-        assert point["actual_exports_gbp"] == pytest.approx(point["actual_exports_usd"] / USD_PER_GBP_2024)

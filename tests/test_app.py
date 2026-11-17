@@ -18,8 +18,6 @@ from api.main import create_app
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 PAGE = APP_DIR / "pages" / "1_Product_to_Markets.py"
 MARKET_PAGE = APP_DIR / "pages" / "2_Market_to_Products.py"
-# Bank of England XUAAUSS, 2024 annual average: the fixture's Baseline year.
-USD_PER_GBP_2024 = 1.2783
 
 
 def _free_port() -> int:
@@ -62,7 +60,7 @@ def test_page_shows_markets_ranked_by_export_gap(monkeypatch, api_url):
     assert not page.exception
     table = page.dataframe[0].value
     assert list(table["Market"]) and set(table["Market"]) == {"Japan", "Canada", "India"}
-    gaps = list(table["Export Gap (£)"])
+    gaps = list(table["Export Gap (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
 
 
@@ -121,33 +119,15 @@ def _captions(page: AppTest) -> str:
     return " ".join(element.value for element in page.caption)
 
 
-def test_market_page_ranks_products_by_export_gap_in_gbp(monkeypatch, api_url):
+def test_market_page_ranks_products_by_export_gap(monkeypatch, api_url):
     page = _market_page(monkeypatch, api_url, "JPN")
 
     assert not page.exception
     assert any("Japan" in element.value for element in page.subheader)
     table = page.dataframe[0].value
     assert set(table["HS6"]) == {"030420", "220830", "300490", "851712", "870323"}
-    gaps = list(table["Export Gap (£)"])
+    gaps = list(table["Export Gap (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
-
-
-@pytest.mark.parametrize("make_page", [_market_page, lambda m, url: _run_page(m, url, "220830")], ids=["market", "product"])
-def test_ranking_pages_state_the_gbp_rate_and_year(monkeypatch, api_url, make_page):
-    page = make_page(monkeypatch, api_url)
-
-    captions = _captions(page)
-    assert "1.2783" in captions and "2024" in captions and "Bank of England" in captions
-
-
-def test_values_can_be_shown_in_usd(monkeypatch, api_url):
-    page = _market_page(monkeypatch, api_url, "JPN")
-    in_gbp = page.dataframe[0].value
-
-    page.radio(key="currency").set_value("USD").run()
-
-    in_usd = page.dataframe[0].value
-    assert list(in_usd["Export Gap (USD)"]) == pytest.approx([gap * USD_PER_GBP_2024 for gap in in_gbp["Export Gap (£)"]])
 
 
 def test_market_page_shows_the_uk_trade_agreement(monkeypatch, api_url):
@@ -204,17 +184,17 @@ def test_min_gap_filter_drops_smaller_gaps(monkeypatch, api_url):
     page = _market_page(monkeypatch, api_url, "JPN")
     everything = page.dataframe[0].value
 
-    page.number_input(key="min_gap_gbp").set_value(0).run()
+    page.number_input(key="min_gap_usd").set_value(0).run()
 
     table = page.dataframe[0].value
     assert 0 < len(table) < len(everything)
-    assert (table["Export Gap (£)"] >= 0).all()
+    assert (table["Export Gap (USD, nominal)"] >= 0).all()
 
 
 def test_filters_that_match_nothing_say_so(monkeypatch, api_url):
     page = _market_page(monkeypatch, api_url, "JPN")
 
-    page.number_input(key="min_gap_gbp").set_value(10**12).run()
+    page.number_input(key="min_gap_usd").set_value(10**12).run()
 
     assert not page.exception
     assert not page.dataframe
@@ -238,7 +218,6 @@ def downloads(monkeypatch):
 @pytest.mark.parametrize("make_page", [_market_page, lambda m, url: _run_page(m, url, "220830")], ids=["market", "product"])
 def test_csv_export_matches_the_ranking_on_screen(monkeypatch, api_url, downloads, make_page):
     page = make_page(monkeypatch, api_url)
-    page.radio(key="currency").set_value("USD").run()
 
     on_screen = page.dataframe[0].value.drop(columns="Why?")  # links are navigation, not data
     exported = pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str, "Sector": str})
@@ -261,6 +240,6 @@ def test_market_page_can_rank_by_blocked_opportunity_value(monkeypatch, api_url)
     page.radio(key="rank_by").set_value("blocked").run()
 
     assert not page.exception
-    values = list(page.dataframe[0].value["Blocked Opportunity value (£)"])
+    values = list(page.dataframe[0].value["Blocked Opportunity value (USD, nominal)"])
     assert values == sorted(values, reverse=True) and values[0] > 0
     assert "Blocked Opportunity value" in _captions(page)
