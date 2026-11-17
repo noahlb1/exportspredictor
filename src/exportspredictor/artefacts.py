@@ -10,6 +10,7 @@ Layout of `<root>/<version>/`:
     history.parquet    UK Actual Exports per pair and year, non-zero only, last six years
     products.parquet   Product lookup (hs6, description, sector)
     markets.parquet    Market lookup (iso3, name, region)
+    excluded_products.parquet  Excluded Products (hs6, description, sector, reason), ADR 0005
     evaluation.json    accuracy on the test year, stability and later checks (optional)
 
 `artefact_format` is 2. `load` refuses any other format, including v1 folders (which
@@ -34,7 +35,7 @@ from exportspredictor import currency
 METADATA_FILE = "metadata.json"
 EVALUATION_FILE = "evaluation.json"
 ARTEFACT_FORMAT = 2
-_TABLES = ("baseline", "baseline_features", "history", "products", "markets")
+_TABLES = ("baseline", "baseline_features", "history", "products", "markets", "excluded_products")
 
 
 class ArtefactsNotFound(FileNotFoundError):
@@ -52,8 +53,9 @@ class Artefacts:
     baseline: pl.DataFrame  # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd
     baseline_features: pl.DataFrame  # hs6, iso3, fold, FEATURES (transformed, as the models saw them)
     history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd
-    products: pl.DataFrame
+    products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
     markets: pl.DataFrame
+    excluded_products: pl.DataFrame  # hs6, description, sector, reason (`exclusions.excluded_products`)
     # The evaluation report (`exportspredictor.evaluation`), JSON-ready; None if not evaluated.
     evaluation: dict | None = None
 

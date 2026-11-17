@@ -33,6 +33,7 @@ import xgboost as xgb
 from exportspredictor import baci, backtests, constraints, evaluation
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.currency import gbp_rate
+from exportspredictor.exclusions import EXCLUSIONS, drop_excluded, excluded_products, is_excluded
 from exportspredictor.features import (
     FEATURES,
     MONOTONE_CONSTRAINTS,
@@ -156,6 +157,7 @@ def build_artefacts(
         history=_history(flows.filter((pl.col("exporter") == UK) & recent)),
         products=world.products,
         markets=world.markets,
+        excluded_products=excluded_products(world.products),
         evaluation=report,
     )
 
@@ -201,6 +203,12 @@ def build_real_artefacts(
     root = Path(root or data_dir())
     folder = features_dir(root)
     settings = json.loads((folder / "features.json").read_text(encoding="utf-8"))
+    built_without = settings.get("excluded_products")
+    if built_without != [exclusion.codes for exclusion in EXCLUSIONS]:
+        raise ValueError(
+            f"The feature files in {folder} were built excluding {built_without}, not the current Excluded "
+            "Products; rebuild them with `python -m exportspredictor.features`"
+        )
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
     grid = pl.read_parquet(folder / f"uk_grid_{baseline_year}.parquet")
     trained = _train_and_score(
@@ -246,6 +254,7 @@ def build_real_artefacts(
         history=history,
         products=baci.products(root),
         markets=markets,
+        excluded_products=excluded_products(baci.products(root)),
         evaluation=report,
     )
 
@@ -420,9 +429,10 @@ def _evaluate(
 
 
 def _history(uk_flows: pl.DataFrame) -> pl.DataFrame:
-    """Non-zero UK Actual Exports per pair and year."""
+    """Non-zero UK Actual Exports per pair and year, for every Product but the Excluded ones."""
     return (
         uk_flows.filter(pl.col("value_usd") > 0)
+        .pipe(drop_excluded)
         .select(
             pl.col("hs6").cast(pl.String),
             iso3=pl.col("importer").cast(pl.String),

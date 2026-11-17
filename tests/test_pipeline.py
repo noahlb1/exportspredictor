@@ -8,7 +8,9 @@ import pytest
 from exportspredictor.features import FEATURES, POLICY_FEATURES
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
-from exportspredictor.pipeline import build_artefacts, refresh
+from exportspredictor.pipeline import build_artefacts, fixture_training, refresh
+
+CRUDE_OIL = "270900"  # the fixture world's Excluded Product
 
 
 @pytest.fixture
@@ -112,7 +114,7 @@ def test_baseline_features_hold_each_pairs_fold_and_model_inputs(artefacts):
 
 def test_history_holds_uk_actual_exports_up_to_the_baseline_year(world, artefacts):
     history = artefacts.history
-    uk = world.flows.filter(pl.col("exporter") == UK, pl.col("value_usd") > 0)
+    uk = world.flows.filter(pl.col("exporter") == UK, pl.col("value_usd") > 0, pl.col("hs6") != CRUDE_OIL)
 
     assert history.columns == ["hs6", "iso3", "year", "actual_exports_usd"]
     assert sorted(history["year"].unique().to_list()) == [2021, 2022, 2023, 2024]
@@ -139,3 +141,24 @@ def test_refresh_adds_derived_metadata_to_a_saved_bundle_without_retraining(arte
     assert refreshed.metadata["gbp_rate"]["usd_per_gbp"] == 1.2783
     assert refreshed.fold_models is older.fold_models
     assert refreshed.baseline is older.baseline
+
+
+# --- Excluded Products (ADR 0005) -----------------------------------------------------------
+
+def test_excluded_products_appear_in_no_baseline_history_or_scenario_row(artefacts):
+    for table in (artefacts.baseline, artefacts.baseline_features, artefacts.history):
+        assert CRUDE_OIL not in set(table["hs6"])
+
+
+def test_excluded_products_appear_in_no_training_row(world):
+    for table in fixture_training(world).values():
+        assert CRUDE_OIL not in set(table["hs6"])
+
+
+def test_the_artefact_lists_excluded_products_with_reasons(artefacts):
+    table = artefacts.excluded_products
+
+    assert table["hs6"].to_list() == [CRUDE_OIL]
+    assert "pipelines" in table["reason"][0]
+    # The Product lookup keeps it, so a search can say it is excluded rather than unknown.
+    assert CRUDE_OIL in set(artefacts.products["hs6"])
