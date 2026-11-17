@@ -94,5 +94,9 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 **Why?** (arrives with #19)
 - [ ] Open "Why?" for a Product–Market pair: the factors are described in plain words, and the recent Actual Exports are shown.
 
-**Model Evaluation** (arrives with #20)
-- [ ] The accuracy headline, Lift, Sector and region breakdowns, the Event Backtest and the known-limitations panel all render.
+**Model Evaluation**
+- [ ] The plain-English accuracy headline renders, green if the model beats the naive baseline and amber with a plain warning if it does not, with the test year and the non-UK training sample stated below it.
+- [ ] The metric tables (model against naive baseline) render for UK pairs and for all Exporters.
+- [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
+- [ ] The stability sentence and the known-limitations panel (goods only, no tariffs, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) render.
+- [ ] Lift and the Event Backtest render (arrive with #21).

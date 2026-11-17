@@ -15,8 +15,9 @@ import polars as pl
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from api.schemas import Health, MarketOpportunity, MarketOut, ProductOpportunities, ProductOut
+from api.schemas import Evaluation, Health, MarketOpportunity, MarketOut, ProductOpportunities, ProductOut
 from exportspredictor import artefacts as store
+from exportspredictor.evaluation import LIMITATIONS
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
 
@@ -77,6 +78,18 @@ def create_app(artefacts_root: Path | None = None) -> FastAPI:
                 MarketOpportunity(**{k: row[k] for k in MarketOpportunity.model_fields})
                 for row in rows.iter_rows(named=True)
             ],
+        )
+
+    @app.get("/evaluation", response_model=Evaluation)
+    def evaluation(artefacts: store.Artefacts = Depends(loaded)):
+        """The evaluation artefact: test-year accuracy, breakdowns, stability, and the known limitations."""
+        if artefacts.evaluation is None:
+            raise HTTPException(status_code=404, detail=f"Artefact version {artefacts.version} has no evaluation.")
+        return Evaluation(
+            **artefacts.evaluation,
+            artefact_version=artefacts.version,
+            baseline_year=artefacts.baseline_year,
+            limitations=LIMITATIONS,
         )
 
     return app
