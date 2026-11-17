@@ -118,6 +118,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Blocked Opportunities unlocked by the Scenario are listed, and changing the thresholds changes the list.
 - [ ] Pick a Market in the drill-down: its most affected Product–Market pairs are listed, largest effect first.
 - [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
+- [ ] In tariff mode, set a 1000% tariff for one Market: the Scenario Effect is never a rise, and the page says the effect flattens beyond the training range. Removing a Trade Agreement (e.g. with Japan) shows the restored 2021 MFN tariff in the pair tables.
 - [ ] The page states the EU–Japan Event Backtest result (predicted against observed) above the Scenario choice.
 
 **Why?**

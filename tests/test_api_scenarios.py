@@ -55,6 +55,8 @@ def test_top_pairs_are_sorted_by_scenario_effect(client):
         "scenario_potential_usd",
         "effect_usd",
         "effect_share",
+        "baseline_tariff_pct",
+        "scenario_tariff_pct",
         "blocked_opportunity",
     }
 
@@ -269,3 +271,74 @@ def test_rank_orders_are_served_with_titles(client):
     # Blocked Opportunity value is the Blocked Opportunities page's order, not a ranking toggle.
     assert [order["name"] for order in body] == ["gap", "relative"]
     assert [order["title"] for order in body] == ["Export Gap", "Relative Export Gap"]
+
+
+# --- Tariffs in Scenarios (ADR 0006) ------------------------------------------------------
+
+
+def _scenario(client, payload: dict) -> dict:
+    response = client.post("/scenarios", json={**payload, "min_effect_share": 0, "min_effect_usd": 0, "limit": 1000})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_adding_a_trade_agreement_removes_the_tariff_and_never_lowers_export_potential(client):
+    body = _scenario(client, {"add_agreements": ["IND"]})
+
+    assert len(body["top_pairs"]) == 5
+    assert all(row["effect_usd"] >= 0 for row in body["top_pairs"])
+    assert all(row["scenario_tariff_pct"] == 0 for row in body["top_pairs"])
+    assert any(row["baseline_tariff_pct"] > 0 for row in body["top_pairs"])
+    assert body["clipped_pairs"] == 0
+
+
+def test_removing_a_trade_agreement_restores_mfn_and_never_raises_export_potential(client):
+    body = _scenario(client, {"remove_agreements": ["JPN", "CAN"]})
+
+    assert {row["iso3"] for row in body["top_pairs"]} == {"JPN", "CAN"}
+    assert all(row["effect_usd"] <= 0 for row in body["top_pairs"])
+    assert all(row["scenario_tariff_pct"] >= row["baseline_tariff_pct"] for row in body["top_pairs"])
+    assert any(row["scenario_tariff_pct"] > 0 for row in body["top_pairs"])
+
+
+def test_a_tariff_hike_never_raises_export_potential(client):
+    body = _scenario(client, {"tariff": {"markets": ["IND", "JPN", "HKG"], "rate_pct": 150}})
+
+    assert body["scenario"]["tariff"] == {"markets": ["IND", "JPN", "HKG"], "rate_pct": 150, "sectors": None}
+    assert body["top_pairs"]
+    assert all(row["scenario_tariff_pct"] == pytest.approx(150) for row in body["top_pairs"])
+    assert all(row["effect_usd"] <= 0 for row in body["top_pairs"])
+    assert body["clipped_pairs"] == 0
+
+
+def test_a_tariff_scenario_can_be_limited_to_sectors(client):
+    body = _scenario(client, {"tariff": {"markets": ["JPN"], "rate_pct": 25, "sectors": ["22", "87"]}})
+
+    assert {(row["hs6"], row["iso3"]) for row in body["top_pairs"]} == {("220830", "JPN"), ("870323", "JPN")}
+
+
+def test_a_hike_beyond_the_training_range_reports_clipped_pairs(client):
+    body = _scenario(client, {"tariff": {"markets": ["JPN"], "rate_pct": 1000}})
+
+    assert body["clipped_pairs"] == 5
+    # Clipped to the training range's top, India's 150% on whisky.
+    assert all(row["scenario_tariff_pct"] == pytest.approx(150, rel=1e-5) for row in body["top_pairs"])
+    assert all(row["effect_usd"] <= 0 for row in body["top_pairs"])
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tariff": {"markets": ["JPN"], "rate_pct": -5}},
+        {"tariff": {"markets": ["JPN"], "rate_pct": 5, "sectors": ["99"]}},
+        {"tariff": {"markets": ["JPN"], "rate_pct": 5, "sectors": ["wine"]}},
+        {"tariff": {"markets": [], "rate_pct": 5}},
+        {"tariff": {"markets": ["XXX"], "rate_pct": 5}},
+        {"tariff": {"markets": ["JPN"]}},
+        {"tariff": {"markets": ["JPN"], "rate_pct": 5}, "preset": "cptpp"},
+    ],
+)
+def test_an_invalid_tariff_scenario_returns_422(client, payload):
+    response = client.post("/scenarios", json=payload)
+
+    assert response.status_code == 422

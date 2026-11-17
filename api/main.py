@@ -22,6 +22,7 @@ import logging
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -264,12 +265,16 @@ def create_app(
 
     @app.post("/scenarios", response_model=ScenarioResponse)
     def run_scenario(request: ScenarioRequest, artefacts: store.Artefacts = Depends(loaded)):
-        """Re-predict the Baseline with a preset or custom Trade Agreement changes (422 if invalid)."""
+        """Re-predict the Baseline with a preset, custom Trade Agreements or a tariff change (422 if invalid)."""
         if request.market is not None and artefacts.markets.filter(pl.col("iso3") == request.market).is_empty():
             raise HTTPException(status_code=422, detail=f"Unknown Market: {request.market}")
         try:
             result = scenarios.run(
-                artefacts.baseline_features, artefacts.baseline, artefacts.fold_models, request.to_scenario()
+                artefacts.baseline_features,
+                artefacts.baseline,
+                artefacts.fold_models,
+                request.to_scenario(),
+                tariff_range=scenarios.tariff_range(artefacts.metadata),
             )
         except scenarios.InvalidScenario as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
@@ -364,7 +369,7 @@ def scenario_response(
     total = result.total()
     return ScenarioResponse(
         **_metadata(artefacts),
-        scenario=_pick(ScenarioIn, vars(result.scenario)),
+        scenario=ScenarioIn.model_validate(asdict(result.scenario)),
         thresholds=_pick(Thresholds, request.model_dump()),
         market=request.market,
         changes_nothing=result.changes_nothing,
@@ -378,6 +383,7 @@ def scenario_response(
         top_pairs=top.head(request.limit).to_dicts(),
         blocked_opportunities=blocked.head(request.limit).to_dicts(),
         blocked_count=blocked.height,
+        clipped_pairs=result.clipped_pairs,
     )
 
 
