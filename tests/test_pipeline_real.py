@@ -3,7 +3,7 @@
 import polars as pl
 import pytest
 
-from exportspredictor import features, pipeline
+from exportspredictor import constraints, features, pipeline
 from exportspredictor.lookups import market_lookup
 
 CONFIGS = [{"max_depth": 2, "eta": 0.3}, {"max_depth": 3, "eta": 0.3}]
@@ -14,7 +14,7 @@ def trained(derived_data_root):
     features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
     return pipeline.build_real_artefacts(
         derived_data_root, version="real-test", configs=CONFIGS, device="cpu", max_rounds=30, non_uk_rate=0.5,
-        backtest_plan=pipeline.FIXTURE_BACKTESTS,
+        backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN,
     )
 
 

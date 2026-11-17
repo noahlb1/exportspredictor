@@ -30,7 +30,7 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor import backtests, baci, evaluation
+from exportspredictor import backtests, baci, constraints, evaluation
 from exportspredictor.artefacts import Artefacts, new_version
 from exportspredictor.currency import gbp_rate
 from exportspredictor.features import (
@@ -146,6 +146,7 @@ def build_artefacts(
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
         seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
+        constraint_plan=constraints.FIXTURE_PLAN,
     )
     return Artefacts(
         metadata=metadata,
@@ -190,6 +191,7 @@ def build_real_artefacts(
     non_uk_rate: float = REAL_NON_UK_RATE,
     seed: int = 0,
     backtest_plan: backtests.Plan = backtests.REAL_PLAN,
+    constraint_plan: constraints.Plan = constraints.REAL_PLAN,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
@@ -234,6 +236,7 @@ def build_real_artefacts(
         backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
         high_income=load_sources(root)[0].high_income,
         backtest_cache=backtests.cache_dir(root),
+        constraint_plan=constraint_plan,
     )
     return Artefacts(
         metadata=metadata,
@@ -356,10 +359,12 @@ def _evaluate(
     seed: int,
     backtest_plan: backtests.Plan,
     high_income,
+    constraint_plan: constraints.Plan,
     backtest_chunks: Mapping[int, Chunk] | None = None,
     backtest_cache: Path | None = None,
 ) -> dict:
-    """Evaluate on the test year, then run Lift and the Event Backtests (`backtests`).
+    """Evaluate on the test year, run Lift and the Event Backtests (`backtests`), then compare
+    the monotone-constrained model with an unconstrained one (`constraints`).
 
     The test-year fold models are trained with the tuned configuration; the backtest
     models use it too. `backtest_chunks` defaults to `training`.
@@ -396,6 +401,20 @@ def _evaluate(
         cache=backtest_cache,
     )
     print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
+    report["monotone_constraints"] = constraints.compare(
+        {y: chunk for y, chunk in training.items() if y in metadata["training_years"]},
+        trained.baseline_features,
+        plan=constraint_plan,
+        uk=UK,
+        params=metadata["params"],
+        rounds=metadata["rounds"],
+        transform=FeatureTransform.from_dict(metadata["feature_transform"]),
+        n_folds=metadata["n_folds"],
+        non_uk_rate=non_uk_rate,
+        device=device,
+        seed=seed,
+    )
+    print(f"Monotone-constraint comparison in {report['monotone_constraints']['seconds']:.0f} s", flush=True)
     return report
 
 
