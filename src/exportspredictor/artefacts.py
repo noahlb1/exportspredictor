@@ -2,13 +2,16 @@
 
 Layout of `<root>/<version>/`:
 
-    metadata.json      artefact_format, version, baseline_year, n_folds, features, ...
+    metadata.json      artefact_format, version, baseline_year, gap_years, n_folds, features, ...
                        (free-form beyond those)
     models/fold_<k>.ubj
-    baseline.parquet   one row per UK Product–Market pair in the Baseline year, with its
-                       Flagged Product and Re-export Hub flags (ADR 0005)
-    baseline_features.parquet  the same pairs' model inputs and fold (for Scenarios, explanations)
-    history.parquet    UK Actual Exports per pair and year, non-zero only, last six years
+    baseline.parquet   one row per UK Product–Market pair: Gap Period means of Export Potential,
+                       Actual Exports and Export Gap; the Baseline year's Export Potential;
+                       the Blocked Opportunity value; its Flagged Product and Re-export Hub
+                       flags (ADR 0005)
+    baseline_features.parquet  the same pairs' Baseline-year model inputs and fold (for Scenarios, explanations)
+    history.parquet    per pair and year, last six years: UK Actual Exports (non-zero only before
+                       the Gap Period) and, in Gap Period years, Export Potential and Export Gap
     products.parquet   Product lookup (hs6, description, sector)
     markets.parquet    Market lookup (iso3, name, region)
     excluded_products.parquet  Excluded Products (hs6, description, sector, reason), ADR 0005
@@ -49,11 +52,11 @@ class UnreadableArtefacts(ValueError):
 class Artefacts:
     metadata: dict
     fold_models: list[xgb.Booster]
-    # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd, flagged_product, reexport_hub,
-    # blocked_effect_usd
+    # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd (Gap Period means),
+    # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_effect_usd
     baseline: pl.DataFrame
     baseline_features: pl.DataFrame  # hs6, iso3, fold, FEATURES (transformed, as the models saw them)
-    history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd
+    history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd
     products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
     markets: pl.DataFrame
     excluded_products: pl.DataFrame  # hs6, description, sector, reason (`exclusions.excluded_products`)
@@ -67,6 +70,12 @@ class Artefacts:
     @property
     def baseline_year(self) -> int:
         return self.metadata["baseline_year"]
+
+    @property
+    def gap_years(self) -> tuple[int, int]:
+        """The first and last year of the Gap Period the Export Gaps average over."""
+        first, last = self.metadata["gap_years"]
+        return first, last
 
 
 def new_version() -> str:

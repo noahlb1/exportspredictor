@@ -133,3 +133,20 @@ def test_feature_files_built_without_the_exclusions_are_refused(derived_data_roo
 
     with pytest.raises(ValueError, match="rebuild"):
         pipeline.build_real_artefacts(derived_data_root, configs=CONFIGS, device="cpu", max_rounds=30)
+
+
+def test_feature_files_built_without_the_gap_period_union_are_refused(derived_data_root):
+    folder = features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
+    settings = json.loads((folder / "features.json").read_text())
+    del settings["gap_years"]  # grids built one year at a time, as before the Gap Period
+    (folder / "features.json").write_text(json.dumps(settings))
+
+    with pytest.raises(ValueError, match="Gap Period"):
+        pipeline.build_real_artefacts(derived_data_root, configs=CONFIGS, device="cpu", max_rounds=30)
+
+
+def test_the_real_run_scores_every_gap_period_year(trained):
+    assert trained.metadata["gap_years"] == [2022, 2024]
+    gap_rows = trained.history.filter(pl.col("year") >= 2022)
+    assert gap_rows.height == trained.baseline.height * 3
+    assert gap_rows["export_gap_usd"].is_not_null().all()

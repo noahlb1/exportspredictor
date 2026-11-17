@@ -10,10 +10,12 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    it. The test year (Baseline year − 1) is never read here.
 2. **Refit** the fold models (ADR 0001) on every year before the Baseline year, with the
    best configuration and its round count; the feature transform is fitted on the same years.
-3. **Score** the Baseline year's full UK Product × Market grid out-of-fold and assemble the
-   Baseline table, the Scenario inputs and the Actual Exports history.
+3. **Score** every year of the Gap Period (`gap_period`, 2022–2024): each year's UK grid
+   (the union of the Gap Period's pairs) out-of-fold, with that year's features. The
+   Baseline table holds the Gap Period means and the Baseline year's Export Potential; the
+   history holds each year's scores; the Scenario inputs are the Baseline year's features.
 4. **Blocked Opportunity values**: re-predict every pair without a Trade Agreement with
-   one added (`scenarios.blocked_effects`), for the `rank_by=blocked` rankings.
+   one added (`scenarios.blocked_effects`), against the Baseline year only.
 5. **Evaluate** on the test year (Baseline year − 1): fold models refitted on the years
    before it with the tuned configuration score it, against a naive baseline
    (`evaluation`). The report is saved in the artefact as `evaluation.json`.
@@ -48,12 +50,19 @@ from exportspredictor.features import (
     FeatureTransform,
     build_features,
     features_dir,
+    grid_pairs,
     load_sources,
     training_rows,
     uk_grid,
 )
 from exportspredictor.fixture import UK, World
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
+from exportspredictor.gap_period import (
+    baseline_year_scores,
+    export_gaps,
+    gap_period,
+    gap_years,
+)
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
 from exportspredictor.scenarios import blocked_effects, with_blocked_effects
@@ -123,6 +132,7 @@ class _Trained:
     models: list[xgb.Booster]
     baseline: pl.DataFrame
     baseline_features: pl.DataFrame
+    yearly: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd
     metadata: dict
 
 
@@ -151,13 +161,13 @@ def build_artefacts(
     training = fixture_training(
         world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed, exporters=scope
     )
-    grids = {}
-    for year in (baseline_year - 1, baseline_year):
-        year_flows = flows.filter(pl.col("year") == year)
-        grids[year] = build_features(uk_grid(year_flows, UK), flows, sources)  # all years: growth reads t-3
-    grid = grids[baseline_year]
+    # Every Gap Period year is scored over the union of the Gap Period's grids, as `features.build` writes them.
+    # `build_features` gets every year's Flows: Market import growth reads year t-3.
+    year_flows = {year: flows.filter(pl.col("year") == year) for year in gap_years(baseline_year)}
+    pairs = grid_pairs(uk_grid(f, UK) for f in year_flows.values())
+    grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in year_flows.items()}
     trained = _train_and_score(
-        training, grid, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
+        training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed, row_budget=row_budget,
     )
     recent = (pl.col("year") > baseline_year - HISTORY_YEARS) & (pl.col("year") <= baseline_year)
@@ -180,7 +190,7 @@ def build_artefacts(
         fold_models=trained.models,
         baseline=trained.baseline,
         baseline_features=trained.baseline_features,
-        history=_history(flows.filter((pl.col("exporter") == UK) & recent)),
+        history=_history(flows.filter((pl.col("exporter") == UK) & recent), trained.yearly),
         products=world.products,
         markets=world.markets,
         excluded_products=excluded_products(world.products),
@@ -242,15 +252,20 @@ def build_real_artefacts(
             f"The feature files in {folder} hold {settings.get('features')}, not the current features; "
             "rebuild them with `python -m exportspredictor.features`"
         )
+    if settings.get("gap_years") != gap_period(baseline_year):
+        raise ValueError(
+            f"The feature files in {folder} were built for the Gap Period {settings.get('gap_years')}, not "
+            f"{gap_period(baseline_year)}; rebuild them with `python -m exportspredictor.features`"
+        )
     if "exporter_scope" not in settings:
         raise ValueError(
             f"The feature files in {folder} were built without the training scope (ADR 0004); "
             "rebuild them with `python -m exportspredictor.features`"
         )
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
-    grid = pl.read_parquet(folder / f"uk_grid_{baseline_year}.parquet")
+    grids = {y: folder / f"uk_grid_{y}.parquet" for y in gap_years(baseline_year)}
     trained = _train_and_score(
-        training, grid, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
+        training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
         n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
     )
     history_years = [y for y in settings["years"] if baseline_year - HISTORY_YEARS < y <= baseline_year]
@@ -262,7 +277,8 @@ def build_real_artefacts(
                 .select(pl.col("hs6").cast(pl.String), "importer", "year", "value_usd")
                 for y in history_years
             ]
-        ).collect()
+        ).collect(),
+        trained.yearly,
     )
     country_map = pl.read_parquet(root / "derived" / "country_map.parquet")
     markets = market_lookup(baci.markets(root), country_map)
@@ -301,7 +317,7 @@ def build_real_artefacts(
 
 def _train_and_score(
     training: Mapping[int, Chunk],
-    grid: pl.DataFrame,
+    grids: Mapping[int, Chunk],
     *,
     baseline_year: int,
     configs: Sequence[dict],
@@ -361,28 +377,39 @@ def _train_and_score(
     training_seconds = time.perf_counter() - started
     print(f"Trained {n_folds} fold models in {training_seconds:.0f} s", flush=True)
 
-    # 3. Score the Baseline year's full UK grid out-of-fold.
-    scored = (
-        score_out_of_fold(transform.apply(grid), models, uk=UK)
-        .with_columns(hs6=pl.col("hs6").cast(pl.String), iso3=pl.col("importer").cast(pl.String))
-        .sort("hs6", "iso3")
+    # 3. Score every Gap Period year's UK grid out-of-fold, each with that year's features.
+    scored = {year: _score_grid(read_chunk(grids[year]), transform, models) for year in gap_years(baseline_year)}
+    pairs = scored[baseline_year].select("hs6", "iso3")
+    if any(not table.select("hs6", "iso3").equals(pairs) for table in scored.values()):
+        raise ValueError("Every Gap Period year must score the same UK pairs (the union of the years' grids)")
+    yearly = pl.concat(
+        [
+            table.select(
+                "hs6",
+                "iso3",
+                year=pl.lit(year, pl.Int16),
+                actual_exports_usd="value_usd",
+                export_potential_usd="export_potential_usd",
+            )
+            for year, table in scored.items()
+        ]
+    ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
+    baseline = (
+        export_gaps(yearly)
+        .join(
+            scored[baseline_year].select("hs6", "iso3", baseline_export_potential_usd="export_potential_usd"),
+            on=["hs6", "iso3"],
+        )
+        .with_columns(*flag_columns())
     )
-    if scored.select("hs6", "iso3").is_duplicated().any() or scored.height != grid.height:
-        raise ValueError("The Baseline must hold exactly one row per UK Product–Market pair of the grid")
-    if scored.select(is_excluded().any()).item():
-        raise ValueError("The UK grid holds Excluded Products; they are never scored (ADR 0005)")
-    baseline = scored.select(
-        "hs6",
-        "iso3",
-        "export_potential_usd",
-        actual_exports_usd="value_usd",
-    ).with_columns(*flag_columns(), export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
-    baseline_features = scored.select("hs6", "iso3", "fold", *FEATURES)
+    # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
+    baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES)
     # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
     baseline = with_blocked_effects(baseline, blocked_effects(baseline_features, baseline, models))
     metadata = {
         "artefact_format": ARTEFACT_FORMAT,
         "baseline_year": baseline_year,
+        "gap_years": gap_period(baseline_year),
         "validation_year": validation_year,
         "test_year": test_year,
         "tuning_years": tuning_years,
@@ -410,8 +437,23 @@ def _train_and_score(
         models=models,
         baseline=baseline,
         baseline_features=baseline_features,
+        yearly=yearly.sort("hs6", "iso3", "year"),
         metadata=metadata,
     )
+
+
+def _score_grid(grid: pl.DataFrame, transform: FeatureTransform, models: list[xgb.Booster]) -> pl.DataFrame:
+    """One year's UK grid scored out-of-fold (ADR 0001), keyed by hs6 and iso3 strings."""
+    scored = (
+        score_out_of_fold(transform.apply(grid), models, uk=UK)
+        .with_columns(hs6=pl.col("hs6").cast(pl.String), iso3=pl.col("importer").cast(pl.String))
+        .sort("hs6", "iso3")
+    )
+    if scored.select("hs6", "iso3").is_duplicated().any() or scored.height != grid.height:
+        raise ValueError("A scored grid must hold exactly one row per UK Product–Market pair")
+    if scored.select(is_excluded().any()).item():
+        raise ValueError("The UK grid holds Excluded Products; they are never scored (ADR 0005)")
+    return scored
 
 
 def _evaluate(
@@ -453,7 +495,7 @@ def _evaluate(
         read_chunk(training[test_year]),
         read_chunk(test_grid),
         test_models=test_models,
-        baseline=trained.baseline,
+        baseline=baseline_year_scores(trained.yearly, metadata["baseline_year"]),
         baseline_models=trained.models,
         baseline_transform=FeatureTransform.from_dict(metadata["feature_transform"]),
         markets=markets,
@@ -485,19 +527,29 @@ def _evaluate(
     return report
 
 
-def _history(uk_flows: pl.DataFrame) -> pl.DataFrame:
-    """Non-zero UK Actual Exports per pair and year, for every Product but the Excluded ones."""
-    return (
-        uk_flows.filter(pl.col("value_usd") > 0)
+def _history(uk_flows: pl.DataFrame, yearly: pl.DataFrame) -> pl.DataFrame:
+    """UK Actual Exports per pair and year, with each Gap Period year's Export Potential and Export Gap.
+
+    Gap Period years come from `yearly` (every scored pair, $0 Actual Exports included), so a
+    pair's yearly Export Gaps average to its Export Gap. Earlier years keep non-zero Actual
+    Exports only, with no score. Excluded Products are never included.
+    """
+    gap = yearly.select(
+        "hs6", "iso3", pl.col("year").cast(pl.Int16), "actual_exports_usd", "export_potential_usd", "export_gap_usd"
+    )
+    earlier = (
+        uk_flows.filter(pl.col("value_usd") > 0, ~pl.col("year").is_in(gap["year"].unique().to_list()))
         .pipe(drop_excluded)
         .select(
             pl.col("hs6").cast(pl.String),
             iso3=pl.col("importer").cast(pl.String),
             year=pl.col("year").cast(pl.Int16),
             actual_exports_usd=pl.col("value_usd"),
+            export_potential_usd=pl.lit(None, pl.Float64),
+            export_gap_usd=pl.lit(None, pl.Float64),
         )
-        .sort("hs6", "iso3", "year")
     )
+    return pl.concat([earlier, gap]).sort("hs6", "iso3", "year")
 
 
 def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | None = None) -> Artefacts:

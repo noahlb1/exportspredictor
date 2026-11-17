@@ -58,11 +58,13 @@ def rank_opportunities(
     Each row names its Product (hs6, description, sector) and Market (iso3, market, region),
     says whether a UK Trade Agreement with the Market is in force in the Baseline year
     (`trade_agreement`, the policy feature the model saw), gives Export Potential, Actual
-    Exports, Export Gap and Blocked Opportunity value in nominal USD, and flags a Blocked Opportunity at the default thresholds
-    (`blocked_opportunity`), and carries the Baseline's `flagged_product` and `reexport_hub`
-    caveat flags (ADR 0005). Filters keep rows of one Sector (HS2 chapter), one Market region,
-    or an Export Gap of at least `min_gap_usd`; `hide_flagged` drops Flagged Products and
-    `hide_hubs` drops Re-export Hubs (both off by default, as they are ranked as normal). Rows are sorted by the
+    Exports and Export Gap as Gap Period means, the Baseline year's Export Potential and the
+    Blocked Opportunity value in nominal USD, flags a Blocked Opportunity at the default
+    thresholds against the Baseline year (`blocked_opportunity`), and carries the Baseline's
+    `flagged_product` and `reexport_hub` caveat flags (ADR 0005). Filters keep rows of one
+    Sector (HS2 chapter), one Market region, or an Export Gap of at least `min_gap_usd`;
+    `hide_flagged` drops Flagged Products and `hide_hubs` drops Re-export Hubs (both off by
+    default, as they are ranked as normal). Rows are sorted by the
     `RANK_BY[rank_by]` column, largest first (ties by hs6, iso3); `limit` then keeps the top rows.
     """
     order = RANK_BY[rank_by]
@@ -87,7 +89,7 @@ def rank_opportunities(
     if region is not None:
         rows = rows.filter(pl.col("region") == region)
     rows = (
-        rows.with_columns(blocked_opportunity=is_blocked("blocked_effect_usd", "export_potential_usd"))
+        rows.with_columns(blocked_opportunity=is_blocked("blocked_effect_usd", "baseline_export_potential_usd"))
         .sort(order.column, "hs6", "iso3", descending=[True, False, False])
     )
     return rows if limit is None else rows.head(limit)

@@ -13,6 +13,7 @@ class Health(BaseModel):
     ready: bool
     artefact_version: str | None = None
     baseline_year: int | None = None
+    gap_years: list[int] | None = None  # first and last year the Export Gaps average over
     reason: str | None = None  # why the artefacts are not loaded, while not ready
 
 
@@ -65,7 +66,7 @@ class RankingQuery(BaseModel):
 
 
 class _Values(BaseModel):
-    """Export Potential, Actual Exports and Export Gap of one UK Product–Market pair."""
+    """Export Potential, Actual Exports and Export Gap of one UK Product–Market pair: Gap Period means."""
 
     export_potential_usd: float
     actual_exports_usd: float
@@ -92,6 +93,7 @@ class ProductOpportunity(_Values):
 class _Ranking(BaseModel):
     artefact_version: str
     baseline_year: int
+    gap_years: list[int]  # first and last year of the Gap Period the values average over
     rank_by: RankBy
 
 
@@ -329,6 +331,7 @@ class PairEffect(BaseModel):
 class ScenarioResponse(BaseModel):
     artefact_version: str
     baseline_year: int
+    gap_years: list[int]
     scenario: ScenarioIn
     thresholds: Thresholds
     market: str | None  # the drill-down Market `top_pairs` is limited to, if any
@@ -353,20 +356,26 @@ class FactorOut(BaseModel):
 class HistoryOut(BaseModel):
     year: int
     actual_exports_usd: float
+    export_potential_usd: float | None  # Gap Period years only
+    export_gap_usd: float | None  # Gap Period years only; their mean is the Export Gap
 
 
 class Explanation(BaseModel):
     artefact_version: str
     baseline_year: int
+    gap_years: list[int]
     product: ProductOut
     market: MarketOut
     fold: int  # the fold model that held the pair out, scored its Baseline and explains it
     base_value: float  # SHAP base value (log scale)
     log_export_potential: float  # base_value + sum of contributions
-    export_potential_usd: float
+    export_potential_usd: float  # Gap Period means, as in the rankings
     actual_exports_usd: float
     export_gap_usd: float
+    baseline_export_potential_usd: float  # the Baseline year's, which the factors explain
     flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
     reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
     factors: list[FactorOut]  # largest absolute contribution first
-    history: list[HistoryOut]  # UK Actual Exports by year; years with none are absent
+    # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
+    # years with UK Actual Exports only
+    history: list[HistoryOut]
