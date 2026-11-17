@@ -821,6 +821,7 @@ def add_to_latest(
     *,
     plan: Plan = REAL_PLAN,
     device: str = "cuda",
+    version: str | None = None,
 ) -> Path:
     """Run the backtests for the newest evaluated artefact and save it again, with them, as a new version.
 
@@ -856,7 +857,7 @@ def add_to_latest(
         cache=cache_dir(root),
     )
     report = {**bundle.evaluation, **result}
-    new = {**metadata, "version": store.new_version(), "copied_from": bundle.version}
+    new = {**metadata, "version": version or store.new_version(), "copied_from": bundle.version}
     return store.copy_version(source, artefacts_root, metadata=new, evaluation=report)
 
 

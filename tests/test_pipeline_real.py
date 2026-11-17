@@ -110,5 +110,9 @@ def test_backtests_are_added_to_the_newest_evaluated_artefact_with_cached_models
     assert result.evaluation["lift"]["ci"] and result.evaluation["event_backtest"]["events"]
     cached = sorted(p.name.split("_")[0] for p in backtests.cache_dir(derived_data_root).iterdir())
     assert cached == ["lift", "uk"]  # the Lift and the Event Backtest models; a re-run reads them
-    again = store.load(backtests.add_to_latest(derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu"))
+    again = store.load(
+        backtests.add_to_latest(
+            derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu", version="99990101T000000Z"
+        )
+    )
     assert again.evaluation["lift"]["lift"] == result.evaluation["lift"]["lift"]
