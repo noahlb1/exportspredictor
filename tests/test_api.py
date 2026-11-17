@@ -3,12 +3,14 @@
 import math
 from dataclasses import replace
 
+import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
 from exportspredictor.fixture import PRODUCTS
+from exportspredictor.pipeline import build_artefacts
 
 FIXTURE_HS6 = "220830"
 
@@ -92,6 +94,8 @@ def test_by_product_rows_have_the_documented_shape(client):
         "export_potential_usd",
         "actual_exports_usd",
         "export_gap_usd",
+        "relative_export_gap",
+        "opportunity_type",
         "trade_agreement",
         "blocked_effect_usd",
         "blocked_opportunity",
@@ -329,6 +333,8 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "actual_exports_usd",
         "export_gap_usd",
         "baseline_export_potential_usd",
+        "relative_export_gap",
+        "opportunity_type",
         "flagged_product",
         "reexport_hub",
         "factors",
@@ -511,3 +517,184 @@ def test_an_explanation_carries_both_flags(client):
 
     assert (flagged_hub["flagged_product"], flagged_hub["reexport_hub"]) == (True, True)
     assert (plain["flagged_product"], plain["reexport_hub"]) == (False, False)
+
+
+# --- The Leaderboard: every UK pair, a summary, Relative Export Gap and Opportunity Type --------
+
+
+def _top(client, **params) -> dict:
+    response = client.get("/opportunities/top", params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_leaderboard_ranks_every_uk_pair_by_export_gap_with_a_summary(client, fixture_artefacts):
+    body = _top(client)
+
+    rows = body["opportunities"]
+    gaps = [row["export_gap_usd"] for row in rows]
+    assert gaps == sorted(gaps, reverse=True)
+    assert len(rows) == fixture_artefacts.baseline.height == 20
+    assert {(row["hs6"], row["iso3"]) for row in rows} == set(
+        fixture_artefacts.baseline.select("hs6", "iso3").iter_rows()
+    )
+    assert body["rank_by"] == "gap"
+    assert body["gap_years"] == [2022, 2024]
+    assert body["summary"]["pairs"] == 20
+    assert body["summary"]["positive_export_gap_usd"] == pytest.approx(sum(gap for gap in gaps if gap > 0))
+    assert {"hs6", "description", "sector", "iso3", "market", "region", "opportunity_type"} <= set(rows[0])
+
+
+def _gap_summary(rows: list[dict]) -> dict:
+    return {"pairs": len(rows), "positive_export_gap_usd": pytest.approx(sum(max(r["export_gap_usd"], 0) for r in rows))}
+
+
+@pytest.mark.parametrize(
+    ("params", "keep"),
+    [
+        ({"sector": "85"}, lambda row: row["sector"] == "85"),
+        ({"region": "South Asia"}, lambda row: row["region"] == "South Asia"),
+        ({"market": "JPN"}, lambda row: row["iso3"] == "JPN"),
+        ({"opportunity_type": "Expand"}, lambda row: row["opportunity_type"] == "Expand"),
+        ({"min_gap_usd": 5000}, lambda row: row["export_gap_usd"] >= 5000),
+        ({"trade_agreement": True}, lambda row: row["trade_agreement"]),
+        ({"trade_agreement": False}, lambda row: not row["trade_agreement"]),
+        ({"hide_flagged": True}, lambda row: not row["flagged_product"]),
+        ({"hide_hubs": True}, lambda row: not row["reexport_hub"]),
+    ],
+    ids=lambda value: "-".join(f"{k}={v}" for k, v in value.items()) if isinstance(value, dict) else "",
+)
+def test_every_leaderboard_filter_keeps_exactly_the_matching_rows_and_the_summary_follows(client, params, keep):
+    everything = _top(client)["opportunities"]
+    body = _top(client, **params)
+
+    expected = [row for row in everything if keep(row)]
+    assert body["opportunities"] == expected
+    assert body["summary"] == _gap_summary(expected)
+
+
+def test_leaderboard_filters_combine_and_limit_keeps_the_top_but_not_the_summary(client):
+    everything = _top(client, trade_agreement=False, hide_hubs=True)["opportunities"]
+    top = _top(client, trade_agreement=False, hide_hubs=True, limit=2)
+
+    assert everything and all(row["iso3"] == "IND" for row in everything)  # no UK agreement, not a hub
+    assert top["opportunities"] == everything[:2]
+    assert top["summary"] == _gap_summary(everything)  # the summary sizes every filtered pair
+
+
+def test_leaderboard_unknown_market_or_opportunity_type_is_rejected(client):
+    assert client.get("/opportunities/top", params={"market": "XYZ"}).status_code == 404
+    assert client.get("/opportunities/top", params={"opportunity_type": "Exotic"}).status_code == 422
+
+
+def test_relative_export_gap_is_the_export_gap_over_export_potential(client):
+    for row in _top(client)["opportunities"]:
+        assert row["relative_export_gap"] == pytest.approx(row["export_gap_usd"] / row["export_potential_usd"])
+
+
+def test_relative_ranks_only_pairs_above_the_minimum_export_potential(client):
+    # Fixture Export Potentials are tens of thousands of dollars, all below the $1M default.
+    assert _top(client, rank_by="relative")["opportunities"] == []
+    assert _top(client, rank_by="relative")["summary"] == {"pairs": 0, "positive_export_gap_usd": 0.0}
+
+    everything = _top(client)["opportunities"]
+    floor = sorted(row["export_potential_usd"] for row in everything)[len(everything) // 2]
+    body = _top(client, rank_by="relative", min_potential_usd=floor)
+
+    rows = body["opportunities"]
+    assert {(r["hs6"], r["iso3"]) for r in rows} == {
+        (r["hs6"], r["iso3"]) for r in everything if r["export_potential_usd"] >= floor
+    }
+    relative = [row["relative_export_gap"] for row in rows]
+    assert relative == sorted(relative, reverse=True)
+    assert body["rank_by"] == "relative"
+    assert body["summary"] == _gap_summary(rows)
+
+
+def test_relative_breaks_ties_by_export_gap(fixture_artefacts, tmp_path):
+    # Two constructed pairs share a Relative Export Gap of 50%; the larger Export Gap ranks first.
+    tied = pl.DataFrame(
+        {
+            "hs6": ["220830", "300490", "851712"],
+            "iso3": ["JPN", "CAN", "IND"],
+            "potential": [2e6, 8e6, 3e6],
+            "gap": [1e6, 4e6, 0.3e6],
+        }
+    )
+    baseline = (
+        fixture_artefacts.baseline.join(tied, on=["hs6", "iso3"], how="left")
+        .with_columns(
+            export_potential_usd=pl.col("potential").fill_null(1e3),  # every other pair: below the minimum
+            export_gap_usd=pl.col("gap").fill_null(0.0),
+        )
+        .with_columns(relative_export_gap=pl.col("export_gap_usd") / pl.col("export_potential_usd"))
+        .drop("potential", "gap")
+    )
+    store.save(replace(fixture_artefacts, baseline=baseline), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as constructed:
+        rows = _top(constructed, rank_by="relative")["opportunities"]
+
+    assert [(row["hs6"], row["iso3"]) for row in rows] == [("300490", "CAN"), ("220830", "JPN"), ("851712", "IND")]
+
+
+def test_leaderboard_rank_orders_offer_the_minimum_export_potentials(client):
+    orders = {order["name"]: order for order in client.get("/opportunities/rank-by").json()}
+
+    assert orders["relative"]["title"] == "Relative Export Gap"
+    assert orders["relative"]["min_potential_usd_options"] == [0, 1e5, 1e6, 1e7, 1e8]
+    assert orders["relative"]["default_min_potential_usd"] == 1e6
+    assert orders["gap"].get("min_potential_usd_options") is None
+
+
+@pytest.mark.parametrize("path", [f"/opportunities/by-product/{FIXTURE_HS6}", "/opportunities/by-market/JPN"])
+def test_by_product_and_by_market_take_relative_and_the_new_filters(client, path):
+    everything = _ranked(client, path)
+    floor = min(row["export_potential_usd"] for row in everything)
+
+    relative = _ranked(client, path, rank_by="relative", min_potential_usd=floor)
+    filtered = _ranked(client, path, opportunity_type="Expand", trade_agreement=True)
+
+    values = [row["relative_export_gap"] for row in relative]
+    assert len(relative) == len(everything) and values == sorted(values, reverse=True)
+    assert filtered == [row for row in everything if row["opportunity_type"] == "Expand" and row["trade_agreement"]]
+
+
+# Opportunity Type on constructed pairs: the fixture world with some UK Flows removed in the Gap Period.
+NEW_MARKET_PAIR = ("220830", "IND")  # the UK still sells whisky to other Markets
+NEW_PRODUCT = "851712"  # the UK sells phones to no Market in 2022–2024
+
+
+@pytest.fixture(scope="module")
+def opportunity_client(fixture_world, tmp_path_factory):
+    uk_gap_period = (pl.col("exporter") == "GBR") & (pl.col("year") >= 2022)
+    removed = uk_gap_period & (
+        ((pl.col("hs6") == NEW_MARKET_PAIR[0]) & (pl.col("importer") == NEW_MARKET_PAIR[1]))
+        | (pl.col("hs6") == NEW_PRODUCT)
+    )
+    world = replace(
+        fixture_world,
+        flows=fixture_world.flows.with_columns(value_usd=pl.when(removed).then(0.0).otherwise(pl.col("value_usd"))),
+    )
+    root = tmp_path_factory.mktemp("opportunity-types")
+    store.save(build_artefacts(world, version="opportunity-types"), root)
+    with TestClient(create_app(root)) as constructed:
+        yield constructed
+
+
+def test_opportunity_type_matches_its_definition_on_constructed_pairs(opportunity_client):
+    types = {(row["hs6"], row["iso3"]): row["opportunity_type"] for row in _top(opportunity_client)["opportunities"]}
+
+    assert types[NEW_MARKET_PAIR] == "New Market"
+    assert {types[(NEW_PRODUCT, iso3)] for iso3 in ("JPN", "CAN", "IND", "HKG")} == {"New Product"}
+    others = {pair: kind for pair, kind in types.items() if pair != NEW_MARKET_PAIR and pair[0] != NEW_PRODUCT}
+    assert len(others) == 15 and set(others.values()) == {"Expand"}
+
+
+def test_opportunity_type_filter_and_explanation_on_constructed_pairs(opportunity_client):
+    rows = _top(opportunity_client, opportunity_type="New Product")["opportunities"]
+    explanation = opportunity_client.get(f"/explain/{NEW_MARKET_PAIR[0]}/{NEW_MARKET_PAIR[1]}").json()
+
+    assert {row["hs6"] for row in rows} == {NEW_PRODUCT} and len(rows) == 4
+    assert all(row["actual_exports_usd"] == 0 for row in rows)
+    assert explanation["opportunity_type"] == "New Market"

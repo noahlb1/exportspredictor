@@ -5,7 +5,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from exportspredictor import scenarios
-from exportspredictor.rankings import DEFAULT_RANK_BY, RANK_BY
+from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from exportspredictor.rankings import (
+    DEFAULT_MIN_POTENTIAL_USD,
+    DEFAULT_RANK_BY,
+    RANK_BY,
+)
 from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, PRESETS
 
 
@@ -41,12 +46,17 @@ class MarketOut(BaseModel):
 
 
 RankBy = Literal[tuple(RANK_BY)]  # the ranking orders of `exportspredictor.rankings.RANK_BY`
+OpportunityType = Literal[OPPORTUNITY_TYPES]  # Expand, New Market or New Product (GLOSSARY.md)
 
 
 class RankOrderOut(BaseModel):
     name: str
     title: str
     description: str
+    # For an order that ranks only pairs above a minimum Export Potential (Relative Export Gap):
+    # the minimums offered, in USD, and the default. Absent for other orders.
+    min_potential_usd_options: list[float] | None = None
+    default_min_potential_usd: float | None = None
 
 
 class RankingQuery(BaseModel):
@@ -59,10 +69,28 @@ class RankingQuery(BaseModel):
     )
     sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
     region: str | None = Field(None, description="Market region, e.g. South Asia")
+    opportunity_type: OpportunityType | None = Field(
+        None, description="Opportunity Type: " + ", ".join(OPPORTUNITY_TYPES)
+    )
     min_gap_usd: float | None = Field(None, description="Minimum Export Gap, in USD")
+    trade_agreement: bool | None = Field(
+        None, description="Only pairs with (true) or without (false) a UK Trade Agreement in force"
+    )
     hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
     hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
+    min_potential_usd: float | None = Field(
+        None,
+        ge=0,
+        description="rank_by=relative only: rank only pairs whose Export Potential is at least this, in USD "
+        f"(default {DEFAULT_MIN_POTENTIAL_USD:,.0f})",
+    )
     limit: int | None = Field(None, ge=1, description="Keep only the top rows")
+
+
+class LeaderboardQuery(RankingQuery):
+    """The ranking filters plus one Market, for the Leaderboard over every UK pair."""
+
+    market: str | None = Field(None, description="One Market, by ISO3 code, e.g. JPN")
 
 
 class _Values(BaseModel):
@@ -71,6 +99,8 @@ class _Values(BaseModel):
     export_potential_usd: float
     actual_exports_usd: float
     export_gap_usd: float
+    relative_export_gap: float | None  # Export Gap / Export Potential; missing where Export Potential is 0
+    opportunity_type: OpportunityType  # how far the UK already trades the pair over the Gap Period
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
     blocked_effect_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
     blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
@@ -90,11 +120,30 @@ class ProductOpportunity(_Values):
     sector: str
 
 
+class LeaderboardOpportunity(_Values):
+    hs6: str
+    description: str
+    sector: str
+    iso3: str
+    market: str
+    region: str
+
+
+class LeaderboardSummary(BaseModel):
+    pairs: int  # every pair passing the filters (before `limit`)
+    positive_export_gap_usd: float  # the sum of their positive Export Gaps
+
+
 class _Ranking(BaseModel):
     artefact_version: str
     baseline_year: int
     gap_years: list[int]  # first and last year of the Gap Period the values average over
     rank_by: RankBy
+
+
+class Leaderboard(_Ranking):
+    summary: LeaderboardSummary
+    opportunities: list[LeaderboardOpportunity]  # UK Product–Market pairs, sorted by `rank_by`, largest first
 
 
 class ProductOpportunities(_Ranking):
@@ -373,6 +422,8 @@ class Explanation(BaseModel):
     actual_exports_usd: float
     export_gap_usd: float
     baseline_export_potential_usd: float  # the Baseline year's, which the factors explain
+    relative_export_gap: float | None  # Export Gap / Export Potential (Gap Period means)
+    opportunity_type: OpportunityType  # Expand, New Market or New Product, over the Gap Period
     flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
     reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
     factors: list[FactorOut]  # largest absolute contribution first
