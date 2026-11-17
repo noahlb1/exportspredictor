@@ -7,7 +7,7 @@ Finds where UK goods exports fall short of what the UK's fundamentals suggest. I
 ### Trade
 
 **Flow**:
-The annual value (USD) of one Product sent from one Exporter to one Importer in one year.
+The annual value, in nominal US dollars, of one Product sent from one Exporter to one Importer in one year.
 _Avoid_: trade, shipment, transaction
 
 **Product**:
@@ -30,6 +30,10 @@ _Avoid_: destination, partner
 An Importer considered as a destination for UK exports.
 _Avoid_: partner, target country
 
+**Zero Cell**:
+An Exporter, Importer, Product and year with no Flow, where the Exporter exports that Product to some Importer and the Importer imports it from some Exporter, but not from each other.
+_Avoid_: missing flow, null trade, empty pair
+
 ### Prediction
 
 **Export Potential**:
@@ -41,12 +45,24 @@ The observed value of a UK Flow in a given year.
 _Avoid_: real exports, historic trade
 
 **Export Gap**:
-Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals.
+The mean, over the Gap Period, of Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals.
 _Avoid_: untapped potential, headroom, shortfall
+
+**Gap Period**:
+The run of recent years whose yearly Export Gaps are averaged into the reported Export Gap. Each year's gap compares that year's Export Potential with that year's Actual Exports, a year with no Flow counting as zero.
+_Avoid_: reference period, gap window, averaging window
 
 **Opportunity**:
 A UK Product–Market pair with a positive Export Gap, ranked by size of that gap.
 _Avoid_: lead, prospect
+
+**Relative Export Gap**:
+Export Gap divided by Export Potential: the share of an Opportunity's Export Potential the UK does not yet realise. Every pair with no Actual Exports scores 100%, so it ranks only among pairs above a minimum Export Potential, with ties broken by Export Gap.
+_Avoid_: percentage gap, headroom ratio
+
+**Opportunity Type**:
+How far the UK already trades an Opportunity: **Expand** (the UK already exports the Product to this Market), **New Market** (the UK exports the Product, but not to this Market) or **New Product** (the UK exports the Product to no Market).
+_Avoid_: entry mode, opportunity status
 
 **Blocked Opportunity**:
 A UK Product–Market pair whose Export Potential rises materially in a Scenario that removes a Barrier. It is distinct from an Opportunity, because the Barrier already holds Export Potential down, so it shows no Export Gap.
