@@ -25,6 +25,9 @@ Two scopes are evaluated:
   by the fold model that held it out (ADR 0001).
 
 Each is broken down by Sector (HS2 chapter) and by the Importer's region, weakest first.
+Excluded Products are never measured (ADR 0005), and each scope is also split by
+`tariff_imputed` into rows with an observed Applied Tariff and rows carrying 2021 forward
+(ADR 0006). TRAINS ends in 2021, so on the 2023 test year every row is imputed.
 
 The **stability** check compares the Baseline's rankings with the same models' rankings of
 the test year's UK grid: how much the rankings move from one year of data to the next.
@@ -48,10 +51,12 @@ import xgboost as xgb
 
 from exportspredictor import artefacts as store
 from exportspredictor import baci
+from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import FEATURES, FeatureTransform, features_dir
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
+from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
 
 TWEEDIE_POWER = 1.5
@@ -73,6 +78,8 @@ HEADLINE_SCOPE = "uk_out_of_fold"
 # A headline win smaller than this is reported as "only slightly better".
 NARROW_MARGIN = 0.05
 _PREDICTORS = {"model": "export_potential_usd", "naive": "naive_usd"}
+# The two sides of the test-metric split by `tariff_imputed` (ADR 0006), in display order.
+TARIFF_GROUPS = ("observed", "imputed")
 
 LIMITATIONS = [
     {
@@ -80,10 +87,36 @@ LIMITATIONS = [
         "text": "The model covers goods trade only. Services, about half of UK exports, are not in the data.",
     },
     {
-        "title": "No tariffs",
-        "text": "Tariffs are not a model input in this version. The only Barrier the model sees is the "
-        "absence of a Trade Agreement or Trading Bloc membership, so it cannot say how a tariff change would "
-        "shift Export Potential.",
+        "title": "Tariffs carried forward from 2021",
+        "text": "Applied Tariffs come from UNCTAD TRAINS, which ends in 2021. 2022–2024, the test year and the "
+        "whole Gap Period included, reuse each pair's 2021 rate, or 0 where a Trade Agreement entered force after "
+        "2021 (which overstates liberalisation while its tariff cuts phase in). Tariff changes since 2021 are "
+        "invisible, and every test-year row is scored on a carried-forward tariff.",
+    },
+    {
+        "title": "Excluded Products",
+        "text": "Crude and refined oil, gas, coal and electricity, bullion and coins, precious-metal scrap, antiques "
+        "and radioactive elements are Excluded Products: their trade follows pipelines, bullion markets or licences "
+        "the model cannot see. They are never scored or ranked, and every metric here leaves them out.",
+    },
+    {
+        "title": "Trained on the top 100 Exporters",
+        "text": "The model trains on Flows from the top 100 economies by mean GDP over 2012–2023, the UK always "
+        "included, into every Market; other Exporters' rows are sampled to fit the GPU. Smaller Exporters still "
+        "count in every total the features use, but the model never learns from their own Flows.",
+    },
+    {
+        "title": "Values are nominal US dollars",
+        "text": "Every value is in nominal US dollars, as BACI reports it, with no adjustment for inflation or "
+        "exchange rates. A change between years mixes real trade growth with price and currency movements.",
+    },
+    {
+        "title": "What the Potential Range assumes",
+        "text": "The Potential Range is calibrated on other Exporters' 2024 Flows, never the UK's, so it assumes UK "
+        "pairs vary around their Export Potential as comparable pairs of other top-100 Exporters do "
+        "(exchangeability). That is assumed, not guaranteed: the coverage check above shows how well it held on "
+        "held-out rows. It describes how much comparable pairs vary, not a confidence interval for Export "
+        "Potential, and Scenario Effects get no range.",
     },
     {
         "title": "Associations, not causes",
@@ -180,7 +213,13 @@ def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
     `income_level` (the bias review's stand-in for reporting quality; `by_income` is
     added only when it is there). Breakdowns are sorted weakest first (lowest
     within-Product rank correlation of the model).
+
+    Excluded Products are never measured (ADR 0005). When `scored` carries
+    `tariff_imputed`, `by_tariff` splits the rows into observed tariffs and imputed ones
+    (carried forward from 2021, ADR 0006): always both, in `TARIFF_GROUPS` order, an empty
+    side with zero rows.
     """
+    scored = drop_excluded(scored)
     has_income = "income_level" in markets.columns
     regions = markets.select(
         *(["income_level"] if has_income else []), _i=pl.col("iso3").cast(pl.String), region=pl.col("region")
@@ -202,7 +241,39 @@ def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
             name: [_clean(row) for row in _weakest_first(_metrics(frame, column)).iter_rows(named=True)]
             for name, column in groups.items()
         },
+        **({"by_tariff": _tariff_split(frame)} if "tariff_imputed" in frame.columns else {}),
     }
+
+
+def _tariff_split(frame: pl.DataFrame) -> list[dict]:
+    labelled = frame.with_columns(
+        _tariff=pl.when(pl.col("tariff_imputed")).then(pl.lit("imputed")).otherwise(pl.lit("observed"))
+    )
+    found = {row["group"]: row for row in _metrics(labelled, "_tariff").iter_rows(named=True)}
+    return [_clean(found.get(group) or _empty_group(group)) for group in TARIFF_GROUPS]
+
+
+def _empty_group(group: str) -> dict:
+    counts = {"rows": 0, "non_zero_flows": 0, "products": 0, "ranked_products": 0, "actual_usd": 0.0}
+    return {"group": group, **counts, **{f"{name}_{metric}": None for name in _PREDICTORS for metric in METRICS}}
+
+
+def tariff_split_text(accuracy_by_scope: Mapping[str, dict], test_year: int) -> str:
+    """How the UK pairs of the test year split between observed and imputed Applied Tariffs, in plain words."""
+    split = {row["group"]: row for row in accuracy_by_scope[HEADLINE_SCOPE].get("by_tariff", [])}
+    if not split:
+        return "The test rows carry no tariff mark, so they are not split by imputed and observed tariffs."
+    observed, imputed = split["observed"]["rows"], split["imputed"]["rows"]
+    if observed == 0:
+        return (
+            f"Every {test_year} UK pair uses an Applied Tariff carried forward from {LAST_TRAINS_YEAR}, because tariff "
+            f"data end in {LAST_TRAINS_YEAR}, so no test row has an observed tariff to compare with: all the accuracy "
+            f"above is measured on carried-forward tariffs."
+        )
+    return (
+        f"Of the {observed + imputed:,} UK pairs in {test_year}, {imputed:,} use an Applied Tariff carried forward "
+        f"from {LAST_TRAINS_YEAR} and {observed:,} an observed one. The table compares the model's accuracy on each."
+    )
 
 
 def _metrics(frame: pl.DataFrame, group: str) -> pl.DataFrame:
@@ -457,6 +528,7 @@ def evaluate(
         "of that Product, each leaving the Flow itself out.",
         "accuracy": accuracy_by_scope,
         "headline": headline(accuracy_by_scope[HEADLINE_SCOPE]["overall"], year),
+        "tariff_split_text": tariff_split_text(accuracy_by_scope, year),
         "stability": stable,
     }
 

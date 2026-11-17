@@ -132,3 +132,100 @@ def test_blocked_values_are_zero_where_a_trade_agreement_exists(fixture_artefact
 
     assert (values.filter(pl.col("trade_agreement") == 1)["blocked_effect_usd"] == 0).all()
     assert (values.filter(pl.col("trade_agreement") == 0)["blocked_effect_usd"] >= 0).all()
+
+
+# --- Tariffs in Scenarios (ADR 0006) ------------------------------------------------------
+
+
+def test_removing_a_trade_agreement_restores_the_importers_2021_mfn_tariff(fixture_artefacts):
+    before = fixture_artefacts.baseline_features
+    after = scenarios.apply(before, scenarios.Scenario(remove_agreements=("JPN",))).sort("hs6")
+    mfn = before.filter(pl.col("iso3") == "JPN").sort("hs6")["mfn_tariff"]
+
+    assert (mfn > 0).any()
+    assert after["log_applied_tariff"].to_list() == pytest.approx((mfn / 100).log1p().to_list(), rel=1e-6)
+
+
+def test_adding_a_trade_agreement_removes_the_tariff(fixture_artefacts):
+    before = fixture_artefacts.baseline_features
+    after = scenarios.apply(before, scenarios.Scenario(add_agreements=("IND",)))
+
+    assert before.filter(pl.col("iso3") == "IND")["log_applied_tariff"].min() > 0
+    assert after.height == 5 and (after["log_applied_tariff"] == 0).all()
+
+
+def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
+    result = scenarios.run(
+        fixture_artefacts.baseline_features,
+        fixture_artefacts.baseline,
+        fixture_artefacts.fold_models,
+        scenarios.Scenario(add_agreements=("IND",)),
+    )
+    blocked = fixture_artefacts.baseline.join(result.pairs, on=["hs6", "iso3"])
+
+    assert blocked["blocked_effect_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
+
+
+def test_a_tariff_scenario_sets_the_tariff_in_the_chosen_markets_and_sectors(fixture_artefacts):
+    before = fixture_artefacts.baseline_features
+    change = scenarios.TariffChange(markets=("JPN", "IND"), rate_pct=10.0, sectors=("22", "87"))
+    after = scenarios.apply(before, scenarios.Scenario(tariff=change))
+
+    assert sorted(after.select("hs6", "iso3").rows()) == [
+        ("220830", "IND"), ("220830", "JPN"), ("870323", "IND"), ("870323", "JPN")
+    ]
+    assert after["log_applied_tariff"].to_list() == pytest.approx([0.0953102] * 4, rel=1e-5)
+
+
+def test_a_tariff_beyond_the_training_range_is_clipped_and_counted(fixture_artefacts):
+    low, high = scenarios.tariff_range(fixture_artefacts.metadata)
+    result = scenarios.run(
+        fixture_artefacts.baseline_features,
+        fixture_artefacts.baseline,
+        fixture_artefacts.fold_models,
+        scenarios.Scenario(tariff=scenarios.TariffChange(markets=("JPN",), rate_pct=400.0)),
+        tariff_range=(low, high),
+    )
+    after = scenarios.apply(
+        fixture_artefacts.baseline_features,
+        scenarios.Scenario(tariff=scenarios.TariffChange(markets=("JPN",), rate_pct=400.0)),
+        tariff_range=(low, high),
+    )
+
+    assert (low, high) == pytest.approx((0.0, 0.9162907))  # India's 150% whisky
+    assert result.clipped_pairs == 5
+    assert after["log_applied_tariff"].to_list() == pytest.approx([high] * 5)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        scenarios.Scenario(tariff=scenarios.TariffChange(markets=("JPN",), rate_pct=-1.0)),
+        scenarios.Scenario(tariff=scenarios.TariffChange(markets=("JPN",), rate_pct=5.0, sectors=("99",))),
+        scenarios.Scenario(tariff=scenarios.TariffChange(markets=("XXX",), rate_pct=5.0)),
+        scenarios.Scenario(tariff=scenarios.TariffChange(markets=(), rate_pct=5.0)),
+        scenarios.Scenario(add_agreements=("IND",), tariff=scenarios.TariffChange(markets=("JPN",), rate_pct=5.0)),
+    ],
+)
+def test_a_malformed_tariff_scenario_is_rejected(fixture_artefacts, scenario):
+    with pytest.raises(scenarios.InvalidScenario):
+        scenarios.apply(fixture_artefacts.baseline_features, scenario)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        *(scenarios.Scenario(preset=name) for name in scenarios.PRESETS),
+        scenarios.Scenario(add_agreements=("IND", "HKG"), remove_agreements=("JPN",)),
+        scenarios.Scenario(tariff=scenarios.TariffChange(markets=("JPN", "IND", "CAN"), rate_pct=500.0)),
+    ],
+)
+def test_every_scenario_changes_only_policy_columns(fixture_artefacts, scenario):
+    before = fixture_artefacts.baseline_features
+    after = scenarios.apply(before, scenario, scenarios.tariff_range(fixture_artefacts.metadata))
+    fixed = ["hs6", "iso3", "fold", *NON_POLICY, "mfn_tariff", "tariff_imputed"]
+    fixed = [c for c in fixed if c in before.columns]
+    original = before.join(after.select("hs6", "iso3"), on=["hs6", "iso3"]).sort("hs6", "iso3")
+
+    assert after.columns == before.columns
+    assert_frame_equal(after.sort("hs6", "iso3").select(fixed), original.select(fixed))

@@ -22,8 +22,8 @@ ROWS_SHOWN = 500  # the top of the ranking sent to the page; the summary covers 
 st.title("Blocked Opportunities")
 if banner() is not None:
     st.markdown(
-        "UK Product–Market pairs where the model associates adding a UK Trade Agreement with a material rise "
-        "in Export Potential. A missing agreement is a Barrier the model has learned to associate with lower "
+        "UK Product–Market pairs where the model associates adding a UK Trade Agreement, and removing the tariff, "
+        "with a material rise in Export Potential. A missing agreement is a Barrier the model has learned to associate with lower "
         "Export Potential, so these pairs need not show an Export Gap; they point to trade-policy work rather "
         "than export promotion. Each Blocked Opportunity value is a tendency the model has learned, not a forecast."
     )
@@ -42,7 +42,8 @@ if banner() is not None:
         value_column.metric("Total Blocked Opportunity value", format_usd(summary["blocked_effect_usd"]))
         st.caption(
             f"The Blocked Opportunity value is the change in {body['baseline_year']} Export Potential the model "
-            "associates with adding a UK Trade Agreement where none is in force; it is 0 where one is. "
+            "associates with adding a UK Trade Agreement and removing the tariff where no agreement is in force; "
+            "it is 0 where one is. "
             f"A pair is a Blocked Opportunity when that value is at least {thresholds['min_effect_share']:.0%} of its "
             f"{body['baseline_year']} Export Potential and at least {format_usd(thresholds['min_effect_usd'])}. "
             "Try other agreements and thresholds on the Scenarios page."

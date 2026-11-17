@@ -209,6 +209,8 @@ class ScopeAccuracy(BaseModel):
     by_sector: list[AccuracyRow]  # weakest first (lowest within-Product rank correlation)
     by_region: list[AccuracyRow]  # weakest first
     by_income: list[AccuracyRow] = []  # weakest first; World Bank income level of the Market (reporting quality)
+    # "observed" then "imputed" (Applied Tariff carried forward from 2021, ADR 0006); an empty side has rows 0
+    by_tariff: list[AccuracyRow] = []
 
 
 class Headline(BaseModel):
@@ -294,6 +296,7 @@ class EventResult(BaseModel):
     post_years: list[int]
     control_rule: str
     caveat: str
+    states: str = ""  # what "agreement on" and "off" set, the Applied Tariff included
     directions: list[EventDirection]
     text: str
 
@@ -327,6 +330,7 @@ class Evaluation(BaseModel):
     naive_baseline: str
     accuracy: dict[str, ScopeAccuracy]  # "all_exporters" and "uk_out_of_fold"
     headline: Headline
+    tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None
     event_backtest: EventBacktest | None = None
@@ -342,18 +346,37 @@ class PresetOut(BaseModel):
 PresetName = Literal[tuple(PRESETS)]  # the presets of `exportspredictor.scenarios.PRESETS`
 
 
+class TariffIn(BaseModel):
+    """The Applied Tariff chosen Markets charge on UK goods, optionally in chosen Sectors only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    markets: list[str] = Field(min_length=1, description="Markets (ISO3) that charge the tariff")
+    rate_pct: float = Field(ge=0, allow_inf_nan=False, description="The tariff in percent, e.g. 10 = 10%")
+    sectors: list[str] | None = Field(None, description="Sectors (HS2 chapters, e.g. 22); all Sectors if omitted")
+
+
 class ScenarioIn(BaseModel):
-    """A Trading Bloc preset, *or* Markets (ISO3) to add or remove a Trade Agreement with."""
+    """A Trading Bloc preset, Markets (ISO3) to add or remove a Trade Agreement with, *or* a tariff change."""
 
     preset: PresetName | None = None
     add_agreements: list[str] = []
     remove_agreements: list[str] = []
+    tariff: TariffIn | None = None
 
     def to_scenario(self) -> scenarios.Scenario:
+        tariff = self.tariff
         return scenarios.Scenario(
             preset=self.preset,
             add_agreements=tuple(self.add_agreements),
             remove_agreements=tuple(self.remove_agreements),
+            tariff=None
+            if tariff is None
+            else scenarios.TariffChange(
+                markets=tuple(tariff.markets),
+                rate_pct=tariff.rate_pct,
+                sectors=None if tariff.sectors is None else tuple(tariff.sectors),
+            ),
         )
 
 
@@ -401,6 +424,8 @@ class PairEffect(BaseModel):
     scenario_potential_usd: float
     effect_usd: float
     effect_share: float
+    baseline_tariff_pct: float | None  # the Applied Tariff (percent) in the Baseline; None where unknown
+    scenario_tariff_pct: float | None  # and under the Scenario (clipped to the training range)
     blocked_opportunity: bool
 
 
@@ -419,6 +444,9 @@ class ScenarioResponse(BaseModel):
     top_pairs: list[PairEffect]  # top Product–Market pairs by effect (of `market` only, if given)
     blocked_opportunities: list[PairEffect]  # pairs clearing both thresholds, largest first
     blocked_count: int  # all Blocked Opportunities, before `limit`
+    # Pairs whose Scenario tariff lay beyond the training range and was clipped to it, so
+    # their Scenario Effect flattens there (ADR 0006).
+    clipped_pairs: int
 
 
 class FactorOut(BaseModel):

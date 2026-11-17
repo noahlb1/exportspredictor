@@ -447,7 +447,8 @@ def _train_and_score(
         .pipe(with_opportunity_columns)
     )
     # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
-    baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES)
+    # `mfn_tariff` (not a feature) is the rate a Scenario restores when it removes a Trade Agreement (ADR 0006).
+    baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES, "mfn_tariff")
     # The Potential Range (ADR 0007): other Exporters' Baseline-year rows, never the UK's.
     started = time.perf_counter()
     scored_calibration = conformal.score_calibration(read_chunk(calibration), models, transform, uk=UK)
@@ -595,7 +596,9 @@ def _evaluate(
         seed=seed,
     )
     print(f"Monotone-constraint comparison in {report['monotone_constraints']['seconds']:.0f} s", flush=True)
-    report["potential_range"] = trained.potential_range_report
+    report["potential_range"] = {
+        **trained.potential_range_report, "text": conformal.coverage_text(trained.potential_range_report)
+    }
     return report
 
 

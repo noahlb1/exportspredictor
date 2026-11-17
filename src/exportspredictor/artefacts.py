@@ -67,7 +67,8 @@ class Artefacts:
     # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_effect_usd,
     # potential_range_low_usd, potential_range_high_usd, uncertain, tariff_imputed
     baseline: pl.DataFrame
-    baseline_features: pl.DataFrame  # hs6, iso3, fold, FEATURES (transformed, as the models saw them)
+    # hs6, iso3, fold, FEATURES (transformed, as the models saw them), mfn_tariff (percent, the 2021 MFN rate)
+    baseline_features: pl.DataFrame
     history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd, tariff_imputed
     products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
     markets: pl.DataFrame

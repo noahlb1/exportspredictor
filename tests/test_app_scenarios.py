@@ -106,3 +106,33 @@ def test_threshold_inputs_default_to_the_apis_thresholds(monkeypatch, api_url):
 
     assert page.number_input(key="min_share").value == defaults["min_effect_share"] * 100
     assert page.number_input(key="min_usd").value == defaults["min_effect_usd"] / 1e6
+
+
+def test_the_tariff_mode_runs_and_says_when_the_effect_flattens_beyond_the_training_range(monkeypatch, api_url):
+    page = _scenarios_page(monkeypatch, api_url)
+
+    page.radio(key="kind").set_value("Tariff change").run()
+    page.multiselect(key="tariff_markets").set_value(["JPN"]).run()
+    page.number_input(key="tariff_rate").set_value(1000.0).run()
+    page.button(key="run").click().run()
+
+    assert not page.exception
+    assert "associates" in " ".join(element.value for element in page.markdown)
+    clip = [element.value for element in page.warning if "training range" in element.value]
+    assert clip and "flattens" in clip[0] and "5" in clip[0]
+    pairs = page.dataframe[-1].value
+    assert set(pairs["Market"]) == {"Japan"}
+
+
+def test_a_tariff_within_the_training_range_shows_no_clip_message(monkeypatch, api_url):
+    page = _scenarios_page(monkeypatch, api_url)
+
+    page.radio(key="kind").set_value("Tariff change").run()
+    page.multiselect(key="tariff_markets").set_value(["JPN"]).run()
+    page.multiselect(key="tariff_sectors").set_value(["22"]).run()
+    page.number_input(key="tariff_rate").set_value(20.0).run()
+    page.button(key="run").click().run()
+
+    assert not page.exception
+    assert not [element.value for element in page.warning if "training range" in element.value]
+    assert set(page.dataframe[0].value["Market"]) == {"Japan"}
