@@ -137,6 +137,80 @@ class Stability(BaseModel):
     text: str
 
 
+class SizeMatchedLift(BaseModel):
+    expected_rate: float | None
+    lift: float | None
+    ci: list[float | None]
+
+
+class LiftDecile(BaseModel):
+    decile: int  # 1 = the largest Export Gaps
+    rate: float | None  # weighted share of pairs that grew materially
+    pairs: float
+
+
+class Lift(BaseModel):
+    """How much more often the top tenth of pairs by Export Gap grew materially than random pairs (#21)."""
+
+    lift: float | None
+    ci: list[float | None]
+    ci_level: float
+    bootstrap_unit: str
+    top_rate: float | None
+    base_rate: float | None
+    size_matched: SizeMatchedLift
+    by_decile: list[LiftDecile]
+    held_out_share: float
+    held_out_exporters: list[str]
+    training_years: list[int]
+    gap_year: int
+    outcome_year: int
+    min_growth_share: float
+    min_growth_usd: float
+    text: str
+
+
+class EventEffect(BaseModel):
+    observed: float | None  # difference-in-differences, as a share
+    observed_ci: list[float | None]
+    predicted: float | None  # the model's Scenario Effect, as a share
+    predicted_ci: list[float | None]
+
+
+class EventYear(EventEffect):
+    year: int
+
+
+class EventDirection(BaseModel):
+    label: str
+    exporters: list[str]
+    importers: list[str]
+    controls: list[str]  # the control Markets
+    by_year: list[EventYear]
+    pooled: EventEffect
+
+
+class EventResult(BaseModel):
+    role: str  # "primary" or "secondary"
+    name: str
+    title: str
+    in_force: str
+    event_year: int
+    training_years: list[int]
+    pre_years: list[int]
+    post_years: list[int]
+    control_rule: str
+    caveat: str
+    directions: list[EventDirection]
+    text: str
+
+
+class EventBacktest(BaseModel):
+    events: list[EventResult]
+    text: str  # the primary event's summary
+    caveat: str
+
+
 class Limitation(BaseModel):
     title: str
     text: str
@@ -161,6 +235,8 @@ class Evaluation(BaseModel):
     accuracy: dict[str, ScopeAccuracy]  # "all_exporters" and "uk_out_of_fold"
     headline: Headline
     stability: Stability
+    lift: Lift | None = None
+    event_backtest: EventBacktest | None = None
     limitations: list[Limitation]
 
 class PresetOut(BaseModel):

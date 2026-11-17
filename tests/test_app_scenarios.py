@@ -82,3 +82,11 @@ def test_product_to_markets_can_rank_by_blocked_opportunity_value(monkeypatch, a
     assert list(table["Market"])[0] == "India"
     values = list(table["Blocked Opportunity value (£)"])
     assert values == sorted(values, reverse=True)
+
+
+def test_the_scenarios_page_states_the_event_backtest_result(monkeypatch, api_url, fixture_artefacts):
+    page = _scenarios_page(monkeypatch, api_url)
+
+    assert not page.exception
+    text = " ".join(element.value for element in [*page.markdown, *page.caption, *page.info])
+    assert fixture_artefacts.evaluation["event_backtest"]["text"] in text
