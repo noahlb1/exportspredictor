@@ -47,6 +47,20 @@ def test_build_drops_excluded_products_and_records_the_list(derived_data_root):
     assert settings["excluded_products"][0] == "Sector 27 except 2712"
 
 
+def test_build_trains_only_on_the_recorded_exporter_scope(derived_data_root):
+    out = features.build(derived_data_root, years=[2023], rate=0.5, scope_size=2)
+
+    settings = json.loads((out / "features.json").read_text())
+    scope = settings["exporter_scope"]
+    assert UK in scope and len(scope) in (2, 3)
+    training = pl.read_parquet(out / "training_2023.parquet")
+    assert set(training["exporter"]) == set(scope) & {UK, "DEU", "FRA", "TWN"}
+    assert len(set(training["exporter"])) < 4  # an Exporter fell out of scope
+    assert settings["uk_zero_sampling_rate"] == 1.0
+    uk_zeros = training.filter((pl.col("exporter") == UK) & (pl.col("value_usd") == 0))
+    assert uk_zeros.height > 0 and (uk_zeros["weight"] == 1.0).all()
+
+
 def test_build_scores_the_union_of_the_gap_period_grids_in_each_gap_year(derived_data_root):
     # Nobody trades whisky in 2023, so the 2023 grid alone would have no whisky pair.
     path = baci.flows_dir(derived_data_root) / "flows_2023.parquet"
