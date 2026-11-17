@@ -51,7 +51,7 @@ def run(steps: list[Step]) -> int:
     """Run the steps in order from the repo root. Returns 0, or the first failing exit code."""
     for number, step in enumerate(steps, start=1):
         print(f"[{number}/{len(steps)}] {step.name}", flush=True)
-        code = subprocess.run(step.command, cwd=REPO, env={**os.environ, **step.env}).returncode
+        code = subprocess.run(step.command, cwd=REPO, env={**os.environ, **step.env}, check=False).returncode
         if code != 0:
             print(f"Step {number} failed with exit code {code}: {step.name}", file=sys.stderr)
             return code

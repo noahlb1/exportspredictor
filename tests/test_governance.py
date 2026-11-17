@@ -5,7 +5,6 @@ import pytest
 
 from exportspredictor import evaluation, governance
 
-
 # --- Model card --------------------------------------------------------------------------
 
 

@@ -173,7 +173,7 @@ def crosscheck(ots: pl.DataFrame, baci_uk: pl.DataFrame, *, usd_per_gbp: float, 
     by_market = _compare(ots.filter(has_market), baci_uk, ["iso3"])
     pairs = _compare(ots.filter(has_product & has_market), baci_uk, ["hs6", "iso3"])
     both = pairs.filter((pl.col("ots_usd") > 0) & (pl.col("baci_usd") > 0))
-    close = both.filter((pl.col("difference_usd").abs() <= CLOSE_SHARE * pl.col("baci_usd")))
+    close = both.filter(pl.col("difference_usd").abs() <= CLOSE_SHARE * pl.col("baci_usd"))
     spearman = (
         float(both.select(pl.corr(pl.col("ots_usd"), pl.col("baci_usd"), method="spearman")).item())
         if both.height >= 3

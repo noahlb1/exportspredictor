@@ -14,6 +14,8 @@ Gotchas of this machine that the code and config don't reveal. Add one when a ru
 
 - **Create them by hand**: `git worktree add C:\CodingProjectsC\ep-wt\<ticket> -b <branch> <base>`. Agent worktree isolation refuses this repo because the session path is `c:\` and git reports `C:\`.
 - **Run everything through `scripts/wt.ps1`** (`& <worktree>\scripts\wt.ps1 pytest -q`). It uses the main checkout's `.venv`, so a worktree builds none, and removing it is quick.
+- **Merging into the integration branch**: after each merge, run `scripts/wt.ps1 ruff check .` and `scripts/wt.ps1 pytest -q` in the merged checkout, and get them green before the next merge. A file that exists on disk but is gitignored passes in a worktree and fails everywhere else, so check `git status --ignored` for test data.
+- **Pushes are gated** by `.githooks/pre-push` (ruff, then the full suite, about 90 s). It needs `git config core.hooksPath .githooks` once per clone.
 - **Adding a dependency**: `uv add --no-sync <pkg>` in the worktree updates `pyproject.toml` and `uv.lock`; then install it into the shared env with `uv pip install --python C:\CodingProjectsC\exportspredictor\.venv <pkg>`.
 
 ## Shared data and artefacts

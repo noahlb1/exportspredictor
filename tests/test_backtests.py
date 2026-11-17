@@ -158,10 +158,10 @@ def test_control_markets_are_similar_markets_without_an_agreement_largest_first(
 
 # --- Backtest models on the fixture world --------------------------------------------------
 
-from dataclasses import replace  # noqa: E402
+from dataclasses import replace
 
-from exportspredictor import pipeline  # noqa: E402
-from exportspredictor.fixture import UK  # noqa: E402
+from exportspredictor import pipeline
+from exportspredictor.fixture import UK
 
 PLAN = pipeline.FIXTURE_BACKTESTS
 EVENT = PLAN.event  # the fixture's UK–Japan agreement, in force from 2022

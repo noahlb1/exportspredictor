@@ -25,21 +25,21 @@ OWNER = "UNASSIGNED"
 MODEL_CARD_FILE = "model_card.md"
 
 INTENDED_USE = [
-    "Help government export Advisors decide where to look: rank UK Product–Market pairs by Export Gap "
-    "(Opportunities) or by the Scenario Effect of adding a Trade Agreement (Blocked Opportunities).",
-    "Explore how the model associates Trade Agreement and Trading Bloc Scenarios with UK Export Potential, "
-    "as an order of magnitude and a starting point for policy analysis.",
+    ("Help government export Advisors decide where to look: rank UK Product–Market pairs by Export Gap "
+    "(Opportunities) or by the Scenario Effect of adding a Trade Agreement (Blocked Opportunities)."),
+    ("Explore how the model associates Trade Agreement and Trading Bloc Scenarios with UK Export Potential, "
+    "as an order of magnitude and a starting point for policy analysis."),
     "Explain, for one pair, which fundamentals raised or lowered its Export Potential (the Why? page).",
     "Every output is a lead for a person to check against sector knowledge, not a decision.",
 ]
 
 OUT_OF_SCOPE = [
-    "Forecasting next year's UK exports, or any one pair's future exports: Lift is a tendency across many "
-    "pairs, not a forecast.",
-    "Quoting a Scenario Effect as what a Trade Agreement would cause: Scenario Effects are associations, and the "
-    "Event Backtests found them several times larger than the changes observed.",
-    "Decisions about individual firms or people (grants, credit, eligibility). The model holds no data on firms "
-    "or people, and such uses would change its risk class (EU AI Act, intended purpose).",
+    ("Forecasting next year's UK exports, or any one pair's future exports: Lift is a tendency across many "
+    "pairs, not a forecast."),
+    ("Quoting a Scenario Effect as what a Trade Agreement would cause: Scenario Effects are associations, and the "
+    "Event Backtests found them several times larger than the changes observed."),
+    ("Decisions about individual firms or people (grants, credit, eligibility). The model holds no data on firms "
+    "or people, and such uses would change its risk class (EU AI Act, intended purpose)."),
     "Services trade, tariff changes, sanctions, quotas and product standards: none of them is a model input.",
     "Markets under sanctions or embargo: their Export Gaps reflect fundamentals the sanctions override.",
 ]
@@ -48,59 +48,59 @@ OUT_OF_SCOPE = [
 # considered, is in the ADRs and in the project's decision log.
 DECISIONS = [
     ("UK pairs are scored out-of-fold (ADR 0001)",
-     "UK Product–Market pairs are split into five folds by a hash of the pair, all years together. Each pair's "
+     ("UK Product–Market pairs are split into five folds by a hash of the pair, all years together. Each pair's "
      "Export Potential, Scenario Effect and explanation come from the fold model that never saw it, so the "
-     "Export Gap is not shrunk by memorisation. UK supply features leave the target Market out."),
+     "Export Gap is not shrunk by memorisation. UK supply features leave the target Market out.")),
     ("One monotone-constrained XGBoost model (ADR 0002)",
-     "A single Tweedie-loss gradient-boosted model serves Opportunities and Scenarios. Every policy feature has a "
+     ("A single Tweedie-loss gradient-boosted model serves Opportunities and Scenarios. Every policy feature has a "
      "+1 monotone constraint, so adding an agreement never lowers Export Potential; it does not make the size "
-     "of the effect right."),
+     "of the effect right.")),
     ("BACI's HS 2012 revision (ADR 0003)",
-     "A longer history (2012–2024) gives the model more agreements that changed during training, and covers the "
-     "EU–Japan Event Backtest; the cost is 2012-vintage Product codes."),
+     ("A longer history (2012–2024) gives the model more agreements that changed during training, and covers the "
+     "EU–Japan Event Backtest; the cost is 2012-vintage Product codes.")),
     ("No features from the pair's trade in other Products",
-     "Total bilateral trade would absorb the policy effect, so a Scenario that flips only the policy columns would "
-     "understate it."),
+     ("Total bilateral trade would absorb the policy effect, so a Scenario that flips only the policy columns would "
+     "understate it.")),
     ("Training rows: non-zero Flows plus 2% of relevant zero cells",
-     "Zero cells where both sides trade the Product, but not with each other, are sampled at 2% and weighted by 50 "
-     "(Horvitz–Thompson), so totals stay unbiased."),
+     ("Zero cells where both sides trade the Product, but not with each other, are sampled at 2% and weighted by 50 "
+     "(Horvitz–Thompson), so totals stay unbiased.")),
     ("Only 30% of other Exporters' rows are trained on",
-     "All 152 M training rows filled the GPU's memory, so the real models keep a reweighted 30% hash sample of "
-     "non-UK rows and every UK row. Estimates stay unbiased but noisier, most for small Exporters."),
+     ("All 152 M training rows filled the GPU's memory, so the real models keep a reweighted 30% hash sample of "
+     "non-UK rows and every UK row. Estimates stay unbiased but noisier, most for small Exporters.")),
     ("Policy features from the WTO RTA-IS",
-     "An agreement counts in a year if in force before 1 July. Partial-scope agreements are excluded. The UK leaves "
-     "the EU Trading Bloc in 2020 (31 January) but stays in the Customs Union and EU agreements for 2020."),
+     ("An agreement counts in a year if in force before 1 July. Partial-scope agreements are excluded. The UK leaves "
+     "the EU Trading Bloc in 2020 (31 January) but stays in the Customs Union and EU agreements for 2020.")),
     ("Bloc Scenarios change only member Markets' rows",
-     "EU re-join sets the Trade Agreement, Customs Union and EU flags on EU Markets' rows; CPTPP sets the Trade "
-     "Agreement and CPTPP flags on members' rows. A Blocked Opportunity gains at least 20% and $1M."),
+     ("EU re-join sets the Trade Agreement, Customs Union and EU flags on EU Markets' rows; CPTPP sets the Trade "
+     "Agreement and CPTPP flags on members' rows. A Blocked Opportunity gains at least 20% and $1M.")),
     ("Headline metric: rank correlation within each Product",
-     "Advisors read the model as a ranking of Markets for one Product, so the headline is the within-Product "
-     "Spearman correlation on the UK's full 2023 grid, out-of-fold, against a naive market-share baseline."),
+     ("Advisors read the model as a ranking of Markets for one Product, so the headline is the within-Product "
+     "Spearman correlation on the UK's full 2023 grid, out-of-fold, against a naive market-share baseline.")),
     ("Lift and Event Backtests",
-     "Lift counts a pair as grown if its Flow rose at least 50% and $100,000 from 2017 to 2023, for Exporters the "
+     ("Lift counts a pair as grown if its Flow rose at least 50% and $100,000 from 2017 to 2023, for Exporters the "
      "model never saw, with a size-matched Lift beside it. Event Backtests compare predicted with observed "
-     "difference-in-differences against the 10 largest high-income Control Markets with no agreement."),
+     "difference-in-differences against the 10 largest high-income Control Markets with no agreement.")),
     ("Values in £ at one stated rate",
      "USD values are converted at the Bank of England's annual average for the Baseline year (XUAAUSS)."),
     ("Missing GDP and population stay missing after a stated chain of sources",
-     "WDI, then IMF WEO, then CEPII Gravity, then interpolation; 21 small territories (0.1% of value) stay "
-     "missing and XGBoost routes them by learned defaults."),
+     ("WDI, then IMF WEO, then CEPII Gravity, then interpolation; 21 small territories (0.1% of value) stay "
+     "missing and XGBoost routes them by learned defaults.")),
 ]
 
 DATA_SOURCES = [
-    ("BACI HS12 V202601 (CEPII)", "Every non-zero Flow, 2012–2024, reconciled from exporter and importer reports; "
-     "the model's target and supply and demand features.", "raw/baci"),
-    ("CEPII Gravity V202211", "Distance, contiguity, common language, colonial ties; cross-check of agreements "
-     "to 2021.", "raw/gravity"),
+    ("BACI HS12 V202601 (CEPII)", ("Every non-zero Flow, 2012–2024, reconciled from exporter and importer reports; "
+     "the model's target and supply and demand features."), "raw/baci"),
+    ("CEPII Gravity V202211", ("Distance, contiguity, common language, colonial ties; cross-check of agreements "
+     "to 2021."), "raw/gravity"),
     ("World Bank WDI and country list", "GDP and population; regions and income levels.", "raw/wdi"),
     ("IMF World Economic Outlook", "GDP and population where WDI has none (e.g. Taiwan).", "raw/imf_weo"),
-    ("WTO Regional Trade Agreements database (RTA-IS)", "Trade Agreements, Customs Unions and Trading Bloc "
-     "memberships with per-member dates: the policy features.", "raw/wto"),
+    ("WTO Regional Trade Agreements database (RTA-IS)", ("Trade Agreements, Customs Unions and Trading Bloc "
+     "memberships with per-member dates: the policy features."), "raw/wto"),
     ("Bank of England, series XUAAUSS", "USD → GBP annual average rates.", "src/exportspredictor/currency.py"),
-    ("HMRC Overseas Trade Statistics, 2023 (Open Government Licence v3.0)", "Cross-check of BACI's UK totals "
-     "only; never a model input.", "raw/hmrc"),
-    ("UN Statistics Division HS 2022 → HS 2012 conversion table", "Puts HMRC's 2023 codes on BACI's revision "
-     "for the cross-check.", "raw/hmrc"),
+    ("HMRC Overseas Trade Statistics, 2023 (Open Government Licence v3.0)", ("Cross-check of BACI's UK totals "
+     "only; never a model input."), "raw/hmrc"),
+    ("UN Statistics Division HS 2022 → HS 2012 conversion table", ("Puts HMRC's 2023 codes on BACI's revision "
+     "for the cross-check."), "raw/hmrc"),
 ]
 
 # Raw folders under the data root and the source each belongs to, for `data_lineage`.
@@ -297,7 +297,7 @@ def psi(reference: pl.Series, current: pl.Series, bins: int = PSI_BINS) -> float
     Missing values form their own bin. PSI = Σ (actual − expected) × ln(actual / expected).
     """
     reference, current = reference.cast(pl.Float64), current.cast(pl.Float64)
-    edges = sorted(set(reference.drop_nulls().quantile(q / bins, "linear") for q in range(1, bins)))
+    edges = sorted({reference.drop_nulls().quantile(q / bins, "linear") for q in range(1, bins)})
     expected, actual = _shares(reference, edges), _shares(current, edges)
     return float(sum((a - e) * math.log(a / e) for e, a in zip(expected, actual, strict=True)))
 
