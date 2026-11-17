@@ -23,6 +23,7 @@ YEAR = 2023
 WHISKY = "220830"
 TARGET = (UK, "JPN", WHISKY)  # UK whisky to Japan
 OTHER_MARKET = "CAN"
+CRUDE_OIL = "270900"  # the fixture world's Excluded Product (Sector 27)
 
 
 @pytest.fixture
@@ -120,8 +121,8 @@ def _world_with_an_irrelevant_product(world) -> pl.DataFrame:
 
 def _relevant_zero_cells(flows: pl.DataFrame) -> set[tuple]:
     """Worked out cell by cell: the Exporter exports the Product to someone and the Importer
-    imports it from someone that year, but not from each other."""
-    active = {(e, i, k, y) for e, i, k, y, v in flows.iter_rows() if v > 0}
+    imports it from someone that year, but not from each other. Excluded Products have none."""
+    active = {(e, i, k, y) for e, i, k, y, v in flows.iter_rows() if v > 0 and k != CRUDE_OIL}
     exports = {(e, k, y) for e, _, k, y in active}
     imports = {(i, k, y) for _, i, k, y in active}
     exporters = {e for e, *_ in exports}
@@ -137,7 +138,7 @@ def _relevant_zero_cells(flows: pl.DataFrame) -> set[tuple]:
 
 def test_training_rows_keep_every_non_zero_flow_with_weight_one(world):
     rows = training_rows(world.flows, rate=0.5, seed=0)
-    non_zero = world.flows.filter(pl.col("value_usd") > 0)
+    non_zero = world.flows.filter((pl.col("value_usd") > 0) & (pl.col("hs6") != CRUDE_OIL))
 
     kept = rows.filter(pl.col("value_usd") > 0)
     assert kept.height == non_zero.height
@@ -190,7 +191,8 @@ def test_uk_grid_has_every_product_and_market_with_actual_exports(world):
 
     grid = uk_grid(flows, UK)
 
-    assert grid.height == 5 * 3  # 5 Products x 3 Markets, the UK never its own Market
+    # 5 Products x 3 Markets: the UK is never its own Market, and crude oil is excluded.
+    assert grid.height == 5 * 3
     assert set(grid["exporter"]) == {UK}
     assert grid.select("importer", "hs6").is_duplicated().sum() == 0
     assert grid.filter(_is(*TARGET))["value_usd"][0] == _value(flows, *TARGET)
@@ -235,3 +237,35 @@ def test_transform_round_trips_through_metadata(world):
     fitted = FeatureTransform.fit(_all_year_features(world, world.flows), TRAINING_YEARS)
 
     assert FeatureTransform.from_dict(fitted.to_dict()) == fitted
+
+
+# --- Excluded Products: dropped as rows, still counted in totals (ADR 0005) ---------------
+
+
+def test_the_fixture_world_trades_an_excluded_product(world):
+    assert world.flows.filter((pl.col("hs6") == CRUDE_OIL) & (pl.col("value_usd") > 0)).height > 0
+
+
+def test_excluded_products_appear_in_no_training_row_and_no_uk_grid_row(world):
+    rows = training_rows(world.flows, rate=1.0)
+    grid = uk_grid(world.flows, UK)
+
+    assert CRUDE_OIL not in set(rows["hs6"])
+    assert CRUDE_OIL not in set(grid["hs6"])
+    assert rows.filter(pl.col("value_usd") > 0).height == world.flows.filter(
+        (pl.col("value_usd") > 0) & (pl.col("hs6") != CRUDE_OIL)
+    ).height
+
+
+def test_rca_and_aggregates_of_other_products_are_unchanged_by_the_exclusion(world):
+    """Features of a non-Excluded row are what they would be with every Product as a row,
+    because the totals (Exporter total, world totals in RCA, supply and demand) still count
+    the Excluded Product's Flows."""
+    year_flows = world.flows.filter(pl.col("year") == YEAR)
+    built = build_features(training_rows(year_flows, rate=1.0), year_flows, world.sources).filter(_is(*TARGET))
+    without_exclusion = _features_for(world, world.flows, [TARGET])
+
+    assert _same(built, without_exclusion, 0, FEATURES)
+    # Crude oil really is in the totals: dropping its Flows would move the UK's whisky RCA.
+    no_crude = world.flows.filter(pl.col("hs6") != CRUDE_OIL)
+    assert not _same(without_exclusion, _features_for(world, no_crude, [TARGET]), 0, ["rca_loo"])

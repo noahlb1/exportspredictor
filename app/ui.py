@@ -99,13 +99,34 @@ def product_picker(sector: str | None = None) -> str | None:
         in_sector = f" in Sector {sector}" if sector else ""
         st.warning(f"No Product matches '{query}'{in_sector}. Try an HS6 code or another word.")
         return None
-    descriptions = {product["hs6"]: product["description"] for product in found}
+    # Excluded Products are found and marked; choosing one shows the API's 404 with its reason.
+    descriptions = {
+        product["hs6"]: product["description"] + (" (Excluded Product)" if product["excluded"] else "")
+        for product in found
+    }
     return st.selectbox(
         "Product",
         list(descriptions),
         format_func=lambda hs6: f"{hs6} – {descriptions[hs6]}",
         key="hs6",
     )
+
+
+def excluded_products_list() -> None:
+    """The Excluded Products and the reason for each, in an expander under the ranking filters."""
+    excluded = fetch("/products/excluded", client.api_url())
+    with st.expander(f"Excluded Products ({len(excluded)}): why some Products are never ranked"):
+        st.caption(
+            "These Products are left out of training, scoring and every ranking, because their recorded "
+            "trade follows bullion-market, pipeline or grid geography the model cannot see, or is unreliable. "
+            "Their trade still counts in every country and world total."
+        )
+        table = pd.DataFrame(excluded, columns=["hs6", "description", "sector", "reason"])
+        # A static table, so the page's interactive dataframes are only its rankings.
+        st.table(
+            table.rename(columns={"hs6": "HS6", "description": "Product", "sector": "Sector", "reason": "Reason"})
+            .set_index("HS6")
+        )
 
 
 @st.cache_data(ttl=300, show_spinner=False)

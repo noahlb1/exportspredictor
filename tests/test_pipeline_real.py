@@ -1,5 +1,7 @@
 """The real-data training run, on a tiny data root laid out like the derived tables (CPU, seconds)."""
 
+import json
+
 import polars as pl
 import pytest
 
@@ -116,3 +118,18 @@ def test_backtests_are_added_to_the_newest_evaluated_artefact_with_cached_models
         )
     )
     assert again.evaluation["lift"]["lift"] == result.evaluation["lift"]["lift"]
+
+
+def test_baseline_and_history_hold_no_excluded_product(trained):
+    assert "270900" not in set(trained.baseline["hs6"]) | set(trained.history["hs6"])
+    assert trained.excluded_products["hs6"].to_list() == ["270900"]
+
+
+def test_feature_files_built_without_the_exclusions_are_refused(derived_data_root):
+    folder = features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
+    settings = json.loads((folder / "features.json").read_text())
+    del settings["excluded_products"]  # as v1's feature build wrote it
+    (folder / "features.json").write_text(json.dumps(settings))
+
+    with pytest.raises(ValueError, match="rebuild"):
+        pipeline.build_real_artefacts(derived_data_root, configs=CONFIGS, device="cpu", max_rounds=30)

@@ -114,7 +114,9 @@ def test_products_search_finds_a_product_by_an_everyday_word(client):
 def test_products_search_matches_words_in_the_description(client):
     body = client.get("/products", params={"q": "fish frozen"}).json()
 
-    assert body == [{"hs6": "030420", "description": "Fish fillets, frozen", "sector": "03"}]
+    assert body == [
+        {"hs6": "030420", "description": "Fish fillets, frozen", "sector": "03", "excluded": False, "exclusion_reason": None}
+    ]
 
 
 def test_products_search_by_code_prefix_lists_the_sector(client):
@@ -368,3 +370,45 @@ def test_evaluation_includes_lift_and_the_event_backtest(client):
     assert direction["controls"] and direction["pooled"]["observed"] is not None
     assert direction["pooled"]["predicted"] is not None
     assert body["event_backtest"]["text"] and body["event_backtest"]["caveat"]
+
+
+# --- Excluded Products (ADR 0005) -----------------------------------------------------------
+
+CRUDE_OIL = "270900"  # the fixture world's Excluded Product
+
+
+def test_products_excluded_lists_every_excluded_product_with_its_reason(client):
+    response = client.get("/products/excluded")
+
+    assert response.status_code == 200
+    [crude] = response.json()
+    assert crude["hs6"] == CRUDE_OIL
+    assert crude["sector"] == "27"
+    assert "pipelines" in crude["reason"]
+
+
+@pytest.mark.parametrize("path", [f"/opportunities/by-product/{CRUDE_OIL}", f"/explain/{CRUDE_OIL}/JPN"])
+def test_asking_for_an_excluded_product_returns_404_with_its_reason(client, path):
+    response = client.get(path)
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert "Excluded Product" in detail and "pipelines" in detail
+
+
+@pytest.mark.parametrize("iso3", ["JPN", "CAN", "IND"])
+def test_no_ranking_contains_an_excluded_product(client, iso3):
+    for rank_by in ("gap", "blocked"):
+        body = client.get(f"/opportunities/by-market/{iso3}", params={"rank_by": rank_by}).json()
+
+        hs6s = {row["hs6"] for row in body["opportunities"]}
+        assert hs6s and CRUDE_OIL not in hs6s
+
+
+def test_product_search_marks_an_excluded_product_rather_than_hiding_it(client):
+    [crude] = client.get("/products", params={"q": "crude"}).json()
+    [whisky] = client.get("/products", params={"q": FIXTURE_HS6}).json()
+
+    assert crude["hs6"] == CRUDE_OIL
+    assert crude["excluded"] is True and "pipelines" in crude["exclusion_reason"]
+    assert whisky["excluded"] is False and whisky["exclusion_reason"] is None

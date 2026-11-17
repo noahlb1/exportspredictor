@@ -22,6 +22,17 @@ class ProductOut(BaseModel):
     sector: str
 
 
+class ProductMatch(ProductOut):
+    """A Product search result: Excluded Products are found and marked, not hidden (ADR 0005)."""
+
+    excluded: bool
+    exclusion_reason: str | None
+
+
+class ExcludedProductOut(ProductOut):
+    reason: str  # why it is left out of training, scoring and rankings
+
+
 class MarketOut(BaseModel):
     iso3: str
     name: str

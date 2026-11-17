@@ -1,6 +1,7 @@
 """A tiny, deterministic synthetic world for tests, the fixture-mode notebook and local development.
 
-The world has 4 Exporters (including the UK), 3 Markets, 5 Products and 4 years.
+The world has 4 Exporters (including the UK), 3 Markets, 5 Products (plus one Excluded
+Product) and 4 years.
 Flows follow a gravity-like rule: Exporter and Importer size, the Exporter's strength in
 the Product, and a positive association with a Trade Agreement, plus noise and some zeros.
 The UK–Japan Trade Agreement switches on part-way through, so the world contains a
@@ -30,6 +31,9 @@ PRODUCTS = {
     "870323": "Motor cars, spark-ignition engine of 1,500-3,000 cc",
 }
 YEARS = [2021, 2022, 2023, 2024]
+# Large, so that leaving it out of the totals would visibly move other Products' RCA.
+EXCLUDED_PRODUCT = ("270900", "Petroleum oils and oils obtained from bituminous minerals; crude")
+_EXCLUDED_SCALE = 10.0
 
 # Trade Agreements in force, as (Exporter, Importer) -> first year in force.
 _AGREEMENTS = {
@@ -112,6 +116,7 @@ def build_world(seed: int = 0) -> World:
                     is_zero = rng.random() < _ZERO_SHARE
                     value = 0.0 if is_zero else round(float(np.exp(log_value)), 2)
                     flow_rows.append((exporter, importer, hs6, year, value))
+    flow_rows += _excluded_product_flows(seed)
 
     flows = pl.DataFrame(
         flow_rows,
@@ -136,9 +141,9 @@ def build_world(seed: int = 0) -> World:
     ).with_columns(customs_union=pl.lit(0, pl.Int8))  # no fixture pair shares a Customs Union
     products = pl.DataFrame(
         {
-            "hs6": list(PRODUCTS),
-            "description": list(PRODUCTS.values()),
-            "sector": [hs6[:2] for hs6 in PRODUCTS],
+            "hs6": [*PRODUCTS, EXCLUDED_PRODUCT[0]],
+            "description": [*PRODUCTS.values(), EXCLUDED_PRODUCT[1]],
+            "sector": [hs6[:2] for hs6 in [*PRODUCTS, EXCLUDED_PRODUCT[0]]],
         }
     )
     markets = pl.DataFrame(
@@ -158,6 +163,21 @@ def build_world(seed: int = 0) -> World:
         pairs=_pairs(),
         high_income=_HIGH_INCOME,
     )
+
+
+def _excluded_product_flows(seed: int) -> list[tuple]:
+    """Crude oil Flows from every Exporter to every Market, from their own random stream."""
+    rng = np.random.default_rng([seed, 1])
+    hs6 = EXCLUDED_PRODUCT[0]
+    strength = {exporter: rng.normal(0.0, 1.0) for exporter in EXPORTERS}
+    return [
+        (exporter, importer, hs6, year, round(float(np.exp(
+            _EXCLUDED_SCALE + exporter_size + importer_size + strength[exporter] + rng.normal(0.0, 0.3)
+        )), 2))
+        for exporter, exporter_size in EXPORTERS.items()
+        for importer, (_, _, importer_size) in MARKETS.items()
+        for year in YEARS
+    ]
 
 
 def _blocs() -> pl.DataFrame:

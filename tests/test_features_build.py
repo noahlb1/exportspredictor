@@ -36,3 +36,12 @@ def test_build_records_its_settings(derived_data_root):
     assert settings["zero_sampling_seed"] == 4
     assert settings["years"] == [2023]
     assert settings["features"] == features.FEATURES
+
+
+def test_build_drops_excluded_products_and_records_the_list(derived_data_root):
+    out = features.build(derived_data_root, years=[2024], rate=1.0)
+
+    for name in ("training_2024", "uk_grid_2024"):
+        assert "270900" not in set(pl.read_parquet(out / f"{name}.parquet")["hs6"].cast(pl.String))
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["excluded_products"][0] == "Sector 27 except 2712"
