@@ -53,7 +53,12 @@ from exportspredictor.features import (
 )
 from exportspredictor.fixture import UK, World
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
-from exportspredictor.gap_period import baseline_year_scores, export_gaps, gap_period, gap_years
+from exportspredictor.gap_period import (
+    baseline_year_scores,
+    export_gaps,
+    gap_period,
+    gap_years,
+)
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
 from exportspredictor.scenarios import blocked_effects, with_blocked_effects

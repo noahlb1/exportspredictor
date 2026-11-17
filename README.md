@@ -73,13 +73,13 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 Run this before a release, against `podman compose up` with real artefacts. Tick each item.
 
 **UK Exports Predictor (home page)**
-- [ ] The page loads, and the banner states the Baseline year, that it is provisional, and the model version.
+- [ ] The page loads, and the banner states the Baseline year, that it is provisional, that Export Gaps are 2022–2024 averages, and the model version.
 - [ ] Every page has one caption, "Values are nominal US dollars, as reported by BACI", and no page shows a pound sign or a currency switch.
 - [ ] Stop the API (`podman compose stop api`) and reload: every page shows a clear "API is unavailable" message instead of an error. Start it again with `podman compose start api`.
 
 **Product → Markets**
 - [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
-- [ ] Export Potential, Actual Exports and Export Gap appear side by side.
+- [ ] Export Potential, Actual Exports and Export Gap appear side by side, each headed "2022–2024 average".
 - [ ] Search text that matches nothing (e.g. `999999` or `zzz`) shows a clear "No Product matches" warning.
 - [ ] Open "Excluded Products" under the filters: each Excluded Product (e.g. `270900` crude oil, `710812` gold) is listed with its reason. Searching one (e.g. `gold`) marks it "(Excluded Product)", and choosing it shows why it is not ranked instead of a ranking.
 - [ ] Values are in USD: column headers say "(USD, nominal)".
@@ -106,7 +106,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 **Why?**
 - [ ] On **Product → Markets** and **Market → Products**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
 - [ ] The factors are described in plain words (no raw feature names), each marked as raising or lowering Export Potential, phrased as associations.
-- [ ] The UK's Actual Exports for the last six years are shown, with 0 for years with none.
+- [ ] A year-by-year table shows the last six years' UK Actual Exports (0 for years with none) and, for 2022–2024, each year's Export Potential and Export Gap; the three yearly gaps average to the Export Gap shown above it.
 - [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.
 
 **Model Evaluation**

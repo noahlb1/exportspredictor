@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch, product_picker
+from app.ui import banner, fetch, gap_period_label, product_picker
 from exportspredictor.currency import USD_UNIT, format_usd
 
 TOP_FACTORS = 8
@@ -43,11 +43,14 @@ if banner() is not None:
         else:
             product, market = body["product"], body["market"]
             st.subheader(f"{product['hs6']} – {product['description']} → {market['name']}")
+            averaged = gap_period_label(body["gap_years"])
             st.markdown(
-                f"Baseline year {body['baseline_year']}: "
+                f"{averaged[0].upper()}{averaged[1:]}: "
                 f"Export Potential **{format_usd(body['export_potential_usd'])}**, "
                 f"Actual Exports **{format_usd(body['actual_exports_usd'])}**, "
-                f"Export Gap **{format_usd(body['export_gap_usd'])}**."
+                f"Export Gap **{format_usd(body['export_gap_usd'])}**. "
+                f"Baseline year {body['baseline_year']} Export Potential, which the factors below explain: "
+                f"**{format_usd(body['baseline_export_potential_usd'])}**."
             )
             st.markdown(
                 "Each factor below is something the model associates with higher or lower UK exports "
@@ -84,12 +87,27 @@ if banner() is not None:
                 f"Computed with SHAP from fold model {body['fold']}, the same model that scored this pair's Baseline."
             )
 
-            st.subheader("UK Actual Exports, recent years")
+            st.subheader("Year by year")
             baseline_year = body["baseline_year"]
-            exports = {point["year"]: point["actual_exports_usd"] for point in body["history"]}
-            years = range(baseline_year - 5, baseline_year + 1)
+            points = {point["year"]: point for point in body["history"]}
+            years = list(range(baseline_year - 5, baseline_year + 1))
+            empty = {"actual_exports_usd": 0.0, "export_potential_usd": None, "export_gap_usd": None}
+            yearly = [points.get(year, empty) for year in years]
             st.dataframe(
-                pd.DataFrame({"Year": list(years), f"Actual Exports ({USD_UNIT})": [exports.get(y, 0.0) for y in years]}),
+                pd.DataFrame(
+                    {
+                        "Year": years,
+                        f"Export Potential ({USD_UNIT})": [p["export_potential_usd"] for p in yearly],
+                        f"Actual Exports ({USD_UNIT})": [p["actual_exports_usd"] for p in yearly],
+                        f"Export Gap ({USD_UNIT})": [p["export_gap_usd"] for p in yearly],
+                    },
+                    dtype=float,
+                ).astype({"Year": int}),
                 hide_index=True,
             )
-            st.caption(f"{baseline_year} figures are provisional. A year with no recorded UK exports shows 0.")
+            first, last = body["gap_years"]
+            st.caption(
+                f"The Export Gap above is the {averaged} of the yearly Export Gaps of {first}–{last}, the Gap Period; "
+                "each year's Export Potential is scored from that year's conditions. Earlier years show UK Actual "
+                f"Exports only. {baseline_year} figures are provisional. A year with no recorded UK exports shows 0."
+            )

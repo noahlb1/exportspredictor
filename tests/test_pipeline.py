@@ -6,7 +6,13 @@ import numpy as np
 import polars as pl
 import pytest
 
-from exportspredictor.features import FEATURES, POLICY_FEATURES, FeatureTransform, build_features, uk_grid
+from exportspredictor.features import (
+    FEATURES,
+    POLICY_FEATURES,
+    FeatureTransform,
+    build_features,
+    uk_grid,
+)
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
 from exportspredictor.pipeline import build_artefacts, fixture_training, refresh

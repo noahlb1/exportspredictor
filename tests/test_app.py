@@ -60,7 +60,7 @@ def test_page_shows_markets_ranked_by_export_gap(monkeypatch, api_url):
     assert not page.exception
     table = page.dataframe[0].value
     assert list(table["Market"]) and set(table["Market"]) == {"Japan", "Canada", "India"}
-    gaps = list(table["Export Gap (USD, nominal)"])
+    gaps = list(table["Export Gap, 2022–2024 average (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
 
 
@@ -69,6 +69,18 @@ def test_page_shows_baseline_year_banner(monkeypatch, api_url):
 
     banner = " ".join(element.value for element in page.info)
     assert "2024" in banner and "provisional" in banner
+    assert "Export Gaps are 2022–2024 averages" in banner
+
+
+@pytest.mark.parametrize("market_page", [False, True], ids=["product", "market"])
+def test_ranking_values_are_labelled_as_gap_period_averages(monkeypatch, api_url, market_page):
+    page = _market_page(monkeypatch, api_url, "JPN") if market_page else _run_page(monkeypatch, api_url, "220830")
+
+    columns = list(page.dataframe[0].value.columns)
+    for value in ("Export Potential", "Actual Exports", "Export Gap"):
+        assert f"{value}, 2022–2024 average (USD, nominal)" in columns
+    # The Blocked Opportunity value is a 2024 Scenario Effect, not an average.
+    assert "Blocked Opportunity value (USD, nominal)" in columns
 
 
 def test_searching_by_everyday_words_finds_the_product(monkeypatch, api_url):
@@ -126,7 +138,7 @@ def test_market_page_ranks_products_by_export_gap(monkeypatch, api_url):
     assert any("Japan" in element.value for element in page.subheader)
     table = page.dataframe[0].value
     assert set(table["HS6"]) == {"030420", "220830", "300490", "851712", "870323"}
-    gaps = list(table["Export Gap (USD, nominal)"])
+    gaps = list(table["Export Gap, 2022–2024 average (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
 
 
@@ -188,7 +200,7 @@ def test_min_gap_filter_drops_smaller_gaps(monkeypatch, api_url):
 
     table = page.dataframe[0].value
     assert 0 < len(table) < len(everything)
-    assert (table["Export Gap (USD, nominal)"] >= 0).all()
+    assert (table["Export Gap, 2022–2024 average (USD, nominal)"] >= 0).all()
 
 
 def test_filters_that_match_nothing_say_so(monkeypatch, api_url):

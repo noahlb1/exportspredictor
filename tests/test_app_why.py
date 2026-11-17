@@ -74,6 +74,25 @@ def test_why_page_shows_actual_exports_history_for_every_recent_year(monkeypatch
     assert "Actual Exports (USD, nominal)" in history.columns
 
 
+def test_why_page_shows_each_gap_period_years_export_potential_and_gap(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+    body = httpx.get(f"{api_url}/explain/220830/JPN").json()
+
+    history = page.dataframe[1].value
+    assert list(history.columns) == [
+        "Year",
+        "Export Potential (USD, nominal)",
+        "Actual Exports (USD, nominal)",
+        "Export Gap (USD, nominal)",
+    ]
+    gap_years = history[history["Year"] >= 2022]
+    assert list(gap_years["Year"]) == [2022, 2023, 2024]
+    assert gap_years["Export Gap (USD, nominal)"].mean() == pytest.approx(body["export_gap_usd"])
+    assert history[history["Year"] < 2022]["Export Gap (USD, nominal)"].isna().all()
+    text = " ".join(m.value for m in page.markdown) + " ".join(c.value for c in page.caption)
+    assert "2022–2024 average" in text
+
+
 def test_why_page_phrases_results_as_associations(monkeypatch, api_url):
     page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
 

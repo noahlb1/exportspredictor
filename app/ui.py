@@ -21,6 +21,14 @@ _VALUES = {
     "export_gap": "Export Gap",
     "blocked_effect": "Blocked Opportunity value",
 }
+# The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's.
+_GAP_PERIOD_MEANS = ("export_potential", "actual_exports", "export_gap")
+
+
+def gap_period_label(gap_years: list[int]) -> str:
+    """How a Gap Period mean is labelled, e.g. "2022–2024 average", from the API's `gap_years`."""
+    first, last = gap_years
+    return f"{first}–{last} average"
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -44,8 +52,10 @@ def banner() -> dict | None:
             "Then reload this page."
         )
         return None
+    first, last = health["gap_years"]
     st.info(
         f"Baseline year {health['baseline_year']} (provisional data). "
+        f"Export Gaps are {first}–{last} averages. "
         "Figures are associations the model has learned, not causes. "
         f"Model version {health['artefact_version']}."
     )
@@ -153,6 +163,9 @@ def market_picker(region: str | None = None) -> str | None:
 def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: str | None = None, iso3: str | None = None) -> None:
     """The ranking table in nominal USD, with a Why? link per row and a CSV export.
 
+    Export Potential, Actual Exports and Export Gap are Gap Period means, labelled as such
+    (e.g. "Export Gap, 2022–2024 average (USD, nominal)").
+
     `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
     ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
     holds exactly the table's data columns (the Why? links are page navigation, not data).
@@ -166,15 +179,20 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     raw = pd.DataFrame(rows)
     table = raw[list(columns)].rename(columns=columns)
     table["UK Trade Agreement in force"] = raw["trade_agreement"].map({True: "Yes", False: "No"})
-    for field, heading in _VALUES.items():
-        table[f"{heading} ({USD_UNIT})"] = raw[f"{field}_usd"]
+    averaged = gap_period_label(body["gap_years"])
+    headings = {
+        field: f"{heading}, {averaged} ({USD_UNIT})" if field in _GAP_PERIOD_MEANS else f"{heading} ({USD_UNIT})"
+        for field, heading in _VALUES.items()
+    }
+    for field, heading in headings.items():
+        table[heading] = raw[f"{field}_usd"]
     table["Blocked Opportunity"] = raw["blocked_opportunity"]
     links = [why_link(hs6 or row["hs6"], iso3 or row["iso3"]) for row in rows]
     st.dataframe(
         table.assign(**{"Why?": links}),
         hide_index=True,
         column_config={
-            **{f"{heading} ({USD_UNIT})": st.column_config.NumberColumn(format="localized") for heading in _VALUES.values()},
+            **{heading: st.column_config.NumberColumn(format="localized") for heading in headings.values()},
             "Why?": why_column(),
         },
     )
