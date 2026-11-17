@@ -115,3 +115,29 @@ def test_markets_lists_every_market_with_name_and_region(client):
         "region": "East Asia & Pacific",
     }
     assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND"}
+
+
+def test_by_market_returns_every_product_sorted_by_export_gap(client):
+    body = client.get("/opportunities/by-market/JPN").json()
+
+    gaps = [row["export_gap_usd"] for row in body["opportunities"]]
+    assert gaps == sorted(gaps, reverse=True)
+    assert {row["hs6"] for row in body["opportunities"]} == {"030420", "220830", "300490", "851712", "870323"}
+    assert body["market"] == {"iso3": "JPN", "name": "Japan", "region": "East Asia & Pacific"}
+    assert body["baseline_year"] == 2024
+    assert body["artefact_version"] == "fixture-test"
+
+
+def test_by_market_rows_name_the_product(client):
+    rows = client.get("/opportunities/by-market/JPN").json()["opportunities"]
+
+    assert {"hs6": "220830", "description": "Whiskies", "sector": "22"}.items() <= next(
+        row for row in rows if row["hs6"] == "220830"
+    ).items()
+
+
+def test_unknown_market_returns_404_with_a_message(client):
+    response = client.get("/opportunities/by-market/XYZ")
+
+    assert response.status_code == 404
+    assert "XYZ" in response.json()["detail"]

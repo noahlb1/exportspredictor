@@ -6,6 +6,8 @@ Tests inject an artefact root with `create_app(root)`; the module-level `app` re
 
 To add an endpoint: add a route in `create_app`, get the bundle with `Depends(loaded)` (it
 answers 503 until artefacts load), and declare a response model in `api/schemas.py`.
+Both ranking views go through `_ranking` (and the package's `rank_opportunities`), so a
+ranking option or row field is added there once.
 """
 
 from contextlib import asynccontextmanager
@@ -14,11 +16,21 @@ from pathlib import Path
 import polars as pl
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from api.schemas import Health, MarketOpportunity, MarketOut, ProductOpportunities, ProductOut
+from api.schemas import (
+    Health,
+    MarketOpportunities,
+    MarketOpportunity,
+    MarketOut,
+    ProductOpportunities,
+    ProductOpportunity,
+    ProductOut,
+)
 from exportspredictor import artefacts as store
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
+from exportspredictor.rankings import rank_opportunities
 
 
 def loaded(request: Request) -> store.Artefacts:
@@ -61,25 +73,37 @@ def create_app(artefacts_root: Path | None = None) -> FastAPI:
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
     def by_product(hs6: str, artefacts: store.Artefacts = Depends(loaded)):
+        """Markets ranked for one Product."""
         product = artefacts.products.filter(pl.col("hs6") == hs6)
         if product.is_empty():
             raise HTTPException(status_code=404, detail=f"Unknown Product: {hs6}")
-        rows = (
-            artefacts.baseline.filter(pl.col("hs6") == hs6)
-            .join(artefacts.markets.rename({"name": "market"}), on="iso3", how="left")
-            .sort("export_gap_usd", descending=True)
-        )
         return ProductOpportunities(
-            artefact_version=artefacts.version,
-            baseline_year=artefacts.baseline_year,
+            **_ranking(artefacts, MarketOpportunity, hs6=hs6),
             product=ProductOut(**product.row(0, named=True)),
-            opportunities=[
-                MarketOpportunity(**{k: row[k] for k in MarketOpportunity.model_fields})
-                for row in rows.iter_rows(named=True)
-            ],
+        )
+
+    @app.get("/opportunities/by-market/{iso3}", response_model=MarketOpportunities)
+    def by_market(iso3: str, artefacts: store.Artefacts = Depends(loaded)):
+        """Products ranked for one Market."""
+        market = artefacts.markets.filter(pl.col("iso3") == iso3)
+        if market.is_empty():
+            raise HTTPException(status_code=404, detail=f"Unknown Market: {iso3}")
+        return MarketOpportunities(
+            **_ranking(artefacts, ProductOpportunity, iso3=iso3),
+            market=MarketOut(**market.row(0, named=True)),
         )
 
     return app
+
+
+def _ranking(artefacts: store.Artefacts, row_model: type[BaseModel], **query) -> dict:
+    """The fields both ranking views share: metadata and the ranked rows."""
+    rows = rank_opportunities(artefacts, **query)
+    return {
+        "artefact_version": artefacts.version,
+        "baseline_year": artefacts.baseline_year,
+        "opportunities": [row_model(**{k: row[k] for k in row_model.model_fields}) for row in rows.iter_rows(named=True)],
+    }
 
 
 def _try_load(app: FastAPI) -> store.Artefacts | None:
