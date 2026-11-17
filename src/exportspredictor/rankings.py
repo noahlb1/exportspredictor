@@ -2,8 +2,10 @@
 
 Every ranking view (the API's `/opportunities/top`, `/opportunities/by-product` and
 `/opportunities/by-market`) goes through `rank_opportunities`, which filters, sorts and limits
-once; `summarise` sizes the filtered rows for the Leaderboard's summary row. A new ranking
-order is one entry in `RANK_BY`; a new row field is added in `rank_opportunities`.
+once; `summarise` sizes the filtered rows for the Leaderboard's summary row, and
+`summarise_blocked` for the Blocked Opportunities page's (`/opportunities/blocked`, ordered by
+`BLOCKED`). A new ranking order is one entry in `RANK_BY`; a new row field is added in
+`rank_opportunities`.
 """
 
 from dataclasses import dataclass
@@ -49,17 +51,20 @@ RANK_BY = {
             ties=("export_gap_usd",),
             min_potential=True,
         ),
-        RankOrder(
-            "blocked",
-            "blocked_effect_usd",
-            "Blocked Opportunity value",
-            "The Scenario Effect the model associates with adding a Trade Agreement where none exists "
-            f"(0 where one does). Flagged rows clear {DEFAULT_MIN_SHARE:.0%} of Baseline Export Potential "
-            f"and ${DEFAULT_MIN_USD / 1e6:g}M.",
-        ),
     ]
 }
 DEFAULT_RANK_BY = "gap"
+# The Blocked Opportunities page's order. It is not in `RANK_BY`, so the Leaderboard and ranking
+# pages do not offer it: Blocked Opportunities show no Export Gap and have their own page.
+BLOCKED = RankOrder(
+    "blocked",
+    "blocked_effect_usd",
+    "Blocked Opportunity value",
+    "The Scenario Effect the model associates with adding a Trade Agreement where none exists "
+    f"(0 where one does). Flagged rows clear {DEFAULT_MIN_SHARE:.0%} of Baseline Export Potential "
+    f"and ${DEFAULT_MIN_USD / 1e6:g}M.",
+)
+_ORDERS = {**RANK_BY, BLOCKED.name: BLOCKED}  # every order `rank_opportunities` accepts
 
 
 def rank_opportunities(
@@ -99,10 +104,10 @@ def rank_opportunities(
     ranked as normal). An order with a minimum Export
     Potential (Relative Export Gap) keeps only pairs whose Export Potential is at least
     `min_potential_usd` (default `DEFAULT_MIN_POTENTIAL_USD`); other orders ignore it. Rows
-    are sorted by the `RANK_BY[rank_by]` column and its tie-breaks, largest first (then hs6,
+    are sorted by the `rank_by` order's column (`RANK_BY`, or `BLOCKED`) and its tie-breaks, largest first (then hs6,
     iso3); `limit` then keeps the top rows.
     """
-    order = RANK_BY[rank_by]
+    order = _ORDERS[rank_by]
     if opportunity_type is not None and opportunity_type not in OPPORTUNITY_TYPES:
         raise ValueError(f"Unknown Opportunity Type: {opportunity_type}")
     rows = artefacts.baseline
@@ -147,4 +152,13 @@ def summarise(rows: pl.DataFrame) -> dict:
     return {
         "pairs": rows.height,
         "positive_export_gap_usd": float(rows["export_gap_usd"].clip(lower_bound=0).sum()),
+    }
+
+
+def summarise_blocked(rows: pl.DataFrame) -> dict:
+    """The Blocked Opportunities page's summary: `summarise`, plus the Blocked Opportunities and total value (USD)."""
+    return {
+        **summarise(rows),
+        "blocked_opportunities": int(rows["blocked_opportunity"].sum()),
+        "blocked_effect_usd": float(rows["blocked_effect_usd"].sum()),
     }

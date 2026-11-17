@@ -1,6 +1,6 @@
 """Shared page furniture: cached API reads, the persistent banner, pickers and the ranking table.
 
-The Leaderboard and both ranking pages render through `ranking_filters` and `show_ranking`, so a ranking option,
+The Leaderboard, the Blocked Opportunities page and both ranking pages render through `ranking_filters` and `show_ranking`, so a ranking option,
 column or row link is added here once.
 """
 
@@ -80,14 +80,15 @@ def banner() -> dict | None:
     return health
 
 
-def ranking_filters(*, market_filter: bool = False) -> dict:
+def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True) -> dict:
     """The ranking order and filters, shared by the Leaderboard and both ranking pages.
 
     Returns the API query parameters that are set: `rank_by` (with `min_potential_usd`, chosen
     from the API's options, when the order ranks only pairs above a minimum Export Potential),
     `sector`, `region`, `opportunity_type`, `trade_agreement`, `min_gap_usd`, and
     `hide_flagged` / `hide_hubs` / `hide_uncertain` when ticked (all off by default). With `market_filter`
-    (the Leaderboard), one Market can be chosen too (`market`).
+    (the Leaderboard), one Market can be chosen too (`market`). Without `rank_by_toggle` (the
+    Blocked Opportunities page, which has one order) no `rank_by` is offered or returned.
     """
     markets = fetch("/markets", client.api_url())
     regions = sorted({market["region"] for market in markets})
@@ -132,13 +133,14 @@ def ranking_filters(*, market_filter: bool = False) -> dict:
     hide_uncertain = uncertain_column.checkbox(
         "Hide Uncertain Opportunities", key="hide_uncertain", help=CAVEATS["uncertain"][1]
     )
-    orders = rank_orders()
-    order_column, minimum_column = st.columns(2)
-    rank_by = order_column.radio(
-        "Rank by", list(orders), format_func=lambda name: orders[name]["title"], key="rank_by", horizontal=True
-    )
-    min_potential_usd = None
-    options = orders[rank_by].get("min_potential_usd_options")
+    rank_by = min_potential_usd = options = None
+    if rank_by_toggle:
+        orders = rank_orders()
+        order_column, minimum_column = st.columns(2)
+        rank_by = order_column.radio(
+            "Rank by", list(orders), format_func=lambda name: orders[name]["title"], key="rank_by", horizontal=True
+        )
+        options = orders[rank_by].get("min_potential_usd_options")
     if options:
         min_potential_usd = minimum_column.selectbox(
             f"Only pairs with Export Potential of at least ({USD_UNIT})",
@@ -259,7 +261,7 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
     holds exactly the table's data columns (the Why? links are page navigation, not data).
     """
-    order = rank_orders()[body["rank_by"]]
+    order = body.get("order") or rank_orders()[body["rank_by"]]  # Blocked Opportunities carry their own
     st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']}")
     rows = body["opportunities"]
     if not rows:

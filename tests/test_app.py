@@ -248,17 +248,6 @@ def test_market_page_api_down_shows_a_clear_message(monkeypatch):
     assert any("API" in element.value for element in page.error)
 
 
-def test_market_page_can_rank_by_blocked_opportunity_value(monkeypatch, api_url):
-    page = _market_page(monkeypatch, api_url, "IND")
-
-    page.radio(key="rank_by").set_value("blocked").run()
-
-    assert not page.exception
-    values = list(page.dataframe[0].value["Blocked Opportunity value (USD, nominal)"])
-    assert values == sorted(values, reverse=True) and values[0] > 0
-    assert "Blocked Opportunity value" in _captions(page)
-
-
 # --- Flagged Products and Re-export Hubs: caveat badges and hide filters (ADR 0005) -------
 
 JEWELLERY = "711319"  # the fixture's Flagged Product; Hong Kong is its Re-export Hub
