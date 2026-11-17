@@ -937,8 +937,12 @@ def add_to_latest(
     plan: Plan = REAL_PLAN,
     device: str = "cuda",
     version: str | None = None,
+    v1_frozen: Path | None = None,
 ) -> Path:
     """Run the backtests for the newest evaluated artefact and save it again, with them, as a new version.
+
+    The Lift model holds out v1's frozen held-out Exporters within the artefact's scope, read
+    from `v1_frozen` (default: the real v1 artefact's frozen tables under `artefacts_root`).
 
     The backtest models use the artefact's tuned parameters, round count, non-UK sample and
     seed, and are read from the cache when already trained; the secondary Event Backtest uses
@@ -971,7 +975,7 @@ def add_to_latest(
         test_models=evaluation.real_test_models(bundle, root, device=device) if plan.secondary else None,
         cache=cache_dir(root),
         lift_held_out=lift_exporters(
-            freeze.lift_held_out_exporters(freeze.v1_folder(artefacts_root)), scope=metadata["exporter_scope"], uk=baci.UK
+            freeze.lift_held_out_exporters(v1_frozen or freeze.v1_folder(artefacts_root)), scope=metadata["exporter_scope"], uk=baci.UK
         ),
     )
     report = {**bundle.evaluation, **result}

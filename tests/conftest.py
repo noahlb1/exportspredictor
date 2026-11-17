@@ -122,3 +122,23 @@ def derived_data_root(tmp_path):
         tariffs.derived_dir(tmp_path) / "preferences.parquet"
     )
     return tmp_path
+
+
+@pytest.fixture(scope="session")
+def v1_frozen(tmp_path_factory):
+    """A synthetic frozen-v1 folder holding only the held-out Lift Exporters and their manifest entry.
+
+    The fixture's stand-in for v1's list: FRA, and MEX, which is outside the fixture's Exporter scope.
+    """
+    import hashlib
+    import json
+
+    from exportspredictor import freeze, pipeline
+
+    folder = tmp_path_factory.mktemp("v1") / freeze.FOLDER
+    folder.mkdir()
+    path = folder / freeze.TABLES["lift_held_out_exporters"]
+    pl.DataFrame({"exporter": list(pipeline.FIXTURE_V1_LIFT_EXPORTERS)}).write_parquet(path)
+    entry = {"file": path.name, "rows": len(pipeline.FIXTURE_V1_LIFT_EXPORTERS), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    (folder / freeze.MANIFEST_FILE).write_text(json.dumps({"tables": {"lift_held_out_exporters": entry}}), encoding="utf-8")
+    return folder
