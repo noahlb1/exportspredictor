@@ -96,7 +96,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] A Scenario that changes nothing (e.g. adding an agreement that already exists) says so.
 
 **Why?**
-- [ ] On **Product → Markets**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
+- [ ] On **Product → Markets** and **Market → Products**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
 - [ ] The factors are described in plain words (no raw feature names), each marked as raising or lowering Export Potential, phrased as associations.
 - [ ] The UK's Actual Exports for the last six years are shown, with 0 for years with none.
 - [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.
