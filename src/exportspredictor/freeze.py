@@ -215,6 +215,25 @@ def verify(folder: Path) -> dict:
     return manifest
 
 
+def lift_held_out_exporters(folder: Path) -> list[str]:
+    """v1's held-out Lift Exporters, read from a frozen folder after checking that table against the manifest.
+
+    v2's Lift model holds out the same Exporters (within v2's scope, `backtests.lift_exporters`).
+    """
+    folder = Path(folder)
+    entry = json.loads((folder / MANIFEST_FILE).read_text(encoding="utf-8"))["tables"]["lift_held_out_exporters"]
+    path = folder / entry["file"]
+    table = pl.read_parquet(path)
+    if _sha256(path) != entry["sha256"] or table.height != entry["rows"]:
+        raise ValueError("The frozen table lift_held_out_exporters does not match its manifest")
+    return sorted(table["exporter"].cast(pl.String).to_list())
+
+
+def v1_folder(artefacts_root: Path | None = None) -> Path:
+    """The frozen v1 tables of the real v1 artefact."""
+    return Path(artefacts_root or artefacts_dir()) / V1_IDS["artefact"] / FOLDER
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as file:

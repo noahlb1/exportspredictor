@@ -27,15 +27,15 @@ def v1(fixture_world):
     """The fixture's stand-in for v1's saved models and feature rows."""
     training = pipeline.fixture_training(fixture_world)
     flows = fixture_world.flows.filter(pl.col("year") == TEST_YEAR)
-    exporters = training[PLAN.lift.gap_year]["exporter"].unique()
-    held = backtests.held_out_exporters(exporters, share=PLAN.lift.held_out_share)
+    exporters = training[max(PLAN.lift.gap_years)].filter(pl.col("exporter") != UK)["exporter"].unique()
+    held = backtests.held_out_exporters(exporters, share=backtests.HELD_OUT_SHARE)
     common = {"uk": UK, "params": PARAMS, "rounds": ROUNDS, "device": "cpu"}
     return freeze.V1(
         rows=training,
         test_grid=build_features(uk_grid(flows, UK), flows, fixture_world.sources),
         test_models=evaluation.train_test_models(training, test_year=TEST_YEAR, **common),
         lift_model=backtests.train_backtest_model(
-            training, name="lift", training_years=PLAN.lift.training_years, before=PLAN.lift.outcome_year,
+            training, name="lift", training_years=PLAN.lift.training_years, before=PLAN.lift.before,
             held_out=held, **common,
         ),
         event_model=backtests.train_backtest_model(
@@ -128,6 +128,22 @@ def test_the_event_backtest_covers_each_direction_and_post_year_with_the_agreeme
     assert (event["export_potential_on_usd"] >= event["export_potential_off_usd"]).all()
     on = v1.event_model.predict(treated.sort("year", "hs6").with_columns(trade_agreement=pl.lit(1, pl.Int8)))
     assert event.sort("year", "hs6")["export_potential_on_usd"].to_numpy() == pytest.approx(on)
+
+
+def test_v2_reads_the_frozen_held_out_exporters_restricted_to_its_scope(frozen, v1):
+    (held,) = v1.lift_model.held_out_exporters
+    scope = [UK, held, "ZZZ"]
+
+    assert freeze.lift_held_out_exporters(frozen) == [held]
+    assert backtests.lift_exporters(freeze.lift_held_out_exporters(frozen), scope=scope, uk=UK) == [held]
+
+
+def test_the_frozen_held_out_list_is_refused_if_it_no_longer_matches_its_manifest(v1, tmp_path):
+    folder = freeze.freeze(tmp_path, v1, uk=UK, provenance=PROVENANCE)
+    pl.DataFrame({"exporter": ["XXX"]}).write_parquet(folder / freeze.TABLES["lift_held_out_exporters"])
+
+    with pytest.raises(ValueError, match="lift_held_out_exporters"):
+        freeze.lift_held_out_exporters(folder)
 
 
 def test_re_running_the_freeze_leaves_it_as_it_was(frozen, v1):
