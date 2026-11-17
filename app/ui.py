@@ -12,6 +12,7 @@ import streamlit as st
 
 from app import client
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
+from exportspredictor.exclusions import FLAGGED_PRODUCT_CAVEAT, REEXPORT_HUB_CAVEAT
 
 # HS2 chapters of the 2012 edition (chapter 77 is reserved and unused).
 SECTORS = [f"{chapter:02d}" for chapter in range(1, 98) if chapter != 77]
@@ -20,6 +21,11 @@ _VALUES = {
     "actual_exports": "Actual Exports",
     "export_gap": "Export Gap",
     "blocked_effect": "Blocked Opportunity value",
+}
+# Caveat badges (ADR 0005): the row field that sets each, its badge and what it means.
+CAVEATS = {
+    "flagged_product": ("Flagged Product", FLAGGED_PRODUCT_CAVEAT),
+    "reexport_hub": ("Re-export Hub", REEXPORT_HUB_CAVEAT),
 }
 
 
@@ -54,9 +60,10 @@ def banner() -> dict | None:
 
 
 def ranking_filters() -> dict:
-    """The ranking order and the Sector, region and minimum-Gap filters, shared by both ranking pages.
+    """The ranking order and the Sector, region, minimum-Gap and hide filters, shared by both ranking pages.
 
-    Returns the API query parameters that are set (`rank_by`, `sector`, `region`, `min_gap_usd`).
+    Returns the API query parameters that are set (`rank_by`, `sector`, `region`, `min_gap_usd`,
+    and `hide_flagged` / `hide_hubs` when ticked; both are off by default).
     """
     markets = fetch("/markets", client.api_url())
     regions = sorted({market["region"] for market in markets})
@@ -70,12 +77,36 @@ def ranking_filters() -> dict:
     min_gap_usd = gap_column.number_input(
         f"Minimum Export Gap ({USD_UNIT})", value=None, step=1_000_000.0, key="min_gap_usd"
     )
+    flagged_column, hubs_column = st.columns(2)
+    hide_flagged = flagged_column.checkbox(
+        "Hide Flagged Products", key="hide_flagged", help=CAVEATS["flagged_product"][1]
+    )
+    hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=CAVEATS["reexport_hub"][1])
     orders = rank_orders()
     rank_by = st.radio(
         "Rank by", list(orders), format_func=lambda name: orders[name]["title"], key="rank_by", horizontal=True
     )
-    params = {"rank_by": rank_by, "sector": sector, "region": region, "min_gap_usd": min_gap_usd}
+    params = {
+        "rank_by": rank_by,
+        "sector": sector,
+        "region": region,
+        "min_gap_usd": min_gap_usd,
+        "hide_flagged": hide_flagged or None,
+        "hide_hubs": hide_hubs or None,
+    }
     return {name: value for name, value in params.items() if value is not None}
+
+
+def caveat_badges(row: dict) -> str:
+    """The caveat badges of one ranking row or explanation, comma-separated ("" if none)."""
+    return ", ".join(badge for field, (badge, _) in CAVEATS.items() if row[field])
+
+
+def show_caveats(row: dict) -> None:
+    """One warning per caveat of a pair (its detail view)."""
+    for field, (_, caveat) in CAVEATS.items():
+        if row[field]:
+            st.warning(caveat)
 
 
 def product_picker(sector: str | None = None) -> str | None:
@@ -151,7 +182,7 @@ def market_picker(region: str | None = None) -> str | None:
 
 
 def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: str | None = None, iso3: str | None = None) -> None:
-    """The ranking table in nominal USD, with a Why? link per row and a CSV export.
+    """The ranking table in nominal USD, with caveat badges, a Why? link per row and a CSV export.
 
     `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
     ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
@@ -169,6 +200,7 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     for field, heading in _VALUES.items():
         table[f"{heading} ({USD_UNIT})"] = raw[f"{field}_usd"]
     table["Blocked Opportunity"] = raw["blocked_opportunity"]
+    table["Caveats"] = [caveat_badges(row) for row in rows]
     links = [why_link(hs6 or row["hs6"], iso3 or row["iso3"]) for row in rows]
     st.dataframe(
         table.assign(**{"Why?": links}),
@@ -178,6 +210,9 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
             "Why?": why_column(),
         },
     )
+    shown = [caveat for field, (_, caveat) in CAVEATS.items() if raw[field].any()]
+    if shown:
+        st.caption(" ".join(shown) + " Use the hide filters above to leave them out.")
     st.download_button(
         "Download CSV", table.to_csv(index=False), file_name=f"{file_name}.csv", mime="text/csv", key="csv"
     )

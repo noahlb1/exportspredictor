@@ -5,7 +5,8 @@ Layout of `<root>/<version>/`:
     metadata.json      artefact_format, version, baseline_year, n_folds, features, ...
                        (free-form beyond those)
     models/fold_<k>.ubj
-    baseline.parquet   one row per UK Product–Market pair in the Baseline year
+    baseline.parquet   one row per UK Product–Market pair in the Baseline year, with its
+                       Flagged Product and Re-export Hub flags (ADR 0005)
     baseline_features.parquet  the same pairs' model inputs and fold (for Scenarios, explanations)
     history.parquet    UK Actual Exports per pair and year, non-zero only, last six years
     products.parquet   Product lookup (hs6, description, sector)
@@ -48,7 +49,9 @@ class UnreadableArtefacts(ValueError):
 class Artefacts:
     metadata: dict
     fold_models: list[xgb.Booster]
-    baseline: pl.DataFrame  # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd
+    # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd, flagged_product, reexport_hub,
+    # blocked_effect_usd
+    baseline: pl.DataFrame
     baseline_features: pl.DataFrame  # hs6, iso3, fold, FEATURES (transformed, as the models saw them)
     history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd
     products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
