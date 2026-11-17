@@ -25,8 +25,10 @@ pair without a Trade Agreement, the Scenario Effect of adding one: the value tha
 Scenario Effects are associations the model has learned, not causal estimates.
 """
 
+import time
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -290,3 +292,37 @@ def _changes(rows: pl.DataFrame, scenario: Scenario) -> list[tuple[str, pl.Expr,
 
 def _uk_blocs(rows: pl.DataFrame) -> list[str]:
     return [c.removesuffix("_o") for c in POLICY_FEATURES if c.endswith("_o") and rows[c].max() == 1]
+
+
+# --- Rebuilding the Blocked Opportunity values of a saved artefact ---------------------
+
+
+def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
+    """Recompute `blocked_effect_usd` from the newest artefact's saved fold models.
+
+    Writes a new artefact version (models and tables copied) and returns its folder, so
+    this step re-runs on its own without retraining. Nothing is trained here.
+    """
+    from exportspredictor import artefacts as store
+
+    source = store.load_latest(root)
+    started = time.perf_counter()
+    effects = blocked_effects(source.baseline_features, source.baseline, source.fold_models)
+    metadata = {
+        **source.metadata,
+        "version": version or store.new_version(),
+        "blocked_values_from": source.version,
+        "blocked_values_seconds": round(time.perf_counter() - started, 2),
+    }
+    rebuilt = replace(source, metadata=metadata, baseline=with_blocked_effects(source.baseline, effects))
+    return store.save(rebuilt, root)
+
+
+def main() -> None:
+    from exportspredictor.paths import artefacts_dir
+
+    print(rebuild_blocked_values(artefacts_dir()), flush=True)
+
+
+if __name__ == "__main__":
+    main()

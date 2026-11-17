@@ -170,6 +170,11 @@ def scenario_response(
 
 def _summary(result: scenarios.ScenarioResult, total: dict, blocked: int, year: int) -> str:
     """One sentence, worded as an association, never as a cause or a forecast."""
+    if result.changes_nothing and result.scenario.preset == "leave":
+        return (
+            f"This Scenario changes nothing: in the {year} Baseline the UK belongs to no tracked "
+            "Trading Bloc, so there is none to leave and no Scenario Effect."
+        )
     if result.changes_nothing:
         return (
             "This Scenario changes nothing: the trade-policy conditions it sets are already those of the "
