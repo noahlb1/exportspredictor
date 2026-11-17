@@ -114,6 +114,8 @@ REAL_MAX_ROUNDS = 1500
 # Share of non-UK training rows kept (reweighted by 1/rate; UK rows are always kept). None
 # derives it: the largest rate whose 2012–2023 rows fit the VRAM row budget (ADR 0004,
 # `training.fit_non_uk_rate`). A given rate is checked against the budget before training.
+# The learning curve (ticket #53) chose None: on 2022 the deviance still fell by 6% from a
+# rate of 0.3 to 0.65, so the model takes every non-UK row the budget allows.
 REAL_NON_UK_RATE: float | None = None
 HISTORY_YEARS = 6  # Actual Exports history: the Baseline year and the five before it
 # The fixture world has about 60 calibration rows, so its bands need far fewer than real data's 1,000.

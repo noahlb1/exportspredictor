@@ -118,8 +118,10 @@ CLIPPED_FEATURES = [f for f in [
 # tariff carried forward from 2021 (ADR 0006), and `mfn_tariff` (percent) is the Importer's
 # MFN rate, which a Scenario restores when it removes a Trade Agreement.
 TARIFF_METADATA = ["tariff_imputed", "mfn_tariff"]
-# Share of other Exporters' Zero Cells kept for training on real data (ADR 0004: a starting
-# rate, settled by the learning curve). UK Zero Cells are always kept.
+# Share of other Exporters' Zero Cells kept for training on real data (ADR 0004). UK Zero Cells
+# are always kept. Settled by the learning curve (`experiments`, ticket #53): on 2022 at a
+# non-UK rate of 0.65, 5% gave the lowest deviance (412.1 against 413.6 at 2% and 413.8 at
+# 10%) with UK Spearman within 0.003 of 2%, and leaves a higher non-UK rate than 10% does.
 ZERO_SAMPLING_RATE = 0.05
 _FLOAT_FEATURES = [*GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES]
 # Market import growth compares the year with this many years earlier.
