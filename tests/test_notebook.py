@@ -88,6 +88,11 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
     loaded = store.load_latest(tmp_path)
     assert loaded.metadata["source"] == "fixture"
     assert loaded.baseline.height == 20
+    # The feature ablation and the learning curve travel with the artefact, measured on 2022 only.
+    experiments = loaded.metadata["experiments"]
+    assert experiments["ablation"][0]["dropped"] is None
+    assert len(experiments["learning_curve"]) == 9
+    assert {row["validation_year"] for row in experiments["ablation"] + experiments["learning_curve"]} == {2022}
     # The Potential Range's coverage is reported on the fixture's held-out half, near its 80% target.
     coverage = loaded.evaluation["potential_range"]
     assert coverage["coverage"] == pytest.approx(0.8, abs=0.15)

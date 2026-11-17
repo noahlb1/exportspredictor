@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 
 from exportspredictor.features import (
+    ALL_FEATURES,
     FEATURES,
     REEXPORT_RATIO_CAP,
     build_features,
@@ -44,8 +45,10 @@ def world():
     return build_world()
 
 
-def test_the_three_features_are_model_inputs():
-    assert set(NEW_FEATURES) <= set(FEATURES)
+def test_the_three_features_are_built_and_those_the_ablation_kept_are_model_inputs():
+    assert set(NEW_FEATURES) <= set(ALL_FEATURES)
+    # The ablation (#53) dropped Market import growth: still built, no longer a model input.
+    assert set(NEW_FEATURES) & set(FEATURES) == {"relatedness", "reexport_ratio"}
 
 
 # --- Relatedness ---------------------------------------------------------------------------

@@ -46,6 +46,7 @@ from exportspredictor import (
     conformal,
     constraints,
     evaluation,
+    experiments,
     fixture,
     freeze,
 )
@@ -116,6 +117,8 @@ REAL_MAX_ROUNDS = 1500
 # Share of non-UK training rows kept (reweighted by 1/rate; UK rows are always kept). None
 # derives it: the largest rate whose 2012–2023 rows fit the VRAM row budget (ADR 0004,
 # `training.fit_non_uk_rate`). A given rate is checked against the budget before training.
+# The learning curve (ticket #53) chose None: on 2022 the deviance still fell by 6% from a
+# rate of 0.3 to 0.65, so the model takes every non-UK row the budget allows.
 REAL_NON_UK_RATE: float | None = None
 HISTORY_YEARS = 6  # Actual Exports history: the Baseline year and the five before it
 # The fixture world has about 60 calibration rows, so its bands need far fewer than real data's 1,000.
@@ -203,14 +206,17 @@ def build_artefacts(
     seed: int = 0,
     row_budget: int | None = None,
     min_band_rows: int = FIXTURE_MIN_BAND_ROWS,
+    experiment_results: dict | None = None,
     v1_frozen: comparison.Frozen | None = None,
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
     `zero_sampling_rate` is the share of other Exporters' Zero Cells kept for training; it
     is recorded in the metadata. `row_budget` overrides the VRAM row budget.
-    `min_band_rows` is the Potential Range's minimum band size. `v1_frozen` is the frozen v1
-    the evaluation compares with (default: the fixture's synthetic one, `fixture_v1_frozen`).
+    `min_band_rows` is the Potential Range's minimum band size. `experiment_results` (the
+    feature ablation and learning curve, `experiments.run`) are recorded in the metadata.
+    `v1_frozen` is the frozen v1 the evaluation compares with (default: the fixture's
+    synthetic one, `fixture_v1_frozen`).
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
@@ -243,6 +249,7 @@ def build_artefacts(
         "zero_sampling_rate": zero_sampling_rate,
         "uk_zero_sampling_rate": 1.0,
         "zero_sampling_seed": seed,
+        "experiments": experiment_results,
     }
     frozen = v1_frozen or fixture_v1_frozen(world)
     v1 = comparison.Inputs(
@@ -313,7 +320,8 @@ def build_real_artefacts(
     Years are read one at a time (`training`), so host memory stays far below 32 GB.
     Backtest models are cached under the data root (`backtests.cache_dir`). The Lift model
     holds out v1's frozen held-out Exporters within scope, read from `v1_frozen`
-    (default: `freeze.v1_folder()`).
+    (default: `freeze.v1_folder()`). The saved feature ablation and learning curve
+    (`experiments.save`) are recorded in the metadata.
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -369,6 +377,8 @@ def build_real_artefacts(
         "zero_sampling_rate": settings["zero_sampling_rate"],
         "uk_zero_sampling_rate": settings["uk_zero_sampling_rate"],
         "zero_sampling_seed": settings["zero_sampling_seed"],
+        # The feature ablation and learning curve that chose the features and rates (2022 only).
+        "experiments": experiments.load(root) if experiments.results_path(root).exists() else None,
     }
     test_grid = folder / f"uk_grid_{baseline_year - 1}.parquet"
     report = _evaluate(

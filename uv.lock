@@ -287,6 +287,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "altair" },
     { name = "cupy-cuda13x", extra = ["ctk"] },
     { name = "hypothesis" },
     { name = "ipykernel" },
@@ -313,6 +314,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "altair", specifier = ">=5.4" },
     { name = "cupy-cuda13x", extras = ["ctk"], specifier = ">=14.2.0" },
     { name = "hypothesis", specifier = ">=6.170.15" },
     { name = "ipykernel", specifier = ">=6.29" },
