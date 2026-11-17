@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
-from exportspredictor.features import Sources
+from exportspredictor.features import Sources, fit_proximity
 
 UK = "GBR"
 
@@ -31,6 +31,8 @@ PRODUCTS = {
     "870323": "Motor cars, spark-ignition engine of 1,500-3,000 cc",
 }
 YEARS = [2021, 2022, 2023, 2024]
+# Proximity is fitted before the fixture's validation year (2022), as on real data.
+PROXIMITY_YEARS = [2021]
 # Large, so that leaving it out of the totals would visibly move other Products' RCA.
 EXCLUDED_PRODUCT = ("270900", "Petroleum oils and oils obtained from bituminous minerals; crude")
 _EXCLUDED_SCALE = 10.0
@@ -86,6 +88,7 @@ class World:
             country_year=self.country_year,
             pairs=self.pairs,
             high_income=self.high_income,
+            proximity=fit_proximity(self.flows, PROXIMITY_YEARS),
         )
 
 

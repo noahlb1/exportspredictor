@@ -134,7 +134,7 @@ def build_artefacts(
     grids = {}
     for year in (baseline_year - 1, baseline_year):
         year_flows = flows.filter(pl.col("year") == year)
-        grids[year] = build_features(uk_grid(year_flows, UK), year_flows, sources)
+        grids[year] = build_features(uk_grid(year_flows, UK), flows, sources)  # all years: growth reads t-3
     grid = grids[baseline_year]
     trained = _train_and_score(
         training, grid, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
@@ -181,7 +181,7 @@ def fixture_training(
         if year < baseline_year:
             year_flows = flows.filter(pl.col("year") == year)
             rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed)
-            training[year] = build_features(rows, year_flows, world.sources)
+            training[year] = build_features(rows, flows, world.sources)
     return training
 
 
@@ -212,6 +212,11 @@ def build_real_artefacts(
         raise ValueError(
             f"The feature files in {folder} were built excluding {built_without}, not the current Excluded "
             "Products; rebuild them with `python -m exportspredictor.features`"
+        )
+    if settings.get("features") != FEATURES:
+        raise ValueError(
+            f"The feature files in {folder} hold {settings.get('features')}, not the current features; "
+            "rebuild them with `python -m exportspredictor.features`"
         )
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
     grid = pl.read_parquet(folder / f"uk_grid_{baseline_year}.parquet")

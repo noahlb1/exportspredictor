@@ -45,3 +45,17 @@ def test_build_drops_excluded_products_and_records_the_list(derived_data_root):
         assert "270900" not in set(pl.read_parquet(out / f"{name}.parquet")["hs6"].cast(pl.String))
     settings = json.loads((out / "features.json").read_text())
     assert settings["excluded_products"][0] == "Sector 27 except 2712"
+
+
+def test_build_adds_relatedness_import_growth_and_the_reexport_ratio(derived_data_root):
+    out = features.build(derived_data_root, years=[2024], rate=1.0)
+
+    grid = pl.read_parquet(out / "uk_grid_2024.parquet")
+    training = pl.read_parquet(out / "training_2024.parquet")
+    for table in (grid, training):
+        for name in ("relatedness", "market_import_growth", "reexport_ratio"):
+            assert table[name].null_count() < table.height, name
+    assert grid["market_import_growth"].null_count() == 0  # 2021 is on disk: three years earlier
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["proximity_years"] == [2021]  # the fixture's only year before 2022
+    assert pl.read_parquet(out / "proximity.parquet").height > 0
