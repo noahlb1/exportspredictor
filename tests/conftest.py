@@ -11,7 +11,7 @@ import uvicorn
 
 from api.main import create_app
 from exportspredictor import artefacts as store
-from exportspredictor import baci, policy
+from exportspredictor import baci, policy, tariffs
 from exportspredictor.fixture import build_world
 from exportspredictor.pipeline import build_artefacts
 
@@ -74,7 +74,7 @@ def free_port() -> int:
 
 @pytest.fixture
 def derived_data_root(tmp_path):
-    """The fixture world written to disk as the BACI, gravity and policy build steps write it.
+    """The fixture world written to disk as the BACI, gravity, policy and tariff build steps write it.
 
     The USA is renamed to Taiwan, which BACI keys as `S19` and every other table as `TWN`.
     """
@@ -115,4 +115,10 @@ def derived_data_root(tmp_path):
     paths = policy.policy_paths(tmp_path)
     world.policy.with_columns(pl.col("exporter").replace(rename)).write_parquet(paths["agreements"])
     world.blocs.write_parquet(paths["trading_blocs"])
+    tariffs.derived_dir(tmp_path).mkdir(parents=True)
+    world.tariffs.schedules.write_parquet(tariffs.derived_dir(tmp_path) / "schedules.parquet")
+    world.tariffs.mfn.write_parquet(tariffs.derived_dir(tmp_path) / "mfn.parquet")
+    world.tariffs.preferences.with_columns(pl.col("exporter").replace(rename)).write_parquet(
+        tariffs.derived_dir(tmp_path) / "preferences.parquet"
+    )
     return tmp_path

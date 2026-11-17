@@ -249,6 +249,7 @@ def create_app(
                 for f in explanation.factors
             ],
             history=[HistoryOut(**vars(h)) for h in explanation.history],
+            tariff_caveat=explanation.tariff_caveat,
         )
 
     @app.get("/scenarios/presets", response_model=list[PresetOut])

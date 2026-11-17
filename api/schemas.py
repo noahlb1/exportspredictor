@@ -434,6 +434,7 @@ class HistoryOut(BaseModel):
     actual_exports_usd: float
     export_potential_usd: float | None  # Gap Period years only
     export_gap_usd: float | None  # Gap Period years only; their mean is the Export Gap
+    tariff_imputed: bool  # the year's Applied Tariff is carried forward from 2021 (ADR 0006)
 
 
 class Explanation(BaseModel):
@@ -456,6 +457,7 @@ class Explanation(BaseModel):
     potential_range_low_usd: float  # the Potential Range around the Gap Period mean (ADR 0007)
     potential_range_high_usd: float
     uncertain: bool  # an Uncertain Opportunity
+    tariff_caveat: str | None  # set when the Baseline year's Applied Tariff is carried forward (ADR 0006)
     factors: list[FactorOut]  # largest absolute contribution first
     # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
     # years with UK Actual Exports only

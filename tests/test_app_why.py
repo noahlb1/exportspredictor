@@ -84,6 +84,7 @@ def test_why_page_shows_each_gap_period_years_export_potential_and_gap(monkeypat
         "Export Potential (USD, nominal)",
         "Actual Exports (USD, nominal)",
         "Export Gap (USD, nominal)",
+        "Applied Tariff",
     ]
     gap_years = history[history["Year"] >= 2022]
     assert list(gap_years["Year"]) == [2022, 2023, 2024]
@@ -188,3 +189,15 @@ def test_why_page_shows_the_potential_range_bar_in_plain_words(monkeypatch, api_
     other = _why(monkeypatch, api_url, hs6=certain["hs6"], iso3=certain["iso3"])
     assert len(other.get("vega_lite_chart")) == 1
     assert not any("Uncertain Opportunity" in w.value for w in other.warning)
+
+
+def test_why_page_says_when_the_applied_tariff_is_carried_forward_from_2021(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="300490", iso3="IND")
+
+    assert not page.exception
+    assert any("carried forward from 2021" in w.value for w in page.warning)
+    factors = page.dataframe[0].value
+    assert "The tariff India charges on this Product from the UK" in list(factors["Factor"])
+    history = page.dataframe[1].value.set_index("Year")["Applied Tariff"]
+    assert history[2021] == "From tariff data"
+    assert set(history[[2022, 2023, 2024]]) == {"Carried forward from 2021"}
