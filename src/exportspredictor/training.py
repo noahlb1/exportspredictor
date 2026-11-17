@@ -50,9 +50,14 @@ DEFAULT_PARAMS = {
 DEFAULT_ROUNDS = 100
 
 
-def model_params(params: dict | None = None, *, device: str = "cpu", seed: int = 0) -> dict:
-    """Full XGBoost parameters: defaults, the given overrides and the monotone constraints."""
-    constraints = "(" + ",".join(str(MONOTONE_CONSTRAINTS.get(f, 0)) for f in FEATURES) + ")"
+def model_params(
+    params: dict | None = None, *, device: str = "cpu", seed: int = 0, features: Sequence[str] = FEATURES
+) -> dict:
+    """Full XGBoost parameters: defaults, the given overrides and the monotone constraints.
+
+    `features` are the matrix's columns, in order (a feature ablation trains on fewer).
+    """
+    constraints = "(" + ",".join(str(MONOTONE_CONSTRAINTS.get(f, 0)) for f in features) + ")"
     return {**DEFAULT_PARAMS, **(params or {}), "monotone_constraints": constraints, "device": device, "seed": seed}
 
 
@@ -206,8 +211,10 @@ class _ChunkIter(xgb.DataIter):
     before the next is copied, so only one chunk is ever on the device beside the matrix.
     """
 
-    def __init__(self, chunks: Sequence[Chunk], prepare: Prepare, device: str = "cpu"):
-        self._chunks, self._prepare, self._i = list(chunks), prepare, 0
+    def __init__(
+        self, chunks: Sequence[Chunk], prepare: Prepare, device: str = "cpu", features: Sequence[str] = FEATURES
+    ):
+        self._chunks, self._prepare, self._i, self._features = list(chunks), prepare, 0, list(features)
         self.device = _Device(device)
         super().__init__()
 
@@ -221,10 +228,10 @@ class _ChunkIter(xgb.DataIter):
             self._i += 1
             if table.height:
                 input_data(
-                    data=self.device.array(table.select(FEATURES).to_numpy()),
+                    data=self.device.array(table.select(self._features).to_numpy()),
                     label=self.device.array(table["value_usd"].to_numpy()),
                     weight=self.device.array(table["weight"].to_numpy()),
-                    feature_names=FEATURES,
+                    feature_names=self._features,
                 )
                 return True
         return False
@@ -256,9 +263,10 @@ def training_matrix(
     *,
     ref: xgb.QuantileDMatrix | None = None,
     device: str = "cpu",
+    features: Sequence[str] = FEATURES,
 ) -> xgb.QuantileDMatrix:
-    """A QuantileDMatrix built chunk by chunk, on `device`; `prepare` filters or transforms each chunk first."""
-    chunk_iter = _ChunkIter(chunks, prepare or (lambda t: t), device)
+    """A QuantileDMatrix of `features`, built chunk by chunk on `device`; `prepare` filters or transforms each chunk first."""
+    chunk_iter = _ChunkIter(chunks, prepare or (lambda t: t), device, features)
     matrix = xgb.QuantileDMatrix(chunk_iter, ref=ref)
     chunk_iter.device.release()
     return matrix

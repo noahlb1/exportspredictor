@@ -82,7 +82,8 @@ MARKET_TREND_FEATURES = ["market_import_growth", "reexport_ratio"]
 # The Applied Tariff as ln(1 + t), with t the rate as a fraction (ADR 0006).
 TARIFF_FEATURES = ["log_applied_tariff"]
 POLICY_FEATURES = [*policy.POLICY_FEATURES, *TARIFF_FEATURES]
-FEATURES = [
+# Every feature `build_features` computes, in model column order.
+ALL_FEATURES = [
     *GRAVITY_FEATURES,
     *SUPPLY_FEATURES,
     *DEMAND_FEATURES,
@@ -91,11 +92,17 @@ FEATURES = [
     *MARKET_TREND_FEATURES,
     *POLICY_FEATURES,
 ]
+# Features the ablation (`experiments`, ticket #53) found to hurt: on 2022, the model without
+# Market import growth had lower deviance and a higher UK within-Product Spearman. It is still
+# computed and stored beside the features, but it is not a model input.
+ABLATED_FEATURES = ["market_import_growth"]
+# The model inputs, in column order.
+FEATURES = [f for f in ALL_FEATURES if f not in ABLATED_FEATURES]
 # +1 on every agreement and bloc flag: a Trade Agreement never lowers Export Potential. -1 on
 # the Applied Tariff: raising it never raises Export Potential (ADR 0002, ADR 0006).
 MONOTONE_CONSTRAINTS = {**{name: 1 for name in policy.POLICY_FEATURES}, **{name: -1 for name in TARIFF_FEATURES}}
 # Continuous features clipped to their training-year range at serving time.
-CLIPPED_FEATURES = [
+CLIPPED_FEATURES = [f for f in [
     "log_gdp_o",
     "log_gdp_d",
     "log_population_o",
@@ -106,13 +113,15 @@ CLIPPED_FEATURES = [
     *RELATEDNESS_FEATURES,
     *MARKET_TREND_FEATURES,
     *TARIFF_FEATURES,
-]
+] if f in FEATURES]
 # Row metadata carried beside the features, never a model input: `tariff_imputed` marks a
 # tariff carried forward from 2021 (ADR 0006), and `mfn_tariff` (percent) is the Importer's
 # MFN rate, which a Scenario restores when it removes a Trade Agreement.
 TARIFF_METADATA = ["tariff_imputed", "mfn_tariff"]
-# Share of other Exporters' Zero Cells kept for training on real data (ADR 0004: a starting
-# rate, settled by the learning curve). UK Zero Cells are always kept.
+# Share of other Exporters' Zero Cells kept for training on real data (ADR 0004). UK Zero Cells
+# are always kept. Settled by the learning curve (`experiments`, ticket #53): on 2022 at a
+# non-UK rate of 0.65, 5% gave the lowest deviance (412.1 against 413.6 at 2% and 413.8 at
+# 10%) with UK Spearman within 0.003 of 2%, and leaves a higher non-UK rate than 10% does.
 ZERO_SAMPLING_RATE = 0.05
 _FLOAT_FEATURES = [*GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES]
 # Market import growth compares the year with this many years earlier.
@@ -180,13 +189,40 @@ def training_rows(
         .filter(pl.col("exporter").cast(pl.String) != pl.col("importer").cast(pl.String))
     )
     if rate < 1:
-        threshold = int(rate * 2**64)
-        cells = cells.filter(is_uk | (pl.struct(KEYS).hash(seed) < pl.lit(threshold, pl.UInt64)))
+        cells = cells.filter(is_uk | _zero_cell_kept(rate, seed))
     zeros = cells.join(active, on=KEYS, how="anti").with_columns(
         value_usd=pl.lit(0.0), weight=pl.when(is_uk).then(1.0).otherwise(1.0 / rate)
     )
     rows = pl.concat([active.with_columns(weight=pl.lit(1.0)), zeros.select(*KEYS, "value_usd", "weight")])
     return rows.collect(engine="streaming")
+
+
+def _zero_cell_kept(rate: float, seed: int) -> pl.Expr:
+    """Whether a Zero Cell is in the sample at `rate`: a hash of its keys and `seed` below rate × 2^64.
+
+    A cell kept at one rate is kept at every higher rate, so samples at different rates nest.
+    """
+    return pl.struct(KEYS).hash(seed) < pl.lit(int(rate * 2**64), pl.UInt64)
+
+
+def subsample_zeros(
+    rows: pl.DataFrame, *, built_rate: float, rate: float, seed: int = 0, uk: str = baci.UK
+) -> pl.DataFrame:
+    """Training rows built at zero rate `built_rate`, cut to the rows `training_rows` would keep at `rate`.
+
+    Flows and UK Zero Cells are kept. Other Exporters' Zero Cells are kept by the same hash
+    rule as `training_rows` (same `seed`), and reweighted to 1/`rate`. Samples nest, so this
+    gives exactly the rows a build at `rate` would have written, without rebuilding the
+    features: the learning curve uses it to vary the zero rate below the built one.
+    """
+    if not 0 < rate <= built_rate:
+        raise ValueError(f"The zero rate must be in (0, {built_rate}], the rate the rows were built at; got {rate}")
+    if rate == built_rate:
+        return rows
+    other_zero = (pl.col("value_usd") == 0) & (pl.col("exporter").cast(pl.String) != uk)
+    return rows.filter(~other_zero | _zero_cell_kept(rate, seed)).with_columns(
+        weight=pl.when(other_zero).then(pl.lit(1.0 / rate)).otherwise(pl.col("weight"))
+    )
 
 
 def uk_grid(flows: pl.DataFrame, uk: str, *, pairs: pl.DataFrame | None = None) -> pl.DataFrame:
@@ -236,7 +272,7 @@ def grid_pairs(grids: Iterable[pl.DataFrame | pl.LazyFrame]) -> pl.DataFrame:
 
 
 def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) -> pl.DataFrame:
-    """Return KEYS, FEATURES, `value_usd` and `weight` for each row.
+    """Return KEYS, ALL_FEATURES (FEATURES and the ablated ones), `value_usd` and `weight` for each row.
 
     `rows` are keyed by KEYS with the row's own Flow `value_usd` (0 for a zero cell);
     `flows` holds every Flow of the same years, from which the supply and demand
