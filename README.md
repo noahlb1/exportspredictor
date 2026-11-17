@@ -80,6 +80,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
 - [ ] Export Potential, Actual Exports and Export Gap appear side by side.
 - [ ] Search text that matches nothing (e.g. `999999` or `zzz`) shows a clear "No Product matches" warning.
+- [ ] Open "Excluded Products" under the filters: each Excluded Product (e.g. `270900` crude oil, `710812` gold) is listed with its reason. Searching one (e.g. `gold`) marks it "(Excluded Product)", and choosing it shows why it is not ranked instead of a ranking.
 - [ ] Values show in £ by default, with the conversion rate and year stated under the table; switching to USD changes the columns.
 - [ ] Each row says whether a UK Trade Agreement is in force with the Market (e.g. Japan: Yes, India: No).
 - [ ] The Sector filter narrows the Product search; the region and minimum-Gap filters narrow the ranking.

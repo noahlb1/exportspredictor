@@ -3,7 +3,7 @@
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch, product_picker, ranking_filters, show_ranking
+from app.ui import banner, excluded_products_list, fetch, product_picker, ranking_filters, show_ranking
 
 st.title("Product → Markets")
 
@@ -13,6 +13,7 @@ if banner() is not None:
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
     else:
+        excluded_products_list()
         hs6 = product_picker(filters.get("sector"))
         if hs6:
             try:
