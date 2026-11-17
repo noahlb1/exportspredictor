@@ -157,7 +157,8 @@ def test_sampled_zeros_are_only_relevant_zeros_with_weight_one_over_rate(world):
     assert set(zeros.select(KEYS).iter_rows()) == relevant  # rate 1 keeps every relevant zero
     sampled = training_rows(flows, rate=0.25, seed=3).filter(pl.col("value_usd") == 0)
     assert set(sampled.select(KEYS).iter_rows()) <= relevant
-    assert (sampled["weight"] == 4.0).all()
+    # Other Exporters' zeros carry 1/rate; UK Zero Cells are never sampled (test_training_scope).
+    assert (sampled.filter(pl.col("exporter") != UK)["weight"] == 4.0).all()
 
 
 def test_zero_weights_reproduce_the_number_of_relevant_zeros_on_average(world):

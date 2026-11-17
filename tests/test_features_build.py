@@ -45,3 +45,17 @@ def test_build_drops_excluded_products_and_records_the_list(derived_data_root):
         assert "270900" not in set(pl.read_parquet(out / f"{name}.parquet")["hs6"].cast(pl.String))
     settings = json.loads((out / "features.json").read_text())
     assert settings["excluded_products"][0] == "Sector 27 except 2712"
+
+
+def test_build_trains_only_on_the_recorded_exporter_scope(derived_data_root):
+    out = features.build(derived_data_root, years=[2023], rate=0.5, scope_size=2)
+
+    settings = json.loads((out / "features.json").read_text())
+    scope = settings["exporter_scope"]
+    assert UK in scope and len(scope) in (2, 3)
+    training = pl.read_parquet(out / "training_2023.parquet")
+    assert set(training["exporter"]) == set(scope) & {UK, "DEU", "FRA", "TWN"}
+    assert len(set(training["exporter"])) < 4  # an Exporter fell out of scope
+    assert settings["uk_zero_sampling_rate"] == 1.0
+    uk_zeros = training.filter((pl.col("exporter") == UK) & (pl.col("value_usd") == 0))
+    assert uk_zeros.height > 0 and (uk_zeros["weight"] == 1.0).all()

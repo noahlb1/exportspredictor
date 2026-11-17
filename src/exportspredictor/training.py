@@ -3,8 +3,13 @@
 Training data is given as **chunks**: a sequence of feature tables (DataFrames, LazyFrames
 or Parquet paths), typically one per year. A chunk is read only while XGBoost consumes it
 through a data iterator into a `QuantileDMatrix`, so peak host memory is about one year of
-rows, never the ~165 M training rows at once. The fixture passes one DataFrame; real data
-passes the per-year files written by `features.build()`.
+rows, never every training row at once. On the GPU each chunk is copied to the device and
+the matrix is built there (`training_matrix(..., device="cuda")`). The fixture passes one
+DataFrame; real data passes the per-year files written by `features.build()`.
+
+The rows must fit the VRAM row budget (ADR 0004): `count_rows` measures them, and
+`fit_non_uk_rate` derives the largest non-UK sampling rate that fits, or
+`check_row_budget` refuses a given one, before any training.
 
 The model is a single XGBoost model (ADR 0002): Tweedie objective, histogram trees and a
 +1 monotone constraint on every policy feature. Hyperparameters are tuned on the
@@ -14,6 +19,7 @@ validation year only (`tune`); the test year is never read here.
 import json
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -67,6 +73,89 @@ def scan_chunks(chunks: Sequence[Chunk]) -> pl.LazyFrame:
     return pl.concat([f.select(*KEYS, *FEATURES, "value_usd", "weight") for f in frames], how="vertical_relaxed")
 
 
+# --- The row budget (ADR 0004) -------------------------------------------------------------
+#
+# Training runs in-core on the 10 GB GPU, so the rows of every training matrix must fit in
+# VRAM. Peak VRAM grows linearly with rows, and per row with the feature count; the
+# constants are fitted to the measured GPU check (`GPU_CHECK`, ticket #52).
+VRAM_BUDGET_BYTES = 8 * 2**30  # of the 10 GiB, leaving room for the desktop and fragmentation
+VRAM_FIXED_BYTES = 512 * 2**20  # CUDA context and XGBoost's own buffers, whatever the rows
+ROW_BYTES = 40.0  # per row: label, weight, gradients, predictions, row partition
+FEATURE_BYTES = 1.5  # per row and feature: the compressed histogram index
+RATE_STEP = 1e-4  # the derived non-UK rate is a multiple of this
+SAMPLE_SDS = 4  # headroom for hash sampling: a sample this many standard deviations large still fits
+GPU_CHECK: dict = {}
+
+
+class RowBudgetExceeded(ValueError):
+    """The training rows would not fit the VRAM row budget; raised before any training."""
+
+
+@dataclass(frozen=True)
+class RowCounts:
+    """Training rows by Exporter: the UK's (never sampled) and every other Exporter's."""
+
+    uk: int
+    non_uk: int
+
+    def expected(self, rate: float) -> float:
+        """Expected rows once other Exporters' rows are sampled at `rate`."""
+        return self.uk + rate * self.non_uk
+
+    def high(self, rate: float):
+        """Expected rows plus `SAMPLE_SDS` standard deviations of the hash sample's size."""
+        rate = np.asarray(rate, dtype=float)
+        return self.expected(rate) + SAMPLE_SDS * np.sqrt(self.non_uk * rate * (1 - rate))
+
+
+def row_budget(n_features: int = len(FEATURES)) -> int:
+    """The most training rows that fit `VRAM_BUDGET_BYTES` with `n_features` features (about 110 M)."""
+    return int((VRAM_BUDGET_BYTES - VRAM_FIXED_BYTES) // (ROW_BYTES + FEATURE_BYTES * n_features))
+
+
+def count_rows(chunks: Sequence[Chunk], *, uk: str) -> RowCounts:
+    """Count the UK's and other Exporters' rows in the chunks, reading only the Exporter column."""
+    frames = [
+        c.lazy() if isinstance(c, pl.DataFrame) else c if isinstance(c, pl.LazyFrame) else pl.scan_parquet(c)
+        for c in chunks
+    ]
+    is_uk = pl.col("exporter").cast(pl.String) == uk
+    counts = pl.concat([f.select(is_uk.alias("is_uk")) for f in frames]).select(
+        uk=pl.col("is_uk").sum(), non_uk=(~pl.col("is_uk")).sum()
+    ).collect()
+    return RowCounts(uk=int(counts["uk"][0] or 0), non_uk=int(counts["non_uk"][0] or 0))
+
+
+def fit_non_uk_rate(counts: RowCounts, budget: int) -> float:
+    """The largest non-UK sampling rate (a multiple of `RATE_STEP`, at most 1) whose rows fit `budget`.
+
+    UK rows are always kept, so they take their share of the budget first. Raises
+    `RowBudgetExceeded` if not even the smallest rate fits.
+    """
+    if counts.expected(1.0) <= budget:
+        return 1.0
+    rates = np.arange(1, round(1 / RATE_STEP)) * RATE_STEP
+    fits = np.flatnonzero(counts.high(rates) <= budget)
+    if not fits.size:
+        raise RowBudgetExceeded(
+            f"{counts.uk:,} UK rows leave no room for other Exporters' rows in a budget of {budget:,} rows"
+        )
+    return round(float(rates[fits[-1]]), 4)
+
+
+def check_row_budget(counts: RowCounts, rate: float, budget: int) -> None:
+    """Raise `RowBudgetExceeded` if sampling other Exporters' rows at `rate` might not fit `budget`."""
+    if counts.high(rate) > budget:
+        try:
+            fits = f"the largest rate that fits is {fit_non_uk_rate(counts, budget)}"
+        except RowBudgetExceeded:
+            fits = "no rate fits"
+        raise RowBudgetExceeded(
+            f"{counts.uk:,} UK rows and {counts.non_uk:,} other rows sampled at {rate} make about "
+            f"{counts.expected(rate):,.0f} rows, over the budget of {budget:,} rows; {fits}"
+        )
+
+
 def sample_non_uk(table: pl.DataFrame, *, uk: str, rate: float, seed: int = 0) -> pl.DataFrame:
     """Keep every UK row and a hash sample of other rows, reweighted by 1/rate (Horvitz–Thompson).
 
@@ -85,10 +174,16 @@ def sample_non_uk(table: pl.DataFrame, *, uk: str, rate: float, seed: int = 0) -
 
 
 class _ChunkIter(xgb.DataIter):
-    """Feeds one prepared chunk at a time to XGBoost."""
+    """Feeds one prepared chunk at a time to XGBoost.
 
-    def __init__(self, chunks: Sequence[Chunk], prepare: Prepare):
+    On a CUDA device each chunk is copied to the GPU as CuPy arrays, so the
+    `QuantileDMatrix` is sketched and compressed on the device and no host copy of the
+    whole matrix is kept: that is what lets about 110 M rows train in-core (ADR 0004).
+    """
+
+    def __init__(self, chunks: Sequence[Chunk], prepare: Prepare, device: str = "cpu"):
         self._chunks, self._prepare, self._i = list(chunks), prepare, 0
+        self._array = _device_array(device)
         super().__init__()
 
     def reset(self) -> None:
@@ -100,20 +195,33 @@ class _ChunkIter(xgb.DataIter):
             self._i += 1
             if table.height:
                 input_data(
-                    data=table.select(FEATURES).to_numpy().astype(np.float32),
-                    label=table["value_usd"].to_numpy(),
-                    weight=table["weight"].to_numpy(),
+                    data=self._array(table.select(FEATURES).to_numpy().astype(np.float32)),
+                    label=self._array(table["value_usd"].to_numpy().astype(np.float32)),
+                    weight=self._array(table["weight"].to_numpy().astype(np.float32)),
                     feature_names=FEATURES,
                 )
                 return True
         return False
 
 
+def _device_array(device: str) -> Callable[[np.ndarray], object]:
+    """Host arrays as they are for the CPU, or copied to the GPU as CuPy arrays for CUDA."""
+    if not device.startswith("cuda"):
+        return lambda array: array
+    import cupy  # only where training runs on the GPU; the API never trains
+
+    return cupy.asarray
+
+
 def training_matrix(
-    chunks: Sequence[Chunk], prepare: Prepare | None = None, *, ref: xgb.QuantileDMatrix | None = None
+    chunks: Sequence[Chunk],
+    prepare: Prepare | None = None,
+    *,
+    ref: xgb.QuantileDMatrix | None = None,
+    device: str = "cpu",
 ) -> xgb.QuantileDMatrix:
-    """A QuantileDMatrix built chunk by chunk; `prepare` filters or transforms each chunk first."""
-    return xgb.QuantileDMatrix(_ChunkIter(chunks, prepare or (lambda t: t)), ref=ref)
+    """A QuantileDMatrix built chunk by chunk, on `device`; `prepare` filters or transforms each chunk first."""
+    return xgb.QuantileDMatrix(_ChunkIter(chunks, prepare or (lambda t: t), device), ref=ref)
 
 
 def preparer(
@@ -151,8 +259,8 @@ def tune(
     `SELECTION_METRIC` and seconds taken, best first.
     """
     prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed)
-    train = training_matrix(train_chunks, prepare)
-    valid = training_matrix(valid_chunks, prepare, ref=train)
+    train = training_matrix(train_chunks, prepare, device=device)
+    valid = training_matrix(valid_chunks, prepare, ref=train, device=device)
     results = []
     for config in configs:
         params = model_params(config, device=device, seed=seed) | {"eval_metric": SELECTION_METRIC}
