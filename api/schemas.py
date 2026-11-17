@@ -1,6 +1,6 @@
 """Response models: the API contract the app and the contract tests rely on."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Health(BaseModel):
@@ -19,6 +19,15 @@ class MarketOut(BaseModel):
     iso3: str
     name: str
     region: str
+
+
+class RankingQuery(BaseModel):
+    """Query parameters both ranking views accept."""
+
+    sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
+    region: str | None = Field(None, description="Market region, e.g. South Asia")
+    min_gap: float | None = Field(None, description="Minimum Export Gap, in USD")
+    limit: int | None = Field(None, ge=1, description="Keep only the top rows")
 
 
 class _Values(BaseModel):

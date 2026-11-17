@@ -12,6 +12,7 @@ ranking option or row field is added there once.
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
 import polars as pl
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -26,6 +27,7 @@ from api.schemas import (
     ProductOpportunities,
     ProductOpportunity,
     ProductOut,
+    RankingQuery,
 )
 from exportspredictor import artefacts as store
 from exportspredictor.lookups import search_products
@@ -72,33 +74,40 @@ def create_app(artefacts_root: Path | None = None) -> FastAPI:
         return [MarketOut(**{k: row[k] for k in MarketOut.model_fields}) for row in artefacts.markets.sort("name").iter_rows(named=True)]
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
-    def by_product(hs6: str, artefacts: store.Artefacts = Depends(loaded)):
+    def by_product(hs6: str, query: Annotated[RankingQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
         """Markets ranked for one Product."""
         product = artefacts.products.filter(pl.col("hs6") == hs6)
         if product.is_empty():
             raise HTTPException(status_code=404, detail=f"Unknown Product: {hs6}")
         return ProductOpportunities(
-            **_ranking(artefacts, MarketOpportunity, hs6=hs6),
+            **_ranking(artefacts, query, MarketOpportunity, hs6=hs6),
             product=ProductOut(**product.row(0, named=True)),
         )
 
     @app.get("/opportunities/by-market/{iso3}", response_model=MarketOpportunities)
-    def by_market(iso3: str, artefacts: store.Artefacts = Depends(loaded)):
+    def by_market(iso3: str, query: Annotated[RankingQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
         """Products ranked for one Market."""
         market = artefacts.markets.filter(pl.col("iso3") == iso3)
         if market.is_empty():
             raise HTTPException(status_code=404, detail=f"Unknown Market: {iso3}")
         return MarketOpportunities(
-            **_ranking(artefacts, ProductOpportunity, iso3=iso3),
+            **_ranking(artefacts, query, ProductOpportunity, iso3=iso3),
             market=MarketOut(**market.row(0, named=True)),
         )
 
     return app
 
 
-def _ranking(artefacts: store.Artefacts, row_model: type[BaseModel], **query) -> dict:
-    """The fields both ranking views share: metadata and the ranked rows."""
-    rows = rank_opportunities(artefacts, **query)
+def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:
+    """The fields both ranking views share: metadata and the ranked, filtered rows."""
+    rows = rank_opportunities(
+        artefacts,
+        **subject,
+        sector=query.sector,
+        region=query.region,
+        min_gap_usd=query.min_gap,
+        limit=query.limit,
+    )
     return {
         "artefact_version": artefacts.version,
         "baseline_year": artefacts.baseline_year,

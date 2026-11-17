@@ -141,3 +141,42 @@ def test_unknown_market_returns_404_with_a_message(client):
 
     assert response.status_code == 404
     assert "XYZ" in response.json()["detail"]
+
+
+def _ranked(client, path, **params) -> list[dict]:
+    response = client.get(path, params=params)
+    assert response.status_code == 200, response.text
+    return response.json()["opportunities"]
+
+
+def test_sector_filter_keeps_only_that_sectors_products(client):
+    rows = _ranked(client, "/opportunities/by-market/JPN", sector="85")
+
+    assert [row["hs6"] for row in rows] == ["851712"]
+
+
+def test_region_filter_keeps_only_that_regions_markets(client):
+    rows = _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}", region="South Asia")
+
+    assert [row["iso3"] for row in rows] == ["IND"]
+
+
+def test_filters_apply_on_both_views(client):
+    # Japan is not in South Asia, and whisky is not in Sector 85.
+    assert _ranked(client, "/opportunities/by-market/JPN", region="South Asia") == []
+    assert _ranked(client, f"/opportunities/by-product/{FIXTURE_HS6}", sector="85") == []
+
+
+def test_min_gap_filter_drops_smaller_export_gaps(client):
+    everything = _ranked(client, "/opportunities/by-market/JPN")
+    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap=0)
+
+    assert rows and all(row["export_gap_usd"] >= 0 for row in rows)
+    assert rows == [row for row in everything if row["export_gap_usd"] >= 0]
+    assert len(rows) < len(everything)
+
+
+def test_limit_keeps_the_top_of_the_ranking(client):
+    everything = _ranked(client, "/opportunities/by-market/JPN")
+
+    assert _ranked(client, "/opportunities/by-market/JPN", limit=2) == everything[:2]
