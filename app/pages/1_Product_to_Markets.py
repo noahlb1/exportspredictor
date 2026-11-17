@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch, product_picker
+from app.ui import banner, fetch, product_picker, why_column, why_link
 
 st.title("Product → Markets")
 
@@ -20,8 +20,13 @@ if banner() is not None:
         else:
             product = body["product"]
             st.subheader(f"{product['hs6']} – {product['description']}")
-            st.caption(f"Markets ranked by Export Gap, Baseline year {body['baseline_year']}.")
-            table = pd.DataFrame(body["opportunities"]).rename(
+            st.caption(
+                f"Markets ranked by Export Gap, Baseline year {body['baseline_year']}. "
+                "Open **Why?** on a row to see which factors raised or lowered its Export Potential."
+            )
+            table = pd.DataFrame(body["opportunities"])
+            table["Why?"] = [why_link(product["hs6"], iso3) for iso3 in table["iso3"]]
+            table = table.rename(
                 columns={
                     "market": "Market",
                     "region": "Region",
@@ -31,6 +36,7 @@ if banner() is not None:
                 }
             )
             st.dataframe(
-                table[["Market", "Region", "Export Potential (USD)", "Actual Exports (USD)", "Export Gap (USD)"]],
+                table[["Market", "Region", "Export Potential (USD)", "Actual Exports (USD)", "Export Gap (USD)", "Why?"]],
                 hide_index=True,
+                column_config={"Why?": why_column()},
             )
