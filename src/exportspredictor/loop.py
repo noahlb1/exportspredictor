@@ -33,6 +33,7 @@ refuses it, and `real_data` refuses it before opening a file.
     uv run python -m exportspredictor.loop select  # #71: v1, three confirmed v2 configurations, depth 6 (four models)
     uv run python -m exportspredictor.loop two-part  # #72: a binary "any Flow" part times a size part (two models)
     uv run python -m exportspredictor.loop scope   # #73: UK Zero Cells sampled; the zero rate at 2% (two models)
+    uv run python -m exportspredictor.loop product-detail  # #74: three Product features, one experiment each (three models)
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -63,9 +64,11 @@ from exportspredictor.experiments import Data, TestYearRead, spearman_within_pro
 from exportspredictor.features import (
     FEATURES,
     KEYS,
+    PRODUCT_DETAIL_FEATURES,
     ZERO_SAMPLING_RATE,
     FeatureTransform,
     features_dir,
+    fit_product_detail,
     subsample_zeros,
 )
 from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
@@ -208,6 +211,9 @@ class LoopData:
     # World exports of each Product in each training year (hs6, year, world_product), for the
     # naive baseline of the training rows; read only by an arm that starts from it.
     world_products: Callable[[], pl.DataFrame] | None = None
+    # Product features finer than Sector, fitted on the training years (`features.fit_product_detail`);
+    # read only by an arm whose features include one of them.
+    product_detail: Callable[[], pl.DataFrame] | None = None
 
     @property
     def validation_year(self) -> int:
@@ -458,6 +464,32 @@ SCOPE_EXPERIMENTS = (
 )
 
 
+# --- Product features finer than Sector (#74) ------------------------------------------------
+
+# Experiment 6, one experiment per feature, run in `PRODUCT_DETAIL_FEATURES` order: each adds
+# its feature to the best so far's and is kept if it clears the win threshold, so the next
+# starts from it. The features are fitted on the training years' Flows of other Exporters
+# (`features.fit_product_detail`) and joined to the loop's rows only; nothing is rebuilt.
+
+
+def product_detail_experiment(feature: str) -> str:
+    return f"product detail: {feature}"
+
+
+def product_detail_arm(feature: str, best: Settings) -> Arm:
+    """The best so far's model with one more feature, the blend weight re-chosen for it."""
+    return Arm(f"+ {feature}", {"features": (*best.features, feature)}, BLEND_GRID)
+
+
+def run_product_detail(lp: "Loop") -> dict:
+    """Run the three Product detail experiments in order, each from the best so far."""
+    for feature in PRODUCT_DETAIL_FEATURES:
+        lp.noise_floor()
+        best = Settings.from_dict(lp.results["best"]["settings"])
+        lp.run_experiment(product_detail_experiment(feature), [product_detail_arm(feature, best)])
+    return lp.results
+
+
 # --- The loop ---------------------------------------------------------------------------------
 
 
@@ -474,6 +506,7 @@ class Loop:
         self.data, self.plan, self.folder = data, plan, folder
         self._models: dict[str, tuple[xgb.Booster, dict]] = {}
         self._matrix_key, self._matrices = None, None
+        self._detail: pl.DataFrame | None = None
         self.results = _load(folder) or {}
         rows = data.data
         years = sorted(rows.training)
@@ -755,7 +788,7 @@ class Loop:
             held_out = outside_fold(plan.uk, plan.n_folds, plan.fold)
             zero_seed = self.data.zero_seed
             world = self._world_products() if settings.base_margin else None
-            grid_rows = self.grid
+            grid_rows = self._with_product_detail(self.grid, settings)
 
             def keep(table: pl.DataFrame) -> pl.DataFrame:
                 rows = subsample_zeros(
@@ -763,6 +796,7 @@ class Loop:
                     uk_zeros_sampled=settings.uk_zeros_sampled,
                 )
                 rows = held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
+                rows = self._with_product_detail(rows, settings)
                 if part == ANY_FLOW:
                     rows = rows.with_columns(_any_flow(pl.col("value_usd")))
                 elif part == SIZE:
@@ -773,7 +807,7 @@ class Loop:
                 return rows.with_columns(naive_margin(naive_from_features(rows, world)).alias(BASE_MARGIN))
 
             if settings.base_margin:
-                grid_rows = self.grid.with_columns(naive_margin(self.grid["naive_usd"]).alias(BASE_MARGIN))
+                grid_rows = grid_rows.with_columns(naive_margin(self.grid["naive_usd"]).alias(BASE_MARGIN))
             if part == ANY_FLOW:  # a binary label on the grid too; the measure each round reads value_usd itself
                 grid_rows = grid_rows.with_columns(_any_flow(pl.col("value_usd")))
 
@@ -787,6 +821,7 @@ class Loop:
 
     def _model_potential(self, model: "xgb.Booster | TwoPart", meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
         """The model's Export Potential in dollars at its chosen round count."""
+        table = self._with_product_detail(table, settings)
         if isinstance(model, TwoPart):
             parts = meta["parts"]
             return two_part_potential(
@@ -797,6 +832,22 @@ class Loop:
         return export_potential(
             table, model, features=list(settings.features), rounds=meta["rounds"], device=self.plan.device,
             base_margin=margin,
+        )
+
+    def _with_product_detail(self, table: pl.DataFrame, settings: Settings) -> pl.DataFrame:
+        """`table` with the Product detail features its settings use, joined on the Product in the same row order."""
+        wanted = [f for f in settings.features if f in PRODUCT_DETAIL_FEATURES]
+        if not wanted:
+            return table
+        if self._detail is None:
+            if self.data.product_detail is None:
+                raise ValueError("This loop's data has no Product detail features, so no arm can use them")
+            self._detail = self.data.product_detail().select(pl.col("hs6").cast(pl.String).alias("_hs6"), *PRODUCT_DETAIL_FEATURES)
+        return (
+            table.drop(wanted, strict=False)
+            .with_columns(_hs6=pl.col("hs6").cast(pl.String))
+            .join(self._detail.select("_hs6", *wanted), on="_hs6", how="left", maintain_order="left")
+            .drop("_hs6")
         )
 
     def _world_products(self) -> pl.DataFrame:
@@ -863,7 +914,8 @@ def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR) -
     rows = experiments.fixture_data(world, validation_year=validation_year)
     flows = world.flows.filter(pl.col("year") == validation_year)
     world_exports = world_products(world.flows.filter(pl.col("year") < validation_year))
-    return LoopData(data=rows, flows=lambda: flows, world_products=lambda: world_exports)
+    detail = fit_product_detail(world.flows, sorted(rows.training), uk=baci.UK)
+    return LoopData(data=rows, flows=lambda: flows, world_products=lambda: world_exports, product_detail=lambda: detail)
 
 
 def real_data(root: Path | None = None, *, validation_year: int = experiments.VALIDATION_YEAR) -> LoopData:
@@ -889,8 +941,16 @@ def real_data(root: Path | None = None, *, validation_year: int = experiments.VA
         files = [str(experiments._flows_file(root, y)) for y in sorted(rows.training)]
         return world_products(pl.scan_parquet(files).select("hs6", "year", "value_usd"))
 
+    def product_detail() -> pl.DataFrame:
+        # Each training year's own file, so no later year is ever opened.
+        years = sorted(rows.training)
+        files = [str(experiments._flows_file(root, y)) for y in years]
+        flows = pl.scan_parquet(files).select("exporter", "importer", "hs6", "year", "value_usd")
+        return fit_product_detail(flows, years, uk=baci.UK)
+
     return LoopData(
-        data=rows, flows=flows, zero_seed=settings.get("zero_sampling_seed", 0), world_products=world_exports
+        data=rows, flows=flows, zero_seed=settings.get("zero_sampling_seed", 0), world_products=world_exports,
+        product_detail=product_detail,
     )
 
 
@@ -939,10 +999,16 @@ def main(argv: Sequence[str]) -> None:
         for name, arms in SCOPE_EXPERIMENTS:
             section = lp.run_experiment(name, arms)["experiments"][name]
             print(json.dumps({name: section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
+    elif command == "product-detail":
+        lp = Loop(real_data(), v2_plan(), loop_dir())
+        results = run_product_detail(lp)
+        for feature in PRODUCT_DETAIL_FEATURES:
+            section = results["experiments"][product_detail_experiment(feature)]
+            print(json.dumps({feature: section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
     elif command == "time":
         print(json.dumps(time_one_arm()), flush=True)
     else:
-        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|two-part|scope|time")
+        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|two-part|scope|product-detail|time")
 
 
 def time_one_arm(root: Path | None = None) -> dict:

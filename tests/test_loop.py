@@ -419,3 +419,39 @@ def test_the_two_scope_experiments_run_in_order_each_from_the_best_so_far(data):
         assert row["settings"]["naive_weight"] in loop.BLEND_WEIGHTS
     zero_rate_row = lp.results["experiments"][loop.ZERO_RATE_EXPERIMENT]["arms"][0]
     assert zero_rate_row["settings"]["zero_rate"] == 0.02
+
+
+def test_an_arm_adding_a_product_detail_feature_trains_and_scores_with_it(data, monkeypatch):
+    trained_on = []
+    original = loop.training_matrix
+
+    def spy(chunks, prepare=None, **kwargs):
+        if prepare is not None:
+            trained_on.append(pl.concat([prepare(c if isinstance(c, pl.DataFrame) else pl.read_parquet(c)) for c in chunks]))
+        return original(chunks, prepare, **kwargs)
+
+    monkeypatch.setattr(loop, "training_matrix", spy)
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+    start = lp.plan.start
+    row = lp.run_arm(loop.Arm("+ hs4", {"features": (*start.features, "hs4")}), start)
+
+    (rows,) = trained_on
+    assert rows["hs4"].to_list() == rows["hs6"].cast(pl.String).str.slice(0, 4).cast(pl.Int16).to_list()
+    assert row["settings"]["features"][-1] == "hs4"
+    assert -1 <= row["selection_measure"] <= 1
+
+
+def test_the_product_detail_experiments_add_one_feature_each_in_order_from_the_best_so_far(data):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+
+    results = loop.run_product_detail(lp)
+
+    names = [loop.product_detail_experiment(f) for f in features.PRODUCT_DETAIL_FEATURES]
+    assert [n for n in results["experiments"] if n in names] == names
+    for name, feature in zip(names, features.PRODUCT_DETAIL_FEATURES):
+        section = results["experiments"][name]
+        (row,) = section["arms"]
+        base_features = section["base"]["settings"]["features"]
+        assert row["settings"]["features"] == [*base_features, feature]
+        assert row["settings"]["naive_weight"] in loop.BLEND_WEIGHTS
+        assert row["status"] in {"kept", "dropped"}

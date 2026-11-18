@@ -73,6 +73,9 @@ SUPPLY_FEATURES = ["log_supply_loo", "rca_loo"]
 # those imports that come from high-income Exporters.
 DEMAND_FEATURES = ["log_demand_loo", "high_income_share_loo"]
 PRODUCT_FEATURES = ["sector"]  # HS2 chapter, as a number
+# Product features finer than Sector (#74), fitted on training years by `fit_product_detail`
+# and joined on the Product; built for the experiment loop's rows only, not by `build_features`.
+PRODUCT_DETAIL_FEATURES = ["trading_pair_share", "importing_markets", "hs4"]
 # Relatedness: how close the Product is to the Products the Exporter already exports
 # competitively (RCA > 1, leaving out the row's Importer), weighted by proximity.
 RELATEDNESS_FEATURES = ["relatedness"]
@@ -386,6 +389,53 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
             "value_usd",
             "weight",
         )
+    )
+
+
+def fit_product_detail(flows: pl.DataFrame | pl.LazyFrame, training_years: list[int], *, uk: str) -> pl.DataFrame:
+    """Product features finer than Sector (#74), one row per Product (`hs6` as text), fitted on `training_years`.
+
+    - `trading_pair_share`: the share of Exporter–Importer pairs trading anything that year
+      which trade the Product, averaged over the years;
+    - `importing_markets`: the number of Markets importing the Product, averaged over the years;
+    - `hs4`: the Product's HS4 heading, as a number.
+
+    Only Flows of `training_years` are read, and only other Exporters' Flows: no UK Flow
+    reaches a feature, so no UK pair can see its own Market or its own past trade. A Product
+    is the same for every row, so the features say how widely a Product is traded, never
+    anything about one pair. A Product with no Flow in those years gets none (missing).
+    """
+    active = (
+        flows.lazy()
+        .filter(pl.col("year").is_in(list(training_years)) & (pl.col("value_usd") > 0))
+        .filter(pl.col("exporter").cast(pl.String) != uk)
+        .select(
+            exporter=pl.col("exporter").cast(pl.String),
+            importer=pl.col("importer").cast(pl.String),
+            hs6=pl.col("hs6").cast(pl.String),
+            year=pl.col("year").cast(pl.Int32),
+        )
+    )
+    pairs = active.group_by("year").agg(_pairs=pl.struct("exporter", "importer").n_unique())
+    by_year = (
+        active.group_by("hs6", "year")
+        .agg(_traded=pl.struct("exporter", "importer").n_unique(), _markets=pl.col("importer").n_unique())
+        .join(pairs, on="year")
+    )
+    # A year in which the Product has no Flow counts as 0 pairs and 0 Markets.
+    n_years = pl.lit(len(set(training_years)), pl.Float64)
+    return (
+        by_year.group_by("hs6")
+        .agg(
+            trading_pair_share=(pl.col("_traded") / pl.col("_pairs")).sum() / n_years,
+            importing_markets=pl.col("_markets").sum().cast(pl.Float64) / n_years,
+        )
+        .with_columns(
+            pl.col("trading_pair_share", "importing_markets").cast(pl.Float32),
+            hs4=pl.col("hs6").str.slice(0, 4).cast(pl.Int16),
+        )
+        .select("hs6", *PRODUCT_DETAIL_FEATURES)
+        .collect()
     )
 
 
