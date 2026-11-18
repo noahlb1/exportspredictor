@@ -63,6 +63,7 @@ from exportspredictor.exclusions import (
 )
 from exportspredictor.features import (
     FEATURES,
+    GROWTH_YEARS,
     KEYS,
     MONOTONE_CONSTRAINTS,
     FeatureTransform,
@@ -70,6 +71,7 @@ from exportspredictor.features import (
     features_dir,
     grid_pairs,
     load_sources,
+    load_year_flows,
     training_rows,
     uk_grid,
 )
@@ -262,6 +264,7 @@ def build_artefacts(
         frozen=frozen,
         rows=comparison.feature_rows(frozen, scope=scope, uk=UK, flows=flows, sources=sources),
         flows=flows,
+        ladder=comparison.FIXTURE_LADDER,
     )
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
@@ -320,6 +323,7 @@ def build_real_artefacts(
     backtest_plan: backtests.Plan = backtests.REAL_PLAN,
     constraint_plan: constraints.Plan = constraints.REAL_PLAN,
     v1_frozen: Path | None = None,
+    ladder_plan: comparison.LadderPlan = comparison.REAL_LADDER,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
@@ -328,7 +332,9 @@ def build_real_artefacts(
     holds out v1's frozen held-out Exporters within scope, read from `v1_frozen`
     (default: `freeze.v1_folder()`). The saved feature ablation and learning curve
     (`experiments.save`) are recorded in the metadata. The tuned configuration comes from
-    `search_results`, by default the saved hyperparameter search (`search.load`).
+    `search_results`, by default the saved hyperparameter search (`search.load`). The evaluation
+    runs the pre-registered v1 comparison against the same frozen v1, with the gain ladder's
+    rungs trained with `ladder_plan` (cached under `ladder_dir`).
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -395,6 +401,7 @@ def build_real_artefacts(
         "experiments": experiments.load(root) if experiments.results_path(root).exists() else None,
     }
     test_grid = folder / f"uk_grid_{baseline_year - 1}.parquet"
+    v1_folder = v1_frozen or freeze.v1_folder()
     report = _evaluate(
         training, test_grid, trained, metadata, markets=evaluation.markets_with_income(markets, root),
         device=device, non_uk_rate=trained.metadata["non_uk_sampling_rate"], seed=seed,
@@ -404,10 +411,15 @@ def build_real_artefacts(
         backtest_cache=backtests.cache_dir(root),
         constraint_plan=constraint_plan,
         lift_held_out=backtests.lift_exporters(
-            freeze.lift_held_out_exporters(v1_frozen or freeze.v1_folder()), scope=settings["exporter_scope"], uk=UK
+            freeze.lift_held_out_exporters(v1_folder), scope=settings["exporter_scope"], uk=UK
         ),
         # Where `evaluation.real_test_models` looks for them, so later steps (the v1 comparison) reuse them.
         test_models_cache=evaluation.test_models_dir(root, metadata),
+        v1=real_v1_inputs(
+            root, v1_folder, scope=settings["exporter_scope"], test_year=baseline_year - 1,
+            lift_outcome_year=backtest_plan.lift.outcome_year, ladder_plan=ladder_plan,
+        ),
+        ladder_cache=ladder_dir(root),
     )
     return Artefacts(
         metadata=metadata,
@@ -666,6 +678,7 @@ def _evaluate(
     backtest_cache: Path | None = None,
     v1: comparison.Inputs | None = None,
     test_models_cache: Path | None = None,
+    ladder_cache: Path | None = None,
 ) -> dict:
     """Evaluate on the test year, run Lift and the Event Backtests (`backtests`), then compare
     the monotone-constrained model with an unconstrained one (`constraints`).
@@ -674,7 +687,8 @@ def _evaluate(
     models use it too. `backtest_chunks` defaults to `training`. With `v1`, the report
     gains the pre-registered `v1_comparison` (`comparison.compare`), scored by the same
     test-year fold models. With `test_models_cache` (a folder), the test-year models are
-    read from it when saved there, or saved there after training.
+    read from it when saved there, or saved there after training. The gain ladder's rung
+    models (`v1.ladder`) are cached under `ladder_cache` the same way.
     """
     test_year = metadata["test_year"]
     started = time.perf_counter()
@@ -733,22 +747,174 @@ def _evaluate(
         **trained.potential_range_report, "text": conformal.coverage_text(trained.potential_range_report)
     }
     if v1 is not None:
-        report["v1_comparison"] = comparison.compare(
-            v1.frozen,
-            v2={
-                name: evaluation.score_rows(rows, test_models.models, test_models.transform, UK)
-                for name, rows in v1.rows.items()
-            },
-            flows=v1.flows,
-            lift_v2=report["lift"],
-            event_v2=report["event_backtest"]["events"][0],
-            lift_settings=backtest_plan.lift,
-            scope=metadata["exporter_scope"],
-            uk=UK,
-            test_year=test_year,
-            seed=seed,
+        report["v1_comparison"] = _v1_comparison(
+            v1, test_models, report, metadata, training=training, lift_settings=backtest_plan.lift, device=device,
+            non_uk_rate=non_uk_rate, seed=seed, ladder_cache=ladder_cache,
         )
     return report
+
+
+def _v1_comparison(
+    v1: comparison.Inputs,
+    test_models: evaluation.TestModels,
+    report: dict,
+    metadata: dict,
+    *,
+    training: Mapping[int, Chunk],
+    lift_settings: backtests.LiftSettings,
+    device: str,
+    non_uk_rate: float,
+    seed: int,
+    ladder_cache: Path | None,
+) -> dict:
+    """The pre-registered `v1_comparison` block (`comparison.compare`) for a report holding the Lift and Event Backtests.
+
+    v2 is scored by its test-year fold models (`test_models`, rung C). With `v1.ladder`, rungs
+    A and B are trained like them (or read from `ladder_cache`) with v1's configuration, and
+    score the UK common rows out-of-fold.
+    """
+    test_year = test_models.test_year
+    ladder = None
+    if v1.ladder is not None:
+        ladder = {}
+        for name, features in (("A", comparison.V1_FEATURES), ("B", FEATURES)):
+            rung = _rung_models(
+                training, name=name, features=features, plan=v1.ladder, test_year=test_year,
+                n_folds=metadata["n_folds"], device=device, non_uk_rate=non_uk_rate, seed=seed, cache=ladder_cache,
+            )
+            ladder[name] = evaluation.score_rows(v1.rows["uk"], rung.models, rung.transform, UK, features=rung.features)
+    started = time.perf_counter()
+    block = comparison.compare(
+        v1.frozen,
+        v2={
+            name: evaluation.score_rows(rows, test_models.models, test_models.transform, UK)
+            for name, rows in v1.rows.items()
+        },
+        flows=v1.flows,
+        lift_v2=report["lift"],
+        event_v2=report["event_backtest"]["events"][0],
+        lift_settings=lift_settings,
+        scope=metadata["exporter_scope"],
+        uk=UK,
+        test_year=test_year,
+        seed=seed,
+        ladder=ladder,
+        ladder_plan=v1.ladder,
+    )
+    print(f"v1 comparison in {time.perf_counter() - started:.0f} s: {block['verdict']['text']}", flush=True)
+    return block
+
+
+def _rung_models(
+    training: Mapping[int, Chunk],
+    *,
+    name: str,
+    features: Sequence[str],
+    plan: comparison.LadderPlan,
+    test_year: int,
+    n_folds: int,
+    device: str,
+    non_uk_rate: float,
+    seed: int,
+    cache: Path | None,
+) -> evaluation.TestModels:
+    """One gain-ladder rung's test-year fold models: v1's configuration on v2's rows, with `features`."""
+    years = [y for y in sorted(training) if y < test_year]
+    settings = {
+        "rung": name, "features": list(features), "params": plan.params, "rounds": plan.rounds, "n_folds": n_folds,
+        "non_uk_rate": non_uk_rate, "seed": seed, "test_year": test_year, "training_years": years,
+    }
+    folder = None if cache is None else Path(cache) / f"{name}_{_settings_key(settings)}"
+    if folder is not None and (folder / evaluation.TEST_MODELS_FILE).exists():
+        print(f"Read ladder rung {name} from {folder}", flush=True)
+        return evaluation.TestModels.load(folder)
+    started = time.perf_counter()
+    models = evaluation.train_test_models(
+        {y: training[y] for y in years}, test_year=test_year, uk=UK, params=plan.params, rounds=plan.rounds,
+        n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, features=features,
+    )
+    print(f"Trained ladder rung {name} in {time.perf_counter() - started:.0f} s", flush=True)
+    if folder is not None:
+        models.save(folder)
+    return models
+
+
+def _settings_key(settings: dict) -> str:
+    return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def ladder_dir(root: Path | None = None) -> Path:
+    """Where the gain ladder's rung models are cached, per feature build."""
+    folder = features_dir(root)
+    return folder.parent / "ladder_models" / _file_key(folder / "features.json")
+
+
+def real_v1_inputs(
+    root: Path,
+    v1_frozen: Path,
+    *,
+    scope: Sequence[str],
+    test_year: int,
+    lift_outcome_year: int,
+    ladder_plan: comparison.LadderPlan | None,
+) -> comparison.Inputs:
+    """The frozen v1 (checked against its manifest) and v2's features on the common rows, from the real data root.
+
+    The features are built as `features.build` builds them: from the test year's Flows and those
+    `GROWTH_YEARS` earlier, with the saved proximity. The comparison's Flows are every Exporter's,
+    of the test year and the Lift outcome year.
+    """
+    frozen = comparison.load_frozen(v1_frozen)
+    sources, to_iso3 = load_sources(root)
+    sources = replace(sources, proximity=pl.read_parquet(features_dir(root) / "proximity.parquet"))
+    years = sorted({test_year, test_year - GROWTH_YEARS, lift_outcome_year})
+    flows = pl.concat([load_year_flows(year, to_iso3, root) for year in years])
+    rows = comparison.feature_rows(frozen, scope=scope, uk=UK, flows=flows, sources=sources)
+    outcome = flows.filter(pl.col("year").is_in([test_year, lift_outcome_year]))
+    return comparison.Inputs(frozen=frozen, rows=rows, flows=outcome, ladder=ladder_plan)
+
+
+def add_v1_comparison(
+    root: Path | None = None,
+    artefacts_root: Path | None = None,
+    *,
+    device: str = "cuda",
+    v1_frozen: Path | None = None,
+    ladder_plan: comparison.LadderPlan = comparison.REAL_LADDER,
+    backtest_plan: backtests.Plan = backtests.REAL_PLAN,
+    version: str | None = None,
+) -> Path:
+    """Add the pre-registered `v1_comparison` to the newest artefact, saved as a new version.
+
+    The source version is not changed: its models and tables are copied file for file, with the
+    evaluation report gaining the block. v2's test-year models are read from the cache
+    (`evaluation.real_test_models`); the ladder's rungs are read or trained (`ladder_dir`).
+    """
+    from exportspredictor import artefacts as store
+    from exportspredictor.paths import artefacts_dir
+
+    root = Path(root or data_dir())
+    artefacts_root = Path(artefacts_root or artefacts_dir())
+    source = store.latest_folder(artefacts_root)
+    bundle = store.load(source)
+    metadata, report = bundle.metadata, dict(bundle.evaluation or {})
+    if "lift" not in report or "event_backtest" not in report:
+        raise ValueError(f"The artefact {bundle.version} has no Lift or Event Backtest to compare with v1's")
+    test_models = evaluation.real_test_models(bundle, root, device=device)
+    folder = features_dir(root)
+    years = json.loads((folder / "features.json").read_text(encoding="utf-8"))["years"]
+    v1 = real_v1_inputs(
+        root, v1_frozen or freeze.v1_folder(artefacts_root), scope=metadata["exporter_scope"],
+        test_year=test_models.test_year, lift_outcome_year=backtest_plan.lift.outcome_year, ladder_plan=ladder_plan,
+    )
+    report["v1_comparison"] = _v1_comparison(
+        v1, test_models, report, metadata,
+        training={y: folder / f"training_{y}.parquet" for y in years if y < test_models.test_year},
+        lift_settings=backtest_plan.lift, device=device, non_uk_rate=metadata["non_uk_sampling_rate"],
+        seed=metadata["model_params"].get("seed", 0), ladder_cache=ladder_dir(root),
+    )
+    copied = {**metadata, "version": version or new_version(), "copied_from": bundle.version}
+    return store.copy_version(source, artefacts_root, metadata=copied, evaluation=report)
 
 
 def _history(uk_flows: pl.DataFrame, yearly: pl.DataFrame) -> pl.DataFrame:
@@ -799,7 +965,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     """`python -m exportspredictor.pipeline` trains and saves a real bundle (about 30 min on GPU).
 
     `python -m exportspredictor.pipeline refresh` instead saves a refreshed copy of the newest
-    saved bundle (`refresh`), in seconds.
+    saved bundle (`refresh`), in seconds. `python -m exportspredictor.pipeline compare` saves a
+    copy of the newest bundle with the v1 comparison and gain ladder added (`add_v1_comparison`).
     """
     import sys
 
@@ -807,6 +974,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     from exportspredictor.paths import artefacts_dir
 
     argv = sys.argv[1:] if argv is None else argv
+    if list(argv) == ["compare"]:
+        print(add_v1_comparison(), flush=True)
+        return
     if list(argv) == ["refresh"]:
         source = artefacts.latest_folder(artefacts_dir())
         bundle = refresh(artefacts.load(source))

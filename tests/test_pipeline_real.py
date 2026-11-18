@@ -5,7 +5,7 @@ import json
 import polars as pl
 import pytest
 
-from exportspredictor import constraints, features, pipeline, search
+from exportspredictor import comparison, constraints, features, pipeline, search
 from exportspredictor.lookups import market_lookup
 
 
@@ -21,6 +21,7 @@ def trained(derived_data_root, v1_frozen):
         derived_data_root, version="real-test", search_results=_tiny_search(derived_data_root), device="cpu",
         non_uk_rate=0.5,
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
+        ladder_plan=comparison.FIXTURE_LADDER,
     )
 
 
@@ -186,7 +187,42 @@ def test_the_real_run_caches_its_fold_models_so_a_rerun_does_not_retrain(
         derived_data_root, version="real-test-again", search_results=trained.metadata["search"], device="cpu",
         non_uk_rate=0.5,
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
+        ladder_plan=comparison.FIXTURE_LADDER,
     )
 
     assert again.baseline.equals(trained.baseline)
     assert again.metadata["feature_transform"] == trained.metadata["feature_transform"]
+
+
+def test_the_v1_comparison_is_added_to_the_newest_artefact_as_a_new_version(
+    trained, derived_data_root, tmp_path, v1_frozen, monkeypatch
+):
+    from dataclasses import replace
+
+    from exportspredictor import artefacts as store
+    from exportspredictor import evaluation
+
+    assert "ladder" in trained.evaluation["v1_comparison"]  # the full run compares too
+    evaluated = {k: v for k, v in trained.evaluation.items() if k != "v1_comparison"}
+    old = replace(trained, metadata={**trained.metadata, "version": "20000101T000000Z"}, evaluation=evaluated)
+    source = store.save(old, tmp_path)
+    before = {p.name: p.read_bytes() for p in source.iterdir() if p.is_file()}
+
+    # The test-year models and the ladder's rungs were cached by the full run: nothing retrains.
+    def no_training(*args, **kwargs):
+        raise AssertionError("the comparison must read the cached models")
+
+    monkeypatch.setattr(evaluation, "train_fold_models", no_training)
+    folder = pipeline.add_v1_comparison(
+        derived_data_root, tmp_path, device="cpu", v1_frozen=v1_frozen, ladder_plan=comparison.FIXTURE_LADDER,
+        backtest_plan=pipeline.FIXTURE_BACKTESTS,
+    )
+
+    result = store.load_latest(tmp_path)
+    assert result.version == folder.name != old.version
+    assert result.metadata["copied_from"] == old.version
+    block = result.evaluation["v1_comparison"]
+    assert block == trained.evaluation["v1_comparison"]
+    assert result.evaluation["headline"] == trained.evaluation["headline"]
+    # The source version is never changed.
+    assert {p.name: p.read_bytes() for p in source.iterdir() if p.is_file()} == before

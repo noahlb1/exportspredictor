@@ -32,20 +32,29 @@ what the exclusions alone change. The block is stored in the evaluation results 
 
 import json
 from collections.abc import Mapping, Sequence
+from itertools import pairwise
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-from exportspredictor import backtests, freeze
+from exportspredictor import backtests, experiments, freeze
 from exportspredictor.evaluation import (
     MIN_RANKED_ROWS,
     naive_potential,
     tweedie_unit_deviance,
 )
 from exportspredictor.exclusions import drop_excluded, is_excluded
-from exportspredictor.features import KEYS, Sources, build_features
+from exportspredictor.features import (
+    FEATURES,
+    KEYS,
+    MARKET_TREND_FEATURES,
+    RELATEDNESS_FEATURES,
+    TARIFF_FEATURES,
+    Sources,
+    build_features,
+)
 
 SEED = 0
 RESAMPLES = 1000
@@ -63,6 +72,40 @@ CONDITIONS = {
     "no_secondary_worse": "no secondary metric gets worse beyond its own interval",
 }
 _PAIR = ["exporter", "importer", "hs6"]
+
+# --- The gain ladder (reporting only; it decides nothing) -------------------------------------------
+# v1's model inputs: v2's features without the ones v2 added (ADR 0006).
+V1_FEATURES = [f for f in FEATURES if f not in {*RELATEDNESS_FEATURES, *MARKET_TREND_FEATURES, *TARIFF_FEATURES}]
+V1_ROUNDS = 1491  # v1's round count (artefact 20261117T022550Z)
+
+
+@dataclass(frozen=True)
+class LadderPlan:
+    """v1's configuration, which rungs A and B train with on v2's rows (scope, sampling, exclusions)."""
+
+    params: dict
+    rounds: int
+
+
+REAL_LADDER = LadderPlan(params=experiments.V1_CONFIG, rounds=V1_ROUNDS)
+# The fixture's v1 stand-in: small trees, few rounds.
+FIXTURE_LADDER = LadderPlan(params={"max_depth": 2, "eta": 0.3}, rounds=20)
+# The cumulative rungs, in order: v1 (frozen), the two extra test-year models, v2 itself.
+RUNGS = {
+    "v1": "v1 as frozen",
+    "A": "v1's features and configuration, with v2's scope, sampling and exclusions",
+    "B": "A plus v2's features",
+    "C": "v2, tuned",
+}
+STEPS = {
+    "A": "v2's Exporter scope, sampling rates and Excluded Products",
+    "B": "v2's new features",
+    "C": "v2's tuned configuration",
+}
+LADDER_NOTE = (
+    "The ladder is for reporting only and decides nothing. Its steps are cumulative, so the order of the steps "
+    "affects how the change is split between them; another order could split it differently."
+)
 
 
 @dataclass(frozen=True)
@@ -84,6 +127,7 @@ class Inputs:
     frozen: Frozen
     rows: Mapping[str, pl.DataFrame]  # v2's feature rows per common row set (`feature_rows`)
     flows: pl.DataFrame  # every Exporter's Flows of the test year and the Lift outcome year
+    ladder: "LadderPlan | None" = None  # v1's configuration for the gain ladder's rungs A and B; None: no ladder
 
 
 def load_frozen(folder: Path) -> Frozen:
@@ -429,6 +473,51 @@ def _all_products(frozen: Frozen, scored: Mapping[str, pl.DataFrame], *, scope: 
     return out
 
 
+def _ladder(
+    uk: pl.DataFrame, rungs: Mapping[str, pl.DataFrame], *, resamples: int, seed: int, level: float
+) -> dict:
+    """The primary metric for each rung of the gain ladder, and each step's change with a paired-bootstrap interval.
+
+    `uk` is the scored UK common rows (`scored_rows`); `rungs` maps "A" and "B" to their scores
+    (exporter, importer, hs6, export_potential_usd) on exactly those keys. The Products are the
+    primary metric's (ranked by v1 and v2), so v1's and C's values are the primary metric's.
+    """
+    columns = {"v1": "v1_usd", "A": "A_usd", "B": "B_usd", "C": "v2_usd"}
+    rows = uk
+    for name in ("A", "B"):
+        scores = rungs[name].select(pl.col(_PAIR).cast(pl.String), pl.col("export_potential_usd").alias(columns[name]))
+        if scores.height != uk.height or scores.select(_PAIR).is_duplicated().any():
+            raise ValueError(f"Rung {name}'s scores must cover the UK common rows exactly once each")
+        rows = rows.join(scores, on=_PAIR, how="left")
+        if rows[columns[name]].null_count():
+            raise ValueError(f"Rung {name}'s scores do not cover the UK common rows")
+    products = _by_product(rows, list(columns.values())).drop_nulls(["v1_usd_rho", "v2_usd_rho"])
+    rho = {name: products[f"{column}_rho"].to_numpy().astype(float) for name, column in columns.items()}
+    counts = _resamples(products.height, resamples=resamples, seed=seed)
+    names = list(RUNGS)
+    steps = []
+    for before, after in pairwise(names):
+        change = rho[after] - rho[before]
+        known = np.isfinite(change)
+        boot = (counts[:, known] @ change[known]) / counts[:, known].sum(axis=1)
+        steps.append(
+            {
+                "from": before,
+                "to": after,
+                "label": STEPS[after],
+                "change": _finite(np.nanmean(rho[after]) - np.nanmean(rho[before])),
+                "ci": _interval(boot, level),
+            }
+        )
+    return {
+        "metric": PRIMARY["label"],
+        "products": products.height,
+        "rungs": [{"name": name, "label": RUNGS[name], "value": _finite(np.nanmean(rho[name]))} for name in names],
+        "steps": steps,
+        "note": LADDER_NOTE,
+    }
+
+
 # --- The verdict -----------------------------------------------------------------------------------
 
 
@@ -510,6 +599,8 @@ def compare(
     seed: int = SEED,
     resamples: int = RESAMPLES,
     level: float = CI_LEVEL,
+    ladder: Mapping[str, pl.DataFrame] | None = None,
+    ladder_plan: LadderPlan | None = None,
 ) -> dict:
     """The `v1_comparison` block of v2's evaluation results.
 
@@ -517,7 +608,9 @@ def compare(
     `flows` holds the Flows (exporter, importer, hs6, year, value_usd) of the test year and of
     the Lift outcome year, of every Exporter. `lift_v2` is v2's Lift result
     (`backtests.lift_backtest`) and `event_v2` its primary Event Backtest
-    (`backtests.event_backtest`). The bootstraps are seeded by `seed`.
+    (`backtests.event_backtest`). The bootstraps are seeded by `seed`. `ladder` maps the gain
+    ladder's rungs "A" and "B" to their scores on the UK common rows (`ladder_plan` is the v1
+    configuration they were trained with, recorded); the ladder is reported, never judged.
     """
     if frozen.manifest.get("test_year") != test_year:
         raise ValueError(f"The frozen v1 tables are for {frozen.manifest.get('test_year')}, not the test year {test_year}")
@@ -531,7 +624,7 @@ def compare(
         *lifts,
         *_event_secondaries(frozen, event_v2=event_v2),
     ]
-    return {
+    block = {
         "test_year": test_year,
         "frozen": {key: frozen.manifest.get(key) for key in ("tag", "commit", "source_models", "frozen_at")},
         "rows": {name: rows.height for name, rows in scored.items()},
@@ -544,3 +637,10 @@ def compare(
         "v1_all_products": _all_products(frozen, scored, scope=scope, uk=uk),
         "verdict": verdict(primary, secondary),
     }
+    if ladder is not None:
+        block["ladder"] = _ladder(scored["uk"], ladder, resamples=resamples, seed=seed, level=level)
+        if ladder_plan is not None:
+            block["ladder"]["v1_configuration"] = {
+                "params": ladder_plan.params, "rounds": ladder_plan.rounds, "features": {"A": V1_FEATURES, "B": FEATURES}
+            }
+    return block
