@@ -14,12 +14,12 @@ podman compose up --build
 
 Then open <http://localhost:8501>.
 
-- The API starts first, on <http://localhost:8000>. It reports healthy only once it has loaded the artefacts.
+- The API starts first, on <http://localhost:8000>. It reports healthy only once it has loaded the artefacts: up to a minute for the real v2 artefact, whose five fold models take 1.7 GB. `/health` names the artefact version, its format (2) and the Gap Period.
 - The app starts only after the API is healthy.
 - `./artefacts` is mounted read-only into the API container, so a new artefact version needs only `podman compose restart api`, not a rebuild.
 - Stop with `Ctrl+C`, or run `podman compose down`.
 
-If the app says the API is unavailable, check `podman compose logs api`. The usual cause is an empty `./artefacts` folder.
+If the app says the API is unavailable, check `podman compose logs api` and <http://localhost:8000/health>. The usual causes are an empty `./artefacts` folder, or a newest folder that is not artefact format 2 (such as a v1 folder): the API serves only the lexically newest folder, and `/health` gives the reason it refused it.
 
 ## Development with uv
 
@@ -75,9 +75,9 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 **UK Exports Predictor (home page)**
 - [ ] The page loads, and the banner states the Baseline year, that it is provisional, that Export Gaps are 2022–2024 averages, and the model version.
 - [ ] Every page has one caption, "Values are nominal US dollars, as reported by BACI", and no page shows a pound sign or a currency switch.
-- [ ] Stop the API (`podman compose stop api`) and reload: every page shows a clear "API is unavailable" message instead of an error. Start it again with `podman compose start api`.
+- [ ] Stop the API (`podman compose stop api`) and reload: within a few seconds, every page shows a clear "API is unavailable" message instead of an error or a spinner. Start it again with `podman compose start api` and wait for <http://localhost:8000/health> to answer before reloading.
 - [ ] The Leaderboard opens on Home without searching, listing UK Product–Market pairs by Export Gap, largest first, with no Excluded Product (e.g. no crude oil or gold) among them.
-- [ ] On the real artefact (about 1.2 M pairs), the Leaderboard loads, and responds to each filter change, within about a second.
+- [ ] On the real artefact (about 1.16 M pairs), the Leaderboard loads, and responds to each filter change, within about a second.
 - [ ] The summary row shows the number of pairs and the total positive Export Gap ("2022–2024 average"); both change with the filters.
 - [ ] Each row shows its Opportunity Type (Expand, New Market or New Product), its Relative Export Gap, whether a UK Trade Agreement is in force, and any Flagged Product or Re-export Hub badge.
 - [ ] Switch "Rank by" to Relative Export Gap: a minimum Export Potential selector appears ($0, $100.0k, $1.0m, $10.0m, $100.0m; default $1.0m), pairs below it disappear, and pairs tied at 100% are ordered by Export Gap.
@@ -90,7 +90,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 **Product → Markets**
 - [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
 - [ ] Export Potential, Actual Exports and Export Gap appear side by side, each headed "2022–2024 average".
-- [ ] Search text that matches nothing (e.g. `999999` or `zzz`) shows a clear "No Product matches" warning.
+- [ ] Search text that matches nothing (e.g. `zzz`) shows a clear "No Product matches" warning.
 - [ ] Open "Excluded Products" under the filters: each Excluded Product (e.g. `270900` crude oil, `710812` gold) is listed with its reason. Searching one (e.g. `gold`) marks it "(Excluded Product)", and choosing it shows why it is not ranked instead of a ranking.
 - [ ] Values are in USD: column headers say "(USD, nominal)".
 - [ ] Each row says whether a UK Trade Agreement is in force with the Market (e.g. Japan: Yes, India: No).
@@ -118,7 +118,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Blocked Opportunities unlocked by the Scenario are listed, and changing the thresholds changes the list.
 - [ ] Pick a Market in the drill-down: its most affected Product–Market pairs are listed, largest effect first.
 - [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
-- [ ] In tariff mode, set a 1000% tariff for one Market: the Scenario Effect is never a rise, and the page says the effect flattens beyond the training range. Removing a Trade Agreement (e.g. with Japan) shows the restored 2021 MFN tariff in the pair tables.
+- [ ] In tariff mode, set a tariff above the highest one in training for one Market (e.g. 5000% for the USA; on the real artefact the training range ends at 3,000%): the Scenario Effect is never a rise, and the page says the effect flattens beyond the training range. Removing a Trade Agreement (e.g. with Japan) shows the restored 2021 MFN tariff in the pair tables.
 - [ ] The page states the EU–Japan Event Backtest result (predicted against observed) above the Scenario choice.
 
 **Why?**

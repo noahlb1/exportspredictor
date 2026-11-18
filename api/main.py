@@ -118,6 +118,7 @@ def create_app(
         return Health(
             ready=True,
             artefact_version=artefacts.version,
+            artefact_format=artefacts.metadata["artefact_format"],
             baseline_year=artefacts.baseline_year,
             gap_years=list(artefacts.gap_years),
         )

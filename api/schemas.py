@@ -18,6 +18,7 @@ from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, PRESE
 class Health(BaseModel):
     ready: bool
     artefact_version: str | None = None
+    artefact_format: int | None = None  # the artefact layout the API reads (2 for v2)
     baseline_year: int | None = None
     gap_years: list[int] | None = None  # first and last year the Export Gaps average over
     reason: str | None = None  # why the artefacts are not loaded, while not ready
