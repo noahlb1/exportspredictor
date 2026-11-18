@@ -11,10 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from exportspredictor.conformal import UNCERTAIN_OPPORTUNITY_CAVEAT
-from exportspredictor.currency import USD_CAPTION, USD_UNIT, format_usd
-from exportspredictor.exclusions import FLAGGED_PRODUCT_CAVEAT, REEXPORT_HUB_CAVEAT
-from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from app.format import format_usd
 
 # HS2 chapters of the 2012 edition (chapter 77 is reserved and unused).
 SECTORS = [f"{chapter:02d}" for chapter in range(1, 98) if chapter != 77]
@@ -26,12 +23,9 @@ _VALUES = {
 }
 # The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's.
 _GAP_PERIOD_MEANS = ("export_potential", "actual_exports", "export_gap")
-# Caveat badges (ADR 0005, 0007): the row field that sets each, its badge and what it means.
-CAVEATS = {
-    "flagged_product": ("Flagged Product", FLAGGED_PRODUCT_CAVEAT),
-    "reexport_hub": ("Re-export Hub", REEXPORT_HUB_CAVEAT),
-    "uncertain_opportunity": ("Uncertain Opportunity", UNCERTAIN_OPPORTUNITY_CAVEAT),
-}
+ROWS_SHOWN = 500  # the top of a Leaderboard-style ranking sent to the page; its summary covers every filtered pair
+# The row fields that name each row of the Leaderboard and the Blocked Opportunities page, and their headings.
+PAIR_COLUMNS = {"hs6": "HS6", "description": "Product", "sector": "Sector", "market": "Market", "region": "Region"}
 
 
 OPPORTUNITY_TYPE_HELP = (
@@ -42,17 +36,26 @@ OPPORTUNITY_TYPE_HELP = (
 _AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
 
 
-def gap_period_label(gap_years: list[int]) -> str:
-    """How a Gap Period mean is labelled, e.g. "2022–2024 average", from the API's `gap_years`."""
-    first, last = gap_years
-    return f"{first}–{last} average"
-
-
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch(path: str, api_url: str, **params) -> dict | list:
     """Cached API read. `api_url` is part of the cache key so a changed API is re-read."""
     del api_url
     return client.get(path, **params)
+
+
+def labels() -> dict:
+    """The API's wording and options (`/labels`): unit and caption, Opportunity Types, caveats, last tariff year."""
+    return fetch("/labels", client.api_url())
+
+
+def usd_unit() -> str:
+    """The unit in column headings, e.g. "USD, nominal"."""
+    return labels()["usd_unit"]
+
+
+def caveats() -> dict[str, tuple[str, str]]:
+    """Caveat badges (ADR 0005, 0007): the row field that sets each, its badge and what it means."""
+    return {field: (caveat["badge"], caveat["text"]) for field, caveat in labels()["caveats"].items()}
 
 
 def banner() -> dict | None:
@@ -69,14 +72,13 @@ def banner() -> dict | None:
             "Then reload this page."
         )
         return None
-    first, last = health["gap_years"]
     st.info(
         f"Baseline year {health['baseline_year']} (provisional data). "
-        f"Export Gaps are {first}–{last} averages. "
+        f"Export Gaps are {health['gap_period_label']}s. "
         "Figures are associations the model has learned, not causes. "
         f"Model version {health['artefact_version']}."
     )
-    st.caption(USD_CAPTION)
+    st.caption(labels()["usd_caption"])
     return health
 
 
@@ -100,12 +102,12 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
         "Market region", [None, *regions], format_func=lambda r: "All regions" if r is None else r, key="region"
     )
     min_gap_usd = gap_column.number_input(
-        f"Minimum Export Gap ({USD_UNIT})", value=None, step=1_000_000.0, key="min_gap_usd"
+        f"Minimum Export Gap ({usd_unit()})", value=None, step=1_000_000.0, key="min_gap_usd"
     )
     type_column, agreement_column, market_column = st.columns(3)
     opportunity_type = type_column.selectbox(
         "Opportunity Type",
-        [None, *OPPORTUNITY_TYPES],
+        [None, *labels()["opportunity_types"]],
         format_func=lambda kind: "All Opportunity Types" if kind is None else kind,
         key="opportunity_type",
         help=OPPORTUNITY_TYPE_HELP,
@@ -125,13 +127,14 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
             format_func=lambda iso3: "All Markets" if iso3 is None else names[iso3],
             key="market",
         )
+    caveat = caveats()
     flagged_column, hubs_column, uncertain_column = st.columns(3)
     hide_flagged = flagged_column.checkbox(
-        "Hide Flagged Products", key="hide_flagged", help=CAVEATS["flagged_product"][1]
+        "Hide Flagged Products", key="hide_flagged", help=caveat["flagged_product"][1]
     )
-    hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=CAVEATS["reexport_hub"][1])
+    hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=caveat["reexport_hub"][1])
     hide_uncertain = uncertain_column.checkbox(
-        "Hide Uncertain Opportunities", key="hide_uncertain", help=CAVEATS["uncertain_opportunity"][1]
+        "Hide Uncertain Opportunities", key="hide_uncertain", help=caveat["uncertain_opportunity"][1]
     )
     rank_by = min_potential_usd = options = None
     if rank_by_toggle:
@@ -143,7 +146,7 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
         options = orders[rank_by].get("min_potential_usd_options")
     if options:
         min_potential_usd = minimum_column.selectbox(
-            f"Only pairs with Export Potential of at least ({USD_UNIT})",
+            f"Only pairs with Export Potential of at least ({usd_unit()})",
             options,
             index=options.index(orders[rank_by]["default_min_potential_usd"]),
             format_func=format_usd,
@@ -168,12 +171,12 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
 
 def caveat_badges(row: dict) -> str:
     """The caveat badges of one ranking row or explanation, comma-separated ("" if none)."""
-    return ", ".join(badge for field, (badge, _) in CAVEATS.items() if row[field])
+    return ", ".join(badge for field, (badge, _) in caveats().items() if row[field])
 
 
 def show_caveats(row: dict) -> None:
     """One warning per caveat of a pair (its detail view)."""
-    for field, (_, caveat) in CAVEATS.items():
+    for field, (_, caveat) in caveats().items():
         if row[field]:
             st.warning(caveat)
 
@@ -271,16 +274,16 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     table = raw[list(columns)].rename(columns=columns)
     table["Opportunity Type"] = raw["opportunity_type"]
     table["UK Trade Agreement in force"] = raw["trade_agreement"].map({True: "Yes", False: "No"})
-    averaged = gap_period_label(body["gap_years"])
+    averaged, unit = body["gap_period_label"], usd_unit()
     headings = {
-        field: f"{heading}, {averaged} ({USD_UNIT})" if field in _GAP_PERIOD_MEANS else f"{heading} ({USD_UNIT})"
+        field: f"{heading}, {averaged} ({unit})" if field in _GAP_PERIOD_MEANS else f"{heading} ({unit})"
         for field, heading in _VALUES.items()
     }
     for field, heading in headings.items():
         table[heading] = raw[f"{field}_usd"]
     relative = f"Relative Export Gap, {averaged}"
     table[relative] = raw["relative_export_gap"]
-    table[f"Potential Range, {averaged} ({USD_UNIT})"] = [
+    table[f"Potential Range, {averaged} ({unit})"] = [
         f"{format_usd(row['potential_range_low_usd'])}–{format_usd(row['potential_range_high_usd'])}" for row in rows
     ]
     table["Blocked Opportunity"] = raw["blocked_opportunity"]
@@ -296,7 +299,7 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
             "Why?": why_column(),
         },
     )
-    shown = [caveat for field, (_, caveat) in CAVEATS.items() if raw[field].any()]
+    shown = [caveat for field, (_, caveat) in caveats().items() if raw[field].any()]
     if shown:
         st.caption(" ".join(shown) + " Use the hide filters above to leave them out.")
     st.download_button(
@@ -304,7 +307,17 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     )
 
 
-WHY_PAGE_PATH = "/Why"  # the URL path Streamlit gives app/pages/4_Why.py
+def show_leaderboard(body: dict, file_name: str) -> None:
+    """A Leaderboard-style ranking of every UK pair (the Leaderboard, Blocked Opportunities): how much of it
+    is shown, the Why? hint and the table, after the page's own summary metrics."""
+    summary, shown = body["summary"], len(body["opportunities"])
+    if summary["pairs"] > shown:
+        st.caption(f"Showing the top {shown:,} of {summary['pairs']:,} pairs.")
+    st.caption("Open **Why?** on a row to see which factors raised or lowered its Export Potential.")
+    show_ranking(body, PAIR_COLUMNS, file_name=file_name)
+
+
+WHY_PAGE_PATH = "/Why"  # the URL path Streamlit gives app/pages/5_Why.py
 
 
 def why_link(hs6: str, iso3: str) -> str:
@@ -326,7 +339,7 @@ def potential_range_bar(body: dict) -> None:
         {"marker": "Export Potential", "value_usd": body["export_potential_usd"]},
         {"marker": "Actual Exports", "value_usd": body["actual_exports_usd"]},
     ]
-    axis = {"title": f"{gap_period_label(body['gap_years'])} ({USD_UNIT})", "format": "~s"}
+    axis = {"title": f"{body['gap_period_label']} ({usd_unit()})", "format": "~s"}
     st.vega_lite_chart(
         {
             "height": 70,

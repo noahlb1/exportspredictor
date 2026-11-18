@@ -243,12 +243,24 @@ def _excluded_products(table: pl.DataFrame) -> list[dict]:
     return [{"reason": row["reason"], "products": row["hs6"]} for row in groups.iter_rows(named=True)]
 
 
+# The row budget spec #39 planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
+SPEC_ROW_BUDGET_M = 110
+
+
 def _sampling_decision(metadata: dict) -> tuple[str, str]:
     scope = _training_scope(metadata)
+    budget = metadata.get("row_budget")
+    measured = (
+        f" The budget measured on the RTX 3080 (`scripts/gpu_check.py`) is {budget:,} rows, about "
+        f"{1 - budget / (SPEC_ROW_BUDGET_M * 1e6):.0%} below the about {SPEC_ROW_BUDGET_M} M rows the spec planned "
+        "around, so the non-UK rate is lower than planned."
+        if budget
+        else ""
+    )
     return (
         f"Train on {scope['exporters']} Exporters into every Market, keeping every UK row (ADR 0004)",
         (f"The full HS6 world does not fit the GPU's 10 GB. {scope['text']} The non-UK rate is the largest the "
-         "VRAM row budget allows, because the learning curve was still falling at the highest rate tried."),
+         f"VRAM row budget allows, because the learning curve was still falling at the highest rate tried.{measured}"),
     )
 
 

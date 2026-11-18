@@ -15,7 +15,7 @@ from streamlit.testing.v1 import AppTest
 from api.main import create_app
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
-WHY = APP_DIR / "pages" / "4_Why.py"
+WHY = APP_DIR / "pages" / "5_Why.py"
 PRODUCT_TO_MARKETS = APP_DIR / "pages" / "1_Product_to_Markets.py"
 
 

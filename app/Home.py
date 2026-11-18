@@ -8,17 +8,15 @@ app/pages/ and reads the model only through the API (app/client.py).
 import streamlit as st
 
 from app import client
+from app.format import format_usd
 from app.ui import (
+    ROWS_SHOWN,
     banner,
     excluded_products_list,
     fetch,
-    gap_period_label,
     ranking_filters,
-    show_ranking,
+    show_leaderboard,
 )
-from exportspredictor.currency import format_usd
-
-ROWS_SHOWN = 500  # the top of the Leaderboard sent to the page; the summary covers every filtered pair
 
 st.set_page_config(page_title="UK Exports Predictor", layout="wide")
 st.title("UK Exports Predictor")
@@ -40,11 +38,7 @@ if banner() is not None:
         pairs_column, gap_column = st.columns(2)
         pairs_column.metric("Product–Market pairs", f"{summary['pairs']:,}")
         gap_column.metric(
-            f"Total positive Export Gap, {gap_period_label(body['gap_years'])}",
+            f"Total positive Export Gap, {body['gap_period_label']}",
             format_usd(summary["positive_export_gap_usd"]),
         )
-        if summary["pairs"] > len(body["opportunities"]):
-            st.caption(f"Showing the top {len(body['opportunities']):,} of {summary['pairs']:,} pairs.")
-        st.caption("Open **Why?** on a row to see which factors raised or lowered its Export Potential.")
-        columns = {"hs6": "HS6", "description": "Product", "sector": "Sector", "market": "Market", "region": "Region"}
-        show_ranking(body, columns, file_name="leaderboard")
+        show_leaderboard(body, file_name="leaderboard")

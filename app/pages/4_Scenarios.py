@@ -6,8 +6,8 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import SECTORS, banner, fetch, run_scenario
-from exportspredictor.currency import USD_UNIT, format_change
+from app.format import format_change
+from app.ui import SECTORS, banner, fetch, labels, run_scenario, usd_unit
 
 st.title("Scenarios")
 
@@ -18,12 +18,15 @@ PAIR_NAMES = {"hs6": "HS6", "description": "Product", "market": "Market"}
 DRILL_DOWN_ROWS = 50
 
 
-VALUE_COLUMNS = {
-    "baseline_potential_usd": f"Baseline Export Potential ({USD_UNIT})",
-    "scenario_potential_usd": f"Scenario Export Potential ({USD_UNIT})",
-    "effect_usd": f"Scenario Effect ({USD_UNIT})",
-    "effect_share": "Scenario Effect (share of Baseline)",
-}
+def value_columns(unit: str) -> dict[str, str]:
+    return {
+        "baseline_potential_usd": f"Baseline Export Potential ({unit})",
+        "scenario_potential_usd": f"Scenario Export Potential ({unit})",
+        "effect_usd": f"Scenario Effect ({unit})",
+        "effect_share": "Scenario Effect (share of Baseline)",
+    }
+
+
 TARIFF_COLUMNS = {
     "baseline_tariff_pct": "Applied Tariff, Baseline (%)",
     "scenario_tariff_pct": "Applied Tariff, Scenario (%)",
@@ -66,7 +69,7 @@ if banner() is not None:
         st.caption(
             "Set the tariff chosen Markets charge on UK goods, in every Sector or only in chosen ones. "
             "Adding or removing a Trade Agreement changes the tariff too: adding one removes it, and removing one "
-            "restores the Market's 2021 MFN rate."
+            f"restores the Market's {labels()['last_tariff_year']} MFN rate."
         )
         tariff_markets = st.multiselect(
             "Markets that charge the tariff", list(market_names), format_func=market_names.get, key="tariff_markets"
@@ -129,11 +132,12 @@ if banner() is not None:
                     "forecasts: the model associates these policy conditions with this change in Export "
                     f"Potential, holding everything else at the {result['baseline_year']} Baseline."
                 )
-                pair_columns = {**PAIR_NAMES, **VALUE_COLUMNS, **TARIFF_COLUMNS}
-                total_columns = {**VALUE_COLUMNS, "pairs": "Product–Market pairs changed"}
+                unit = usd_unit()
+                pair_columns = {**PAIR_NAMES, **value_columns(unit), **TARIFF_COLUMNS}
+                total_columns = {**value_columns(unit), "pairs": "Product–Market pairs changed"}
                 total = result["total"]
                 a, b, c = st.columns(3)
-                a.metric(f"Scenario Effect ({USD_UNIT})", format_change(total["effect_usd"]))
+                a.metric(f"Scenario Effect ({unit})", format_change(total["effect_usd"]))
                 b.metric("Share of Baseline", f"{total['effect_share']:+.1%}")
                 c.metric("Blocked Opportunities", f"{result['blocked_count']:,}")
 
