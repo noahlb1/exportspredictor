@@ -21,13 +21,14 @@ def client(fixture_artefacts_dir):
         yield client
 
 
-def test_health_reports_version_baseline_year_and_gap_period_once_loaded(client):
+def test_health_reports_version_format_baseline_year_and_gap_period_once_loaded(client):
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {
         "ready": True,
         "artefact_version": "fixture-test",
+        "artefact_format": 2,
         "baseline_year": 2024,
         "gap_years": [2022, 2024],
     }
