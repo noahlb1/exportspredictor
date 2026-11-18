@@ -167,3 +167,26 @@ def test_the_real_run_without_a_saved_search_is_refused(derived_data_root):
 
     with pytest.raises(ValueError, match="exportspredictor.search"):
         pipeline.build_real_artefacts(derived_data_root, device="cpu")
+
+
+def test_the_real_run_caches_its_fold_models_so_a_rerun_does_not_retrain(
+    trained, derived_data_root, v1_frozen, monkeypatch
+):
+    from exportspredictor import evaluation
+
+    # The test-year models sit where `evaluation.real_test_models` looks for them (#61 reuses them).
+    assert (evaluation.test_models_dir(derived_data_root, trained.metadata) / evaluation.TEST_MODELS_FILE).exists()
+
+    def no_training(*args, **kwargs):
+        raise AssertionError("a re-run must read the cached fold models")
+
+    monkeypatch.setattr(pipeline, "train_fold_models", no_training)
+    monkeypatch.setattr(evaluation, "train_fold_models", no_training)
+    again = pipeline.build_real_artefacts(
+        derived_data_root, version="real-test-again", search_results=trained.metadata["search"], device="cpu",
+        non_uk_rate=0.5,
+        backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
+    )
+
+    assert again.baseline.equals(trained.baseline)
+    assert again.metadata["feature_transform"] == trained.metadata["feature_transform"]

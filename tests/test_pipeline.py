@@ -207,6 +207,18 @@ def test_metadata_holds_no_gbp_rate(artefacts):
     assert not [key for key in artefacts.metadata if "gbp" in key.lower()]
 
 
+def test_metadata_records_the_thresholds_the_tables_were_built_with(artefacts):
+    # Spec #39 *Artefacts*: the Blocked Opportunity rule, the Relative Export Gap floor and the Potential Range.
+    assert artefacts.metadata["thresholds"] == {
+        "blocked_min_share": 0.2,
+        "blocked_min_usd": 1_000_000.0,
+        "relative_gap_min_potential_usd": 1_000_000.0,
+        "potential_range_coverage": pytest.approx(0.8),
+        "potential_range_bands": 20,
+        "potential_range_min_band_rows": 12,
+    }
+
+
 def test_refresh_adds_derived_metadata_to_a_saved_bundle_without_retraining(artefacts):
     # A v1 bundle carries a £ rate; the refreshed copy drops it.
     v1_rate = {"usd_per_gbp": 1.2783, "year": 2024, "source": "Bank of England"}
