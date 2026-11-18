@@ -45,7 +45,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import xgboost as xgb
 
@@ -57,6 +56,7 @@ from exportspredictor.features import FEATURES, FeatureTransform, features_dir
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
+from exportspredictor.prediction import export_potential
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
 from exportspredictor.wording import number_text, rate_text
@@ -560,9 +560,7 @@ def score_rows(
     uk_rows = score_out_of_fold(transformed, list(models), uk=uk, inputs=features).drop("fold")
     others = transformed.filter(~is_uk)
     if others.height:
-        data = others.select(features).to_numpy().astype(np.float32)
-        mean = np.mean([model.inplace_predict(data) for model in models], axis=0)
-        others = others.with_columns(export_potential_usd=pl.Series(mean, dtype=pl.Float64))
+        others = others.with_columns(export_potential(others, models, features=features, by="mean"))
     else:
         others = others.with_columns(export_potential_usd=pl.lit(None, pl.Float64))
     return pl.concat([uk_rows.select(others.columns), others])

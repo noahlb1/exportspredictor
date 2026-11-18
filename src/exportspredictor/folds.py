@@ -14,11 +14,11 @@ rows never sit in host memory at once. UK rows, Zero Cells included, are never s
 import hashlib
 from collections.abc import Sequence
 
-import numpy as np
 import polars as pl
 import xgboost as xgb
 
 from exportspredictor.features import FEATURES, FeatureTransform
+from exportspredictor.prediction import export_potential
 from exportspredictor.training import (
     DEFAULT_ROUNDS,
     Chunk,
@@ -97,21 +97,7 @@ def score_out_of_fold(
     `inputs` are the models' features, in order.
     """
     rows = _with_fold(features.filter(pl.col("exporter").cast(pl.String) == uk), len(models))
-    return rows.with_columns(export_potential_usd=score_by_fold(rows, models, features=inputs))
-
-
-def score_by_fold(rows: pl.DataFrame, models: list[xgb.Booster], *, features: Sequence[str] = FEATURES) -> pl.Series:
-    """Each row's prediction from the fold model named by its `fold` column (rows hold `features`)."""
-    fold = rows["fold"].to_numpy()
-    potential = np.empty(rows.height)
-    for k, model in enumerate(models):
-        if model.attr("held_out_fold") not in (None, str(k)):
-            raise ValueError(f"Model {k} held out fold {model.attr('held_out_fold')}, not {k}")
-        mask = fold == k
-        if mask.any():
-            data = rows.filter(pl.Series(mask)).select(features).to_numpy().astype(np.float32)
-            potential[mask] = model.inplace_predict(data)
-    return pl.Series("export_potential_usd", potential)
+    return rows.with_columns(export_potential_usd=export_potential(rows, models, features=inputs))
 
 
 def _with_fold(rows: pl.DataFrame, n_folds: int) -> pl.DataFrame:

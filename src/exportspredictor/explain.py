@@ -1,7 +1,7 @@
 """"Why?" explanations: which factors raised or lowered one UK pair's Export Potential.
 
 The explanation uses SHAP values (TreeSHAP) computed by XGBoost itself
-(`predict(..., pred_contribs=True)`), from **the pair's own fold model**: the one that held
+(`prediction.log_contributions`), from **the pair's own fold model**: the one that held
 the pair out and scored its Baseline (ADR 0001). Explaining with any other model would
 explain a number the Advisor never sees.
 
@@ -20,11 +20,11 @@ from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
-import xgboost as xgb
 
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.features import FEATURES, GROWTH_YEARS, REEXPORT_RATIO_CAP
 from exportspredictor.policy import TRADING_BLOCS
+from exportspredictor.prediction import log_contributions
 from exportspredictor.tariffs import TARIFF_CARRIED_FORWARD_CAVEAT
 
 _BLOC_NAMES = {"eu": "the EU", "cptpp": "CPTPP", "efta": "EFTA"}
@@ -108,14 +108,10 @@ def explain_pair(artefacts: Artefacts, hs6: str, iso3: str) -> Explanation:
     if row.is_empty():
         raise UnknownPair(f"No Baseline for Product {hs6} in Market {iso3}")
     fold = int(row["fold"].item())
-    model = artefacts.fold_models[fold]
-    if model.attr("held_out_fold") not in (None, str(fold)):
-        raise ValueError(f"Fold model {fold} held out fold {model.attr('held_out_fold')}")
-
     values = row.select(pl.col(FEATURES).cast(pl.Float32)).to_numpy()
-    matrix = xgb.DMatrix(values, feature_names=FEATURES, missing=np.nan)
-    contributions = model.predict(matrix, pred_contribs=True)[0]
-    log_potential = float(model.predict(matrix, output_margin=True)[0])
+    all_contributions, log_potentials = log_contributions(row, artefacts.fold_models)
+    contributions = all_contributions[0]
+    log_potential = float(log_potentials[0])
     base_value = float(contributions[-1])
 
     market = _market_name(artefacts, iso3)
@@ -213,10 +209,8 @@ def global_importance(artefacts: Artefacts, *, sample: int | None = 20_000, seed
     if sample is not None and rows.height > sample:
         rows = rows.sample(sample, seed=seed)
     totals = np.zeros(len(FEATURES))
-    for fold, part in rows.group_by("fold"):
-        values = part.select(pl.col(FEATURES).cast(pl.Float32)).to_numpy()
-        matrix = xgb.DMatrix(values, feature_names=FEATURES, missing=np.nan)
-        contributions = artefacts.fold_models[int(fold[0])].predict(matrix, pred_contribs=True)
+    for _, part in rows.group_by("fold"):
+        contributions, _ = log_contributions(part, artefacts.fold_models)
         totals += np.abs(contributions[:, : len(FEATURES)]).sum(axis=0)
     labels = factor_labels("the Market")
     return pl.DataFrame(

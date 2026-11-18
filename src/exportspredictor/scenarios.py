@@ -49,6 +49,7 @@ from exportspredictor.features import (
     TARIFF_METADATA,
     FeatureTransform,
 )
+from exportspredictor.prediction import export_potential
 
 DEFAULT_MIN_SHARE = 0.2
 DEFAULT_MIN_USD = 1_000_000.0
@@ -280,7 +281,7 @@ def run(
     changed, clipped_pairs = _apply(baseline_features, scenario, tariff_range)
     pairs = (
         changed.select("hs6", "iso3", scenario_tariff_pct=_percent(TARIFF))
-        .with_columns(scenario_potential_usd=predict(changed, models))
+        .with_columns(scenario_potential_usd=export_potential(changed, models))
         .join(
             baseline.select("hs6", "iso3", baseline_potential_usd="baseline_export_potential_usd"), on=["hs6", "iso3"]
         )
@@ -315,7 +316,7 @@ def blocked_opportunity_values(
     """
     every_market = Scenario(add_agreements=tuple(baseline_features["iso3"].unique().sort()))
     added = apply(baseline_features, every_market)
-    effects = added.select("hs6", "iso3").with_columns(scenario=predict(added, models))
+    effects = added.select("hs6", "iso3").with_columns(scenario=export_potential(added, models))
     return (
         baseline.select("hs6", "iso3", "baseline_export_potential_usd")
         .join(effects, on=["hs6", "iso3"], how="left")
@@ -352,18 +353,6 @@ def _totals(pairs: pl.DataFrame, by: str) -> pl.DataFrame:
         .with_columns(effect_share=_share("effect_usd", "baseline_potential_usd"))
         .sort("effect_usd", by, descending=[True, False])
     )
-
-
-def predict(rows: pl.DataFrame, models: Sequence[xgb.Booster]) -> pl.Series:
-    """Export Potential (USD) for feature rows, each from its pair's fold model (`fold`)."""
-    fold = rows["fold"].to_numpy()
-    data = rows.select(FEATURES).to_numpy().astype(np.float32)
-    potential = np.zeros(rows.height)
-    for k, model in enumerate(models):
-        mask = fold == k
-        if mask.any():
-            potential[mask] = model.inplace_predict(data[mask])
-    return pl.Series("export_potential_usd", potential)
 
 
 def check_only_policy_changed(before: pl.DataFrame, after: pl.DataFrame) -> None:
