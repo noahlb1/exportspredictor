@@ -43,7 +43,7 @@ import hashlib
 import json
 import math
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,7 +52,13 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.features import FEATURES, TARIFF_FEATURES, FeatureTransform
-from exportspredictor.prediction import export_potential
+from exportspredictor.prediction import (
+    MODEL_ALONE,
+    NAIVE_COLUMN,
+    ModelForm,
+    blend,
+    export_potential,
+)
 from exportspredictor.scenarios import AGREEMENT_TARIFF
 from exportspredictor.training import (
     Chunk,
@@ -380,7 +386,7 @@ class FoldPredictor:
     uk: str
 
     @property
-    def trainingyears_text(self) -> list[int]:
+    def training_years(self) -> list[int]:
         return list(self.test_models.training_years)
 
     def predict(self, rows: pl.DataFrame) -> np.ndarray:
@@ -524,17 +530,37 @@ def gap_period_pairs(yearly: pl.DataFrame, later: pl.DataFrame, settings: LiftSe
     )
 
 
-def lift_rows(training: Mapping[int, Chunk], settings: LiftSettings, model: BacktestModel) -> pl.DataFrame:
-    """The held-out Exporters' rows of every Gap Period year, with the Lift model's Export Potential."""
+def lift_rows(
+    training: Mapping[int, Chunk],
+    settings: LiftSettings,
+    model: BacktestModel,
+    *,
+    form: ModelForm = MODEL_ALONE,
+    year_flows: Callable[[int], pl.DataFrame] | None = None,
+) -> pl.DataFrame:
+    """The held-out Exporters' rows of every Gap Period year, with the Lift model's Export Potential.
+
+    In a blend (`form`), each row's Export Potential blends the Lift model with the row's naive
+    baseline (`evaluation.naive_potential`, kept as `naive_usd`), computed from every Exporter's
+    Flows of the row's own year, `year_flows(year)`: the Lift model's own form of the served model.
+    """
+    from exportspredictor.evaluation import naive_potential
+
     _check_lift_model(model, settings)
+    if form.naive_weight and year_flows is None:
+        raise ValueError("A blend's Lift rows need each Gap Period year's Flows for the naive baseline")
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
     frames = []
     for year in settings.gap_years:
         rows = _rows(training[year], is_held)
+        potential = model.predict(rows)
+        kept = [pl.col(_PAIR).cast(pl.String), pl.col("year").cast(pl.Int16), "value_usd", "weight"]
+        if form.naive_weight:
+            rows = naive_potential(rows, year_flows(year))
+            potential = blend(potential, rows[NAIVE_COLUMN].to_numpy(), form.naive_weight)
+            kept.append(NAIVE_COLUMN)
         frames.append(
-            rows.select(pl.col(_PAIR).cast(pl.String), pl.col("year").cast(pl.Int16), "value_usd", "weight").with_columns(
-                export_potential_usd=pl.Series(model.predict(rows), dtype=pl.Float64)
-            )
+            rows.select(kept).with_columns(export_potential_usd=pl.Series(potential, dtype=pl.Float64))
         )
     return pl.concat(frames, how="vertical_relaxed")
 
@@ -553,9 +579,14 @@ def lift_backtest(
     *,
     resamples: int = RESAMPLES,
     seed: int = 0,
+    form: ModelForm = MODEL_ALONE,
+    year_flows: Callable[[int], pl.DataFrame] | None = None,
 ) -> dict:
-    """Raw and size-matched Lift of the held-out Exporters' top-decile Gap Period Export Gaps, by the outcome year."""
-    yearly = lift_rows(training, settings, model)
+    """Raw and size-matched Lift of the held-out Exporters' top-decile Gap Period Export Gaps, by the outcome year.
+
+    The Export Potential is in the model form `form` (`lift_rows`); the result records it.
+    """
+    yearly = lift_rows(training, settings, model, form=form, year_flows=year_flows)
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
     later = _rows(training[settings.outcome_year], is_held & (pl.col("value_usd") > 0)).select(*_PAIR, "value_usd")
     result = lift(gap_period_pairs(yearly, later, settings), resamples=resamples, seed=seed)
@@ -567,6 +598,7 @@ def lift_backtest(
         outcome_year=settings.outcome_year,
         min_growth_share=settings.min_growth_share,
         min_growth_usd=settings.min_growth_usd,
+        model_form=form.to_dict(),
     )
     result["text"] = lift_text(result)
     return result
@@ -808,8 +840,13 @@ def run(
     test_models=None,
     cache: Path | None = None,
     lift_held_out: Sequence[str],
+    form: ModelForm = MODEL_ALONE,
+    year_flows: Callable[[int], pl.DataFrame] | None = None,
 ) -> dict:
     """Train (or read from `cache`) the backtest models; return the report's `lift` and `event_backtest` keys.
+
+    Lift is measured in the served model form `form` (a blend takes each Gap Period year's
+    naive baseline from `year_flows(year)`); the Event Backtests measure the model alone.
 
     `training` maps each year to its feature table (training rows) and must cover every
     year the plan reads. `lift_held_out` are the Exporters the Lift model never sees:
@@ -839,7 +876,9 @@ def run(
         return trained
 
     lift_model = model("lift", plan.lift.training_years, plan.lift.before, held)
-    lift_result = lift_backtest(training, plan.lift, lift_model, resamples=plan.resamples, seed=seed)
+    lift_result = lift_backtest(
+        training, plan.lift, lift_model, resamples=plan.resamples, seed=seed, form=form, year_flows=year_flows
+    )
     income = sorted(high_income) if plan.high_income_controls and high_income is not None else None
     event_model = model(plan.event.name, plan.event.training_years, plan.event.event_year)
     events = [
@@ -948,7 +987,7 @@ def add_to_latest(
     """
     from exportspredictor import artefacts as store
     from exportspredictor import baci, evaluation, freeze
-    from exportspredictor.features import features_dir, load_sources
+    from exportspredictor.features import features_dir, load_sources, load_year_flows
     from exportspredictor.paths import artefacts_dir, data_dir
 
     root = Path(root or data_dir())
@@ -975,6 +1014,8 @@ def add_to_latest(
         lift_held_out=lift_exporters(
             freeze.lift_held_out_exporters(v1_frozen or freeze.v1_folder(artefacts_root)), scope=metadata["exporter_scope"], uk=baci.UK
         ),
+        form=bundle.model_form,
+        year_flows=lambda year: load_year_flows(year, load_sources(root)[1], root),
     )
     report = {**bundle.evaluation, **result}
     new = {**metadata, "version": version or store.new_version(), "copied_from": bundle.version}

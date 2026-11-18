@@ -302,3 +302,59 @@ def test_limitations_drop_no_tariffs_and_cover_v2s_caveats():
     for topic in ["carried forward from 2021", "excluded products", "top 100", "nominal us dollars",
                   "potential range", "exchangeab"]:
         assert topic in text, topic
+
+
+# --- The test year beside earlier versions --------------------------------------------------
+
+
+def _final_report(model, naive):
+    return {
+        "test_year": 2023,
+        "model_form": {"form": "blend", "naive_weight": 0.3},
+        "headline": {"model": model, "naive": naive, "beats_naive": model > naive},
+        "accuracy": {
+            "all_exporters": {"overall": {"model_tweedie_deviance": 400.0}},
+            "uk_out_of_fold": {"overall": {"model_tweedie_deviance": 700.0}},
+        },
+        "lift": {"lift": 4.0, "size_matched": {"lift": 0.9}},
+        "v1_comparison": {"primary": {"v1": 0.5397}},
+    }
+
+
+V2 = {
+    "version": "20261118T100524Z", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
+    "tweedie_deviance_all_exporters": 355.5, "tweedie_deviance_uk": 568.6,
+}
+
+
+def test_the_test_year_is_reported_beside_v2_v1_and_both_naive_figures():
+    block = evaluation.earlier_versions(_final_report(0.55, 0.52), v2=V2)
+
+    rows = {row["name"]: row for row in block["rows"]}
+    assert rows["This version (blend)"]["uk_ranking"] == 0.55
+    assert rows["This version (blend)"]["size_matched_lift"] == 0.9
+    assert rows["This version (blend)"]["tweedie_deviance_all_exporters"] == 400.0
+    assert rows["v2"]["uk_ranking"] == 0.5115 and rows["v2"]["size_matched_lift"] == 0.788
+    assert rows["v1"]["uk_ranking"] == 0.5397
+    naive = {row["name"]: row["uk_ranking"] for row in block["naive"]}
+    assert naive == {"Naive baseline, every Exporter's Flows (this run)": 0.52,
+                     "Naive baseline as reported for v2 (training rows' Flows)": 0.5233}
+    assert block["beats_naive"] is True
+    assert "beats the naive baseline" in block["text"] and "2023" in block["text"]
+
+
+def test_a_model_that_does_not_beat_the_naive_baseline_is_said_so_plainly():
+    block = evaluation.earlier_versions(_final_report(0.515, 0.52), v2=V2)
+
+    assert block["beats_naive"] is False
+    assert "does not beat the naive baseline" in block["text"]
+
+
+def test_without_v2_figures_only_this_version_and_v1_are_listed():
+    report = _final_report(0.55, 0.52)
+    del report["lift"]
+    block = evaluation.earlier_versions(report, v2=None)
+
+    assert [row["name"] for row in block["rows"]] == ["This version (blend)", "v1"]
+    assert block["rows"][0]["size_matched_lift"] is None
+    assert [row["name"] for row in block["naive"]] == ["Naive baseline, every Exporter's Flows (this run)"]

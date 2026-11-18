@@ -312,6 +312,7 @@ def build_artefacts(
         lift_held_out=backtests.lift_exporters(frozen.lift_held_out_exporters, scope=scope, uk=UK),
         v1=v1,
         parts=parts,
+        year_flows=lambda year: flows.filter(pl.col("year") == year),
     )
     return Artefacts(
         metadata=metadata,
@@ -473,6 +474,8 @@ def build_real_artefacts(
         ),
         ladder_cache=ladder_dir(root),
         parts=parts,
+        year_flows=lambda year: load_year_flows(year, to_iso3, root),
+        earlier_v2=evaluation.V2_REPORTED,
     )
     return Artefacts(
         metadata=metadata,
@@ -754,6 +757,8 @@ def _evaluate(
     test_models_cache: Path | None = None,
     ladder_cache: Path | None = None,
     parts: Parts = Parts(),
+    year_flows: Callable[[int], pl.DataFrame] | None = None,
+    earlier_v2: dict | None = None,
 ) -> dict:
     """Evaluate on the test year; with `parts`, run Lift and the Event Backtests (`backtests`)
     and compare the monotone-constrained model with an unconstrained one (`constraints`).
@@ -767,9 +772,10 @@ def _evaluate(
     the same way. `test_flows` are every Exporter's Flows of the test year, for the naive
     baseline (the evaluation's reference, and the blend's other side).
 
-    The test-year models are scored in the served model form; the opt-in parts measure the
-    model alone (the blend's naive side has no policy features: it would scale their effects
-    by 1 − w).
+    The test-year models are scored in the served model form, and so is Lift (a blend takes
+    each Gap Period year's naive baseline from `year_flows(year)`, every Exporter's Flows of that
+    year). The other opt-in parts measure the model alone (the blend's naive side has no policy
+    features: it would scale their effects by 1 − w).
     """
     test_year = metadata["test_year"]
     form = ModelForm.from_dict(metadata["model_form"])
@@ -811,7 +817,7 @@ def _evaluate(
         report |= backtests.run(
             backtest_chunks or training, backtest_plan, uk=UK, params=metadata["params"], rounds=metadata["rounds"],
             device=device, non_uk_rate=non_uk_rate, seed=seed, high_income=high_income, test_models=test_models,
-            cache=backtest_cache, lift_held_out=lift_held_out,
+            cache=backtest_cache, lift_held_out=lift_held_out, form=form, year_flows=year_flows,
         )
         print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
     if parts.constraint_comparison:
@@ -839,6 +845,8 @@ def _evaluate(
             v1, test_models, report, metadata, training=training, lift_settings=backtest_plan.lift, device=device,
             non_uk_rate=non_uk_rate, seed=seed, ladder_cache=ladder_cache,
         )
+    # The test year beside v2's reported figures (`earlier_v2`, real runs only) and v1's.
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=earlier_v2)
     return report
 
 

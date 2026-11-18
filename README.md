@@ -4,7 +4,7 @@ A model that learns from global HS6 goods trade to estimate the UK's **Export Po
 
 Results are associations the model has learned, not causes.
 
-This is **v2**. It trains on the top 100 Exporters into every Market, leaves out Excluded Products, adds the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. Under a comparison rule fixed before the 2023 test year was read, v2 does **not** beat v1 on the headline UK ranking measure (0.511 against 0.540, and below the naive baseline's 0.523), though it estimates the size of Flows better; the notebook and the model card give the detail.
+This is **v2**. It trains on the top 100 Exporters into every Market, leaves out Excluded Products, adds the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. Under a comparison rule fixed before the 2023 test year was read, v2 does **not** beat v1 on the headline UK ranking measure (0.511 against 0.540, and below the naive baseline's 0.523), though it estimates the size of Flows better; the notebook and the model card give the detail. Spec #65 then chose the model on that ranking alone (ADR 0008): the served Export Potential blends the v2 model with the naive baseline, and on 2023, read once, it ranks UK Markets at 0.555, above the naive baseline (0.523), v2 and v1, at the cost of a higher Tweedie deviance ([research note](docs/research/opportunity-ranking-experiments.md)).
 
 ## Run the app (one command)
 
