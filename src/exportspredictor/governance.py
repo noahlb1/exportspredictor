@@ -278,9 +278,11 @@ def _comparison_lines(summary: dict | None) -> list[str]:
     lines = [
         f"**Verdict.** {summary['verdict']}",
         "",
-        f"Primary metric ({primary['label']}): v1 {_f(primary['v1'], '.3f')}, v2 {_f(primary['v2'], '.3f')}, naive "
-        f"{_f(primary['naive'], '.3f')}; v2 − v1 {_f(primary['difference'], '+.3f')} (95% interval "
-        f"{_f(primary['ci'][0], '+.3f')} to {_f(primary['ci'][1], '+.3f')}).",
+        (
+            f"Primary metric ({primary['label']}): v1 {_f(primary['v1'], '.3f')}, v2 {_f(primary['v2'], '.3f')}, "
+            f"naive {_f(primary['naive'], '.3f')}; v2 − v1 {_f(primary['difference'], '+.3f')} (95% interval "
+            f"{_f(primary['ci'][0], '+.3f')} to {_f(primary['ci'][1], '+.3f')})."
+        ),
     ]
     if summary["ladder"]:
         lines += ["", "Gain ladder (change in the primary metric at each cumulative step):", ""]
