@@ -225,3 +225,104 @@ def test_the_fixture_evaluation_holds_the_comparison_on_the_fixtures_common_rows
     counted_events = [e for e in block["secondary"] if e["metric"] == "event_distance" and e["counts"]]
     assert counted_events and {e["year"] for e in counted_events} == {pipeline.FIXTURE_BACKTESTS.event.event_year}
     assert set(block["verdict"]["conditions"]) == set(comparison.CONDITIONS)
+
+
+# --- The gain ladder ---------------------------------------------------------------------------
+
+
+def test_v1s_features_are_v2s_without_relatedness_market_trends_and_tariffs():
+    from exportspredictor.features import FEATURES
+
+    assert comparison.V1_FEATURES == [
+        "log_gdp_o", "log_gdp_d", "log_population_o", "log_population_d", "log_distance", "contiguous",
+        "common_language", "colonial_tie", "common_colonizer", "log_supply_loo", "rca_loo", "log_demand_loo",
+        "high_income_share_loo", "sector", "trade_agreement", "customs_union", "eu_o", "eu_d", "cptpp_o", "cptpp_d",
+        "efta_o", "efta_d",
+    ]
+    assert set(comparison.V1_FEATURES) < set(FEATURES)
+
+
+def test_v1s_features_are_those_of_the_real_v1_artefact():
+    import json
+
+    metadata = freeze.v1_folder().parent / "metadata.json"
+    if not metadata.exists():
+        pytest.skip("The real v1 artefact is not on disk")
+    v1 = json.loads(metadata.read_text(encoding="utf-8"))
+    assert comparison.V1_FEATURES == v1["features"]
+    assert comparison.REAL_LADDER.params == v1["params"]
+    assert comparison.REAL_LADDER.rounds == v1["rounds"]
+
+
+def test_a_rung_trained_on_v1s_features_scores_rows_that_hold_every_feature(fixture_world, scope, tmp_path):
+    from exportspredictor import evaluation, pipeline
+
+    training = pipeline.fixture_training(fixture_world, exporters=scope)
+    rung = evaluation.train_test_models(
+        training, test_year=TEST_YEAR, uk=UK, params={"max_depth": 2}, rounds=5, n_folds=2, device="cpu",
+        features=comparison.V1_FEATURES,
+    )
+    assert rung.features == comparison.V1_FEATURES
+    assert all(model.feature_names == comparison.V1_FEATURES for model in rung.models)
+    again = evaluation.TestModels.load(rung.save(tmp_path / "rung"))
+    assert again.features == comparison.V1_FEATURES
+
+    rows = training[TEST_YEAR - 1].with_columns(year=pl.lit(TEST_YEAR, training[TEST_YEAR - 1]["year"].dtype))
+    scored = evaluation.score_rows(rows, again.models, again.transform, UK, features=again.features)
+    assert scored.height == rows.height
+    assert scored["export_potential_usd"].null_count() == 0
+
+
+def _ladder_compare(frozen, v2, fixture_world, fixture_artefacts, rungs, *, seed=0):
+    from exportspredictor import pipeline
+
+    report = fixture_artefacts.evaluation
+    return comparison.compare(
+        frozen, v2=v2, flows=fixture_world.flows, lift_v2=report["lift"], event_v2=report["event_backtest"]["events"][0],
+        lift_settings=pipeline.FIXTURE_BACKTESTS.lift, scope=fixture_artefacts.metadata["exporter_scope"], uk=UK,
+        test_year=TEST_YEAR, seed=seed, resamples=200, ladder=rungs,
+    )
+
+
+@pytest.fixture(scope="module")
+def rungs(frozen, scope):
+    uk = comparison.common_keys(frozen, scope=scope, uk=UK)["uk"]
+    return {"A": _v2_scores(uk, noise=1.5, seed=3), "B": _v2_scores(uk, noise=0.1, seed=4)}
+
+
+def test_the_ladder_runs_from_v1_through_a_and_b_to_v2_and_its_steps_add_up(
+    frozen, v2, rungs, fixture_world, fixture_artefacts
+):
+    result = _ladder_compare(frozen, v2, fixture_world, fixture_artefacts, rungs)
+    ladder, primary = result["ladder"], result["primary"]
+
+    assert [r["name"] for r in ladder["rungs"]] == ["v1", "A", "B", "C"]
+    values = {r["name"]: r["value"] for r in ladder["rungs"]}
+    assert values["v1"] == pytest.approx(primary["v1"])
+    assert values["C"] == pytest.approx(primary["v2"])
+    # B's scores are close to Actual Exports, A's far: B ranks Markets better than A.
+    assert values["B"] > values["A"]
+    assert [(s["from"], s["to"]) for s in ladder["steps"]] == [("v1", "A"), ("A", "B"), ("B", "C")]
+    assert sum(s["change"] for s in ladder["steps"]) == pytest.approx(primary["difference"])
+    for step in ladder["steps"]:
+        low, high = step["ci"]
+        assert low <= step["change"] <= high
+    assert "decides nothing" in ladder["note"] and "order" in ladder["note"]
+    # The ladder decides nothing: the verdict is the same with or without it.
+    assert result["verdict"] == _compare(frozen, v2, fixture_world, fixture_artefacts)["verdict"]
+
+
+def test_ladder_scores_on_other_keys_are_refused(frozen, v2, rungs, fixture_world, fixture_artefacts):
+    short = {**rungs, "A": rungs["A"].slice(1)}
+    with pytest.raises(ValueError, match="A"):
+        _ladder_compare(frozen, v2, fixture_world, fixture_artefacts, short)
+
+
+def test_the_fixture_evaluation_holds_the_gain_ladder_of_two_extra_test_year_models(fixture_artefacts):
+    block = fixture_artefacts.evaluation["v1_comparison"]
+    ladder = block["ladder"]
+
+    assert [r["name"] for r in ladder["rungs"]] == ["v1", "A", "B", "C"]
+    assert ladder["rungs"][-1]["value"] == pytest.approx(block["primary"]["v2"])
+    assert ladder["v1_configuration"]["rounds"] == comparison.FIXTURE_LADDER.rounds
+    assert ladder["v1_configuration"]["features"]["A"] == comparison.V1_FEATURES

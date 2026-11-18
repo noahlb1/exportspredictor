@@ -64,20 +64,24 @@ def train_fold_models(
     seed: int = 0,
     transform: FeatureTransform | None = None,
     non_uk_rate: float = 1.0,
+    features: Sequence[str] = FEATURES,
 ) -> list[xgb.Booster]:
     """Train one model per fold on all non-UK rows plus the UK pairs outside that fold.
 
     `chunks` are feature tables (or Parquet paths), read one at a time. A `weight` column
     weights each row (sampled zero cells carry 1/rate). `non_uk_rate` < 1 trains on a
     reweighted hash sample of non-UK rows; UK rows are always kept in full. The returned
-    models are set to predict on CPU, as the API does.
+    models are set to predict on CPU, as the API does. `features` are the model inputs, in
+    order (a rung of the v1/v2 gain ladder trains on v1's).
     """
     models = []
     for k in range(n_folds):
         keep = outside_fold(uk, n_folds, k)
         prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed, keep=keep)
-        matrix = training_matrix(chunks, prepare, device=device)
-        model = xgb.train(model_params(params, device=device, seed=seed), matrix, num_boost_round=rounds)
+        matrix = training_matrix(chunks, prepare, device=device, features=features)
+        model = xgb.train(
+            model_params(params, device=device, seed=seed, features=features), matrix, num_boost_round=rounds
+        )
         del matrix
         model.set_param({"device": "cpu"})
         model.set_attr(held_out_fold=str(k))
@@ -85,14 +89,19 @@ def train_fold_models(
     return models
 
 
-def score_out_of_fold(features: pl.DataFrame, models: list[xgb.Booster], uk: str) -> pl.DataFrame:
-    """UK rows with their pair's `fold` and `export_potential_usd` from the model that held it out."""
+def score_out_of_fold(
+    features: pl.DataFrame, models: list[xgb.Booster], uk: str, *, inputs: Sequence[str] = FEATURES
+) -> pl.DataFrame:
+    """UK rows with their pair's `fold` and `export_potential_usd` from the model that held it out.
+
+    `inputs` are the models' features, in order.
+    """
     rows = _with_fold(features.filter(pl.col("exporter").cast(pl.String) == uk), len(models))
-    return rows.with_columns(export_potential_usd=score_by_fold(rows, models))
+    return rows.with_columns(export_potential_usd=score_by_fold(rows, models, features=inputs))
 
 
-def score_by_fold(rows: pl.DataFrame, models: list[xgb.Booster]) -> pl.Series:
-    """Each row's prediction from the fold model named by its `fold` column (rows hold FEATURES)."""
+def score_by_fold(rows: pl.DataFrame, models: list[xgb.Booster], *, features: Sequence[str] = FEATURES) -> pl.Series:
+    """Each row's prediction from the fold model named by its `fold` column (rows hold `features`)."""
     fold = rows["fold"].to_numpy()
     potential = np.empty(rows.height)
     for k, model in enumerate(models):
@@ -100,7 +109,7 @@ def score_by_fold(rows: pl.DataFrame, models: list[xgb.Booster]) -> pl.Series:
             raise ValueError(f"Model {k} held out fold {model.attr('held_out_fold')}, not {k}")
         mask = fold == k
         if mask.any():
-            data = rows.filter(pl.Series(mask)).select(FEATURES).to_numpy().astype(np.float32)
+            data = rows.filter(pl.Series(mask)).select(features).to_numpy().astype(np.float32)
             potential[mask] = model.inplace_predict(data)
     return pl.Series("export_potential_usd", potential)
 

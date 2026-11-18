@@ -135,6 +135,7 @@ def model_card(artefacts: Artefacts) -> dict:
         "intended_use": INTENDED_USE,
         "out_of_scope": OUT_OF_SCOPE,
         "metrics": _metrics(report),
+        "v1_comparison": _comparison_summary(report.get("v1_comparison")),
         "limitations": [*_result_limitations(metadata, report), *LIMITATIONS],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
@@ -185,6 +186,25 @@ def _metrics(report: dict) -> list[dict]:
                      "naive": group["naive_spearman_within_product"],
                      "text": f"{group['non_zero_flows']:,} UK Flows in {group['rows']:,} pairs"})
     return rows
+
+
+def _comparison_summary(block: dict | None) -> dict | None:
+    """The pre-registered v1 comparison in brief: the verdict, the primary metric and the gain ladder."""
+    if not block:
+        return None
+    primary = block["primary"]
+    ladder = block.get("ladder")
+    return {
+        "verdict": block["verdict"]["text"],
+        "v2_beats_v1": block["verdict"]["v2_beats_v1"],
+        "primary": {key: primary[key] for key in ("label", "v1", "v2", "naive", "difference", "ci")},
+        "rows": block["rows"],
+        "ladder": [
+            {"from": step["from"], "to": step["to"], "label": step["label"], "change": step["change"], "ci": step["ci"]}
+            for step in ladder["steps"]
+        ] if ladder else [],
+        "ladder_note": ladder["note"] if ladder else None,
+    }
 
 
 def _ci(interval, *, percent: bool = False) -> str:
@@ -239,7 +259,8 @@ def render_model_card(card: dict) -> str:
         f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"
         for m in card["metrics"]
     ]
-    lines += ["", "## Limitations", "", *[f"- **{x['title']}.** {x['text']}" for x in card["limitations"]], ""]
+    lines += ["", "## Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
+    lines += ["## Limitations", "", *[f"- **{x['title']}.** {x['text']}" for x in card["limitations"]], ""]
     lines += ["## Data sources", "", *[f"- **{s['name']}** ({s['location']}): {s['use']}" for s in card["data_sources"]], ""]
     if card["source_versions"]:
         lines += ["## Source versions", "", *[
@@ -248,6 +269,30 @@ def render_model_card(card: dict) -> str:
         ], ""]
     lines += ["## Decisions behind the model", "", *[f"- **{d['title']}.** {d['text']}" for d in card["decisions"]], ""]
     return "\n".join(lines)
+
+
+def _comparison_lines(summary: dict | None) -> list[str]:
+    if summary is None:
+        return ["The pre-registered comparison with v1 has not been run for this version."]
+    primary = summary["primary"]
+    lines = [
+        f"**Verdict.** {summary['verdict']}",
+        "",
+        (
+            f"Primary metric ({primary['label']}): v1 {_f(primary['v1'], '.3f')}, v2 {_f(primary['v2'], '.3f')}, "
+            f"naive {_f(primary['naive'], '.3f')}; v2 − v1 {_f(primary['difference'], '+.3f')} (95% interval "
+            f"{_f(primary['ci'][0], '+.3f')} to {_f(primary['ci'][1], '+.3f')})."
+        ),
+    ]
+    if summary["ladder"]:
+        lines += ["", "Gain ladder (change in the primary metric at each cumulative step):", ""]
+        lines += [
+            f"- {step['from']} → {step['to']} ({step['label']}): {_f(step['change'], '+.3f')} (95% interval "
+            f"{_f(step['ci'][0], '+.3f')} to {_f(step['ci'][1], '+.3f')})"
+            for step in summary["ladder"]
+        ]
+        lines += ["", summary["ladder_note"]]
+    return lines
 
 
 def _number(value, percent: bool = False) -> str:

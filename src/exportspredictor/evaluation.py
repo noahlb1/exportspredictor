@@ -42,7 +42,7 @@ import json
 import math
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -401,12 +401,13 @@ def _mean_finite(values: pl.Series) -> float | None:
 
 @dataclass(frozen=True)
 class TestModels:
-    """Fold models refitted on every year before the test year, and their feature transform."""
+    """Fold models refitted on every year before the test year, their feature transform and inputs."""
 
     test_year: int
     training_years: list[int]
     models: list[xgb.Booster]
     transform: FeatureTransform
+    features: list[str] = field(default_factory=lambda: list(FEATURES))  # the models' inputs, in order
 
     def save(self, folder: Path) -> Path:
         folder = Path(folder)
@@ -418,6 +419,7 @@ class TestModels:
             "training_years": self.training_years,
             "n_folds": len(self.models),
             "transform": self.transform.to_dict(),
+            "features": list(self.features),
         }
         # Written last: its presence marks the folder as complete.
         (folder / TEST_MODELS_FILE).write_text(json.dumps(info, indent=2), encoding="utf-8")
@@ -432,7 +434,13 @@ class TestModels:
             model = xgb.Booster()
             model.load_model(folder / f"fold_{k}.ubj")
             models.append(model)
-        return cls(info["test_year"], info["training_years"], models, FeatureTransform.from_dict(info["transform"]))
+        return cls(
+            info["test_year"],
+            info["training_years"],
+            models,
+            FeatureTransform.from_dict(info["transform"]),
+            info.get("features", list(FEATURES)),  # folders saved before the ladder hold FEATURES
+        )
 
 
 def train_test_models(
@@ -446,8 +454,12 @@ def train_test_models(
     device: str = "cuda",
     non_uk_rate: float = 1.0,
     seed: int = 0,
+    features: Sequence[str] = FEATURES,
 ) -> TestModels:
-    """Fit the fold models on every year before `test_year`; the test year itself is never read."""
+    """Fit the fold models on every year before `test_year`; the test year itself is never read.
+
+    `features` are the models' inputs (default: v2's; a gain-ladder rung uses v1's).
+    """
     years = [y for y in sorted(training) if y < test_year]
     if not years:
         raise ValueError(f"No training years before the test year {test_year}")
@@ -455,19 +467,31 @@ def train_test_models(
     transform = FeatureTransform.fit(scan_chunks(chunks), years)
     models = train_fold_models(
         chunks, uk=uk, params=params, rounds=rounds, n_folds=n_folds, device=device, seed=seed,
-        transform=transform, non_uk_rate=non_uk_rate,
+        transform=transform, non_uk_rate=non_uk_rate, features=features,
     )
-    return TestModels(test_year=test_year, training_years=years, models=models, transform=transform)
+    return TestModels(
+        test_year=test_year, training_years=years, models=models, transform=transform, features=list(features)
+    )
 
 
-def score_rows(table: pl.DataFrame, models: Sequence[xgb.Booster], transform: FeatureTransform, uk: str) -> pl.DataFrame:
-    """Add `export_potential_usd`: UK rows out-of-fold, other rows by the mean of the fold models."""
-    features = transform.apply(table)
+def score_rows(
+    table: pl.DataFrame,
+    models: Sequence[xgb.Booster],
+    transform: FeatureTransform,
+    uk: str,
+    *,
+    features: Sequence[str] = FEATURES,
+) -> pl.DataFrame:
+    """Add `export_potential_usd`: UK rows out-of-fold, other rows by the mean of the fold models.
+
+    `features` are the models' inputs, in order.
+    """
+    transformed = transform.apply(table)
     is_uk = pl.col("exporter").cast(pl.String) == uk
-    uk_rows = score_out_of_fold(features, list(models), uk=uk).drop("fold")
-    others = features.filter(~is_uk)
+    uk_rows = score_out_of_fold(transformed, list(models), uk=uk, inputs=features).drop("fold")
+    others = transformed.filter(~is_uk)
     if others.height:
-        data = others.select(FEATURES).to_numpy().astype(np.float32)
+        data = others.select(features).to_numpy().astype(np.float32)
         mean = np.mean([model.inplace_predict(data) for model in models], axis=0)
         others = others.with_columns(export_potential_usd=pl.Series(mean, dtype=pl.Float64))
     else:

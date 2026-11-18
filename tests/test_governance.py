@@ -47,6 +47,28 @@ def test_model_card_renders_as_markdown_with_every_section(card):
     assert "UNASSIGNED" in text
 
 
+def test_model_card_summarises_the_v1_comparison_and_the_gain_ladder(card, fixture_artefacts):
+    block = fixture_artefacts.evaluation["v1_comparison"]
+    summary = card["v1_comparison"]
+
+    assert summary["verdict"] == block["verdict"]["text"]
+    assert summary["v2_beats_v1"] == block["verdict"]["v2_beats_v1"]
+    assert [step["to"] for step in summary["ladder"]] == ["A", "B", "C"]
+    text = governance.render_model_card(card)
+    assert "## Comparison with v1" in text
+    assert block["verdict"]["text"] in text
+    assert "decides nothing" in text
+
+
+def test_a_model_card_without_a_v1_comparison_says_so(fixture_artefacts):
+    from dataclasses import replace
+
+    report = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "v1_comparison"}
+    card = governance.model_card(replace(fixture_artefacts, evaluation=report))
+    assert card["v1_comparison"] is None
+    assert "not been run" in governance.render_model_card(card)
+
+
 def test_writing_the_model_card_puts_it_next_to_the_models(fixture_artefacts, tmp_path):
     path = governance.write_model_card(fixture_artefacts, tmp_path)
 
