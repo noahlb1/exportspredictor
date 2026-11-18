@@ -229,3 +229,54 @@ def test_the_training_rows_naive_baseline_from_their_features_is_the_naive_basel
     expected = naive_potential(rows, flows)["naive_usd"]
     assert (expected > 0).any()
     assert from_features.to_list() == pytest.approx(expected.to_list(), rel=1e-5, abs=1e-3)
+
+
+# --- #71: select on ranking ----------------------------------------------------------------------
+
+# The shape of the saved search results (`search.load()`): three confirmed configurations.
+SAVED_SEARCH = {
+    "plan": {"eta": 0.1},
+    "confirmation": [
+        {"trial": 15, "params": {"max_depth": 12, "min_child_weight": 3.0, "subsample": 0.9,
+                                 "colsample_bytree": 0.9, "reg_lambda": 5.0, "tweedie_variance_power": 1.27}},
+        {"trial": 23, "params": {"max_depth": 11, "min_child_weight": 6.8, "subsample": 0.86,
+                                 "colsample_bytree": 0.99, "reg_lambda": 23.8, "tweedie_variance_power": 1.27}},
+        {"trial": 19, "params": {"max_depth": 11, "min_child_weight": 1.4, "subsample": 0.88,
+                                 "colsample_bytree": 0.95, "reg_lambda": 0.96, "tweedie_variance_power": 1.28}},
+    ],
+}
+
+
+def test_select_on_ranking_has_v1_the_three_confirmed_configurations_and_a_depth_6_one():
+    arms = loop.select_arms(SAVED_SEARCH)
+
+    assert [arm.name for arm in arms] == ["v1", "search trial 15", "search trial 23", "search trial 19", "depth 6"]
+    v1 = arms[0].changes["params"]
+    assert v1 == {"max_depth": 8, "min_child_weight": 1, "subsample": 0.8, "colsample_bytree": 0.8,
+                  "reg_lambda": 1.0, "tweedie_variance_power": 1.3, "eta": 0.1}
+    assert arms[2].changes["params"] == {**SAVED_SEARCH["confirmation"][1]["params"], "eta": 0.1}
+    assert arms[4].changes["params"] == {"max_depth": 6}
+    for arm in arms:
+        assert arm.grid == {"naive_weight": loop.BLEND_WEIGHTS}
+
+
+def test_select_on_ranking_trains_at_most_one_model_per_new_configuration_and_reuses_the_best_so_fars(data):
+    # The fixture's "search" confirmed its own start configuration and a deeper one.
+    saved = {"plan": {"eta": 0.3}, "confirmation": [{"trial": 0, "params": {"max_depth": 2}},
+                                                   {"trial": 1, "params": {"max_depth": 3}}]}
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+
+    results = lp.run_experiment(loop.SELECT_EXPERIMENT, loop.select_arms(saved))
+
+    section = results["experiments"][loop.SELECT_EXPERIMENT]
+    rows = {row["arm"]: row for row in section["arms"]}
+    assert list(rows) == ["v1", "search trial 0", "search trial 1", "depth 6"]
+    assert rows["search trial 0"]["trained"] is False
+    assert rows["search trial 0"]["training_key"] == results["noise_floor"]["arms"][0]["training_key"]
+    assert sum(row["trained"] for row in rows.values()) == 3
+    for row in rows.values():
+        assert row["rounds"] >= 1
+        assert row["settings"]["naive_weight"] in loop.BLEND_WEIGHTS
+        assert row["status"] in {"kept", "dropped"}
+    assert rows["v1"]["settings"]["params"]["max_depth"] == 8
+    assert rows["depth 6"]["settings"]["params"] == {"max_depth": 6, "eta": 0.3}

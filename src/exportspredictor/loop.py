@@ -30,6 +30,7 @@ refuses it, and `real_data` refuses it before opening a file.
 
     uv run python -m exportspredictor.loop noise   # GPU, three arms of about 11 minutes each
     uv run python -m exportspredictor.loop naive   # #70: the blend (no training) and the starting point (one model)
+    uv run python -m exportspredictor.loop select  # #71: v1, three confirmed v2 configurations, depth 6 (four models)
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -372,6 +373,34 @@ def rank_average_measures(grid: pl.DataFrame) -> dict:
         rank_average=(pl.col("model_usd").rank().over("hs6") + pl.col("naive_usd").rank().over("hs6")) / 2
     )
     return measures(ranked, None, "rank_average")
+
+# --- Select on ranking (#71) ------------------------------------------------------------------
+
+SELECT_EXPERIMENT = "select on ranking"  # experiment 3
+SHALLOW_DEPTH = 6  # the one shallower configuration: the best so far's parameters at this depth
+
+
+def select_arms(saved_search: Mapping, weights: Sequence[float] = BLEND_WEIGHTS) -> list[Arm]:
+    """Experiment 3: five fixed configurations, no search, each chosen on the selection measure alone.
+
+    v1's configuration (`search.V1_TRIAL`), the three configurations the search confirmed
+    on every Product (`saved_search`, as `search.load()` returns it) and one shallower
+    configuration. Their round counts are chosen by the selection measure while training.
+    Each is scored as a blend with the naive baseline, its weight re-chosen from `weights`
+    for that configuration's model, since the best so far is a blend.
+    """
+    eta = saved_search["plan"]["eta"]
+    grid = {"naive_weight": tuple(weights)}
+    confirmed = [
+        Arm(f"search trial {row['trial']}", {"params": {**row["params"], "eta": eta}}, grid)
+        for row in saved_search["confirmation"]
+    ]
+    return [
+        Arm("v1", {"params": {**search.V1_TRIAL, "eta": eta}}, grid),
+        *confirmed,
+        Arm(f"depth {SHALLOW_DEPTH}", {"params": {"max_depth": SHALLOW_DEPTH}}, grid),
+    ]
+
 
 # --- The loop ---------------------------------------------------------------------------------
 
@@ -750,10 +779,14 @@ def main(argv: Sequence[str]) -> None:
         lp = Loop(real_data(), v2_plan(), loop_dir())
         section = lp.run_experiment(NAIVE_EXPERIMENT, [blend_arm(), starting_point_arm()])["experiments"][NAIVE_EXPERIMENT]
         print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
+    elif command == "select":
+        lp = Loop(real_data(), v2_plan(), loop_dir())
+        section = lp.run_experiment(SELECT_EXPERIMENT, select_arms(search.load()))["experiments"][SELECT_EXPERIMENT]
+        print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
     elif command == "time":
         print(json.dumps(time_one_arm()), flush=True)
     else:
-        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|time")
+        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|time")
 
 
 def time_one_arm(root: Path | None = None) -> dict:
