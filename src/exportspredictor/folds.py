@@ -18,7 +18,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.features import FEATURES, FeatureTransform
-from exportspredictor.prediction import export_potential
+from exportspredictor.prediction import MODEL_ALONE, ModelForm, export_potential
 from exportspredictor.training import (
     DEFAULT_ROUNDS,
     Chunk,
@@ -90,14 +90,19 @@ def train_fold_models(
 
 
 def score_out_of_fold(
-    features: pl.DataFrame, models: list[xgb.Booster], uk: str, *, inputs: Sequence[str] = FEATURES
+    features: pl.DataFrame,
+    models: list[xgb.Booster],
+    uk: str,
+    *,
+    inputs: Sequence[str] = FEATURES,
+    form: ModelForm = MODEL_ALONE,
 ) -> pl.DataFrame:
     """UK rows with their pair's `fold` and `export_potential_usd` from the model that held it out.
 
-    `inputs` are the models' features, in order.
+    `inputs` are the models' features, in order; `form` is the model form (a blend needs `naive_usd`).
     """
     rows = _with_fold(features.filter(pl.col("exporter").cast(pl.String) == uk), len(models))
-    return rows.with_columns(export_potential_usd=export_potential(rows, models, features=inputs))
+    return rows.with_columns(export_potential_usd=export_potential(rows, models, features=inputs, form=form))
 
 
 def _with_fold(rows: pl.DataFrame, n_folds: int) -> pl.DataFrame:

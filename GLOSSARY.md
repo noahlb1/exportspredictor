@@ -134,6 +134,14 @@ _Avoid_: variance, error bar
 The margin an Arm must beat the best so far by to be kept: twice the Noise Floor's standard deviation, and at least 0.005.
 _Avoid_: significance level, tolerance
 
+**Naive Baseline**:
+A market-share estimate of a Flow with no model: the Exporter's share of the Product's world exports times the Importer's imports of that Product, each leaving the Flow itself out. Results are compared against it.
+_Avoid_: benchmark (the PPML benchmark is another thing), naive model
+
+**Model Form**:
+How Export Potential is made from the fold models. The served form is a **Blend**: the model's Export Potential and the Naive Baseline combined on the log scale with fixed weights (the Naive Baseline's weight chosen on the Selection Measure). The Naive Baseline has no policy features, so a Scenario moves only the model's share.
+_Avoid_: ensemble, model type
+
 ### Scenarios
 
 **Baseline**:

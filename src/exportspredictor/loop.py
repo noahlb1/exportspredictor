@@ -76,10 +76,12 @@ from exportspredictor.features import (
 from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import (
+    ModelForm,
     export_potential,
     flow_probability,
     two_part_potential,
 )
+from exportspredictor.prediction import blend as blend_usd
 from exportspredictor.training import (
     BASE_MARGIN,
     model_params,
@@ -330,13 +332,14 @@ NAIVE_EXPERIMENT = "naive baseline"  # experiments 1 and 2: the blend and the st
 def blend(model_usd: pl.Series, naive_usd: pl.Series, naive_weight: float) -> pl.Series:
     """Export Potential in dollars: exp((1 − w) · log model + w · log naive), both floored at MIN_PREDICTION_USD.
 
-    With w = 0 the model's Export Potential is returned unchanged.
+    With w = 0 the model's Export Potential is returned unchanged. The served blend is the same
+    function (`prediction.blend`).
     """
     if naive_weight == 0:
         return model_usd
-    model = model_usd.cast(pl.Float64).clip(lower_bound=MIN_PREDICTION_USD).log()
-    naive = naive_usd.cast(pl.Float64).clip(lower_bound=MIN_PREDICTION_USD).log()
-    return ((1 - naive_weight) * model + naive_weight * naive).exp().alias("export_potential_usd")
+    return pl.Series(
+        "export_potential_usd", blend_usd(model_usd.to_numpy(), naive_usd.to_numpy(), naive_weight), dtype=pl.Float64
+    )
 
 
 def starting_point_arm() -> Arm:
@@ -1096,6 +1099,48 @@ def loop_dir(root: Path | None = None) -> Path:
 def load(root: Path | None = None) -> dict:
     """The saved results of the real loop."""
     return json.loads((loop_dir(root) / RESULTS_FILE).read_text(encoding="utf-8"))
+
+
+# --- What the pipeline serves (#77) -------------------------------------------------------------
+
+RECORDED = ("selection_measure", "validation_year", "fold", "n_folds", "naive", "noise_floor", "experiments", "best",
+            CONFIRMATION)  # the parts of the results an artefact records
+
+
+def chosen_form(results: Mapping) -> ModelForm:
+    """The model form the loop chose (its best so far), as the pipeline serves it.
+
+    Only the forms the pipeline can serve: the model alone or a blend, on the package's
+    features, with the monotone constraints. Any other winner raises ValueError, so an
+    artefact never serves a form other than the one its experiments chose.
+    """
+    settings = Settings.from_dict(results["best"]["settings"])
+    if settings.base_margin is not None or settings.two_part:
+        raise ValueError(f"The loop chose a form the pipeline does not serve: {results['best']['arm']!r}")
+    if list(settings.features) != list(FEATURES) or not settings.monotone:
+        raise ValueError("The loop's best so far changed the features or the constraints; the pipeline serves neither")
+    return ModelForm(naive_weight=settings.naive_weight)
+
+
+def ranking_record(results: Mapping) -> dict:
+    """What an artefact records of the loop: the selection measure, the noise floor, every experiment's
+    rows, the best so far and the five-fold confirmation (where run)."""
+    return {key: results[key] for key in RECORDED if key in results}
+
+
+CONFIRMED_NAIVE_WEIGHT = 0.3  # the real loop's blend weight, confirmed on five folds (#76)
+
+
+def fixture_ranking(world) -> dict:
+    """The fixture world's loop results: the noise floor and the blend experiment (CPU, under a second).
+
+    The blend sweeps only `CONFIRMED_NAIVE_WEIGHT`, the weight the real loop chose and confirmed (#76),
+    so the fixture artefact serves the same form as the real one; the fixture's 20 UK pairs cannot
+    choose a weight of their own.
+    """
+    lp = Loop(fixture_data(world), FIXTURE_LOOP)
+    lp.noise_floor()
+    return lp.run_experiment(NAIVE_EXPERIMENT, [blend_arm((CONFIRMED_NAIVE_WEIGHT,))])
 
 
 def v2_plan(root: Path | None = None) -> LoopPlan:

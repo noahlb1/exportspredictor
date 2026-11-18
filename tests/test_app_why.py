@@ -201,3 +201,11 @@ def test_why_page_says_when_the_applied_tariff_is_carried_forward_from_2021(monk
     history = page.dataframe[1].value.set_index("Year")["Applied Tariff"]
     assert history[2021] == "From tariff data"
     assert set(history[[2022, 2023, 2024]]) == {"Carried forward from 2021"}
+
+
+def test_why_page_says_export_potential_blends_the_model_with_the_naive_baseline(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    text = " ".join(c.value for c in page.caption)
+    assert "70% the model" in text and "30% a naive market-share estimate" in text
+    assert "half under UK supply and half under Market demand" in text

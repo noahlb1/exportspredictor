@@ -52,11 +52,17 @@ from exportspredictor import artefacts as store
 from exportspredictor import baci
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
-from exportspredictor.features import FEATURES, FeatureTransform, features_dir
+from exportspredictor.features import (
+    FEATURES,
+    FeatureTransform,
+    features_dir,
+    load_sources,
+    load_year_flows,
+)
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
-from exportspredictor.prediction import export_potential
+from exportspredictor.prediction import MODEL_ALONE, ModelForm, export_potential
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
 from exportspredictor.wording import number_text, rate_text
@@ -577,17 +583,18 @@ def score_rows(
     uk: str,
     *,
     features: Sequence[str] = FEATURES,
+    form: ModelForm = MODEL_ALONE,
 ) -> pl.DataFrame:
     """Add `export_potential_usd`: UK rows out-of-fold, other rows by the mean of the fold models.
 
-    `features` are the models' inputs, in order.
+    `features` are the models' inputs, in order; `form` is the model form (a blend needs `naive_usd`).
     """
     transformed = transform.apply(table)
     is_uk = pl.col("exporter").cast(pl.String) == uk
-    uk_rows = score_out_of_fold(transformed, list(models), uk=uk, inputs=features).drop("fold")
+    uk_rows = score_out_of_fold(transformed, list(models), uk=uk, inputs=features, form=form).drop("fold")
     others = transformed.filter(~is_uk)
     if others.height:
-        others = others.with_columns(export_potential(others, models, features=features, by="mean"))
+        others = others.with_columns(export_potential(others, models, features=features, by="mean", form=form))
     else:
         others = others.with_columns(export_potential_usd=pl.lit(None, pl.Float64))
     return pl.concat([uk_rows.select(others.columns), others])
@@ -613,6 +620,8 @@ def evaluate(
     markets: pl.DataFrame,
     uk: str,
     settings: dict,
+    flows: pl.DataFrame | None = None,
+    form: ModelForm = MODEL_ALONE,
 ) -> dict:
     """The evaluation report for the test year.
 
@@ -620,7 +629,9 @@ def evaluate(
     `test_grid` its full UK grid, both with features untransformed. `baseline` holds the
     Baseline year's UK scores (`gap_period.baseline_year_scores`) and `baseline_models` /
     `baseline_transform` the models that scored them, used for the stability check. `settings` (validation year, params, sampling rates, ...)
-    is recorded in the report.
+    is recorded in the report. `flows` are the test year's Flows the naive baseline is computed
+    from (default: the non-zero Flows among `test_rows`); `form` is the model form the test-year
+    models are scored in (a blend takes that naive baseline).
     """
     year = test_models.test_year
     if set(test_rows["year"].unique().to_list()) != {year} or set(test_grid["year"].unique().to_list()) != {year}:
@@ -628,15 +639,20 @@ def evaluate(
     if year in test_models.training_years:
         raise ValueError("The test-year models were trained on the test year")
 
-    flows = test_rows.filter(pl.col("value_usd") > 0).select("exporter", "importer", "hs6", "value_usd")
-    scored_rows = naive_potential(score_rows(test_rows, test_models.models, test_models.transform, uk), flows)
-    scored_grid = naive_potential(score_rows(test_grid, test_models.models, test_models.transform, uk), flows)
+    if flows is None:
+        flows = test_rows.filter(pl.col("value_usd") > 0)
+    flows = flows.select("exporter", "importer", "hs6", "value_usd")
+    test_rows, test_grid = naive_potential(test_rows, flows), naive_potential(test_grid, flows)
+    scored_rows = score_rows(test_rows, test_models.models, test_models.transform, uk, form=form)
+    scored_grid = score_rows(test_grid, test_models.models, test_models.transform, uk, form=form)
     accuracy_by_scope = {
         "all_exporters": accuracy(scored_rows, markets),
         "uk_out_of_fold": accuracy(scored_grid, markets),
     }
 
-    previous = _uk_table(score_out_of_fold(baseline_transform.apply(test_grid), list(baseline_models), uk=uk))
+    previous = _uk_table(
+        score_out_of_fold(baseline_transform.apply(test_grid), list(baseline_models), uk=uk, form=form)
+    )
     baseline_year = year + 1
     stable = stability(baseline, previous)
     stable["years"] = [year, baseline_year]
@@ -646,6 +662,7 @@ def evaluate(
         "test_year": year,
         "test_training_years": test_models.training_years,
         **settings,
+        "model_form": form.to_dict(),
         "tweedie_power": TWEEDIE_POWER,
         "min_prediction_usd": MIN_PREDICTION_USD,
         "metrics": {name: METRIC_INFO[name] for name in METRICS},
@@ -727,7 +744,7 @@ def real_test_models(artefacts, root: Path | None = None, *, device: str = "cuda
 
 
 def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) -> dict:
-    """The evaluation report of a real artefact, from the per-year feature files."""
+    """The evaluation report of a real artefact, from the per-year feature files, in its model form."""
     folder = features_dir(root)
     year = test_models.test_year
     return evaluate(
@@ -740,6 +757,8 @@ def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) 
         markets=markets_with_income(artefacts.markets, root),
         uk=baci.UK,
         settings=report_settings(artefacts.metadata),
+        flows=load_year_flows(year, load_sources(root)[1], root),
+        form=artefacts.model_form,
     )
 
 

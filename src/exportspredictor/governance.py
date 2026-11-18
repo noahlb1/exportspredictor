@@ -59,10 +59,13 @@ DECISIONS = [
      ("UK Product–Market pairs are split into five folds by a hash of the pair, all years together. Each pair's "
      "Export Potential, Scenario Effect and explanation come from the fold model that never saw it, so the "
      "Export Gap is not shrunk by memorisation. UK supply features leave the target Market out.")),
-    ("One monotone-constrained XGBoost model (ADR 0002)",
-     ("A single Tweedie-loss gradient-boosted model serves Opportunities and Scenarios. Every Trade Agreement and "
+    ("One monotone-constrained XGBoost model, blended with the naive baseline (ADR 0002, ADR 0008)",
+     ("A Tweedie-loss gradient-boosted model serves Opportunities and Scenarios. Every Trade Agreement and "
      "Trading Bloc feature has a +1 monotone constraint and the Applied Tariff a −1 constraint, so adding an "
-     "agreement or cutting a tariff never lowers Export Potential; it does not make the size of the effect right.")),
+     "agreement or cutting a tariff never lowers Export Potential; it does not make the size of the effect right. "
+     "Since ADR 0008 the form is chosen on the UK ranking alone: Export Potential blends the model with the naive "
+     "market-share baseline on the log scale, which ranked UK Markets better on all five folds of 2022. The naive "
+     "baseline has no policy features, so Scenario Effects come from the model's share only.")),
     ("BACI's HS 2012 revision (ADR 0003)",
      ("A longer history (2012–2024) gives the model more agreements that changed during training, and covers the "
      "EU–Japan Event Backtest; the cost is 2012-vintage Product codes.")),
@@ -196,11 +199,18 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
 
 def _model_summary(metadata: dict) -> str:
     params = metadata.get("params", {})
+    form = metadata.get("model_form") or {}
+    weight = form.get("naive_weight") or 0
+    blended = (
+        f" Export Potential blends the model ({1 - weight:.0%}) with the naive baseline ({weight:.0%}) on the log scale."
+        if weight
+        else ""
+    )
     return (
         f"XGBoost, Tweedie objective (variance power {number_text(params.get('tweedie_variance_power'), '.2f')}), depth "
         f"{params.get('max_depth', '?')}, {number_text(metadata.get('rounds'), ',')} rounds; {metadata.get('n_folds', '?')} "
         f"out-of-fold models trained on {years_text(metadata.get('training_years'))}, scoring the "
-        f"{metadata.get('baseline_year', '?')} Baseline. Source: {metadata.get('source', '?')}."
+        f"{metadata.get('baseline_year', '?')} Baseline.{blended} Source: {metadata.get('source', '?')}."
     )
 
 

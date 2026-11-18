@@ -49,7 +49,12 @@ from exportspredictor.features import (
     TARIFF_METADATA,
     FeatureTransform,
 )
-from exportspredictor.prediction import export_potential
+from exportspredictor.prediction import (
+    MODEL_ALONE,
+    NAIVE_COLUMN,
+    ModelForm,
+    export_potential,
+)
 
 DEFAULT_MIN_SHARE = 0.2
 DEFAULT_MIN_USD = 1_000_000.0
@@ -270,18 +275,21 @@ def run(
     models: Sequence[xgb.Booster],
     scenario: Scenario,
     tariff_range: tuple[float, float] | None = None,
+    *,
+    form: ModelForm = MODEL_ALONE,
 ) -> ScenarioResult:
     """Apply a Scenario and re-predict the changed pairs with their own fold models.
 
     `baseline` holds each pair's `baseline_export_potential_usd` (the Baseline year's, never
     the Gap Period mean), which the same fold models produced from the same feature rows,
     so only the changed rows are predicted. Scenario tariffs are clipped to `tariff_range`
-    (the training range, `tariff_range(metadata)`).
+    (the training range, `tariff_range(metadata)`). `form` is the served model form: a blend's
+    naive baseline (`naive_usd`) has no policy features, so the Scenario leaves it unchanged.
     """
     changed, clipped_pairs = _apply(baseline_features, scenario, tariff_range)
     pairs = (
         changed.select("hs6", "iso3", scenario_tariff_pct=_percent(TARIFF))
-        .with_columns(scenario_potential_usd=export_potential(changed, models))
+        .with_columns(scenario_potential_usd=export_potential(changed, models, form=form))
         .join(
             baseline.select("hs6", "iso3", baseline_potential_usd="baseline_export_potential_usd"), on=["hs6", "iso3"]
         )
@@ -304,7 +312,11 @@ def run(
 
 
 def blocked_opportunity_values(
-    baseline_features: pl.DataFrame, baseline: pl.DataFrame, models: Sequence[xgb.Booster]
+    baseline_features: pl.DataFrame,
+    baseline: pl.DataFrame,
+    models: Sequence[xgb.Booster],
+    *,
+    form: ModelForm = MODEL_ALONE,
 ) -> pl.DataFrame:
     """Every pair's Scenario Effect of adding a Trade Agreement where none exists (0 where one does).
 
@@ -316,7 +328,7 @@ def blocked_opportunity_values(
     """
     every_market = Scenario(add_agreements=tuple(baseline_features["iso3"].unique().sort()))
     added = apply(baseline_features, every_market)
-    effects = added.select("hs6", "iso3").with_columns(scenario=export_potential(added, models))
+    effects = added.select("hs6", "iso3").with_columns(scenario=export_potential(added, models, form=form))
     return (
         baseline.select("hs6", "iso3", "baseline_export_potential_usd")
         .join(effects, on=["hs6", "iso3"], how="left")
@@ -359,7 +371,8 @@ def check_only_policy_changed(before: pl.DataFrame, after: pl.DataFrame) -> None
     """Raise LeakageError unless `after`'s rows match `before`'s pairs outside the policy columns."""
     keys = ["hs6", "iso3"]
     non_policy = [f for f in FEATURES if f not in POLICY_FEATURES]
-    fixed = ["fold", *non_policy, *(c for c in TARIFF_METADATA if c in before.columns)]
+    # The naive baseline a blend takes is no policy feature: a Scenario never moves it.
+    fixed = ["fold", *non_policy, *(c for c in (*TARIFF_METADATA, NAIVE_COLUMN) if c in before.columns)]
     if after.columns != before.columns:
         raise LeakageError("A Scenario must keep the Baseline feature columns.")
     joined = after.select(*keys, *fixed).join(
@@ -453,7 +466,9 @@ def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
 
     source = store.load_latest(root)
     started = time.perf_counter()
-    effects = blocked_opportunity_values(source.baseline_features, source.baseline, source.fold_models)
+    effects = blocked_opportunity_values(
+        source.baseline_features, source.baseline, source.fold_models, form=source.model_form
+    )
     metadata = {
         **source.metadata,
         "version": version or store.new_version(),

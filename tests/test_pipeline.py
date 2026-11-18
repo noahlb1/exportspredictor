@@ -6,6 +6,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from exportspredictor.evaluation import naive_potential
 from exportspredictor.features import (
     FEATURES,
     POLICY_FEATURES,
@@ -15,7 +16,9 @@ from exportspredictor.features import (
 )
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
+from exportspredictor.loop import NAIVE_EXPERIMENT, SELECTION_MEASURE_TEXT
 from exportspredictor.pipeline import build_artefacts, fixture_training, refresh
+from exportspredictor.prediction import blend
 from exportspredictor.search import FIXTURE_SEARCH
 
 CRUDE_OIL = "270900"  # the fixture world's Excluded Product
@@ -86,20 +89,23 @@ def test_baseline_export_potential_is_the_baseline_years_score(artefacts):
 
 def test_each_gap_years_uk_score_comes_from_the_fold_model_that_held_the_pair_out(world, artefacts):
     transform = FeatureTransform.from_dict(artefacts.metadata["feature_transform"])
+    weight = artefacts.model_form.naive_weight
     for year in (2022, 2023, 2024):
         year_flows = world.flows.filter(pl.col("year") == year)
         grid = assign_folds(
-            transform.apply(build_features(uk_grid(year_flows, UK), world.flows, world.sources)).rename(
-                {"importer": "iso3"}
-            )
+            transform.apply(
+                naive_potential(build_features(uk_grid(year_flows, UK), world.flows, world.sources), year_flows)
+            ).rename({"importer": "iso3"})
         )
         scored = artefacts.history.filter(pl.col("year") == year).join(grid.drop("year"), on=["hs6", "iso3"])
         assert scored.height == 20
         for (fold,), rows in scored.group_by("fold"):
             model = artefacts.fold_models[fold]
             assert model.attr("held_out_fold") == str(fold)
-            # The pair's fold model never trained on any of the pair's years (ADR 0001).
-            expected = model.inplace_predict(rows.select(FEATURES).to_numpy().astype(np.float32))
+            # The pair's fold model never trained on any of the pair's years (ADR 0001); the
+            # served blend takes its Export Potential with the year's naive baseline.
+            model_alone = model.inplace_predict(rows.select(FEATURES).to_numpy().astype(np.float32))
+            expected = blend(model_alone, rows["naive_usd"].to_numpy(), weight)
             assert rows["export_potential_usd"].to_list() == pytest.approx(expected.tolist(), rel=1e-5)
 
 
@@ -179,11 +185,26 @@ def test_metadata_records_the_device_and_the_search_and_training_time(artefacts)
     assert metadata["training_seconds"] > 0
 
 
-def test_baseline_features_hold_each_pairs_fold_and_model_inputs(artefacts):
+def test_the_artefact_serves_the_form_the_ranking_experiments_chose_and_records_them(artefacts):
+    ranking = artefacts.metadata["ranking_experiments"]
+
+    assert artefacts.metadata["model_form"] == {
+        "form": "blend",
+        "naive_weight": ranking["best"]["settings"]["naive_weight"],
+    }
+    assert ranking["selection_measure"] == SELECTION_MEASURE_TEXT
+    assert {"selection_measures", "mean", "sd", "win_threshold"} <= set(ranking["noise_floor"])
+    assert ranking["best"]["experiment"] == NAIVE_EXPERIMENT
+    assert ranking["experiments"][NAIVE_EXPERIMENT]["arms"][0]["status"] == "kept"
+
+
+def test_baseline_features_hold_each_pairs_fold_model_inputs_and_naive_baseline(artefacts):
     inputs = artefacts.baseline_features
 
     assert inputs.select("hs6", "iso3").sort("hs6", "iso3").equals(artefacts.baseline.select("hs6", "iso3"))
     assert set(FEATURES) <= set(inputs.columns)
+    assert inputs["naive_usd"].null_count() == 0
+    assert (inputs["naive_usd"] >= 0).all()
     assert inputs.equals(assign_folds(inputs.drop("fold")).select(inputs.columns))
 
 

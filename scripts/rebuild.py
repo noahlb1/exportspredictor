@@ -44,6 +44,14 @@ STEPS = [
     Step("Feature ablation on 2022 (GPU)", [PY, "-m", "exportspredictor.experiments", "ablation"]),
     Step("Learning curve on 2022 (GPU)", [PY, "-m", "exportspredictor.experiments", "curve"]),
     Step("Hyperparameter search on 2022 (GPU, resumable, about 3 h)", [PY, "-m", "exportspredictor.search"]),
+    # The experiment loop (spec #65) chooses the model form on the Selection Measure, on 2022 only;
+    # the pipeline serves the form it chose and records its results. Each step resumes from its cache.
+    *(
+        Step(f"Experiment loop on 2022: {command} (GPU, resumable)", [PY, "-m", "exportspredictor.loop", command])
+        for command in ("noise", "naive", "select", "two-part", "scope", "product-detail", "constraints")
+    ),
+    Step("Five-fold confirmation of the loop's best form on 2022 (GPU, resumable, about 1 h)",
+         [PY, "-m", "exportspredictor.loop", "confirm"]),
     # Trains the fold models, scores the Gap Period, evaluates on 2023 (read here for the first
     # time) and saves a new artefact version. Fold and test-year models are cached, so a re-run resumes.
     # The default run: the Event Backtests, the constraint comparison and the gain ladder are opt-in
