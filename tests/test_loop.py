@@ -122,6 +122,29 @@ def test_a_scoring_only_arm_trains_no_model(data, tmp_path, monkeypatch):
     assert row["selection_measure"] is not None
 
 
+def test_an_experiment_that_would_train_more_than_six_models_is_refused_before_training_any(data, monkeypatch):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+    lp.noise_floor()
+    _no_training(monkeypatch)
+    # Seven new seeds: seven models. Scoring-only arms reuse the cached model and do not count.
+    arms = [loop.Arm(f"seed {seed}", {"seed": seed}) for seed in range(10, 17)]
+    arms.append(loop.Arm("half naive", {"naive_weight": 0.5}))
+
+    with pytest.raises(ValueError, match="at most 6 trained models"):
+        lp.run_experiment("too many", arms)
+
+
+def test_a_two_part_arm_counts_as_two_trained_models(data, monkeypatch):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+    lp.noise_floor()
+    _no_training(monkeypatch)
+    arms = [loop.Arm(f"seed {seed}", {"seed": seed}) for seed in range(10, 15)]  # five models
+    arms.append(loop.Arm("two-part", {"two_part": True}))  # and two more
+
+    with pytest.raises(ValueError, match="at most 6 trained models"):
+        lp.run_experiment("too many", arms)
+
+
 def test_a_rerun_skips_finished_arms(data, tmp_path, monkeypatch):
     arms = [loop.Arm("deeper", {"params": {"max_depth": 3}}), loop.Arm("shallow", {"params": {"max_depth": 1}})]
     first = loop.Loop(data, loop.FIXTURE_LOOP, tmp_path).run_experiment("depth", arms)

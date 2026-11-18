@@ -110,6 +110,7 @@ DIAGNOSTICS = (
 )
 TOP_MARKETS = 10
 MIN_WIN_THRESHOLD = 0.005
+MAX_TRAINED_MODELS = 6  # the budget of one experiment (spec #65); a cached model is free
 ROUNDING = 1e-9  # float error in a difference of measures, never counted as a win
 NOISE_SEEDS = (0, 1, 2)
 MAX_ROUNDS = 5000
@@ -570,6 +571,8 @@ class Loop:
         if "decided" not in section:
             section["base"] = dict(self.results["best"])
         base = Settings.from_dict(section["base"]["settings"])
+        if "decided" not in section:
+            self._check_budget(name, section, arms, base)
         rows = self._run_arms(section, arms, base)
         if "decided" not in section:
             threshold = self.results[NOISE_FLOOR]["win_threshold"]
@@ -599,6 +602,27 @@ class Loop:
             self.results["best"] = _best(NOISE_FLOOR, rows[0])
             self._save()
         return section
+
+    def _check_budget(self, name: str, section: dict, arms: Sequence[Arm], base: Settings) -> None:
+        """Refuse, before training anything, an experiment that would train more than MAX_TRAINED_MODELS models.
+
+        Counted: the models its finished arms trained and those its other arms would train
+        (a model already cached is free; a two-part model is two).
+        """
+        models = {row["training_key"]: _models_in(row["settings"]) for row in section["arms"] if row.get("trained")}
+        done = {row["arm"] for row in section["arms"]}
+        for arm in arms:
+            if arm.name in done:
+                continue
+            settings = self._resolved(arm.apply(base))
+            key = training_key(settings, self._fingerprint())
+            if key not in self._models and not self._model_file(key).exists():
+                models.setdefault(key, _models_in(settings.to_dict()))
+        if sum(models.values()) > MAX_TRAINED_MODELS:
+            raise ValueError(
+                f"Experiment {name!r} would train {sum(models.values())} models; the budget is at most "
+                f"{MAX_TRAINED_MODELS} trained models per experiment (spec #65)"
+            )
 
     def _run_arms(self, section: dict, arms: Sequence[Arm], base: Settings) -> list[dict]:
         done = {row["arm"] for row in section["arms"]}
@@ -894,6 +918,11 @@ class Loop:
 def _any_flow(value: pl.Expr) -> pl.Expr:
     """The binary part's label: 1 where there is a Flow, 0 in a Zero Cell."""
     return (value > 0).cast(pl.Float64).alias("value_usd")
+
+
+def _models_in(settings: Mapping) -> int:
+    """How many models an arm with these settings trains: two for a two-part model, else one."""
+    return 2 if settings.get("two_part") else 1
 
 
 def training_key(settings: Settings, fingerprint: Mapping) -> str:
