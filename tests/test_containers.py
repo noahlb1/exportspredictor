@@ -11,6 +11,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from exportspredictor import artefacts as store
+from exportspredictor.paths import artefacts_dir
+
 REPO = Path(__file__).resolve().parents[1]
 COMPOSE = REPO / "compose.yaml"
 
@@ -64,3 +67,17 @@ def test_healthcheck_passes_when_artefacts_are_loaded(services, live_api, fixtur
 def test_healthcheck_fails_while_no_artefacts_are_loaded(services, live_api, tmp_path):
     with live_api(tmp_path) as url:
         assert _healthcheck(services, url) != 0
+
+
+def test_healthcheck_passes_once_the_real_v2_artefacts_are_loaded(services, live_api):
+    """The mounted `./artefacts` folder holds the real v2 artefacts (skipped without them)."""
+    root = artefacts_dir()
+    try:
+        bundle = store.load_latest(root)
+    except (store.ArtefactsNotFound, store.UnreadableArtefacts) as error:
+        pytest.skip(f"No real format-2 artefacts under {root}: {error}")
+    if bundle.metadata.get("source", "fixture") == "fixture":
+        pytest.skip("The artefacts are fixture artefacts")
+
+    with live_api(root) as url:
+        assert _healthcheck(services, url) == 0
