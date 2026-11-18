@@ -287,8 +287,12 @@ def test_adding_a_trade_agreement_removes_the_tariff_and_never_lowers_export_pot
 
     assert len(body["top_pairs"]) == 5
     assert all(row["effect_usd"] >= 0 for row in body["top_pairs"])
-    assert all(row["scenario_tariff_pct"] == 0 for row in body["top_pairs"])
-    assert any(row["baseline_tariff_pct"] > 0 for row in body["top_pairs"])
+    # A known tariff falls to 0; an unknown one (India has no telephone rate) stays unknown (ADR 0006).
+    assert all(
+        row["scenario_tariff_pct"] == 0 if row["baseline_tariff_pct"] is not None else row["scenario_tariff_pct"] is None
+        for row in body["top_pairs"]
+    )
+    assert any((row["baseline_tariff_pct"] or 0) > 0 for row in body["top_pairs"])
     assert body["clipped_pairs"] == 0
 
 

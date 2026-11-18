@@ -62,7 +62,9 @@ _AGREEMENTS = {
 _MFN_2021 = {
     "JPN": {"711319": 5.2, "220830": 2.0, "300490": 1.0, "851712": 4.0, "870323": 6.0, "270900": 0.0},
     "CAN": {"711319": 8.5, "220830": 3.0, "300490": 2.0, "851712": 0.0, "870323": 6.1, "270900": 0.0},
-    "IND": {"711319": 20.0, "220830": 150.0, "300490": 10.0, "851712": 20.0, "870323": 60.0, "270900": 5.0},
+    # No rate for telephones (851712): TRAINS has gaps, so some Applied Tariffs are unknown (null),
+    # and the model's missing-value branch, which monotone constraints do not bind, is exercised.
+    "IND": {"711319": 20.0, "220830": 150.0, "300490": 10.0, "870323": 60.0, "270900": 5.0},
     "HKG": {"711319": 0.0, "220830": 0.0, "300490": 0.0, "851712": 0.0, "870323": 0.0, "270900": 0.0},  # a free port
 }
 # 2021 preferences, as TRAINS lists them: Market -> WITS partner codes granted 0%.

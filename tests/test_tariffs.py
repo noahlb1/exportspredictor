@@ -209,7 +209,8 @@ def test_years_after_2021_carry_2021_forward_and_are_marked_imputed(fixture_worl
     assert by_year["any_imputed"].to_list() == [False, True, True, True]
     first, *carried = by_year["applied_tariff"].to_list()
     assert carried == [first] * 3
-    assert None not in first and max(first) > 0
+    # Only the gap in India's schedule (telephones) is unknown, and it stays unknown when carried forward.
+    assert first.count(None) == 1 and max(rate for rate in first if rate is not None) > 0
 
 
 def test_a_trade_agreement_entering_force_after_2021_zeroes_the_carried_tariff(fixture_world):

@@ -48,3 +48,6 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# faulthandler: a suite run under load died on a "Windows fatal exception" report from XGBoost.
+# --durations: the slowest tests, to keep the suite within its budget (CODING_STANDARDS.md, "Tests").
+addopts = "-p no:faulthandler --durations=10"
