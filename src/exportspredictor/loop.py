@@ -55,9 +55,9 @@ import xgboost as xgb
 
 from exportspredictor import baci, experiments, search
 from exportspredictor.evaluation import (
-    MIN_PREDICTION_USD,
     MIN_RANKED_ROWS,
     TWEEDIE_POWER,
+    naive_from_totals,
     naive_potential,
     tweedie_deviance,
 )
@@ -76,6 +76,7 @@ from exportspredictor.features import (
 from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import (
+    MIN_PREDICTION_USD,
     ModelForm,
     export_potential,
     flow_probability,
@@ -215,7 +216,7 @@ class LoopData:
     data: Data
     flows: Callable[[], pl.DataFrame]  # every Flow of the validation year (exporter, importer, hs6, value_usd)
     zero_seed: int = 0  # the seed the rows' Zero Cells were sampled with
-    # World exports of each Product in each training year (hs6, year, world_product), for the
+    # World exports of each Product in each training year (hs6, year, world_product_usd), for the
     # naive baseline of the training rows; read only by an arm that starts from it.
     world_products: Callable[[], pl.DataFrame] | None = None
     # Product features finer than Sector, fitted on the training years (`features.fit_product_detail`);
@@ -353,35 +354,39 @@ def naive_margin(naive_usd: pl.Series) -> pl.Series:
 
 
 def naive_from_features(rows: pl.DataFrame, world_products: pl.DataFrame) -> pl.Series:
-    """The naive baseline (`evaluation.naive_potential`) of untransformed feature rows, from their own features.
+    """The naive baseline (`evaluation.naive_from_totals`) of untransformed feature rows, from their own features.
 
     The rows' leave-one-out supply and demand are already features (`log_supply_loo`,
-    `log_demand_loo`); `world_products` (hs6, year, world_product) gives the Product's world
+    `log_demand_loo`); `world_products` (hs6, year, world_product_usd) gives the Product's world
     exports, from which the row's own Flow is left out. So the training rows need no Flows.
     """
     world = world_products.select(
-        _p=pl.col("hs6").cast(pl.String), _y=pl.col("year").cast(pl.Int32), _w=pl.col("world_product").cast(pl.Float64)
+        _p=pl.col("hs6").cast(pl.String),
+        _y=pl.col("year").cast(pl.Int32),
+        _world_usd=pl.col("world_product_usd").cast(pl.Float64),
     )
     keys = rows.select(
         _p=pl.col("hs6").cast(pl.String),
         _y=pl.col("year").cast(pl.Int32),
-        _s=pl.col("log_supply_loo").cast(pl.Float64).exp() - 1,
-        _d=pl.col("log_demand_loo").cast(pl.Float64).exp() - 1,
-        _own=pl.col("value_usd").cast(pl.Float64),
+        _supply_usd=pl.col("log_supply_loo").cast(pl.Float64).exp() - 1,
+        _demand_usd=pl.col("log_demand_loo").cast(pl.Float64).exp() - 1,
+        _own_usd=pl.col("value_usd").cast(pl.Float64),
     ).join(world, on=["_p", "_y"], how="left", maintain_order="left")
-    other_world = pl.col("_w").fill_null(0.0) - pl.col("_own")
+    other_world_usd = pl.col("_world_usd").fill_null(0.0) - pl.col("_own_usd")
     return keys.select(
-        naive_usd=pl.when(other_world > 0)
-        .then(pl.col("_s").clip(lower_bound=0) * pl.col("_d").clip(lower_bound=0) / other_world)
-        .otherwise(0.0)
+        naive_usd=naive_from_totals(pl.col("_supply_usd"), pl.col("_demand_usd"), other_world_usd)
     )["naive_usd"]
 
 
 def world_products(flows: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
-    """World exports of each Product in each year (hs6, year, world_product), from non-zero Flows."""
+    """World exports of each Product in each year (hs6, year, world_product_usd), from non-zero Flows."""
     value = pl.col("value_usd")
     return (
-        flows.lazy().filter(value > 0).group_by("hs6", "year").agg(world_product=value.cast(pl.Float64).sum()).collect()
+        flows.lazy()
+        .filter(value > 0)
+        .group_by("hs6", "year")
+        .agg(world_product_usd=value.cast(pl.Float64).sum())
+        .collect()
     )
 
 
