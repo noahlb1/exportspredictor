@@ -32,8 +32,8 @@ what the exclusions alone change. The block is stored in the evaluation results 
 
 import json
 from collections.abc import Mapping, Sequence
-from itertools import pairwise
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
