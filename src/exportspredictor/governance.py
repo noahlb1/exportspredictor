@@ -191,8 +191,8 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
 def _model_summary(metadata: dict) -> str:
     params = metadata.get("params", {})
     return (
-        f"XGBoost, Tweedie objective (variance power {params.get('tweedie_variance_power', '?')}), depth "
-        f"{params.get('max_depth', '?')}, {metadata.get('rounds', '?')} rounds; {metadata.get('n_folds', '?')} "
+        f"XGBoost, Tweedie objective (variance power {_f(params.get('tweedie_variance_power'), '.2f')}), depth "
+        f"{params.get('max_depth', '?')}, {_f(metadata.get('rounds'), ',')} rounds; {metadata.get('n_folds', '?')} "
         f"out-of-fold models trained on {_years(metadata.get('training_years'))}, scoring the "
         f"{metadata.get('baseline_year', '?')} Baseline. Source: {metadata.get('source', '?')}."
     )
@@ -405,16 +405,21 @@ def _range_review_lines(review: dict | None) -> list[str]:
     lines = [
         f"On a held-out half of the calibration rows, {_f(review['coverage'], '.0%')} of Actual Exports fell inside "
         f"their Potential Range (target {review['target']:.0%}). Per Exporter, {review['near_target']} of "
-        f"{review['exporters']} are within {RANGE_COVERAGE_TOLERANCE:.0%} of the target; the lowest is "
+        f"{review['exporters']} are within {RANGE_COVERAGE_TOLERANCE * 100:.0f} percentage points of the target; the lowest is "
         f"{review['lowest']['exporter']} at {review['lowest']['coverage']:.0%}.",
     ]
     if review["too_narrow"]:
-        lines += ["", f"Too narrow (the range understates their variation): {', '.join(review['too_narrow'])}."]
+        lines += ["", f"Too narrow (the range understates their variation): {_some(review['too_narrow'])}."]
     if review["too_wide"]:
-        lines += ["", f"Too wide (the range overstates their variation): {', '.join(review['too_wide'])}."]
+        lines += ["", f"Too wide (the range overstates their variation), largest excess first: {_some(review['too_wide'])}."]
     lines += ["", ("The UK is never a calibration Exporter (ADR 0007), so its own coverage cannot be measured: the "
                    "range assumes UK pairs vary as these Exporters' pairs do.")]
     return lines
+
+
+def _some(names: list[str], limit: int = 10) -> str:
+    shown = ", ".join(names[:limit])
+    return shown if len(names) <= limit else f"{shown} and {len(names) - limit} more"
 
 
 def _benchmark_limitations(benchmark: dict | None) -> list[dict]:
@@ -468,7 +473,7 @@ def render_model_card(card: dict) -> str:
     lines += ["## Excluded Products", "", (
         "These Products are left out of training, scoring and every ranking and metric (ADR 0005). Country and "
         "world totals still count them."), "", *[
-        f"- **{group['reason']}** {len(group['products'])} Products: {', '.join(group['products'])}."
+        f"- **{group['reason']}** {len(group['products'])} Product{'s' if len(group['products']) != 1 else ''}: {', '.join(group['products'])}."
         for group in card["excluded_products"]], ""]
     lines += ["## Intended use", "", *[f"- {item}" for item in card["intended_use"]], ""]
     lines += ["## Out-of-scope use", "", *[f"- {item}" for item in card["out_of_scope"]], ""]
