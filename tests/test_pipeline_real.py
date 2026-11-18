@@ -9,7 +9,6 @@ from exportspredictor import constraints, features, pipeline, search
 from exportspredictor.lookups import market_lookup
 
 
-
 def _tiny_search(root):
     data = search.feature_data(root)
     return search.run(data, data, search.FIXTURE_SEARCH)
