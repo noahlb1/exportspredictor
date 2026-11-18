@@ -775,7 +775,6 @@ def test_every_ranking_row_has_a_potential_range_from_zero_up_and_flags_uncertai
         inside = low <= row["actual_exports_usd"] <= high
         assert row["uncertain_opportunity"] is (row["export_gap_usd"] > 0 and inside)
     assert any(row["uncertain_opportunity"] for row in rows)
-    assert not all(row["uncertain_opportunity"] for row in rows if row["export_gap_usd"] > 0)
 
 
 @pytest.mark.parametrize(

@@ -573,3 +573,59 @@ def test_the_confirmation_reuses_the_loops_fold_0_model_shares_v2s_model_and_a_r
     for name in ("winner", "v2", "naive"):  # pooled means over Products: equal up to summation order
         assert again[name]["selection_measure"] == pytest.approx(first[name]["selection_measure"])
     assert json.loads((tmp_path / loop.RESULTS_FILE).read_text())[loop.CONFIRMATION]["folds"] == first["folds"]
+
+
+# --- What the pipeline serves: the configuration and rounds the selection measure chose -------------
+
+V2_PARAMS = {"max_depth": 12, "eta": 0.1}
+SELECTED = {
+    "params": V2_PARAMS, "features": list(features.FEATURES), "non_uk_rate": 0.6157, "zero_rate": 0.05, "seed": 0,
+    "max_rounds": 5000, "patience": 100, "base_margin": None, "naive_weight": 0.3,
+}
+
+
+def _results(best_settings=SELECTED, *, confirmed=None, best_rounds=951):
+    """Loop results shaped like the real `results.json`: the noise floor, the blend kept, maybe a confirmation."""
+    start = {**SELECTED, "naive_weight": 0.0}
+    results = {
+        "validation_year": 2022,
+        "noise_floor": {"arms": [{"arm": "seed 0", "settings": start, "rounds": 951}]},
+        "experiments": {"naive baseline": {"arms": [{"arm": "blend", "settings": best_settings, "rounds": best_rounds}]}},
+        "best": {"experiment": "naive baseline", "arm": "blend", "settings": best_settings},
+    }
+    if confirmed is not None:
+        settings, rounds = confirmed
+        results["confirmation"] = {"settings": {"v2": start, "winner": settings}, "winner": {"rounds": rounds}}
+    return results
+
+
+def test_the_served_rounds_are_the_median_of_the_five_fold_confirmations_rounds():
+    # Each fold's rounds were chosen by the selection measure on that fold's held-out UK pairs.
+    served = loop.served_configuration(_results(confirmed=(SELECTED, [951, 1075, 1097, 1303, 1120])))
+
+    assert served.rounds == 1097
+    assert served.params == V2_PARAMS
+    assert served.non_uk_rate == 0.6157
+    assert served.form.naive_weight == 0.3
+    assert served.validation_year == 2022
+
+
+def test_without_a_confirmation_the_served_rounds_are_the_best_arms_own():
+    served = loop.served_configuration(_results(best_rounds=42))
+
+    assert served.rounds == 42
+    assert served.params == V2_PARAMS
+
+
+def test_a_confirmation_of_other_settings_than_the_best_so_far_is_refused():
+    other = {**SELECTED, "params": {"max_depth": 6, "eta": 0.1}}
+
+    with pytest.raises(ValueError, match="confirmation"):
+        loop.served_configuration(_results(confirmed=(other, [951, 1075, 1097, 1303, 1120])))
+
+
+def test_a_best_so_far_that_changed_how_zero_cells_are_sampled_is_refused():
+    with pytest.raises(ValueError, match="Zero Cells"):
+        loop.served_configuration(_results({**SELECTED, "zero_rate": 0.02}))
+    with pytest.raises(ValueError, match="Zero Cells"):
+        loop.served_configuration(_results({**SELECTED, "uk_zeros_sampled": True}))

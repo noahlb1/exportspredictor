@@ -96,7 +96,7 @@ The one-fold win was checked on every UK pair before the test year is read. The 
 
 ## The chosen form and configuration
 
-**Form: a blend of the v2 model with the naive baseline in log dollars.** Export Potential = exp(0.7 · log model + 0.3 · log naive), with each floored at $1 (`loop.blend`, `naive_weight` 0.3). It stays in dollars, so the Export Gap is still defined. The naive baseline has no policy features, so a Scenario moves only the model's part, and every Scenario Effect shrinks by the factor 0.7 on the log scale. On fold 0, an added Trade Agreement was associated with +36.9% for the model alone and +23.9% for the blend, with no pair lower (#75).
+**Form: a blend of the v2 model with the naive baseline in log dollars.** Export Potential = exp(0.7 · log model + 0.3 · log naive), with each floored at $1 (`prediction.blend`, `naive_weight` 0.3). It stays in dollars, so the Export Gap is still defined. The naive baseline has no policy features, so a Scenario moves only the model's part, and every Scenario Effect shrinks by the factor 0.7 on the log scale. On fold 0, an added Trade Agreement was associated with +36.9% for the model alone and +23.9% for the blend, with no pair lower (#75).
 
 **Configuration** (unchanged from v2, `results["best"]["settings"]`):
 
@@ -104,6 +104,7 @@ The one-fold win was checked on every UK pair before the test year is read. The 
 - The 25 features of `features.FEATURES`, with the monotone constraints on policy features kept (#75).
 - Non-UK row rate 0.6157, other Exporters' Zero Cells at 5%, and every UK Zero Cell kept at weight 1. Seed 0.
 - Rounds chosen per fold by the selection measure of the model alone (patience 100, max 5,000): 951 / 1,075 / 1,097 / 1,303 / 1,120.
+- **The served round count** (since the code review): the pipeline takes the configuration and the rounds from the loop's selection (`loop.served_configuration`), not from the hyperparameter search. The rounds are the median of the five folds' rounds, 1,097, scaled by the ratio of training rows from the loop's 2012–2021 rows at its non-UK rate 0.6157 to the fold models' 2012–2023 rows (`search.scaled_rounds`, a heuristic). The median keeps one fold's own count, chosen by the selection measure, and is not moved by the one long fold (1,303). The pipeline refuses loop results validated on another year, a confirmation of other settings than the best so far, and a best so far that changed how Zero Cells are sampled. Deviance chooses none of it.
 - No starting point, no two-part model, no Product-detail features.
 
 The five confirmed fold models are in `data/derived/loop_V202601/models/`: `a9314febb8f2e546` (fold 0), `47a1d779af67057c` (1), `f5531a1394b61d75` (2), `6a511c331b5547e0` (3) and `2b7d1510b9dca2b0` (4), each `.ubj` with a `.json` holding its rounds. The final run (#78) serves this form and reads 2023 once.
@@ -111,6 +112,8 @@ The five confirmed fold models are in `data/derived/loop_V202601/models/`: `a931
 ## The 2023 test year, read once (#78)
 
 The final run (`python -m exportspredictor.pipeline --event-backtests`, artefact `20261118T185910Z`) serves the blend at naive weight 0.3. Its fold and test-year models are the pipeline's own, read from the cache. They have v2's configuration, trained on 2012–2023 for the Baseline and on 2012–2022 for the test year, with the search's 1,198 rounds scaled to 1,453. So the served model differs from v2 only in its form. 2023 was read in this run only, after the confirmation.
+
+**The served round count came from deviance.** The 1,198 rounds are the hyperparameter search's, where early stopping ran on Tweedie deviance, which the spec rules out for a selected model ("Deviance is never the stopping rule for a selected model"). The code review found this after the run. The pipeline now takes the rounds from the selection measure (the median of the five-fold confirmation's rounds, 1,097, scaled by the ratio of training rows; see *The chosen form and configuration*), so a rebuild would train fold models with fewer rounds. Artefact `20261118T185910Z` was **not** rebuilt: a rebuild would read 2023 a second time, which the spec forbids without the project owner's say. Whether to rebuild is left to the project owner. Until then, the figures below are those of the 1,453-round models.
 
 **Success was stated in advance: the UK ranking beats the naive baseline on 2023. It does.**
 

@@ -1142,6 +1142,57 @@ def chosen_form(results: Mapping) -> ModelForm:
     return ModelForm(naive_weight=settings.naive_weight)
 
 
+@dataclass(frozen=True)
+class ServedConfiguration:
+    """What the pipeline serves of the loop's choice: the form, the configuration and its round count.
+
+    `rounds` was chosen by the selection measure on the loop's training rows (the years before
+    the validation year, at `non_uk_rate`); the pipeline scales it to its own rows. Deviance
+    chose none of it.
+    """
+
+    form: ModelForm
+    params: dict
+    rounds: int
+    rounds_rule: str  # how `rounds` was taken from the loop's results
+    non_uk_rate: float
+    validation_year: int
+
+
+def served_configuration(results: Mapping) -> ServedConfiguration:
+    """The loop's best so far as the pipeline serves it, with the round count its selection measure chose.
+
+    With a five-fold confirmation, the rounds are the median (lower) of the winner's per-fold
+    rounds, each chosen by the selection measure on that fold's held-out UK pairs; the
+    confirmation must be of the best so far's settings. Without one (the fixture), they are the
+    best arm's own. Raises ValueError for a form the pipeline cannot serve (`chosen_form`) or a
+    best so far that changed how Zero Cells are sampled (the pipeline trains on the rows as built).
+    """
+    form = chosen_form(results)
+    best = Settings.from_dict(results["best"]["settings"])
+    start = Settings.from_dict(results[NOISE_FLOOR]["arms"][0]["settings"])
+    if best.zero_rate != start.zero_rate or best.uk_zeros_sampled:
+        raise ValueError("The loop's best so far changed how Zero Cells are sampled; the pipeline trains on the built rows")
+    confirmation = results.get(CONFIRMATION)
+    if confirmation is not None:
+        confirmed = Settings.from_dict(confirmation["settings"][WINNER])
+        if confirmed.to_dict() != best.to_dict():
+            raise ValueError("The five-fold confirmation is of other settings than the loop's best so far; re-run it")
+        fold_rounds = confirmation[WINNER]["rounds"]
+        rounds = statistics.median_low(fold_rounds)
+        rule = f"median of the five-fold confirmation's rounds {fold_rounds}"
+    else:
+        section = results[NOISE_FLOOR] if results["best"]["experiment"] == NOISE_FLOOR else (
+            results["experiments"][results["best"]["experiment"]]
+        )
+        rounds = next(row["rounds"] for row in section["arms"] if row["arm"] == results["best"]["arm"])
+        rule = "the best arm's own rounds (no five-fold confirmation)"
+    return ServedConfiguration(
+        form=form, params=dict(best.params), rounds=int(rounds), rounds_rule=rule, non_uk_rate=best.non_uk_rate,
+        validation_year=results["validation_year"],
+    )
+
+
 def ranking_record(results: Mapping) -> dict:
     """What an artefact records of the loop: the selection measure, the noise floor, every experiment's
     rows, the best so far and the five-fold confirmation (where run)."""

@@ -11,12 +11,14 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    floor and the experiment results (`loop.ranking_record`). Every row scored below carries
    its naive baseline (`naive_usd`, from every Exporter's Flows of its year), which a blend
    needs and a Scenario never changes.
-   **Tune** on the validation year (Baseline year − 2, i.e. 2022) with the hyperparameter
-   search (`search`): the real run reads the saved search, the fixture runs a tiny one.
+   **The hyperparameter search** the loop started from (`search`, validated on Baseline year − 2, 2022) is
+   recorded beside it: the real run reads the saved search, the fixture runs a tiny one.
    The test year (Baseline year − 1) is never read here.
 2. **Refit** the fold models (ADR 0001) on every year before the Baseline year, with the
-   tuned configuration and its early-stopped round count scaled by the ratio of training
-   rows (`search.scaled_rounds`, a heuristic); the feature transform is fitted on the same years.
+   configuration the loop selected and the round count its selection measure chose
+   (`loop.served_configuration`: the median of the five-fold confirmation's rounds), scaled
+   by the ratio of training rows (`search.scaled_rounds`, a heuristic); the feature
+   transform is fitted on the same years. Loop results validated on another year are refused.
 3. **Score** every year of the Gap Period (`gap_period`, 2022–2024): each year's UK grid
    (the union of the Gap Period's pairs) out-of-fold, with that year's features. The
    Baseline table holds the Gap Period means and the Baseline year's Export Potential; the
@@ -526,7 +528,8 @@ def _train_and_score(
     """Steps 0–4 of the module docstring. With `cache` (a folder), the fold models are saved
     there keyed by their training settings (`fold_models_dir`), and a re-run reads them.
     `year_flows(year)` gives every Exporter's Flows of a year, for the naive baseline."""
-    form = loop.chosen_form(ranking_results)
+    selected = loop.served_configuration(ranking_results)
+    form = selected.form
     print(f"Model form: {form.to_dict()}", flush=True)
     validation_year, test_year = baseline_year - 2, baseline_year - 1
     tuning_years = [y for y in sorted(training) if y < validation_year]
@@ -547,20 +550,19 @@ def _train_and_score(
         check_row_budget(counts, non_uk_rate, budget)
     print(f"Training rows: {counts.uk:,} UK + {counts.non_uk:,} other at rate {non_uk_rate}", flush=True)
 
-    # 1. The tuned configuration (the test year, baseline_year - 1, was not read). Its
-    # early-stopped round count was found on the tuning years' rows; the fold models train on
-    # more years, so the count is scaled by the ratio of training rows (a heuristic).
-    if search_results["validation_year"] != validation_year:
-        raise ValueError(
-            f"The hyperparameter search validated on {search_results['validation_year']}, not {validation_year}"
-        )
-    winner = search_results["winner"]
-    params, tuned_rounds = winner["params"], winner["rounds"]
+    # 1. The configuration the experiment loop selected (the test year, baseline_year - 1, was
+    # not read), with the round count its selection measure chose on the tuning years' rows at
+    # the loop's non-UK rate. The fold models train on more years, so the count is scaled by
+    # the ratio of training rows (a heuristic). Deviance chooses neither.
+    for name, results in (("hyperparameter search", search_results), ("experiment loop", ranking_results)):
+        if results["validation_year"] != validation_year:
+            raise ValueError(f"The {name} validated on {results['validation_year']}, not {validation_year}")
+    params, selected_rounds = selected.params, selected.rounds
     tuning_counts = count_rows([training[y] for y in tuning_years], uk=UK)
-    training_rows, tuning_rows = counts.expected(non_uk_rate), tuning_counts.expected(non_uk_rate)
-    rounds = search.scaled_rounds(tuned_rounds, training_rows=training_rows, tuning_rows=tuning_rows)
+    training_rows, tuning_rows = counts.expected(non_uk_rate), tuning_counts.expected(selected.non_uk_rate)
+    rounds = search.scaled_rounds(selected_rounds, training_rows=training_rows, tuning_rows=tuning_rows)
     tuning_seconds = search.seconds(search_results)
-    print(f"Tuned configuration: {params}, {tuned_rounds} rounds scaled to {rounds}", flush=True)
+    print(f"Selected configuration: {params}, {selected_rounds} rounds scaled to {rounds}", flush=True)
 
     # 2. Refit the fold models on every year before the Baseline year (or read them from `cache`).
     cached = None
@@ -675,7 +677,9 @@ def _train_and_score(
         "model_params": model_params(params, device=device, seed=seed),
         "rounds": rounds,
         "round_scaling": {
-            "tuned_rounds": tuned_rounds,
+            "selected_rounds": selected_rounds,
+            "rule": selected.rounds_rule,
+            "selection_non_uk_rate": selected.non_uk_rate,
             "tuning_years": tuning_years,
             "training_years": training_years,
             "tuning_rows": round(tuning_rows),
