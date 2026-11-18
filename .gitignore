@@ -12,3 +12,6 @@ __pycache__/
 
 # Local
 .env
+
+# Course notes: kept locally for reference, not published
+ML_AI_Concept_Notes.html

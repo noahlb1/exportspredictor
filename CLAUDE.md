@@ -7,7 +7,7 @@ A final project for an ML/AI course. It is a model that learns from global HS6 g
 - `GLOSSARY.md`: the project's language. Use its terms exactly in code names, docstrings, notebook prose and UI text. When a new domain term settles, add it there.
 - `docs/adr/`: decisions that look wrong but are deliberate. Read the relevant ADR before changing how the model trains, what data it uses or how Scenarios are computed.
 - The spec and the wayfinder map (label `wayfinder:map`) are GitHub issues: the spec says what is being built, and the map records open decisions. Cited research notes behind those decisions live in `docs/research/`.
-- `ML_AI_Concept_Notes.html`: the course notes. The project should visibly apply them, then go beyond them. When explaining a choice in the notebook, link it to the course concept it uses or extends.
+- `ML_AI_Concept_Notes.html`: the course notes. They are kept out of git, so read them from the main checkout (`C:\CodingProjectsC\exportspredictor\ML_AI_Concept_Notes.html`), even from a worktree. The project should visibly apply them, then go beyond them. When explaining a choice in the notebook, link it to the course concept it uses or extends.
 
 ## Shape
 
