@@ -441,6 +441,7 @@ class Loop:
         """Train with the selection measure on the held-out UK grid each round, stopping after `patience` flat rounds."""
         started = time.perf_counter()
         train, grid = self._training_matrices(settings)
+        matrix_seconds = round(time.perf_counter() - started, 1)  # 0 when the matrices were reused
         params = model_params(dict(settings.params), device=self.plan.device, seed=settings.seed, features=settings.features)
         params |= {"disable_default_eval_metric": 1} | ({"nthread": self.plan.threads} if self.plan.threads else {})
         model = xgb.train(
@@ -462,7 +463,8 @@ class Loop:
             "hit_round_cap": rounds >= settings.max_rounds,
             "trained_rounds": model.num_boosted_rounds(),
             "training_rows": train.num_row(),
-            "train_seconds": round(time.perf_counter() - started, 1),
+            "matrix_seconds": matrix_seconds,
+            "train_seconds": round(time.perf_counter() - started, 1),  # matrices included
         }
 
     def _round_measure(self, predictions, _matrix) -> tuple[str, float]:
@@ -594,12 +596,35 @@ def v2_plan(root: Path | None = None) -> LoopPlan:
 
 def main(argv: Sequence[str]) -> None:
     command = argv[0] if argv else ""
-    if command != "noise":
-        raise SystemExit("usage: python -m exportspredictor.loop noise")
-    lp = Loop(real_data(), v2_plan(), loop_dir())
-    floor = lp.noise_floor()
-    summary = {k: floor[k] for k in ("seeds", "selection_measures", "sd", "win_threshold")}
-    print(json.dumps({**summary, "seconds": [row["seconds"] for row in floor["arms"]]}), flush=True)
+    if command == "noise":
+        lp = Loop(real_data(), v2_plan(), loop_dir())
+        floor = lp.noise_floor()
+        summary = {k: floor[k] for k in ("seeds", "selection_measures", "sd", "win_threshold")}
+        print(json.dumps({**summary, "seconds": [row["seconds"] for row in floor["arms"]]}), flush=True)
+    elif command == "time":
+        print(json.dumps(time_one_arm()), flush=True)
+    else:
+        raise SystemExit("usage: python -m exportspredictor.loop noise|time")
+
+
+def time_one_arm(root: Path | None = None) -> dict:
+    """Train the start configuration once more, in memory (the cache is not read), and save its timing.
+
+    The timing is saved in the loop's results under `timing`; nothing else there changes.
+    """
+    started = time.perf_counter()
+    lp = Loop(real_data(root), v2_plan(root))
+    row = lp.run_arm(Arm("timing"), lp.plan.start)
+    timing = {
+        "setup_seconds": lp.results["setup_seconds"],
+        **{k: row[k] for k in ("seconds", "matrix_seconds", "train_seconds", "rounds", "trained_rounds", "training_rows", SELECTION_MEASURE)},
+        "total_seconds": round(time.perf_counter() - started, 1),
+    }
+    path = loop_dir(root) / RESULTS_FILE
+    results = json.loads(path.read_text(encoding="utf-8"))
+    results["timing"] = timing
+    path.write_text(json.dumps(results, indent=2, default=experiments._json_default), encoding="utf-8")
+    return timing
 
 
 if __name__ == "__main__":
