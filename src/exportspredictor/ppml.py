@@ -289,9 +289,9 @@ def fit_ppml(
     regressor: str = REGRESSOR,
     fixed_effects: tuple[tuple[str, ...], ...] = FIXED_EFFECTS,
     cluster: tuple[str, ...] = CLUSTER,
-    tol: float = 1e-10,
+    tol: float = 1e-8,
     max_iter: int = 200,
-    demean_tol: float = 1e-11,
+    demean_tol: float = 1e-9,
     max_sweeps: int = 50_000,
 ) -> PpmlFit:
     """PPML of `outcome` on one `regressor` with the high-dimensional `fixed_effects` absorbed.
