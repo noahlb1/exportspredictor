@@ -39,9 +39,18 @@ STEPS = [
     Step("Applied Tariffs (TRAINS download via WITS, HS17/HS07 -> HS12, EU schedule, gap fill)", [PY, "-m", "exportspredictor.tariffs"]),
     Step("Feature table (training rows with sampled zeros, UK grid; per year)", [PY, "-m", "exportspredictor.features"]),
     Step("HMRC OTS 2023 exports for the BACI cross-check (download, HS 2022 -> 2012)", [PY, "-m", "exportspredictor.hmrc"]),
-    # The notebook runs on real data here (it defaults to fixture mode, as the tests run it).
+    # Every choice is made on 2022: the feature ablation and learning curve (#53), then the search (#54).
+    Step("Experiment rows (Sector subset, 2012–2022)", [PY, "-m", "exportspredictor.experiments", "build"]),
+    Step("Feature ablation on 2022 (GPU)", [PY, "-m", "exportspredictor.experiments", "ablation"]),
+    Step("Learning curve on 2022 (GPU)", [PY, "-m", "exportspredictor.experiments", "curve"]),
+    Step("Hyperparameter search on 2022 (GPU, resumable, about 3 h)", [PY, "-m", "exportspredictor.search"]),
+    # Trains the fold models, scores the Gap Period, evaluates on 2023 (read here for the first
+    # time) and saves a new artefact version. Fold and test-year models are cached, so a re-run resumes.
+    Step("Train, evaluate and save the artefacts (GPU, several hours)", [PY, "-m", "exportspredictor.pipeline"]),
+    # The notebook runs on real data here (it defaults to fixture mode, as the tests run it) and
+    # reads the artefact the step before saved.
     Step(
-        "Train, evaluate and save artefacts (notebook)",
+        "The notebook (reads the saved artefact)",
         [PY, "-m", "jupyter", "execute", "notebooks/exports_predictor.ipynb"],
         env={"EXPORTSPREDICTOR_FIXTURE_MODE": "0"},
     ),

@@ -30,6 +30,7 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 (GPU); `uv run python -m exportspredictor.pipeline` runs it and saves the artefact folder.
 """
 
+import hashlib
 import json
 import time
 from collections.abc import Mapping, Sequence
@@ -83,7 +84,13 @@ from exportspredictor.gap_period import (
 )
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
-from exportspredictor.scenarios import blocked_effects, with_blocked_effects
+from exportspredictor.rankings import DEFAULT_MIN_POTENTIAL_USD
+from exportspredictor.scenarios import (
+    DEFAULT_MIN_SHARE,
+    DEFAULT_MIN_USD,
+    blocked_effects,
+    with_blocked_effects,
+)
 from exportspredictor.scope import exporter_scope
 from exportspredictor.sources import source_versions
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
@@ -359,6 +366,7 @@ def build_real_artefacts(
         training, grids, baseline_year=baseline_year, search_results=search_results,
         n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
         calibration=folder / f"training_{baseline_year}.parquet", min_band_rows=min_band_rows,
+        cache=features_dir(root).parent / "fold_models" / _file_key(folder / "features.json"),
     )
     history_years = [y for y in settings["years"] if baseline_year - HISTORY_YEARS < y <= baseline_year]
     history = _history(
@@ -398,6 +406,8 @@ def build_real_artefacts(
         lift_held_out=backtests.lift_exporters(
             freeze.lift_held_out_exporters(v1_frozen or freeze.v1_folder()), scope=settings["exporter_scope"], uk=UK
         ),
+        # Where `evaluation.real_test_models` looks for them, so later steps (the v1 comparison) reuse them.
+        test_models_cache=evaluation.test_models_dir(root, metadata),
     )
     return Artefacts(
         metadata=metadata,
@@ -413,6 +423,11 @@ def build_real_artefacts(
     )
 
 
+def _file_key(path: Path) -> str:
+    """A short hash of a file's bytes: cached models are kept apart per feature build."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
+
+
 def _train_and_score(
     training: Mapping[int, Chunk],
     grids: Mapping[int, Chunk],
@@ -426,7 +441,10 @@ def _train_and_score(
     calibration: Chunk,
     min_band_rows: int,
     row_budget: int | None = None,
+    cache: Path | None = None,
 ) -> _Trained:
+    """Steps 0–4 of the module docstring. With `cache` (a folder), the fold models are saved
+    there keyed by their training settings (`fold_models_dir`), and a re-run reads them."""
     validation_year, test_year = baseline_year - 2, baseline_year - 1
     tuning_years = [y for y in sorted(training) if y < validation_year]
     training_years = [y for y in sorted(training) if y < baseline_year]
@@ -461,16 +479,36 @@ def _train_and_score(
     tuning_seconds = search.seconds(search_results)
     print(f"Tuned configuration: {params}, {tuned_rounds} rounds scaled to {rounds}", flush=True)
 
-    # 2. Refit the fold models on every year before the Baseline year.
-    started = time.perf_counter()
-    chunks = [training[y] for y in training_years]
-    transform = FeatureTransform.fit(scan_chunks(chunks), training_years)
-    models = train_fold_models(
-        chunks, uk=UK, params=params, rounds=rounds, n_folds=n_folds, device=device, seed=seed,
-        transform=transform, non_uk_rate=non_uk_rate,
-    )
-    training_seconds = time.perf_counter() - started
-    print(f"Trained {n_folds} fold models in {training_seconds:.0f} s", flush=True)
+    # 2. Refit the fold models on every year before the Baseline year (or read them from `cache`).
+    cached = None
+    if cache is not None:
+        cached = fold_models_dir(
+            cache,
+            baseline_year=baseline_year,
+            settings={
+                "training_years": training_years, "params": params, "rounds": rounds, "n_folds": n_folds,
+                "non_uk_rate": non_uk_rate, "seed": seed, "features": FEATURES,
+            },
+        )
+    if cached is not None and (cached / evaluation.TEST_MODELS_FILE).exists():
+        saved = evaluation.TestModels.load(cached)
+        models, transform = saved.models, saved.transform
+        training_seconds = json.loads((cached / _TRAINING_FILE).read_text(encoding="utf-8"))["training_seconds"]
+        print(f"Read {n_folds} fold models from {cached} (trained in {training_seconds:.0f} s)", flush=True)
+    else:
+        started = time.perf_counter()
+        chunks = [training[y] for y in training_years]
+        transform = FeatureTransform.fit(scan_chunks(chunks), training_years)
+        models = train_fold_models(
+            chunks, uk=UK, params=params, rounds=rounds, n_folds=n_folds, device=device, seed=seed,
+            transform=transform, non_uk_rate=non_uk_rate,
+        )
+        training_seconds = time.perf_counter() - started
+        print(f"Trained {n_folds} fold models in {training_seconds:.0f} s", flush=True)
+        if cached is not None:
+            cached.mkdir(parents=True, exist_ok=True)
+            (cached / _TRAINING_FILE).write_text(json.dumps({"training_seconds": training_seconds}), encoding="utf-8")
+            evaluation.TestModels(baseline_year, training_years, models, transform).save(cached)
 
     # 3. Score every Gap Period year's UK grid out-of-fold, each with that year's features.
     scored = {year: _score_grid(read_chunk(grids[year]), transform, models) for year in gap_years(baseline_year)}
@@ -565,6 +603,15 @@ def _train_and_score(
             "calibration_exporters": scored_calibration["exporter"].n_unique(),
             "seconds": round(potential_range_seconds, 2),
         },
+        # The defaults the tables were built and are ranked with (spec #39 *Artefacts*).
+        "thresholds": {
+            "blocked_min_share": DEFAULT_MIN_SHARE,
+            "blocked_min_usd": DEFAULT_MIN_USD,
+            "relative_gap_min_potential_usd": DEFAULT_MIN_POTENTIAL_USD,
+            "potential_range_coverage": conformal.COVERAGE,
+            "potential_range_bands": conformal.N_BANDS,
+            "potential_range_min_band_rows": min_band_rows,
+        },
         "created_at": datetime.now(UTC).isoformat(),
     }
     return _Trained(
@@ -576,6 +623,15 @@ def _train_and_score(
         potential_range_report=potential_range_report,
         metadata=metadata,
     )
+
+
+_TRAINING_FILE = "training.json"
+
+
+def fold_models_dir(cache: Path, *, baseline_year: int, settings: dict) -> Path:
+    """Where fold models trained with `settings` are cached under `cache`, keyed by a hash of them."""
+    key = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()[:12]
+    return Path(cache) / f"{baseline_year}_{key}"
 
 
 def _score_grid(grid: pl.DataFrame, transform: FeatureTransform, models: list[xgb.Booster]) -> pl.DataFrame:
@@ -609,6 +665,7 @@ def _evaluate(
     backtest_chunks: Mapping[int, Chunk] | None = None,
     backtest_cache: Path | None = None,
     v1: comparison.Inputs | None = None,
+    test_models_cache: Path | None = None,
 ) -> dict:
     """Evaluate on the test year, run Lift and the Event Backtests (`backtests`), then compare
     the monotone-constrained model with an unconstrained one (`constraints`).
@@ -616,21 +673,29 @@ def _evaluate(
     The test-year fold models are trained with the tuned configuration; the backtest
     models use it too. `backtest_chunks` defaults to `training`. With `v1`, the report
     gains the pre-registered `v1_comparison` (`comparison.compare`), scored by the same
-    test-year fold models.
+    test-year fold models. With `test_models_cache` (a folder), the test-year models are
+    read from it when saved there, or saved there after training.
     """
     test_year = metadata["test_year"]
     started = time.perf_counter()
-    test_models = evaluation.train_test_models(
-        {y: chunk for y, chunk in training.items() if y < test_year},
-        test_year=test_year,
-        uk=UK,
-        params=metadata["params"],
-        rounds=metadata["rounds"],
-        n_folds=metadata["n_folds"],
-        device=device,
-        non_uk_rate=non_uk_rate,
-        seed=seed,
-    )
+    if test_models_cache is not None and (test_models_cache / evaluation.TEST_MODELS_FILE).exists():
+        test_models = evaluation.TestModels.load(test_models_cache)
+        print(f"Read the {test_year} test models from {test_models_cache}", flush=True)
+    else:
+        test_models = evaluation.train_test_models(
+            {y: chunk for y, chunk in training.items() if y < test_year},
+            test_year=test_year,
+            uk=UK,
+            params=metadata["params"],
+            rounds=metadata["rounds"],
+            n_folds=metadata["n_folds"],
+            device=device,
+            non_uk_rate=non_uk_rate,
+            seed=seed,
+        )
+        if test_models_cache is not None:
+            test_models.save(test_models_cache)
+        print(f"Trained the {test_year} test models in {time.perf_counter() - started:.0f} s", flush=True)
     report = evaluation.evaluate(
         read_chunk(training[test_year]),
         read_chunk(test_grid),
