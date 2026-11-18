@@ -255,14 +255,19 @@ def build_artefacts(
     training = fixture_training(
         world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed, exporters=scope
     )
+
+    def flows_of_year(year: int) -> pl.DataFrame:
+        """Every Exporter's Flows of one year."""
+        return flows.filter(pl.col("year") == year)
+
     # Every Gap Period year is scored over the union of the Gap Period's grids, as `features.build` writes them.
     # `build_features` gets every year's Flows: Market import growth reads year t-3.
-    year_flows = {year: flows.filter(pl.col("year") == year) for year in gap_years(baseline_year)}
-    pairs = grid_pairs(uk_grid(f, UK) for f in year_flows.values())
-    grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in year_flows.items()}
+    gap_flows = {year: flows_of_year(year) for year in gap_years(baseline_year)}
+    pairs = grid_pairs(uk_grid(f, UK) for f in gap_flows.values())
+    grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in gap_flows.items()}
     # The Potential Range's calibration rows: the Baseline year's training rows (ADR 0007).
     calibration = build_features(
-        training_rows(year_flows[baseline_year], rate=zero_sampling_rate, seed=seed, uk=UK, exporters=scope),
+        training_rows(gap_flows[baseline_year], rate=zero_sampling_rate, seed=seed, uk=UK, exporters=scope),
         flows,
         sources,
     )
@@ -284,7 +289,7 @@ def build_artefacts(
         training, grids, baseline_year=baseline_year, search_results=search_results,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed, row_budget=row_budget,
         calibration=calibration, min_band_rows=min_band_rows, ranking_results=ranking_results,
-        year_flows=lambda year: flows.filter(pl.col("year") == year),
+        year_flows=flows_of_year,
     )
     recent = (pl.col("year") > baseline_year - HISTORY_YEARS) & (pl.col("year") <= baseline_year)
     metadata = {
@@ -306,13 +311,13 @@ def build_artefacts(
     )
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
-        test_flows=year_flows[baseline_year - 1],
+        test_flows=gap_flows[baseline_year - 1],
         seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
         constraint_plan=constraints.FIXTURE_PLAN,
         lift_held_out=backtests.lift_exporters(frozen.lift_held_out_exporters, scope=scope, uk=UK),
         v1=v1,
         parts=parts,
-        year_flows=lambda year: flows.filter(pl.col("year") == year),
+        year_flows=flows_of_year,
     )
     return Artefacts(
         metadata=metadata,
@@ -342,8 +347,8 @@ def fixture_training(
     training = {}
     for year in sorted(flows["year"].unique().to_list()):
         if year < baseline_year:
-            year_flows = flows.filter(pl.col("year") == year)
-            rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed, uk=UK, exporters=exporters)
+            one_year = flows.filter(pl.col("year") == year)
+            rows = training_rows(one_year, rate=zero_sampling_rate, seed=seed, uk=UK, exporters=exporters)
             # Sorted: row order decides which rows `subsample` draws, so the fixture models are reproducible.
             training[year] = build_features(rows, flows, world.sources).sort(KEYS)
     return training
@@ -417,6 +422,11 @@ def build_real_artefacts(
             raise ValueError(f"No experiment loop results in {loop.loop_dir(root)}; run `python -m exportspredictor.loop`")
         ranking_results = loop.load(root)
     to_iso3 = load_sources(root)[1]
+
+    def flows_of_year(year: int) -> pl.DataFrame:
+        """Every Exporter's Flows of one year, read from its own file."""
+        return load_year_flows(year, to_iso3, root)
+
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
     grids = {y: folder / f"uk_grid_{y}.parquet" for y in gap_years(baseline_year)}
     trained = _train_and_score(
@@ -424,7 +434,7 @@ def build_real_artefacts(
         n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
         calibration=folder / f"training_{baseline_year}.parquet", min_band_rows=min_band_rows,
         cache=features_dir(root).parent / "fold_models" / _file_key(folder / "features.json"),
-        ranking_results=ranking_results, year_flows=lambda year: load_year_flows(year, to_iso3, root),
+        ranking_results=ranking_results, year_flows=flows_of_year,
     )
     history_years = [y for y in settings["years"] if baseline_year - HISTORY_YEARS < y <= baseline_year]
     history = _history(
@@ -456,7 +466,7 @@ def build_real_artefacts(
     v1_folder = v1_frozen or freeze.v1_folder()
     report = _evaluate(
         training, test_grid, trained, metadata, markets=evaluation.markets_with_income(markets, root),
-        test_flows=load_year_flows(baseline_year - 1, to_iso3, root),
+        test_flows=flows_of_year(baseline_year - 1),
         device=device, non_uk_rate=trained.metadata["non_uk_sampling_rate"], seed=seed,
         backtest_plan=backtest_plan,
         backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
@@ -474,7 +484,7 @@ def build_real_artefacts(
         ),
         ladder_cache=ladder_dir(root),
         parts=parts,
-        year_flows=lambda year: load_year_flows(year, to_iso3, root),
+        year_flows=flows_of_year,
         earlier_v2=evaluation.V2_REPORTED,
     )
     return Artefacts(
