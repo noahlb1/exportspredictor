@@ -31,13 +31,21 @@ from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import FeatureTransform
 from exportspredictor.folds import EXPORTER_PAIR_KEYS, assign_folds
-from exportspredictor.prediction import export_potential
+from exportspredictor.prediction import MODEL_ALONE, ModelForm, export_potential
 
 
 def score_calibration(
-    rows: pl.DataFrame, models: list[xgb.Booster], transform: FeatureTransform, *, uk: str
+    rows: pl.DataFrame,
+    models: list[xgb.Booster],
+    transform: FeatureTransform,
+    *,
+    uk: str,
+    form: ModelForm = MODEL_ALONE,
 ) -> pl.DataFrame:
     """The calibration rows of a Baseline-year training table, scored by their hash-assigned fold models.
+
+    They are scored in the served model `form` (a blend needs `naive_usd` on the rows), so the
+    Potential Range is calibrated on the Export Potential the app shows (ADR 0007).
 
     `rows` is a feature table from `features.training_rows` (untransformed). UK rows are
     dropped. Returns exporter, hs6, iso3 (strings), weight, fold, actual_exports_usd,
@@ -60,7 +68,7 @@ def score_calibration(
         "weight",
         "fold",
         actual_exports_usd="value_usd",
-        export_potential_usd=export_potential(calibration, models),
+        export_potential_usd=export_potential(calibration, models, form=form),
     ).with_columns(residual_usd=pl.col("actual_exports_usd") - pl.col("export_potential_usd"))
 
 

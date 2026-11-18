@@ -5,7 +5,13 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 0. **Fit the row budget** (ADR 0004): count the training years' UK and other rows, then
    derive the largest non-UK sampling rate that fits the VRAM row budget, or refuse a
    given rate that does not, before any training.
-1. **Tune** on the validation year (Baseline year − 2, i.e. 2022) with the hyperparameter
+1. **The model form** the experiment loop chose (spec #65, `loop.chosen_form`): the model
+   alone or a blend with the naive baseline. The real run reads the saved loop results, the
+   fixture runs a tiny loop; the artefact records the form, the selection measure, the noise
+   floor and the experiment results (`loop.ranking_record`). Every row scored below carries
+   its naive baseline (`naive_usd`, from every Exporter's Flows of its year), which a blend
+   needs and a Scenario never changes.
+   **Tune** on the validation year (Baseline year − 2, i.e. 2022) with the hyperparameter
    search (`search`): the real run reads the saved search, the fixture runs a tiny one.
    The test year (Baseline year − 1) is never read here.
 2. **Refit** the fold models (ADR 0001) on every year before the Baseline year, with the
@@ -37,7 +43,7 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 import hashlib
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,6 +61,7 @@ from exportspredictor import (
     experiments,
     fixture,
     freeze,
+    loop,
     search,
 )
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
@@ -90,6 +97,7 @@ from exportspredictor.gap_period import (
 )
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
+from exportspredictor.prediction import ModelForm
 from exportspredictor.rankings import DEFAULT_MIN_POTENTIAL_USD
 from exportspredictor.scenarios import (
     DEFAULT_MIN_SHARE,
@@ -226,6 +234,7 @@ def build_artefacts(
     v1_frozen: comparison.Frozen | None = None,
     search_results: dict | None = None,
     parts: Parts = Parts(),
+    ranking_results: dict | None = None,
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
@@ -237,6 +246,8 @@ def build_artefacts(
     `v1_frozen` is the frozen v1 the evaluation compares with (default: the fixture's
     synthetic one, `fixture_v1_frozen`). `search_results` skips the search and uses these
     (`metadata["search"]` of an earlier run). `parts` switches on the opt-in parts (`Parts`).
+    `ranking_results` are the experiment loop's results whose chosen form is served (default:
+    the fixture's own tiny loop, `loop.fixture_ranking`).
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
@@ -267,10 +278,13 @@ def build_artefacts(
     )
     if search_results is None:
         search_results = search.run(tuning_data, tuning_data, replace(search_plan, device=device, seed=seed))
+    if ranking_results is None:
+        ranking_results = loop.fixture_ranking(world)
     trained = _train_and_score(
         training, grids, baseline_year=baseline_year, search_results=search_results,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed, row_budget=row_budget,
-        calibration=calibration, min_band_rows=min_band_rows,
+        calibration=calibration, min_band_rows=min_band_rows, ranking_results=ranking_results,
+        year_flows=lambda year: flows.filter(pl.col("year") == year),
     )
     recent = (pl.col("year") > baseline_year - HISTORY_YEARS) & (pl.col("year") <= baseline_year)
     metadata = {
@@ -292,6 +306,7 @@ def build_artefacts(
     )
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
+        test_flows=year_flows[baseline_year - 1],
         seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
         constraint_plan=constraints.FIXTURE_PLAN,
         lift_held_out=backtests.lift_exporters(frozen.lift_held_out_exporters, scope=scope, uk=UK),
@@ -350,6 +365,7 @@ def build_real_artefacts(
     v1_frozen: Path | None = None,
     ladder_plan: comparison.LadderPlan = comparison.REAL_LADDER,
     parts: Parts = Parts(),
+    ranking_results: dict | None = None,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
@@ -362,6 +378,8 @@ def build_real_artefacts(
     runs the pre-registered v1 comparison against the same frozen v1, with the gain ladder's
     rungs trained with `ladder_plan` (cached under `ladder_dir`). The Event Backtests, the
     constraint comparison and the gain ladder run only when switched on in `parts` (`Parts`).
+    The model form served is the one the experiment loop chose, read from `ranking_results`,
+    by default the saved loop results (`loop.load`).
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -393,6 +411,11 @@ def build_real_artefacts(
                 f"No hyperparameter search in {search.search_dir(root)}; run `python -m exportspredictor.search`"
             )
         search_results = search.load(root)
+    if ranking_results is None:
+        if not (loop.loop_dir(root) / loop.RESULTS_FILE).exists():
+            raise ValueError(f"No experiment loop results in {loop.loop_dir(root)}; run `python -m exportspredictor.loop`")
+        ranking_results = loop.load(root)
+    to_iso3 = load_sources(root)[1]
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
     grids = {y: folder / f"uk_grid_{y}.parquet" for y in gap_years(baseline_year)}
     trained = _train_and_score(
@@ -400,6 +423,7 @@ def build_real_artefacts(
         n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
         calibration=folder / f"training_{baseline_year}.parquet", min_band_rows=min_band_rows,
         cache=features_dir(root).parent / "fold_models" / _file_key(folder / "features.json"),
+        ranking_results=ranking_results, year_flows=lambda year: load_year_flows(year, to_iso3, root),
     )
     history_years = [y for y in settings["years"] if baseline_year - HISTORY_YEARS < y <= baseline_year]
     history = _history(
@@ -431,6 +455,7 @@ def build_real_artefacts(
     v1_folder = v1_frozen or freeze.v1_folder()
     report = _evaluate(
         training, test_grid, trained, metadata, markets=evaluation.markets_with_income(markets, root),
+        test_flows=load_year_flows(baseline_year - 1, to_iso3, root),
         device=device, non_uk_rate=trained.metadata["non_uk_sampling_rate"], seed=seed,
         backtest_plan=backtest_plan,
         backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
@@ -480,11 +505,16 @@ def _train_and_score(
     seed: int,
     calibration: Chunk,
     min_band_rows: int,
+    ranking_results: Mapping,
+    year_flows: Callable[[int], pl.DataFrame],
     row_budget: int | None = None,
     cache: Path | None = None,
 ) -> _Trained:
     """Steps 0–4 of the module docstring. With `cache` (a folder), the fold models are saved
-    there keyed by their training settings (`fold_models_dir`), and a re-run reads them."""
+    there keyed by their training settings (`fold_models_dir`), and a re-run reads them.
+    `year_flows(year)` gives every Exporter's Flows of a year, for the naive baseline."""
+    form = loop.chosen_form(ranking_results)
+    print(f"Model form: {form.to_dict()}", flush=True)
     validation_year, test_year = baseline_year - 2, baseline_year - 1
     tuning_years = [y for y in sorted(training) if y < validation_year]
     training_years = [y for y in sorted(training) if y < baseline_year]
@@ -551,7 +581,10 @@ def _train_and_score(
             evaluation.TestModels(baseline_year, training_years, models, transform).save(cached)
 
     # 3. Score every Gap Period year's UK grid out-of-fold, each with that year's features.
-    scored = {year: _score_grid(read_chunk(grids[year]), transform, models) for year in gap_years(baseline_year)}
+    scored = {
+        year: _score_grid(evaluation.naive_potential(read_chunk(grids[year]), year_flows(year)), transform, models, form)
+        for year in gap_years(baseline_year)
+    }
     pairs = scored[baseline_year].select("hs6", "iso3")
     if any(not table.select("hs6", "iso3").equals(pairs) for table in scored.values()):
         raise ValueError("Every Gap Period year must score the same UK pairs (the union of the years' grids)")
@@ -581,10 +614,14 @@ def _train_and_score(
     )
     # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
     # `mfn_tariff` (not a feature) is the rate a Scenario restores when it removes a Trade Agreement (ADR 0006).
-    baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES, "mfn_tariff")
+    # `naive_usd` (not a feature) is the naive baseline a blend takes; a Scenario leaves it unchanged.
+    baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES, "mfn_tariff", "naive_usd")
     # The Potential Range (ADR 0007): other Exporters' Baseline-year rows, never the UK's.
     started = time.perf_counter()
-    scored_calibration = conformal.score_calibration(read_chunk(calibration), models, transform, uk=UK)
+    scored_calibration = conformal.score_calibration(
+        evaluation.naive_potential(read_chunk(calibration), year_flows(baseline_year)), models, transform, uk=UK,
+        form=form,
+    )
     bands = conformal.fit_bands(scored_calibration, min_rows=min_band_rows)
     baseline = conformal.with_potential_range(baseline, bands)
     potential_range_report = {
@@ -598,7 +635,9 @@ def _train_and_score(
         flush=True,
     )
     # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
-    baseline = with_blocked_opportunity_values(baseline, blocked_opportunity_values(baseline_features, baseline, models))
+    baseline = with_blocked_opportunity_values(
+        baseline, blocked_opportunity_values(baseline_features, baseline, models, form=form)
+    )
     metadata = {
         "artefact_format": ARTEFACT_FORMAT,
         "baseline_year": baseline_year,
@@ -610,6 +649,9 @@ def _train_and_score(
         "n_folds": n_folds,
         "features": FEATURES,
         "monotone_constraints": MONOTONE_CONSTRAINTS,
+        # The served form and the experiments that chose it (spec #65, ADR 0008).
+        "model_form": form.to_dict(),
+        "ranking_experiments": loop.ranking_record(ranking_results),
         "non_uk_sampling_rate": non_uk_rate,
         "non_uk_sampling_rate_derived": derived,
         "row_budget": budget,
@@ -674,10 +716,13 @@ def fold_models_dir(cache: Path, *, baseline_year: int, settings: dict) -> Path:
     return Path(cache) / f"{baseline_year}_{key}"
 
 
-def _score_grid(grid: pl.DataFrame, transform: FeatureTransform, models: list[xgb.Booster]) -> pl.DataFrame:
-    """One year's UK grid scored out-of-fold (ADR 0001), keyed by hs6 and iso3 strings."""
+def _score_grid(
+    grid: pl.DataFrame, transform: FeatureTransform, models: list[xgb.Booster], form: ModelForm
+) -> pl.DataFrame:
+    """One year's UK grid (with its `naive_usd`) scored out-of-fold (ADR 0001) in the served form,
+    keyed by hs6 and iso3 strings."""
     scored = (
-        score_out_of_fold(transform.apply(grid), models, uk=UK)
+        score_out_of_fold(transform.apply(grid), models, uk=UK, form=form)
         .with_columns(hs6=pl.col("hs6").cast(pl.String), iso3=pl.col("importer").cast(pl.String))
         .sort("hs6", "iso3")
     )
@@ -695,6 +740,7 @@ def _evaluate(
     metadata: dict,
     *,
     markets: pl.DataFrame,
+    test_flows: pl.DataFrame,
     device: str,
     non_uk_rate: float,
     seed: int,
@@ -718,9 +764,15 @@ def _evaluate(
     test-year fold models. With `test_models_cache` (a folder), the test-year models are
     read from it when saved there, or saved there after training. The gain ladder's rung
     models (`v1.ladder`, trained only with `parts.gain_ladder`) are cached under `ladder_cache`
-    the same way.
+    the same way. `test_flows` are every Exporter's Flows of the test year, for the naive
+    baseline (the evaluation's reference, and the blend's other side).
+
+    The test-year models are scored in the served model form; the opt-in parts measure the
+    model alone (the blend's naive side has no policy features: it would scale their effects
+    by 1 − w).
     """
     test_year = metadata["test_year"]
+    form = ModelForm.from_dict(metadata["model_form"])
     started = time.perf_counter()
     if test_models_cache is not None and (test_models_cache / evaluation.TEST_MODELS_FILE).exists():
         test_models = evaluation.TestModels.load(test_models_cache)
@@ -750,6 +802,8 @@ def _evaluate(
         markets=markets,
         uk=UK,
         settings=evaluation.report_settings(metadata),
+        flows=test_flows,
+        form=form,
     )
     report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
     print(f"Evaluated on {test_year} in {report['evaluation_seconds']:.0f} s", flush=True)
@@ -804,7 +858,7 @@ def _v1_comparison(
     """The pre-registered `v1_comparison` block (`comparison.compare`); its Lift and Event Backtest
     secondaries only when the report holds them.
 
-    v2 is scored by its test-year fold models (`test_models`, rung C). With `v1.ladder`, rungs
+    v2 is scored by its test-year fold models (`test_models`, rung C), in the served model form. With `v1.ladder`, rungs
     A and B are trained like them (or read from `ladder_cache`) with v1's configuration, and
     score the UK common rows out-of-fold.
     """
@@ -819,10 +873,14 @@ def _v1_comparison(
             )
             ladder[name] = evaluation.score_rows(v1.rows["uk"], rung.models, rung.transform, UK, features=rung.features)
     started = time.perf_counter()
+    form = ModelForm.from_dict(metadata["model_form"])
+    test_flows = v1.flows.filter(pl.col("year") == test_year) if "year" in v1.flows.columns else v1.flows
     block = comparison.compare(
         v1.frozen,
         v2={
-            name: evaluation.score_rows(rows, test_models.models, test_models.transform, UK)
+            name: evaluation.score_rows(
+                evaluation.naive_potential(rows, test_flows), test_models.models, test_models.transform, UK, form=form
+            )
             for name, rows in v1.rows.items()
         },
         flows=v1.flows,

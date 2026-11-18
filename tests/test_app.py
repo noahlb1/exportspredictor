@@ -194,7 +194,7 @@ def test_sector_filter_narrows_the_product_search(monkeypatch, api_url):
 
 
 def test_min_gap_filter_drops_smaller_gaps(monkeypatch, api_url):
-    page = _market_page(monkeypatch, api_url, "JPN")
+    page = _market_page(monkeypatch, api_url, "CAN")
     everything = page.dataframe[0].value
 
     page.number_input(key="min_gap_usd").set_value(0).run()

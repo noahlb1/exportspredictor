@@ -11,6 +11,12 @@ Potential is the exponential of its margin. A model trained from a starting poin
 #65, experiment 2) takes that point per row as `base_margin` on the log scale, and its trees
 add a correction to it.
 
+The served form is a `ModelForm`: the model alone, or a **blend** of the model with the naive
+baseline (spec #65, experiment 1, confirmed on five folds in #76): Export Potential =
+exp((1 − w) · log model + w · log naive), each floored at $1, with w the naive weight. The
+naive baseline (`evaluation.naive_potential`) is a column of the rows (`naive_usd`), not a
+feature, so a Scenario, which changes only policy features, leaves it unchanged.
+
 A two-part model (spec #65, experiment 4) is a binary model of whether a Flow exists and a
 size model fitted on non-zero Flows: its Export Potential is the probability of a Flow times
 the size (`two_part_potential`).
@@ -21,7 +27,8 @@ of the models (rows no fold model held out, such as other Exporters'). A lone Bo
 every row.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
@@ -33,6 +40,39 @@ from exportspredictor.features import FEATURES
 PREDICT_ROWS = 2_000_000  # rows predicted at a time, so a large table fits on the device
 
 Models = xgb.Booster | Sequence[xgb.Booster]
+NAIVE_COLUMN = "naive_usd"  # the naive baseline (USD) of each row, which a blend needs
+MIN_USD = 1.0  # the floor of each side of a blend: a Zero Cell's naive baseline is $0
+SUPPLY, DEMAND = "log_supply_loo", "log_demand_loo"  # the features a blend's naive share is attributed to
+
+
+@dataclass(frozen=True)
+class ModelForm:
+    """How Export Potential is made from the fold models: the model alone (w = 0) or a blend.
+
+    `naive_weight` is w, the weight of the naive baseline on the log scale; the model's is 1 − w.
+    """
+
+    naive_weight: float = 0.0
+
+    def __post_init__(self):
+        if not 0 <= self.naive_weight < 1:
+            raise ValueError(f"The naive weight must be in [0, 1), not {self.naive_weight}")
+
+    @property
+    def name(self) -> str:
+        return "blend" if self.naive_weight else "model alone"
+
+    def to_dict(self) -> dict:
+        return {"form": self.name, "naive_weight": self.naive_weight}
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> "ModelForm":
+        if data.get("form") not in ("blend", "model alone"):
+            raise ValueError(f"No served model form {data.get('form')!r}: only the model alone or a blend")
+        return cls(naive_weight=float(data["naive_weight"]))
+
+
+MODEL_ALONE = ModelForm()
 
 
 def export_potential(
@@ -44,14 +84,46 @@ def export_potential(
     rounds: int | None = None,
     device: str = "cpu",
     base_margin: np.ndarray | pl.Series | None = None,
+    form: ModelForm = MODEL_ALONE,
 ) -> pl.Series:
     """Export Potential (USD) for feature rows (holding `features`, transformed as the models saw them).
 
     `rounds` limits prediction to the first trees (a search trial); `device` is where the
     models predict ("cuda" only where they were trained there); `base_margin` is each row's
-    starting point on the log scale, for models trained from one. Raises ValueError if a
-    row's `fold` has no model, or a fold model held out another fold.
+    starting point on the log scale, for models trained from one. A blend `form` blends the
+    models' Export Potential with the rows' `naive_usd`. Raises ValueError if a row's `fold`
+    has no model, a fold model held out another fold, or a blend's rows have no `naive_usd`.
     """
+    naive = _naive(rows, form)
+    potential = _model_potential(rows, models, features, by, rounds, device, base_margin)
+    if naive is None:
+        return potential
+    return pl.Series("export_potential_usd", blend(potential.to_numpy(), naive, form.naive_weight))
+
+
+def blend(model_usd: np.ndarray, naive_usd: np.ndarray, naive_weight: float) -> np.ndarray:
+    """exp((1 − w) · log model + w · log naive), each floored at MIN_USD; the model unchanged when w = 0."""
+    model_usd = np.asarray(model_usd, dtype=np.float64)
+    if naive_weight == 0:
+        return model_usd
+    return np.exp((1 - naive_weight) * _floored_log(model_usd) + naive_weight * _floored_log(naive_usd))
+
+
+def _floored_log(usd) -> np.ndarray:
+    return np.log(np.maximum(np.asarray(usd, dtype=np.float64), MIN_USD))
+
+
+def _naive(rows: pl.DataFrame, form: ModelForm) -> np.ndarray | None:
+    """The rows' naive baseline when `form` is a blend (None for the model alone)."""
+    if not form.naive_weight:
+        return None
+    if NAIVE_COLUMN not in rows.columns or rows[NAIVE_COLUMN].null_count():
+        raise ValueError(f"A blend needs the naive baseline ({NAIVE_COLUMN}) on every row")
+    return rows[NAIVE_COLUMN].cast(pl.Float64).to_numpy()
+
+
+def _model_potential(rows, models, features, by, rounds, device, base_margin) -> pl.Series:
+    """The models' own Export Potential (the model alone)."""
     margin = None if base_margin is None else np.asarray(base_margin, dtype=np.float32)
     if isinstance(models, xgb.Booster):
         models, by = [models], "mean"
@@ -97,14 +169,26 @@ def two_part_potential(
 
 
 def log_contributions(
-    rows: pl.DataFrame, models: Sequence[xgb.Booster], *, features: Sequence[str] = FEATURES
+    rows: pl.DataFrame,
+    models: Sequence[xgb.Booster],
+    *,
+    features: Sequence[str] = FEATURES,
+    form: ModelForm = MODEL_ALONE,
 ) -> tuple[np.ndarray, np.ndarray]:
     """SHAP values (TreeSHAP) on the log scale, each row from its own fold model.
 
     Returns (contributions, log_export_potential): contributions has one column per feature,
-    in `features` order, then the bias (the model's average log Export Potential); each row's
-    contributions sum to its log Export Potential, whose exponential is `export_potential`.
+    in `features` order, then the bias; each row's contributions sum to its log Export
+    Potential, whose exponential is `export_potential` with the same `form`.
+
+    For the model alone the bias is the model's average log Export Potential. For a blend,
+    each SHAP value and the bias are scaled by the model's weight 1 − w; the naive baseline's
+    share, w · log naive, is split equally between UK supply (`log_supply_loo`) and Market
+    demand (`log_demand_loo`), the two sides of the market-share product it is made of; and
+    where the model's own Export Potential is below the $1 floor, the bias takes up the lift
+    to $1, so the contributions still add up.
     """
+    naive = _naive(rows, form)
     contributions = np.zeros((rows.height, len(features) + 1), dtype=np.float32)
     margin = np.zeros(rows.height, dtype=np.float32)
     for k, mask in _fold_masks(rows, models):
@@ -112,7 +196,18 @@ def log_contributions(
         matrix = xgb.DMatrix(values, feature_names=list(features), missing=np.nan)
         contributions[mask] = models[k].predict(matrix, pred_contribs=True)
         margin[mask] = models[k].predict(matrix, output_margin=True)
-    return contributions, margin
+    if naive is None:
+        return contributions, margin
+    if SUPPLY not in features or DEMAND not in features:
+        raise ValueError(f"A blend's naive share is attributed to {SUPPLY} and {DEMAND}, which the models lack")
+    w = form.naive_weight
+    floored = np.maximum(margin.astype(np.float64), np.log(MIN_USD))
+    naive_share = w * _floored_log(naive)
+    blended = (1 - w) * contributions.astype(np.float64)
+    blended[:, -1] += (1 - w) * (floored - margin)
+    blended[:, list(features).index(SUPPLY)] += naive_share / 2
+    blended[:, list(features).index(DEMAND)] += naive_share / 2
+    return blended, (1 - w) * floored + naive_share
 
 
 def _fold_masks(rows: pl.DataFrame, models: Sequence[xgb.Booster]):

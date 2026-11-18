@@ -75,7 +75,7 @@ from exportspredictor.exclusions import (
     REEXPORT_HUB_CAVEAT,
     not_ranked_message,
 )
-from exportspredictor.explain import UnknownPair, explain_pair
+from exportspredictor.explain import UnknownPair, explain_pair, model_form_text
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.lookups import search_products
@@ -266,6 +266,7 @@ def create_app(
             market=market,
             fold=explanation.fold,
             base_value=explanation.base_value,
+            model_form_text=model_form_text(artefacts.model_form),
             log_export_potential=explanation.log_export_potential,
             factors=[
                 FactorOut(
@@ -303,6 +304,7 @@ def create_app(
                 artefacts.fold_models,
                 request.to_scenario(),
                 tariff_range=scenarios.tariff_range(artefacts.metadata),
+                form=artefacts.model_form,
             )
         except scenarios.InvalidScenario as error:
             raise HTTPException(status_code=422, detail=str(error)) from error

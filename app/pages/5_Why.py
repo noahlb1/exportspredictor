@@ -100,6 +100,7 @@ if banner() is not None:
                 "(SHAP values); ×0.70 means 30% lower. The factors multiply together into the Export Potential. "
                 f"Computed with SHAP from fold model {body['fold']}, the same model that scored this pair's Baseline."
             )
+            st.caption(body["model_form_text"])
 
             st.subheader("Year by year")
             baseline_year = body["baseline_year"]

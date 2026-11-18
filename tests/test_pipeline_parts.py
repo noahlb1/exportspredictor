@@ -14,8 +14,8 @@ from exportspredictor.pipeline import Parts, build_artefacts, parse_parts
 
 @pytest.fixture(scope="module")
 def tuned(fixture_artefacts):
-    """The fixture's search results, so the runs below train nothing for the search."""
-    return fixture_artefacts.metadata["search"]
+    """The fixture's search and experiment loop results, so the runs below train nothing for either."""
+    return fixture_artefacts.metadata
 
 
 def _run(world, tuned, monkeypatch, parts: Parts):
@@ -29,7 +29,10 @@ def _run(world, tuned, monkeypatch, parts: Parts):
 
     with monkeypatch.context() as patch:
         patch.setattr(xgboost, "train", counting)
-        bundle = build_artefacts(world, version="parts", search_results=tuned, parts=parts)
+        bundle = build_artefacts(
+            world, version="parts", search_results=tuned["search"], ranking_results=tuned["ranking_experiments"],
+            parts=parts,
+        )
     return bundle, len(trained)
 
 

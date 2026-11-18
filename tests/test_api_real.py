@@ -36,12 +36,12 @@ def real(client):
     return client.app.state.artefacts
 
 
-def test_health_reports_format_2_and_the_gap_period_of_the_served_artefacts(client, real):
+def test_health_reports_format_3_and_the_gap_period_of_the_served_artefacts(client, real):
     body = client.get("/health").json()
 
     assert body["ready"] is True
     assert body["artefact_version"] == real.version
-    assert body["artefact_format"] == 2
+    assert body["artefact_format"] == 3
     assert body["gap_years"] == [2022, 2024]
     assert body["baseline_year"] == 2024
 
