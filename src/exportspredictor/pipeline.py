@@ -85,7 +85,12 @@ from exportspredictor.gap_period import (
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
 from exportspredictor.rankings import DEFAULT_MIN_POTENTIAL_USD
-from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, blocked_effects, with_blocked_effects
+from exportspredictor.scenarios import (
+    DEFAULT_MIN_SHARE,
+    DEFAULT_MIN_USD,
+    blocked_effects,
+    with_blocked_effects,
+)
 from exportspredictor.scope import exporter_scope
 from exportspredictor.sources import source_versions
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
