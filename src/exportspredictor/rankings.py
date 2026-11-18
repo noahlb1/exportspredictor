@@ -156,9 +156,14 @@ def summarise(rows: pl.DataFrame) -> dict:
 
 
 def summarise_blocked(rows: pl.DataFrame) -> dict:
-    """The Blocked Opportunities page's summary: `summarise`, plus the Blocked Opportunities and total value (USD)."""
+    """The Blocked Opportunities page's summary: `summarise`, plus the Blocked Opportunities and their total value (USD).
+
+    The total sums the Blocked Opportunity values of the Blocked Opportunities only, not of
+    every filtered pair: most pairs without a Trade Agreement have a small value below the thresholds.
+    """
+    blocked = rows.filter("blocked_opportunity")
     return {
         **summarise(rows),
-        "blocked_opportunities": int(rows["blocked_opportunity"].sum()),
-        "blocked_effect_usd": float(rows["blocked_effect_usd"].sum()),
+        "blocked_opportunities": blocked.height,
+        "blocked_effect_usd": float(blocked["blocked_effect_usd"].sum()),
     }

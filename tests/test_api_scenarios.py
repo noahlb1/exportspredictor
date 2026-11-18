@@ -138,7 +138,7 @@ def _blocked_summary(rows: list[dict]) -> dict:
         "pairs": len(rows),
         "positive_export_gap_usd": pytest.approx(sum(max(r["export_gap_usd"], 0) for r in rows)),
         "blocked_opportunities": sum(r["blocked_opportunity"] for r in rows),
-        "blocked_effect_usd": pytest.approx(sum(r["blocked_effect_usd"] for r in rows)),
+        "blocked_effect_usd": pytest.approx(sum(r["blocked_effect_usd"] for r in rows if r["blocked_opportunity"])),
     }
 
 
