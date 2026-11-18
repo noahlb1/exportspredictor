@@ -169,14 +169,33 @@ def freeze(artefact_folder: Path, v1: V1, *, uk: str, provenance: dict) -> Path:
 
     `provenance` holds the `tag` and `commit`. Returns the folder.
     """
-    artefact_folder = Path(artefact_folder)
-    target = artefact_folder / FOLDER
+    target = Path(artefact_folder) / FOLDER
     if (target / MANIFEST_FILE).exists():
         verify(target)
         return target
     started = time.perf_counter()
     built = tables(v1, uk=uk)
-    staging = artefact_folder / f"{FOLDER}.part"
+    fields = {
+        **provenance,
+        "source_models": v1.model_ids,
+        "test_year": v1.test_models.test_year,
+        "lift_years": list(v1.lift_years),
+        "event": v1.event.name,
+        "event_post_years": list(v1.event.post_years),
+    }
+    return write(artefact_folder, built, fields, started=started)
+
+
+def write(artefact_folder: Path, built: Mapping[str, pl.DataFrame], fields: dict, *, started: float | None = None) -> Path:
+    """Write the frozen tables `built` (one per `TABLES` entry) and their manifest into `artefact_folder`.
+
+    `fields` (provenance, source models, test year, Lift years, event) head the manifest.
+    The files go to a staging folder renamed only when complete, so a failed write leaves
+    nothing. The fixture's synthetic frozen v1 is written the same way. Returns the folder.
+    """
+    started = time.perf_counter() if started is None else started
+    target = Path(artefact_folder) / FOLDER
+    staging = Path(artefact_folder) / f"{FOLDER}.part"
     shutil.rmtree(staging, ignore_errors=True)
     try:
         entries = {}
@@ -184,12 +203,7 @@ def freeze(artefact_folder: Path, v1: V1, *, uk: str, provenance: dict) -> Path:
             path = downloads.write_parquet(frame, staging / TABLES[name])
             entries[name] = {"file": TABLES[name], "rows": frame.height, "sha256": _sha256(path)}
         manifest = {
-            **provenance,
-            "source_models": v1.model_ids,
-            "test_year": v1.test_models.test_year,
-            "lift_years": list(v1.lift_years),
-            "event": v1.event.name,
-            "event_post_years": list(v1.event.post_years),
+            **fields,
             "tables": entries,
             "frozen_at": datetime.now(UTC).isoformat(),
             "seconds": round(time.perf_counter() - started, 2),

@@ -9,8 +9,12 @@ policy change for the model to learn from.
 
 Applied Tariffs come from a TRAINS-shaped 2021 schedule per Market, so 2022–2024 are
 carried forward, and the UK–Japan agreement is one that entered force after 2021.
+
+`frozen_v1_tables` builds a synthetic stand-in for v1's frozen predictions, so the v1/v2
+comparison (`comparison`) runs end to end on the fixture.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -18,6 +22,7 @@ import polars as pl
 
 from exportspredictor import tariffs
 from exportspredictor.features import Sources, fit_proximity
+from exportspredictor.folds import assign_folds
 
 UK = "GBR"
 
@@ -255,3 +260,88 @@ def _pairs() -> pl.DataFrame:
     ]
     columns = ["iso3_o", "iso3_d", "distance_km", "contiguous", "common_language", "colonial_tie", "common_colonizer"]
     return pl.DataFrame(rows, schema=columns, orient="row")
+
+
+# --- A synthetic frozen v1 (spec #39: the v1/v2 comparison's fixture) ----------------------------
+
+# v1 had no Exporter scope: its frozen test rows hold Exporters v2 leaves out. The fixture's
+# stand-in is one Exporter outside every fixture scope, with a few rows of its own.
+OUT_OF_SCOPE_EXPORTER = "MEX"
+_V1_NOISE = 0.8  # log-sd of v1's synthetic errors, so v1 ranks worse than a good model would
+_V1_FLOOR_USD = 1_000.0  # v1's synthetic Export Potential where nothing was exported
+_V1_ZERO_WEIGHT = 2.0  # v1's synthetic Zero Cell sample keeps every other Zero Cell
+
+
+def frozen_v1_tables(
+    world: World,
+    *,
+    test_year: int,
+    lift_years: Sequence[int],
+    lift_held_out: Sequence[str],
+    event_directions: Sequence[tuple[str, Sequence[str], Sequence[str]]],
+    event_years: Sequence[int],
+    seed: int = 0,
+) -> dict[str, pl.DataFrame]:
+    """Stand-ins for v1's frozen predictions (`freeze.TABLES`), with the frozen schemas.
+
+    v1's Export Potential is Actual Exports (plus a floor) times seeded log-normal noise.
+    As v1 did, the tables keep the Excluded Product and Exporters outside v2's scope, and the
+    test rows keep every positive Flow and a weighted sample of Zero Cells (every other one,
+    weight 2). `event_directions` are (label, exporters, importers).
+    """
+    rng = np.random.default_rng(seed)
+
+    def predicted(frame: pl.DataFrame, column: str = "export_potential_usd") -> pl.DataFrame:
+        noise = rng.lognormal(0.0, _V1_NOISE, frame.height)
+        return frame.with_columns((pl.col("value_usd") + _V1_FLOOR_USD).mul(pl.Series(noise)).alias(column))
+
+    keys = ["exporter", "importer", "hs6"]
+    flows = world.flows.sort("year", *keys)
+    year_flows = flows.filter(pl.col("year") == test_year)
+    zeros = year_flows.filter(pl.col("value_usd") == 0).with_row_index("_n").filter(pl.col("_n") % 2 == 0).drop("_n")
+    outside = year_flows.filter((pl.col("exporter") == "FRA") & (pl.col("value_usd") > 0)).head(4)
+    test_rows = pl.concat(
+        [
+            year_flows.filter(pl.col("value_usd") > 0).with_columns(weight=pl.lit(1.0)),
+            zeros.with_columns(weight=pl.lit(_V1_ZERO_WEIGHT)),
+            outside.with_columns(exporter=pl.lit(OUT_OF_SCOPE_EXPORTER), weight=pl.lit(1.0)),
+        ]
+    ).sort(*keys)
+    active = year_flows.filter(pl.col("value_usd") > 0)
+    grid = (
+        active.select("hs6").unique()
+        .join(active.filter(pl.col("importer") != UK).select("importer").unique(), how="cross")
+        .join(active.filter(pl.col("exporter") == UK).select("importer", "hs6", "value_usd"), on=["importer", "hs6"], how="left")
+        .with_columns(pl.col("value_usd").fill_null(0.0), year=pl.lit(test_year, pl.Int16))
+        .sort("hs6", "importer")
+    )
+    uk_grid = (
+        predicted(grid)
+        .rename({"importer": "iso3", "value_usd": "actual_exports_usd"})
+        .pipe(assign_folds)
+        .select("hs6", "iso3", "year", "actual_exports_usd", "fold", "export_potential_usd")
+    )
+    held = flows.filter(pl.col("exporter").is_in(list(lift_held_out)) & pl.col("year").is_in(list(lift_years)))
+    lift = predicted(held.with_columns(weight=pl.lit(1.0))).select(*keys, "year", "value_usd", "weight", "export_potential_usd")
+    event = pl.concat(
+        [
+            flows.filter(
+                pl.col("exporter").is_in(list(exporters))
+                & pl.col("importer").is_in(list(importers))
+                & pl.col("year").is_in(list(event_years))
+            ).select(pl.lit(label).alias("direction"), *keys, "year", "value_usd", weight=pl.lit(1.0))
+            for label, exporters, importers in event_directions
+        ]
+    )
+    event = predicted(event, "export_potential_off_usd").with_columns(
+        export_potential_on_usd=pl.col("export_potential_off_usd") * 1.2
+    )
+    return {
+        "test_rows": predicted(test_rows).select(*keys, "year", "value_usd", "weight", "export_potential_usd"),
+        "uk_grid": uk_grid,
+        "lift": lift,
+        "lift_held_out_exporters": pl.DataFrame({"exporter": sorted(lift_held_out)}, schema={"exporter": pl.String}),
+        "event_backtest": event.select(
+            "direction", *keys, "year", "value_usd", "weight", "export_potential_on_usd", "export_potential_off_usd"
+        ),
+    }

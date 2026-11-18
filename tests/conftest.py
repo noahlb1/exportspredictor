@@ -125,20 +125,12 @@ def derived_data_root(tmp_path):
 
 
 @pytest.fixture(scope="session")
-def v1_frozen(tmp_path_factory):
-    """A synthetic frozen-v1 folder holding only the held-out Lift Exporters and their manifest entry.
+def v1_frozen(fixture_world, tmp_path_factory):
+    """The fixture's synthetic frozen-v1 folder (`pipeline.fixture_v1_frozen`) with its manifest.
 
-    The fixture's stand-in for v1's list: FRA, and MEX, which is outside the fixture's Exporter scope.
+    Its held-out Lift Exporters are FRA, and MEX, which is outside the fixture's Exporter scope.
     """
-    import hashlib
-    import json
-
     from exportspredictor import freeze, pipeline
 
-    folder = tmp_path_factory.mktemp("v1") / freeze.FOLDER
-    folder.mkdir()
-    path = folder / freeze.TABLES["lift_held_out_exporters"]
-    pl.DataFrame({"exporter": list(pipeline.FIXTURE_V1_LIFT_EXPORTERS)}).write_parquet(path)
-    entry = {"file": path.name, "rows": len(pipeline.FIXTURE_V1_LIFT_EXPORTERS), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-    (folder / freeze.MANIFEST_FILE).write_text(json.dumps({"tables": {"lift_held_out_exporters": entry}}), encoding="utf-8")
-    return folder
+    frozen = pipeline.fixture_v1_frozen(fixture_world)
+    return freeze.write(tmp_path_factory.mktemp("v1"), frozen.tables, frozen.manifest)
