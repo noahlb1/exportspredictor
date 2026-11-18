@@ -380,6 +380,7 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "market",
         "fold",
         "base_value",
+        "model_form_text",
         "log_export_potential",
         "export_potential_usd",
         "actual_exports_usd",

@@ -202,7 +202,8 @@ def _model_summary(metadata: dict) -> str:
     form = metadata.get("model_form") or {}
     weight = form.get("naive_weight") or 0
     blended = (
-        f" Export Potential blends the model ({1 - weight:.0%}) with the naive baseline ({weight:.0%}) on the log scale."
+        f" Export Potential blends the model (weight {1 - weight:g}) with the naive baseline (weight {weight:g}) on the "
+        "log scale."
         if weight
         else ""
     )
