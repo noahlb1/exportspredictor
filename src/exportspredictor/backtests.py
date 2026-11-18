@@ -52,6 +52,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.features import FEATURES, TARIFF_FEATURES, FeatureTransform
+from exportspredictor.prediction import export_potential
 from exportspredictor.scenarios import AGREEMENT_TARIFF
 from exportspredictor.training import (
     Chunk,
@@ -343,8 +344,7 @@ class BacktestModel:
         """Export Potential (USD) for untransformed feature rows."""
         if not rows.height:
             return np.zeros(0)
-        data = self.transform.apply(rows).select(FEATURES).to_numpy().astype(np.float32)
-        return self.model.inplace_predict(data)
+        return export_potential(self.transform.apply(rows), self.model).to_numpy()
 
     def save(self, folder: Path) -> Path:
         folder = Path(folder)

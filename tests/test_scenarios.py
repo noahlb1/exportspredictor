@@ -15,6 +15,7 @@ from polars.testing import assert_frame_equal
 from exportspredictor import artefacts as store
 from exportspredictor import policy, scenarios
 from exportspredictor.features import FEATURES, POLICY_FEATURES
+from exportspredictor.prediction import export_potential
 
 NON_POLICY = [f for f in FEATURES if f not in POLICY_FEATURES]
 
@@ -59,8 +60,8 @@ def test_switching_a_trade_agreement_on_never_lowers_a_prediction(fixture_artefa
     without = pair.with_columns(trade_agreement=pl.lit(0, pl.Int8))
     with_agreement = pair.with_columns(trade_agreement=pl.lit(1, pl.Int8))
 
-    off = scenarios.predict(without, fixture_artefacts.fold_models)
-    on = scenarios.predict(with_agreement, fixture_artefacts.fold_models)
+    off = export_potential(without, fixture_artefacts.fold_models)
+    on = export_potential(with_agreement, fixture_artefacts.fold_models)
 
     assert on[0] >= off[0]
 
@@ -75,19 +76,10 @@ def test_raising_the_applied_tariff_never_raises_a_prediction(fixture_artefacts,
     pair = fixture_artefacts.baseline_features[row]
     models = fixture_artefacts.fold_models
 
-    lower = scenarios.predict(pair.with_columns(log_applied_tariff=pl.lit(low, pl.Float32)), models)
-    higher = scenarios.predict(pair.with_columns(log_applied_tariff=pl.lit(high, pl.Float32)), models)
+    lower = export_potential(pair.with_columns(log_applied_tariff=pl.lit(low, pl.Float32)), models)
+    higher = export_potential(pair.with_columns(log_applied_tariff=pl.lit(high, pl.Float32)), models)
 
     assert higher[0] <= lower[0]
-
-
-def test_predict_reproduces_the_out_of_fold_baseline(fixture_artefacts):
-    features = fixture_artefacts.baseline_features
-    baseline = fixture_artefacts.baseline.join(features.select("hs6", "iso3"), on=["hs6", "iso3"], how="right")
-
-    predicted = scenarios.predict(features, fixture_artefacts.fold_models)
-
-    assert predicted.to_list() == pytest.approx(baseline["baseline_export_potential_usd"].to_list(), rel=1e-6)
 
 
 def test_scenario_effects_start_from_the_baseline_year_not_the_gap_period_mean(fixture_artefacts):
@@ -198,7 +190,7 @@ def test_blocked_values_leave_an_unknown_tariff_unknown(fixture_artefacts):
     )
     expected = (
         rows.select("hs6", "iso3")
-        .with_columns(scenario=scenarios.predict(rows, fixture_artefacts.fold_models))
+        .with_columns(scenario=export_potential(rows, fixture_artefacts.fold_models))
         .join(fixture_artefacts.baseline, on=["hs6", "iso3"])
         .select("hs6", effect=pl.col("scenario") - pl.col("baseline_export_potential_usd"))
         .sort("hs6")

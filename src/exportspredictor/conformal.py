@@ -30,7 +30,8 @@ import xgboost as xgb
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import FeatureTransform
-from exportspredictor.folds import EXPORTER_PAIR_KEYS, assign_folds, score_by_fold
+from exportspredictor.folds import EXPORTER_PAIR_KEYS, assign_folds
+from exportspredictor.prediction import export_potential
 
 
 def score_calibration(
@@ -59,7 +60,7 @@ def score_calibration(
         "weight",
         "fold",
         actual_exports_usd="value_usd",
-        export_potential_usd=score_by_fold(calibration, models),
+        export_potential_usd=export_potential(calibration, models),
     ).with_columns(residual_usd=pl.col("actual_exports_usd") - pl.col("export_potential_usd"))
 
 

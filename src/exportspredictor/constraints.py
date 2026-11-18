@@ -33,8 +33,9 @@ import numpy as np
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor.features import FEATURES, FeatureTransform
+from exportspredictor.features import FeatureTransform
 from exportspredictor.folds import N_FOLDS, outside_fold
+from exportspredictor.prediction import export_potential
 from exportspredictor.scenarios import check_only_policy_changed
 from exportspredictor.training import Chunk, model_params, preparer, training_matrix
 
@@ -145,9 +146,7 @@ def _effects(pairs: pl.DataFrame, model: xgb.Booster) -> pl.DataFrame:
 
 
 def _predict(model: xgb.Booster, rows: pl.DataFrame) -> np.ndarray:
-    if rows.is_empty():
-        return np.zeros(0)
-    return model.inplace_predict(rows.select(FEATURES).to_numpy().astype(np.float32)).astype(np.float64)
+    return export_potential(rows, model).to_numpy()
 
 
 def _summary(effects: pl.DataFrame, name: str) -> dict:
