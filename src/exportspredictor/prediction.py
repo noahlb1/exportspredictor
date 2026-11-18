@@ -65,6 +65,16 @@ class ModelForm:
     def name(self) -> str:
         return "blend" if self.naive_weight else "model alone"
 
+    @property
+    def text(self) -> str:
+        """How this form makes Export Potential, in one sentence: the one wording of the blend."""
+        if not self.naive_weight:
+            return "Export Potential comes from the model alone."
+        return (
+            f"Export Potential blends the model (weight {1 - self.naive_weight:g}) with the Naive Baseline "
+            f"(weight {self.naive_weight:g}) on the log scale."
+        )
+
     def to_dict(self) -> dict:
         return {"form": self.name, "naive_weight": self.naive_weight}
 
