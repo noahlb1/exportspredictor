@@ -62,15 +62,17 @@ from exportspredictor.features import (
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
-from exportspredictor.prediction import MODEL_ALONE, ModelForm, export_potential
+from exportspredictor.prediction import (
+    MIN_PREDICTION_USD,
+    MODEL_ALONE,
+    ModelForm,
+    export_potential,
+)
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
 from exportspredictor.wording import number_text, rate_text
 
 TWEEDIE_POWER = 1.5
-# Predictions are floored at $1 before the deviance, so that a zero naive prediction of a
-# non-zero Flow is penalised heavily but finitely.
-MIN_PREDICTION_USD = 1.0
 # A Product (or Product within a group) needs this many rows for its rank correlation.
 MIN_RANKED_ROWS = 3
 STABILITY_TOP_N = 1000
@@ -279,6 +281,20 @@ def _rmse_log(prediction: str) -> pl.Expr:
     return error.filter(pl.col("value_usd") > 0).pow(2).mean().sqrt()
 
 
+def naive_from_totals(supply_usd: pl.Expr, demand_usd: pl.Expr, world_usd: pl.Expr) -> pl.Expr:
+    """The Naive Baseline's one formula: supply × demand / world exports, 0 where the world exports nothing.
+
+    Each total leaves the row's own Flow out: the Exporter's exports of the Product, the
+    Importer's imports of it and the Product's world exports. A negative total (float
+    error) counts as 0.
+    """
+    return (
+        pl.when(world_usd > 0)
+        .then(supply_usd.clip(lower_bound=0) * demand_usd.clip(lower_bound=0) / world_usd)
+        .otherwise(0.0)
+    )
+
+
 def naive_potential(rows: pl.DataFrame, flows: pl.DataFrame) -> pl.DataFrame:
     """Add `naive_usd`: the Exporter's share of the Product's world exports times the Importer's imports of it.
 
@@ -289,14 +305,14 @@ def naive_potential(rows: pl.DataFrame, flows: pl.DataFrame) -> pl.DataFrame:
     active = flows.filter(value > 0).select(
         pl.col("exporter", "importer", "hs6").cast(pl.String), value.cast(pl.Float64)
     )
-    supply = active.group_by("exporter", "hs6").agg(_supply=value.sum())
-    demand = active.group_by("importer", "hs6").agg(_demand=value.sum())
-    world = active.group_by("hs6").agg(_world=value.sum())
+    supply = active.group_by("exporter", "hs6").agg(_supply_usd=value.sum())
+    demand = active.group_by("importer", "hs6").agg(_demand_usd=value.sum())
+    world = active.group_by("hs6").agg(_world_usd=value.sum())
     keys = rows.select(
         _e=pl.col("exporter").cast(pl.String),
         _i=pl.col("importer").cast(pl.String),
         _p=pl.col("hs6").cast(pl.String),
-        _own=pl.col("value_usd").cast(pl.Float64),
+        _own_usd=pl.col("value_usd").cast(pl.Float64),
     )
     joined = (
         keys.join(supply.rename({"exporter": "_e", "hs6": "_p"}), on=["_e", "_p"], how="left", maintain_order="left")
@@ -304,12 +320,9 @@ def naive_potential(rows: pl.DataFrame, flows: pl.DataFrame) -> pl.DataFrame:
         .join(world.rename({"hs6": "_p"}), on="_p", how="left", maintain_order="left")
         .fill_null(0.0)
     )
-    own = pl.col("_own")
-    other_world = pl.col("_world") - own
+    own = pl.col("_own_usd")
     naive = joined.select(
-        naive_usd=pl.when(other_world > 0)
-        .then((pl.col("_supply") - own).clip(lower_bound=0) * (pl.col("_demand") - own).clip(lower_bound=0) / other_world)
-        .otherwise(0.0)
+        naive_usd=naive_from_totals(pl.col("_supply_usd") - own, pl.col("_demand_usd") - own, pl.col("_world_usd") - own)
     )
     return rows.with_columns(naive["naive_usd"])
 

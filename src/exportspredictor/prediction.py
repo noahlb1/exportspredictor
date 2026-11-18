@@ -41,7 +41,10 @@ PREDICT_ROWS = 2_000_000  # rows predicted at a time, so a large table fits on t
 
 Models = xgb.Booster | Sequence[xgb.Booster]
 NAIVE_COLUMN = "naive_usd"  # the naive baseline (USD) of each row, which a blend needs
-MIN_USD = 1.0  # the floor of each side of a blend: a Zero Cell's naive baseline is $0
+# The floor of a prediction in dollars, on every log scale: each side of a blend (a Zero Cell's naive baseline
+# is $0), a base margin, and the deviance (a zero naive prediction of a non-zero Flow is penalised heavily
+# but finitely).
+MIN_PREDICTION_USD = 1.0
 SUPPLY, DEMAND = "log_supply_loo", "log_demand_loo"  # the features a blend's naive share is attributed to
 
 
@@ -61,6 +64,16 @@ class ModelForm:
     @property
     def name(self) -> str:
         return "blend" if self.naive_weight else "model alone"
+
+    @property
+    def text(self) -> str:
+        """How this form makes Export Potential, in one sentence: the one wording of the blend."""
+        if not self.naive_weight:
+            return "Export Potential comes from the model alone."
+        return (
+            f"Export Potential blends the model (weight {1 - self.naive_weight:g}) with the Naive Baseline "
+            f"(weight {self.naive_weight:g}) on the log scale."
+        )
 
     def to_dict(self) -> dict:
         return {"form": self.name, "naive_weight": self.naive_weight}
@@ -102,7 +115,7 @@ def export_potential(
 
 
 def blend(model_usd: np.ndarray, naive_usd: np.ndarray, naive_weight: float) -> np.ndarray:
-    """exp((1 − w) · log model + w · log naive), each floored at MIN_USD; the model unchanged when w = 0."""
+    """exp((1 − w) · log model + w · log naive), each floored at MIN_PREDICTION_USD; the model unchanged when w = 0."""
     model_usd = np.asarray(model_usd, dtype=np.float64)
     if naive_weight == 0:
         return model_usd
@@ -110,7 +123,7 @@ def blend(model_usd: np.ndarray, naive_usd: np.ndarray, naive_weight: float) -> 
 
 
 def _floored_log(usd) -> np.ndarray:
-    return np.log(np.maximum(np.asarray(usd, dtype=np.float64), MIN_USD))
+    return np.log(np.maximum(np.asarray(usd, dtype=np.float64), MIN_PREDICTION_USD))
 
 
 def _naive(rows: pl.DataFrame, form: ModelForm) -> np.ndarray | None:
@@ -201,7 +214,7 @@ def log_contributions(
     if SUPPLY not in features or DEMAND not in features:
         raise ValueError(f"A blend's naive share is attributed to {SUPPLY} and {DEMAND}, which the models lack")
     w = form.naive_weight
-    floored = np.maximum(margin.astype(np.float64), np.log(MIN_USD))
+    floored = np.maximum(margin.astype(np.float64), np.log(MIN_PREDICTION_USD))
     naive_share = w * _floored_log(naive)
     blended = (1 - w) * contributions.astype(np.float64)
     blended[:, -1] += (1 - w) * (floored - margin)

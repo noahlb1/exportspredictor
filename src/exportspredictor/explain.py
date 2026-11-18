@@ -29,7 +29,7 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.features import FEATURES, GROWTH_YEARS, REEXPORT_RATIO_CAP
 from exportspredictor.policy import TRADING_BLOCS
-from exportspredictor.prediction import ModelForm, log_contributions
+from exportspredictor.prediction import log_contributions
 from exportspredictor.tariffs import TARIFF_CARRIED_FORWARD_CAVEAT
 
 _BLOC_NAMES = {"eu": "the EU", "cptpp": "CPTPP", "efta": "EFTA"}
@@ -155,20 +155,6 @@ def explain_pair(artefacts: Artefacts, hs6: str, iso3: str) -> Explanation:
             ).iter_rows()
         ],
         tariff_caveat=TARIFF_CARRIED_FORWARD_CAVEAT if tariff_known and imputed.any() else None,
-    )
-
-
-def model_form_text(form: ModelForm) -> str:
-    """How the served model form makes Export Potential, and how its explanation counts each part."""
-    if not form.naive_weight:
-        return "Export Potential comes from the model alone."
-    model, naive = 1 - form.naive_weight, form.naive_weight
-    return (
-        f"Export Potential blends {model:.0%} the model with {naive:.0%} a naive market-share estimate (the UK's "
-        "share of world exports of this Product times the Market's imports of it), on a multiplicative scale: "
-        f"it ranked Markets better than either alone. Each factor above is the model's association times {model:.0%}; "
-        "the naive estimate's part is counted half under UK supply and half under Market demand. A Scenario "
-        f"changes only the model's {model:.0%}."
     )
 
 

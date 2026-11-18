@@ -122,6 +122,29 @@ def test_a_scoring_only_arm_trains_no_model(data, tmp_path, monkeypatch):
     assert row["selection_measure"] is not None
 
 
+def test_an_experiment_that_would_train_more_than_six_models_is_refused_before_training_any(data, monkeypatch):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+    lp.noise_floor()
+    _no_training(monkeypatch)
+    # Seven new seeds: seven models. Scoring-only arms reuse the cached model and do not count.
+    arms = [loop.Arm(f"seed {seed}", {"seed": seed}) for seed in range(10, 17)]
+    arms.append(loop.Arm("half naive", {"naive_weight": 0.5}))
+
+    with pytest.raises(ValueError, match="at most 6 trained models"):
+        lp.run_experiment("too many", arms)
+
+
+def test_a_two_part_arm_counts_as_two_trained_models(data, monkeypatch):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+    lp.noise_floor()
+    _no_training(monkeypatch)
+    arms = [loop.Arm(f"seed {seed}", {"seed": seed}) for seed in range(10, 15)]  # five models
+    arms.append(loop.Arm("two-part", {"two_part": True}))  # and two more
+
+    with pytest.raises(ValueError, match="at most 6 trained models"):
+        lp.run_experiment("too many", arms)
+
+
 def test_a_rerun_skips_finished_arms(data, tmp_path, monkeypatch):
     arms = [loop.Arm("deeper", {"params": {"max_depth": 3}}), loop.Arm("shallow", {"params": {"max_depth": 1}})]
     first = loop.Loop(data, loop.FIXTURE_LOOP, tmp_path).run_experiment("depth", arms)
@@ -177,17 +200,6 @@ def test_the_blend_arm_chooses_its_weight_from_the_fixed_grid_by_the_selection_m
     assert row["settings"]["naive_weight"] == best["naive_weight"]
     assert row["selection_measure"] == pytest.approx(best["selection_measure"])
     assert row["trained"] is False  # the blend scores the best so far's model
-
-
-def test_blended_export_potential_is_in_dollars_and_positive_for_every_pair():
-    model = pl.Series([0.0, 100.0, 400.0])
-    naive = pl.Series([10_000.0, 0.0, 100.0])
-
-    blended = loop.blend(model, naive, 0.5)
-
-    # Geometric means in dollars, each side floored at $1: sqrt(1 × 10,000), sqrt(100 × 1), sqrt(400 × 100).
-    assert blended.to_list() == pytest.approx([100.0, 10.0, 200.0])
-    assert (blended > 0).all()
 
 
 def test_the_blend_records_the_rank_average_of_model_and_naive_as_a_reference_without_dollars(data):
@@ -302,7 +314,7 @@ def test_no_uk_pair_is_scored_by_a_part_that_trained_on_it(data, monkeypatch):
     # Two folds: fold 0's UK pairs are scored, so neither part may see them; fold 1's train both.
     plan = replace(loop.FIXTURE_LOOP, n_folds=2)
     trained_on = []
-    original = loop.training_matrix
+    original = loop.runner.training_matrix
 
     def spy(chunks, prepare=None, **kwargs):
         if prepare is not None:
@@ -312,7 +324,7 @@ def test_no_uk_pair_is_scored_by_a_part_that_trained_on_it(data, monkeypatch):
     def features_of(chunk):
         return chunk if isinstance(chunk, pl.DataFrame) else pl.read_parquet(chunk)
 
-    monkeypatch.setattr(loop, "training_matrix", spy)
+    monkeypatch.setattr(loop.runner, "training_matrix", spy)
     lp = loop.Loop(data, plan)
     lp.run_arm(loop.two_part_arm(), plan.start)  # one arm, no noise floor: two folds are too few to rank
 
@@ -375,14 +387,14 @@ def test_the_scope_arms_subsample_the_built_rows_and_weight_them_by_the_inverse_
     plan = replace(loop.FIXTURE_LOOP, n_folds=2, start=replace(loop.FIXTURE_LOOP.start, zero_rate=0.5))
     data = _with_more_uk_zero_cells(data, plan.uk)
     trained_on = []
-    original = loop.training_matrix
+    original = loop.runner.training_matrix
 
     def spy(chunks, prepare=None, **kwargs):
         if prepare is not None:
             trained_on.append(pl.concat([prepare(c if isinstance(c, pl.DataFrame) else pl.read_parquet(c)) for c in chunks]))
         return original(chunks, prepare, **kwargs)
 
-    monkeypatch.setattr(loop, "training_matrix", spy)
+    monkeypatch.setattr(loop.runner, "training_matrix", spy)
     lp = loop.Loop(data, plan)
     for arm in (loop.Arm("as built"), loop.Arm("UK sampled", {"uk_zeros_sampled": True}), loop.Arm("lower", {"zero_rate": 0.25})):
         lp.run_arm(arm, plan.start)
@@ -423,14 +435,14 @@ def test_the_two_scope_experiments_run_in_order_each_from_the_best_so_far(data):
 
 def test_an_arm_adding_a_product_detail_feature_trains_and_scores_with_it(data, monkeypatch):
     trained_on = []
-    original = loop.training_matrix
+    original = loop.runner.training_matrix
 
     def spy(chunks, prepare=None, **kwargs):
         if prepare is not None:
             trained_on.append(pl.concat([prepare(c if isinstance(c, pl.DataFrame) else pl.read_parquet(c)) for c in chunks]))
         return original(chunks, prepare, **kwargs)
 
-    monkeypatch.setattr(loop, "training_matrix", spy)
+    monkeypatch.setattr(loop.runner, "training_matrix", spy)
     lp = loop.Loop(data, loop.FIXTURE_LOOP)
     start = lp.plan.start
     row = lp.run_arm(loop.Arm("+ hs4", {"features": (*start.features, "hs4")}), start)
@@ -561,3 +573,59 @@ def test_the_confirmation_reuses_the_loops_fold_0_model_shares_v2s_model_and_a_r
     for name in ("winner", "v2", "naive"):  # pooled means over Products: equal up to summation order
         assert again[name]["selection_measure"] == pytest.approx(first[name]["selection_measure"])
     assert json.loads((tmp_path / loop.RESULTS_FILE).read_text())[loop.CONFIRMATION]["folds"] == first["folds"]
+
+
+# --- What the pipeline serves: the configuration and rounds the selection measure chose -------------
+
+V2_PARAMS = {"max_depth": 12, "eta": 0.1}
+SELECTED = {
+    "params": V2_PARAMS, "features": list(features.FEATURES), "non_uk_rate": 0.6157, "zero_rate": 0.05, "seed": 0,
+    "max_rounds": 5000, "patience": 100, "base_margin": None, "naive_weight": 0.3,
+}
+
+
+def _results(best_settings=SELECTED, *, confirmed=None, best_rounds=951):
+    """Loop results shaped like the real `results.json`: the noise floor, the blend kept, maybe a confirmation."""
+    start = {**SELECTED, "naive_weight": 0.0}
+    results = {
+        "validation_year": 2022,
+        "noise_floor": {"arms": [{"arm": "seed 0", "settings": start, "rounds": 951}]},
+        "experiments": {"naive baseline": {"arms": [{"arm": "blend", "settings": best_settings, "rounds": best_rounds}]}},
+        "best": {"experiment": "naive baseline", "arm": "blend", "settings": best_settings},
+    }
+    if confirmed is not None:
+        settings, rounds = confirmed
+        results["confirmation"] = {"settings": {"v2": start, "winner": settings}, "winner": {"rounds": rounds}}
+    return results
+
+
+def test_the_served_rounds_are_the_median_of_the_five_fold_confirmations_rounds():
+    # Each fold's rounds were chosen by the selection measure on that fold's held-out UK pairs.
+    served = loop.served_configuration(_results(confirmed=(SELECTED, [951, 1075, 1097, 1303, 1120])))
+
+    assert served.rounds == 1097
+    assert served.params == V2_PARAMS
+    assert served.non_uk_rate == 0.6157
+    assert served.form.naive_weight == 0.3
+    assert served.validation_year == 2022
+
+
+def test_without_a_confirmation_the_served_rounds_are_the_best_arms_own():
+    served = loop.served_configuration(_results(best_rounds=42))
+
+    assert served.rounds == 42
+    assert served.params == V2_PARAMS
+
+
+def test_a_confirmation_of_other_settings_than_the_best_so_far_is_refused():
+    other = {**SELECTED, "params": {"max_depth": 6, "eta": 0.1}}
+
+    with pytest.raises(ValueError, match="confirmation"):
+        loop.served_configuration(_results(confirmed=(other, [951, 1075, 1097, 1303, 1120])))
+
+
+def test_a_best_so_far_that_changed_how_zero_cells_are_sampled_is_refused():
+    with pytest.raises(ValueError, match="Zero Cells"):
+        loop.served_configuration(_results({**SELECTED, "zero_rate": 0.02}))
+    with pytest.raises(ValueError, match="Zero Cells"):
+        loop.served_configuration(_results({**SELECTED, "uk_zeros_sampled": True}))

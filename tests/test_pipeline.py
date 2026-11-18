@@ -161,20 +161,29 @@ def test_hyperparameters_are_tuned_on_the_validation_year_and_recorded(artefacts
     assert metadata["training_years"] == [2021, 2022, 2023]
     assert metadata["search"]["trials"][0]["v1_config"]
     assert len(metadata["search"]["trials"]) == FIXTURE_SEARCH.n_trials
-    assert metadata["params"] == metadata["search"]["winner"]["params"]
 
 
-def test_fold_models_take_the_tuned_rounds_scaled_by_their_training_rows(artefacts):
+def test_fold_models_take_the_configuration_the_ranking_experiments_chose_not_the_searchs(artefacts):
+    metadata = artefacts.metadata
+    best = metadata["ranking_experiments"]["best"]
+
+    assert metadata["params"] == best["settings"]["params"]
+
+
+def test_fold_models_take_the_rounds_the_selection_measure_chose_scaled_by_their_training_rows(artefacts):
     metadata = artefacts.metadata
     scaling = metadata["round_scaling"]
+    kept = metadata["ranking_experiments"]["experiments"][NAIVE_EXPERIMENT]["arms"][0]
 
-    assert scaling["tuned_rounds"] == metadata["search"]["winner"]["rounds"]
+    # The fixture's loop has no five-fold confirmation: the kept arm's own rounds, never the search's.
+    assert scaling["selected_rounds"] == kept["rounds"]
+    assert "tuned_rounds" not in scaling
     assert scaling["tuning_years"] == [2021]
     assert scaling["training_years"] == [2021, 2022, 2023]
     assert scaling["ratio"] == pytest.approx(scaling["training_rows"] / scaling["tuning_rows"], rel=1e-3)
     assert 2.5 < scaling["ratio"] < 3.5  # three years of rows against one
     assert metadata["rounds"] == scaling["rounds"]
-    assert metadata["rounds"] == pytest.approx(scaling["tuned_rounds"] * scaling["ratio"], abs=1)
+    assert metadata["rounds"] == pytest.approx(scaling["selected_rounds"] * scaling["ratio"], abs=1)
 
 
 def test_metadata_records_the_device_and_the_search_and_training_time(artefacts):
@@ -288,3 +297,10 @@ def test_baseline_flags_flagged_products_and_re_export_hubs(artefacts):
     assert artefacts.baseline.schema["flagged_product"] == pl.Boolean
     assert sum(flagged for flagged, _ in flags.values()) == 4  # one Product in every Market
     assert sum(hub for _, hub in flags.values()) == 5  # every Product in one Market
+
+
+def test_loop_results_validated_on_another_year_are_refused(world, artefacts):
+    ranking = {**artefacts.metadata["ranking_experiments"], "validation_year": 2021}
+
+    with pytest.raises(ValueError, match="validated on 2021"):
+        build_artefacts(world, version="mismatch", search_results=artefacts.metadata["search"], ranking_results=ranking)

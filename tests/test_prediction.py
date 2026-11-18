@@ -8,7 +8,12 @@ import polars as pl
 import pytest
 
 from exportspredictor.features import FEATURES
-from exportspredictor.prediction import ModelForm, export_potential, log_contributions
+from exportspredictor.prediction import (
+    ModelForm,
+    blend,
+    export_potential,
+    log_contributions,
+)
 
 
 def test_export_potential_in_the_served_form_reproduces_the_out_of_fold_baseline(fixture_artefacts):
@@ -103,3 +108,14 @@ def test_a_blends_contributions_add_up_to_its_log_export_potential_with_the_naiv
     on_supply_and_demand = contributions[:, [FEATURES.index("log_supply_loo"), FEATURES.index("log_demand_loo")]].sum(1)
     expected = 0.7 * model_alone[:, [FEATURES.index("log_supply_loo"), FEATURES.index("log_demand_loo")]].sum(1)
     assert on_supply_and_demand == pytest.approx(expected + naive_share, abs=1e-4)
+
+
+def test_blended_export_potential_is_in_dollars_and_positive_for_every_pair():
+    model = np.array([0.0, 100.0, 400.0])
+    naive = np.array([10_000.0, 0.0, 100.0])
+
+    blended = blend(model, naive, 0.5)
+
+    # Geometric means in dollars, each side floored at $1: sqrt(1 × 10,000), sqrt(100 × 1), sqrt(400 × 100).
+    assert blended.tolist() == pytest.approx([100.0, 10.0, 200.0])
+    assert (blended > 0).all()

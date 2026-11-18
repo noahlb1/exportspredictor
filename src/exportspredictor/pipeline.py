@@ -11,12 +11,14 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    floor and the experiment results (`loop.ranking_record`). Every row scored below carries
    its naive baseline (`naive_usd`, from every Exporter's Flows of its year), which a blend
    needs and a Scenario never changes.
-   **Tune** on the validation year (Baseline year − 2, i.e. 2022) with the hyperparameter
-   search (`search`): the real run reads the saved search, the fixture runs a tiny one.
+   **The hyperparameter search** the loop started from (`search`, validated on Baseline year − 2, 2022) is
+   recorded beside it: the real run reads the saved search, the fixture runs a tiny one.
    The test year (Baseline year − 1) is never read here.
 2. **Refit** the fold models (ADR 0001) on every year before the Baseline year, with the
-   tuned configuration and its early-stopped round count scaled by the ratio of training
-   rows (`search.scaled_rounds`, a heuristic); the feature transform is fitted on the same years.
+   configuration the loop selected and the round count its selection measure chose
+   (`loop.served_configuration`: the median of the five-fold confirmation's rounds), scaled
+   by the ratio of training rows (`search.scaled_rounds`, a heuristic); the feature
+   transform is fitted on the same years. Loop results validated on another year are refused.
 3. **Score** every year of the Gap Period (`gap_period`, 2022–2024): each year's UK grid
    (the union of the Gap Period's pairs) out-of-fold, with that year's features. The
    Baseline table holds the Gap Period means and the Baseline year's Export Potential; the
@@ -255,14 +257,19 @@ def build_artefacts(
     training = fixture_training(
         world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed, exporters=scope
     )
+
+    def flows_of_year(year: int) -> pl.DataFrame:
+        """Every Exporter's Flows of one year."""
+        return flows.filter(pl.col("year") == year)
+
     # Every Gap Period year is scored over the union of the Gap Period's grids, as `features.build` writes them.
     # `build_features` gets every year's Flows: Market import growth reads year t-3.
-    year_flows = {year: flows.filter(pl.col("year") == year) for year in gap_years(baseline_year)}
-    pairs = grid_pairs(uk_grid(f, UK) for f in year_flows.values())
-    grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in year_flows.items()}
+    gap_flows = {year: flows_of_year(year) for year in gap_years(baseline_year)}
+    pairs = grid_pairs(uk_grid(f, UK) for f in gap_flows.values())
+    grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in gap_flows.items()}
     # The Potential Range's calibration rows: the Baseline year's training rows (ADR 0007).
     calibration = build_features(
-        training_rows(year_flows[baseline_year], rate=zero_sampling_rate, seed=seed, uk=UK, exporters=scope),
+        training_rows(gap_flows[baseline_year], rate=zero_sampling_rate, seed=seed, uk=UK, exporters=scope),
         flows,
         sources,
     )
@@ -284,7 +291,7 @@ def build_artefacts(
         training, grids, baseline_year=baseline_year, search_results=search_results,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed, row_budget=row_budget,
         calibration=calibration, min_band_rows=min_band_rows, ranking_results=ranking_results,
-        year_flows=lambda year: flows.filter(pl.col("year") == year),
+        year_flows=flows_of_year,
     )
     recent = (pl.col("year") > baseline_year - HISTORY_YEARS) & (pl.col("year") <= baseline_year)
     metadata = {
@@ -306,13 +313,13 @@ def build_artefacts(
     )
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
-        test_flows=year_flows[baseline_year - 1],
+        test_flows=gap_flows[baseline_year - 1],
         seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
         constraint_plan=constraints.FIXTURE_PLAN,
         lift_held_out=backtests.lift_exporters(frozen.lift_held_out_exporters, scope=scope, uk=UK),
         v1=v1,
         parts=parts,
-        year_flows=lambda year: flows.filter(pl.col("year") == year),
+        year_flows=flows_of_year,
     )
     return Artefacts(
         metadata=metadata,
@@ -342,8 +349,8 @@ def fixture_training(
     training = {}
     for year in sorted(flows["year"].unique().to_list()):
         if year < baseline_year:
-            year_flows = flows.filter(pl.col("year") == year)
-            rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed, uk=UK, exporters=exporters)
+            one_year = flows.filter(pl.col("year") == year)
+            rows = training_rows(one_year, rate=zero_sampling_rate, seed=seed, uk=UK, exporters=exporters)
             # Sorted: row order decides which rows `subsample` draws, so the fixture models are reproducible.
             training[year] = build_features(rows, flows, world.sources).sort(KEYS)
     return training
@@ -417,6 +424,11 @@ def build_real_artefacts(
             raise ValueError(f"No experiment loop results in {loop.loop_dir(root)}; run `python -m exportspredictor.loop`")
         ranking_results = loop.load(root)
     to_iso3 = load_sources(root)[1]
+
+    def flows_of_year(year: int) -> pl.DataFrame:
+        """Every Exporter's Flows of one year, read from its own file."""
+        return load_year_flows(year, to_iso3, root)
+
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
     grids = {y: folder / f"uk_grid_{y}.parquet" for y in gap_years(baseline_year)}
     trained = _train_and_score(
@@ -424,7 +436,7 @@ def build_real_artefacts(
         n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
         calibration=folder / f"training_{baseline_year}.parquet", min_band_rows=min_band_rows,
         cache=features_dir(root).parent / "fold_models" / _file_key(folder / "features.json"),
-        ranking_results=ranking_results, year_flows=lambda year: load_year_flows(year, to_iso3, root),
+        ranking_results=ranking_results, year_flows=flows_of_year,
     )
     history_years = [y for y in settings["years"] if baseline_year - HISTORY_YEARS < y <= baseline_year]
     history = _history(
@@ -456,7 +468,7 @@ def build_real_artefacts(
     v1_folder = v1_frozen or freeze.v1_folder()
     report = _evaluate(
         training, test_grid, trained, metadata, markets=evaluation.markets_with_income(markets, root),
-        test_flows=load_year_flows(baseline_year - 1, to_iso3, root),
+        test_flows=flows_of_year(baseline_year - 1),
         device=device, non_uk_rate=trained.metadata["non_uk_sampling_rate"], seed=seed,
         backtest_plan=backtest_plan,
         backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
@@ -474,7 +486,7 @@ def build_real_artefacts(
         ),
         ladder_cache=ladder_dir(root),
         parts=parts,
-        year_flows=lambda year: load_year_flows(year, to_iso3, root),
+        year_flows=flows_of_year,
         earlier_v2=evaluation.V2_REPORTED,
     )
     return Artefacts(
@@ -516,7 +528,8 @@ def _train_and_score(
     """Steps 0–4 of the module docstring. With `cache` (a folder), the fold models are saved
     there keyed by their training settings (`fold_models_dir`), and a re-run reads them.
     `year_flows(year)` gives every Exporter's Flows of a year, for the naive baseline."""
-    form = loop.chosen_form(ranking_results)
+    selected = loop.served_configuration(ranking_results)
+    form = selected.form
     print(f"Model form: {form.to_dict()}", flush=True)
     validation_year, test_year = baseline_year - 2, baseline_year - 1
     tuning_years = [y for y in sorted(training) if y < validation_year]
@@ -537,20 +550,19 @@ def _train_and_score(
         check_row_budget(counts, non_uk_rate, budget)
     print(f"Training rows: {counts.uk:,} UK + {counts.non_uk:,} other at rate {non_uk_rate}", flush=True)
 
-    # 1. The tuned configuration (the test year, baseline_year - 1, was not read). Its
-    # early-stopped round count was found on the tuning years' rows; the fold models train on
-    # more years, so the count is scaled by the ratio of training rows (a heuristic).
-    if search_results["validation_year"] != validation_year:
-        raise ValueError(
-            f"The hyperparameter search validated on {search_results['validation_year']}, not {validation_year}"
-        )
-    winner = search_results["winner"]
-    params, tuned_rounds = winner["params"], winner["rounds"]
+    # 1. The configuration the experiment loop selected (the test year, baseline_year - 1, was
+    # not read), with the round count its selection measure chose on the tuning years' rows at
+    # the loop's non-UK rate. The fold models train on more years, so the count is scaled by
+    # the ratio of training rows (a heuristic). Deviance chooses neither.
+    for name, results in (("hyperparameter search", search_results), ("experiment loop", ranking_results)):
+        if results["validation_year"] != validation_year:
+            raise ValueError(f"The {name} validated on {results['validation_year']}, not {validation_year}")
+    params, selected_rounds = selected.params, selected.rounds
     tuning_counts = count_rows([training[y] for y in tuning_years], uk=UK)
-    training_rows, tuning_rows = counts.expected(non_uk_rate), tuning_counts.expected(non_uk_rate)
-    rounds = search.scaled_rounds(tuned_rounds, training_rows=training_rows, tuning_rows=tuning_rows)
+    training_rows, tuning_rows = counts.expected(non_uk_rate), tuning_counts.expected(selected.non_uk_rate)
+    rounds = search.scaled_rounds(selected_rounds, training_rows=training_rows, tuning_rows=tuning_rows)
     tuning_seconds = search.seconds(search_results)
-    print(f"Tuned configuration: {params}, {tuned_rounds} rounds scaled to {rounds}", flush=True)
+    print(f"Selected configuration: {params}, {selected_rounds} rounds scaled to {rounds}", flush=True)
 
     # 2. Refit the fold models on every year before the Baseline year (or read them from `cache`).
     cached = None
@@ -665,7 +677,9 @@ def _train_and_score(
         "model_params": model_params(params, device=device, seed=seed),
         "rounds": rounds,
         "round_scaling": {
-            "tuned_rounds": tuned_rounds,
+            "selected_rounds": selected_rounds,
+            "rule": selected.rounds_rule,
+            "selection_non_uk_rate": selected.non_uk_rate,
             "tuning_years": tuning_years,
             "training_years": training_years,
             "tuning_rows": round(tuning_rows),
