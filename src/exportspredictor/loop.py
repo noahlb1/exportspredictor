@@ -35,6 +35,7 @@ refuses it, and `real_data` refuses it before opening a file.
     uv run python -m exportspredictor.loop scope   # #73: UK Zero Cells sampled; the zero rate at 2% (two models)
     uv run python -m exportspredictor.loop product-detail  # #74: three Product features, one experiment each (three models)
     uv run python -m exportspredictor.loop constraints  # #75: the monotone constraints on (cached) and off (one model)
+    uv run python -m exportspredictor.loop confirm  # #76: the best arm beside v2 on all five folds (fold 0 cached)
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -516,12 +517,17 @@ class Loop:
 
     With a `folder`, results are saved there as each arm finishes, models are cached in
     it, and a new `Loop` on the same folder resumes; without one, both live in memory.
+    `models_dir` caches models elsewhere: the confirmation's fold loops share the loop's
+    cache but keep no results of their own.
     """
 
-    def __init__(self, data: LoopData, plan: LoopPlan, folder: Path | None = None):
+    def __init__(
+        self, data: LoopData, plan: LoopPlan, folder: Path | None = None, *, models_dir: Path | None = None
+    ):
         experiments._check_years([data.validation_year])
         started = time.perf_counter()
         self.data, self.plan, self.folder = data, plan, folder
+        self.models_dir = models_dir if models_dir is not None else (folder / MODELS_DIR if folder else None)
         self._models: dict[str, tuple[xgb.Booster, dict]] = {}
         self._matrix_key, self._matrices = None, None
         self._detail: pl.DataFrame | None = None
@@ -688,7 +694,7 @@ class Loop:
         }
 
     def _model_file(self, key: str) -> Path:
-        return Path(self.folder or ".nowhere") / MODELS_DIR / f"{key}.ubj"
+        return Path(self.models_dir or ".nowhere") / f"{key}.ubj"
 
     def _model(self, settings: Settings, key: str) -> tuple[xgb.Booster, dict]:
         if key in self._models:
@@ -696,14 +702,14 @@ class Loop:
         path = self._model_file(key)
         # A two-part model's binary part sits beside its size part, which is saved last.
         any_flow_path = path.with_name(f"{key}.{ANY_FLOW}.ubj")
-        if self.folder is not None and path.exists():
+        if self.models_dir is not None and path.exists():
             model = xgb.Booster(model_file=str(path))
             if settings.two_part:
                 model = TwoPart(any_flow=xgb.Booster(model_file=str(any_flow_path)), size=model)
             meta = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
         else:
             model, meta = self._train_two_part(settings) if settings.two_part else self._train(settings)
-            if self.folder is not None:
+            if self.models_dir is not None:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if isinstance(model, TwoPart):
                     model.any_flow.save_model(str(any_flow_path))
@@ -927,6 +933,114 @@ def _log(message: str) -> None:
     print(message, flush=True)
 
 
+# --- The five-fold confirmation (#76) ---------------------------------------------------------
+
+# The best arm after the experiments ("winner") beside the current v2 configuration ("v2") on
+# every fold: each fold's model scores only the UK pairs it held out (ADR 0001), and the
+# selection measure is taken once over every UK pair pooled, as the headline measure is.
+CONFIRMATION = "confirmation"
+WINNER, V2 = "winner", "v2"
+
+
+def confirm(
+    data: LoopData, plan: LoopPlan, winner: Settings, v2: Settings, *, threshold: float, folder: Path | None = None
+) -> dict:
+    """The winner and v2 trained on each of the plan's folds and measured on every held-out UK pair of the validation year.
+
+    Each fold has its own `Loop` (fold `0..n_folds − 1`) sharing the loop's model cache, so
+    a fold model the experiments already trained is read, not retrained, and a winner that
+    differs from v2 only in scoring (`SCORING_FIELDS`) shares v2's model. Each fold's row
+    holds every measure on that fold alone (deviance on its validation rows). The pooled
+    rows (`winner`, `v2`, `naive`) hold the measures over every fold's held-out UK pairs
+    together; their deviance is the mean of the folds'. `beats_v2` is True when the
+    winner beats v2 by more than `threshold`.
+
+    With a `folder`, models are cached in its `models`, each fold's scored grid is saved in
+    `confirmation/fold_<k>.parquet` and the section in `results.json` under `confirmation`,
+    as each fold finishes; a re-run with the same settings skips finished folds. The
+    validation year must not be the test year: `Loop` refuses it.
+    """
+    experiments._check_years([data.validation_year])
+    candidates = {V2: v2, WINNER: winner}  # v2 first: a winner that only re-scores reuses its model
+    settings = {name: s.to_dict() for name, s in candidates.items()}
+    results = _load(folder) or {}
+    section = results.get(CONFIRMATION, {})
+    if section.get("settings") != settings or section.get("n_folds") != plan.n_folds:
+        section = {"settings": settings, "n_folds": plan.n_folds, "validation_year": data.validation_year, "folds": []}
+    folds_dir = folder / CONFIRMATION if folder is not None else None
+    models_dir = folder / MODELS_DIR if folder is not None else None
+    grids: dict[int, pl.DataFrame] = {}
+    for fold in range(plan.n_folds):
+        saved = folds_dir / f"fold_{fold}.parquet" if folds_dir is not None else None
+        if saved is not None and saved.exists() and any(row["fold"] == fold for row in section["folds"]):
+            grids[fold] = pl.read_parquet(saved)
+            continue
+        section["folds"] = [row for row in section["folds"] if row["fold"] != fold]
+        row, grids[fold] = _confirm_fold(data, replace(plan, fold=fold), candidates, models_dir)
+        section["folds"] = sorted([*section["folds"], row], key=lambda r: r["fold"])
+        if saved is not None:
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            grids[fold].write_parquet(saved)
+        if folder is not None:
+            _save_results(folder, results | {CONFIRMATION: section})
+        _log(f"fold {fold}: {json.dumps({n: row[n][SELECTION_MEASURE] for n in candidates})}")
+    pooled = pl.concat([grids[fold] for fold in range(plan.n_folds)])
+    for name in candidates:
+        deviances = [row[name]["tweedie_deviance"] for row in section["folds"]]
+        section[name] = {
+            **measures(pooled, None, name),
+            "tweedie_deviance": None if None in deviances else statistics.fmean(deviances),
+            "settings": settings[name],
+            "rounds": [row[name]["rounds"] for row in section["folds"]],
+        }
+    section["naive"] = measures(pooled, None, "naive_usd")
+    difference = section[WINNER][SELECTION_MEASURE] - section[V2][SELECTION_MEASURE]
+    section |= {
+        "difference": difference,
+        "win_threshold": threshold,
+        "beats_v2": difference > threshold + ROUNDING,
+    }
+    if folder is not None:
+        _save_results(folder, results | {CONFIRMATION: section})
+    return section
+
+
+def _confirm_fold(
+    data: LoopData, plan: LoopPlan, candidates: Mapping[str, Settings], models_dir: Path | None
+) -> tuple[dict, pl.DataFrame]:
+    """One fold: each candidate's model (cached or trained) scores the fold's held-out UK grid and validation rows."""
+    started = time.perf_counter()
+    lp = Loop(data, plan, models_dir=models_dir)
+    grid = lp.grid.select("hs6", "importer", "value_usd", "naive_usd")
+    row: dict = {"fold": plan.fold, "uk_pairs": lp.grid.height, "setup_seconds": lp.results["setup_seconds"]}
+    for name, settings in candidates.items():
+        resolved = lp._resolved(settings)
+        key = training_key(resolved, lp._fingerprint())
+        trained = key not in lp._models and not lp._model_file(key).exists()
+        _, meta = lp._model(resolved, key)
+        grid = grid.with_columns(lp.export_potential(resolved, lp.grid).alias(name))
+        validation = lp.validation.select("value_usd", "weight").with_columns(
+            lp.export_potential(resolved, lp.validation).alias(name)
+        )
+        row[name] = {
+            **measures(grid, validation, name),
+            "training_key": key,
+            "trained": trained,
+            **{k: meta[k] for k in ("rounds", "trained_rounds", "training_rows", "train_seconds") if k in meta},
+        }
+        del validation
+    row["seconds"] = round(time.perf_counter() - started, 1)
+    return row, grid
+
+
+def _save_results(folder: Path, results: dict) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / RESULTS_FILE
+    partial = path.with_suffix(".partial")
+    partial.write_text(json.dumps(results, indent=2, default=experiments._json_default), encoding="utf-8")
+    partial.replace(path)
+
+
 # --- Data -------------------------------------------------------------------------------------
 
 
@@ -1030,10 +1144,28 @@ def main(argv: Sequence[str]) -> None:
         lp = Loop(real_data(), v2_plan(), loop_dir())
         section = lp.run_experiment(CONSTRAINTS_EXPERIMENT, constraint_arms())["experiments"][CONSTRAINTS_EXPERIMENT]
         print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
+    elif command == "confirm":
+        section = confirm_best()
+        summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
+        print(json.dumps({**summary, **{k: section[k] for k in ("difference", "win_threshold", "beats_v2")}}), flush=True)
     elif command == "time":
         print(json.dumps(time_one_arm()), flush=True)
     else:
-        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|two-part|scope|product-detail|constraints|time")
+        raise SystemExit(
+            "usage: python -m exportspredictor.loop noise|naive|select|two-part|scope|product-detail|constraints|confirm|time"
+        )
+
+
+def confirm_best(root: Path | None = None) -> dict:
+    """#76: the best arm so far beside v2 (the noise floor's first seed, the model alone) on all five folds."""
+    results = load(root)
+    v2 = Settings.from_dict(results[NOISE_FLOOR]["arms"][0]["settings"])
+    winner = Settings.from_dict(results["best"]["settings"])
+    plan = v2_plan(root)
+    return confirm(
+        real_data(root), replace(plan, fold=0), winner, v2,
+        threshold=results[NOISE_FLOOR]["win_threshold"], folder=loop_dir(root),
+    )
 
 
 def time_one_arm(root: Path | None = None) -> dict:
