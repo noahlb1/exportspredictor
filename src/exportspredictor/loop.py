@@ -128,6 +128,10 @@ class Settings:
 
 SCORING_FIELDS = ("naive_weight",)
 TRAINING_FIELDS = tuple(f.name for f in fields(Settings) if f.name not in SCORING_FIELDS)
+# The training fields of the first loop (#67), always part of a model's cache key. A training
+# field added later is keyed only when it leaves its default, so adding one keeps every
+# cached model's key.
+KEYED_FIELDS = ("params", "features", "non_uk_rate", "zero_rate", "seed", "max_rounds", "patience")
 
 
 @dataclass(frozen=True)
@@ -507,7 +511,12 @@ class Loop:
 
 def training_key(settings: Settings, fingerprint: Mapping) -> str:
     """A short hash of everything a trained model depends on: its training settings and its rows."""
-    training = {name: value for name, value in settings.to_dict().items() if name in TRAINING_FIELDS}
+    defaults = Settings(params={}).to_dict()
+    training = {
+        name: value
+        for name, value in settings.to_dict().items()
+        if name in KEYED_FIELDS or (name in TRAINING_FIELDS and value != defaults[name])
+    }
     text = json.dumps({"settings": training, "rows": dict(fingerprint)}, sort_keys=True)
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
