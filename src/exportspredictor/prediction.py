@@ -11,6 +11,10 @@ Potential is the exponential of its margin. A model trained from a starting poin
 #65, experiment 2) takes that point per row as `base_margin` on the log scale, and its trees
 add a correction to it.
 
+A two-part model (spec #65, experiment 4) is a binary model of whether a Flow exists and a
+size model fitted on non-zero Flows: its Export Potential is the probability of a Flow times
+the size (`two_part_potential`).
+
 `by="fold"` scores each row with the fold model named by its `fold` column, the model that
 held the row's Product–Market pair out (ADR 0001). `by="mean"` scores every row with the mean
 of the models (rows no fold model held out, such as other Exporters'). A lone Booster scores
@@ -59,6 +63,37 @@ def export_potential(
         part = None if margin is None else margin[mask]
         potential[mask] = _predict(models[k], rows.filter(pl.Series(mask)), features, rounds, device, part)
     return pl.Series("export_potential_usd", potential)
+
+
+def flow_probability(
+    rows: pl.DataFrame,
+    model: xgb.Booster,
+    *,
+    features: Sequence[str] = FEATURES,
+    rounds: int | None = None,
+    device: str = "cpu",
+) -> pl.Series:
+    """The probability of a Flow, from the binary part of a two-part model."""
+    return pl.Series("flow_probability", _predict(model, rows, features, rounds, device), dtype=pl.Float64)
+
+
+def two_part_potential(
+    rows: pl.DataFrame,
+    any_flow: xgb.Booster,
+    size: xgb.Booster,
+    *,
+    features: Sequence[str] = FEATURES,
+    rounds: tuple[int | None, int | None] = (None, None),
+    device: str = "cpu",
+) -> pl.Series:
+    """Export Potential (USD) of a two-part model: the probability of a Flow times its size if there is one.
+
+    `rounds` limits each part (any_flow, size) to its first trees. Both parts are
+    monotone-constrained alike, so their product moves with the policy features as each does.
+    """
+    probability = flow_probability(rows, any_flow, features=features, rounds=rounds[0], device=device).to_numpy()
+    size_usd = _predict(size, rows, features, rounds[1], device)
+    return pl.Series("export_potential_usd", probability * size_usd, dtype=pl.Float64)
 
 
 def log_contributions(

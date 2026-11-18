@@ -31,6 +31,7 @@ refuses it, and `real_data` refuses it before opening a file.
     uv run python -m exportspredictor.loop noise   # GPU, three arms of about 11 minutes each
     uv run python -m exportspredictor.loop naive   # #70: the blend (no training) and the starting point (one model)
     uv run python -m exportspredictor.loop select  # #71: v1, three confirmed v2 configurations, depth 6 (four models)
+    uv run python -m exportspredictor.loop two-part  # #72: a binary "any Flow" part times a size part (two models)
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -68,7 +69,11 @@ from exportspredictor.features import (
 )
 from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.paths import data_dir
-from exportspredictor.prediction import export_potential
+from exportspredictor.prediction import (
+    export_potential,
+    flow_probability,
+    two_part_potential,
+)
 from exportspredictor.training import (
     BASE_MARGIN,
     model_params,
@@ -122,6 +127,9 @@ class Settings:
     # The model's starting point: None (a constant, XGBoost's base score) or "naive" (the log of
     # the naive baseline, so the trees learn a correction to it).
     base_margin: str | None = None
+    # True: a two-part model (#72), a binary model of "any Flow" times a size model fitted on
+    # non-zero Flows; False: one Tweedie model.
+    two_part: bool = False
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
 
@@ -402,6 +410,34 @@ def select_arms(saved_search: Mapping, weights: Sequence[float] = BLEND_WEIGHTS)
     ]
 
 
+# --- The two-part model (#72) -----------------------------------------------------------------
+
+TWO_PART_EXPERIMENT = "two-part model"  # experiment 4
+TWO_PART = "two-part"
+ANY_FLOW, SIZE = "any_flow", "size"  # the two parts, trained in this order
+# The binary part keeps the best so far's tree parameters; only the objective changes.
+ANY_FLOW_PARAMS = {"objective": "binary:logistic"}
+TWEEDIE_ONLY = ("tweedie_variance_power",)
+
+
+def two_part_arm(weights: Sequence[float] = BLEND_WEIGHTS) -> Arm:
+    """Experiment 4: the best so far's configuration as a two-part model, blended with the naive baseline.
+
+    The binary part learns whether a Flow exists, on every training row with its weight;
+    the size part learns how large it is, on non-zero Flows. Export Potential is their
+    product. Both keep the monotone constraints. The blend weight is re-chosen for it.
+    """
+    return Arm(TWO_PART, {"two_part": True}, {"naive_weight": tuple(weights)})
+
+
+@dataclass(frozen=True)
+class TwoPart:
+    """A two-part model's Boosters."""
+
+    any_flow: xgb.Booster
+    size: xgb.Booster
+
+
 # --- The loop ---------------------------------------------------------------------------------
 
 
@@ -526,6 +562,10 @@ class Loop:
             extra["grid"] = candidates
         if arm.grid.keys() & {"naive_weight"}:
             extra["rank_average"] = rank_average_measures(self.grid.with_columns(model_usd=model_grid))
+            # The model unblended (w = 0), a reference only: the blend's grid leaves 0 out.
+            extra["model_alone"] = measures(self.grid.with_columns(model_usd=model_grid), None, "model_usd")
+        if settings.two_part:
+            extra["parts"] = meta["parts"]
         scored_grid = self.grid.with_columns(export_potential_usd=self._score(model_grid, settings, self.grid))
         scored = self.validation.with_columns(
             export_potential_usd=self._score(
@@ -546,6 +586,16 @@ class Loop:
         }
 
     # --- Models --------------------------------------------------------------------------------
+
+    def export_potential(self, settings: Settings, table: pl.DataFrame) -> pl.Series:
+        """Export Potential (USD) of transformed rows (with `naive_usd`) as an arm with `settings` scores them.
+
+        The model is taken from the cache (or trained); e.g. to re-predict after a Scenario
+        changes policy features.
+        """
+        settings = self._resolved(settings)
+        model, meta = self._model(settings, training_key(settings, self._fingerprint()))
+        return self._score(self._model_potential(model, meta, settings, table), settings, table)
 
     def _resolved(self, settings: Settings) -> Settings:
         zero_rate = settings.zero_rate if settings.zero_rate is not None else self.data.data.built_zero_rate
@@ -573,31 +623,80 @@ class Loop:
         if key in self._models:
             return self._models[key]
         path = self._model_file(key)
+        # A two-part model's binary part sits beside its size part, which is saved last.
+        any_flow_path = path.with_name(f"{key}.{ANY_FLOW}.ubj")
         if self.folder is not None and path.exists():
             model = xgb.Booster(model_file=str(path))
+            if settings.two_part:
+                model = TwoPart(any_flow=xgb.Booster(model_file=str(any_flow_path)), size=model)
             meta = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
         else:
-            model, meta = self._train(settings)
+            model, meta = self._train_two_part(settings) if settings.two_part else self._train(settings)
             if self.folder is not None:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                model.save_model(str(path))
+                if isinstance(model, TwoPart):
+                    model.any_flow.save_model(str(any_flow_path))
+                (model.size if isinstance(model, TwoPart) else model).save_model(str(path))
                 path.with_suffix(".json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         self._models[key] = (model, meta)
         return model, meta
 
-    def _train(self, settings: Settings) -> tuple[xgb.Booster, dict]:
-        """Train with the selection measure on the held-out UK grid each round, stopping after `patience` flat rounds."""
+    def _train_two_part(self, settings: Settings) -> tuple[TwoPart, dict]:
+        """Train the binary part, then the size part with the two-part Export Potential measured each round.
+
+        The binary part stops on the selection measure of its probability alone; the size
+        part stops on the selection measure of probability × size, the binary part held at
+        its chosen round. Both measures are the model alone, never the blend (#67's rule).
+        The matrices are built one part at a time, so only one training matrix is on the device.
+        """
+        if settings.base_margin:
+            raise ValueError("A two-part model has no starting point: base_margin and two_part do not combine")
         started = time.perf_counter()
-        train, grid = self._training_matrices(settings)
+        any_flow, any_flow_meta = self._train(settings, part=ANY_FLOW)
+        probability = flow_probability(
+            self.grid, any_flow, features=list(settings.features), rounds=any_flow_meta["rounds"],
+            device=self.plan.device,
+        ).to_numpy()
+        self._matrix_key, self._matrices = None, None  # free the binary part's matrices first
+        size, size_meta = self._train(settings, part=SIZE, grid_probability=probability)
+        self._matrix_key, self._matrices = None, None
+        return TwoPart(any_flow=any_flow, size=size), {
+            "rounds": size_meta["rounds"],  # the size part's, chosen on the two-part Export Potential
+            "hit_round_cap": any_flow_meta["hit_round_cap"] or size_meta["hit_round_cap"],
+            "trained_rounds": size_meta["trained_rounds"],
+            "training_rows": any_flow_meta["training_rows"],
+            "matrix_seconds": round(any_flow_meta["matrix_seconds"] + size_meta["matrix_seconds"], 1),
+            "train_seconds": round(time.perf_counter() - started, 1),
+            "parts": {ANY_FLOW: any_flow_meta, SIZE: size_meta},
+        }
+
+    def _train(
+        self, settings: Settings, *, part: str | None = None, grid_probability=None
+    ) -> tuple[xgb.Booster, dict]:
+        """Train with the selection measure on the held-out UK grid each round, stopping after `patience` flat rounds.
+
+        `part` trains one part of a two-part model; the size part's measure each round is
+        that of `grid_probability` × size.
+        """
+        started = time.perf_counter()
+        train, grid = self._training_matrices(settings, part)
         matrix_seconds = round(time.perf_counter() - started, 1)  # 0 when the matrices were reused
         params = model_params(dict(settings.params), device=self.plan.device, seed=settings.seed, features=settings.features)
+        if part == ANY_FLOW:
+            params = {k: v for k, v in params.items() if k not in TWEEDIE_ONLY} | ANY_FLOW_PARAMS
         params |= {"disable_default_eval_metric": 1} | ({"nthread": self.plan.threads} if self.plan.threads else {})
+        metric = self._round_measure
+        if grid_probability is not None:
+
+            def metric(predictions, matrix):
+                return self._round_measure(grid_probability * predictions, matrix)
+
         model = xgb.train(
             params,
             train,
             num_boost_round=settings.max_rounds,
             evals=[(grid, "grid")],
-            custom_metric=self._round_measure,
+            custom_metric=metric,
             callbacks=[
                 xgb.callback.EarlyStopping(
                     rounds=settings.patience, metric_name=SELECTION_MEASURE, data_name="grid", maximize=True
@@ -610,6 +709,7 @@ class Loop:
             "rounds": rounds,
             "hit_round_cap": rounds >= settings.max_rounds,
             "trained_rounds": model.num_boosted_rounds(),
+            "stopping_measure": float(model.best_score),  # the selection measure at `rounds`, as training saw it
             "training_rows": train.num_row(),
             "matrix_seconds": matrix_seconds,
             "train_seconds": round(time.perf_counter() - started, 1),  # matrices included
@@ -619,9 +719,13 @@ class Loop:
         value = spearman_within_product(self._grid_keys.with_columns(prediction=pl.Series(predictions)), "prediction")
         return SELECTION_MEASURE, NO_MEASURE if value is None else value
 
-    def _training_matrices(self, settings: Settings):
-        """The training matrix and the held-out grid's, reused while the rows' settings stay the same."""
-        key = (settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin)
+    def _training_matrices(self, settings: Settings, part: str | None = None):
+        """The training matrix and the held-out grid's, reused while the rows' settings stay the same.
+
+        For a two-part model's binary part (`ANY_FLOW`) the label is "any Flow" (0 or 1) and
+        every row keeps its weight; its size part (`SIZE`) trains on non-zero Flows only.
+        """
+        key = (settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin, part)
         if key != self._matrix_key:
             self._matrices = None  # free the device memory before building the next
             plan, built = self.plan, self.data.data.built_zero_rate
@@ -633,6 +737,10 @@ class Loop:
             def keep(table: pl.DataFrame) -> pl.DataFrame:
                 rows = subsample_zeros(table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk)
                 rows = held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
+                if part == ANY_FLOW:
+                    rows = rows.with_columns(_any_flow(pl.col("value_usd")))
+                elif part == SIZE:
+                    rows = rows.filter(pl.col("value_usd") > 0)
                 if world is None:
                     return rows
                 # Before the transform clips the supply and demand features: the naive baseline as built.
@@ -640,6 +748,8 @@ class Loop:
 
             if settings.base_margin:
                 grid_rows = self.grid.with_columns(naive_margin(self.grid["naive_usd"]).alias(BASE_MARGIN))
+            if part == ANY_FLOW:  # a binary label on the grid too; the measure each round reads value_usd itself
+                grid_rows = grid_rows.with_columns(_any_flow(pl.col("value_usd")))
 
             prepare = preparer(
                 uk=plan.uk, transform=self.transform, non_uk_rate=settings.non_uk_rate, seed=settings.seed, keep=keep
@@ -649,8 +759,14 @@ class Loop:
             self._matrix_key, self._matrices = key, (train, grid)
         return self._matrices
 
-    def _model_potential(self, model: xgb.Booster, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
+    def _model_potential(self, model: "xgb.Booster | TwoPart", meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
         """The model's Export Potential in dollars at its chosen round count."""
+        if isinstance(model, TwoPart):
+            parts = meta["parts"]
+            return two_part_potential(
+                table, model.any_flow, model.size, features=list(settings.features),
+                rounds=(parts[ANY_FLOW]["rounds"], parts[SIZE]["rounds"]), device=self.plan.device,
+            )
         margin = naive_margin(table["naive_usd"]) if settings.base_margin else None
         return export_potential(
             table, model, features=list(settings.features), rounds=meta["rounds"], device=self.plan.device,
@@ -675,6 +791,11 @@ class Loop:
         partial = path.with_suffix(".partial")
         partial.write_text(json.dumps(self.results, indent=2, default=experiments._json_default), encoding="utf-8")
         partial.replace(path)
+
+
+def _any_flow(value: pl.Expr) -> pl.Expr:
+    """The binary part's label: 1 where there is a Flow, 0 in a Zero Cell."""
+    return (value > 0).cast(pl.Float64).alias("value_usd")
 
 
 def training_key(settings: Settings, fingerprint: Mapping) -> str:
@@ -783,10 +904,14 @@ def main(argv: Sequence[str]) -> None:
         lp = Loop(real_data(), v2_plan(), loop_dir())
         section = lp.run_experiment(SELECT_EXPERIMENT, select_arms(search.load()))["experiments"][SELECT_EXPERIMENT]
         print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
+    elif command == "two-part":
+        lp = Loop(real_data(), v2_plan(), loop_dir())
+        section = lp.run_experiment(TWO_PART_EXPERIMENT, [two_part_arm()])["experiments"][TWO_PART_EXPERIMENT]
+        print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
     elif command == "time":
         print(json.dumps(time_one_arm()), flush=True)
     else:
-        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|time")
+        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|two-part|time")
 
 
 def time_one_arm(root: Path | None = None) -> dict:
