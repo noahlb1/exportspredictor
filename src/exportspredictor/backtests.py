@@ -52,6 +52,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.features import FEATURES, TARIFF_FEATURES, FeatureTransform
+from exportspredictor.scenarios import AGREEMENT_TARIFF
 from exportspredictor.training import (
     Chunk,
     model_params,
@@ -709,17 +710,17 @@ AGREEMENT_STATES = (
 
 
 def agreement_states(rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """The rows with the Trade Agreement on (Applied Tariff 0) and off (the Importer's MFN rate restored).
+    """The rows with the Trade Agreement on (a known Applied Tariff 0) and off (the Importer's MFN rate restored).
 
     Only policy columns change: `trade_agreement` and `log_applied_tariff`, as a Trade
     Agreement Scenario changes them (ADR 0006). `mfn_tariff` is in percent; where it is
-    missing the off state keeps the row's own tariff.
+    missing the off state keeps the row's own tariff, and an unknown tariff stays unknown in the on state.
     """
     flag = rows.schema["trade_agreement"]
     tariff = pl.col(TARIFF)
     dtype = rows.schema[TARIFF]
     mfn = (pl.col("mfn_tariff").cast(pl.Float64) / 100).log1p().cast(dtype)
-    on = rows.with_columns(trade_agreement=pl.lit(1, flag), **{TARIFF: pl.lit(0.0, dtype)})
+    on = rows.with_columns(trade_agreement=pl.lit(1, flag), **{TARIFF: AGREEMENT_TARIFF.cast(dtype)})
     off = rows.with_columns(trade_agreement=pl.lit(0, flag), **{TARIFF: mfn.fill_null(tariff)})
     return on, off
 
