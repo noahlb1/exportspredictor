@@ -113,3 +113,19 @@ def test_excluded_products_round_trip(fixture_artefacts, tmp_path):
     loaded = store.load(store.save(fixture_artefacts, tmp_path))
 
     assert loaded.excluded_products.equals(fixture_artefacts.excluded_products)
+
+
+def test_round_trip_keeps_the_ppml_benchmark_of_a_full_run(fixture_artefacts, tmp_path):
+    assert fixture_artefacts.ppml_benchmark is not None
+    folder = store.save(fixture_artefacts, tmp_path)
+
+    assert store.load(folder).ppml_benchmark == fixture_artefacts.ppml_benchmark
+
+
+def test_a_format_3_folder_without_the_ppml_benchmark_still_loads(fixture_default_artefacts, tmp_path):
+    folder = store.save(fixture_default_artefacts, tmp_path)
+
+    assert not (folder / store.PPML_BENCHMARK_FILE).exists()
+    bundle = store.load(folder)
+    assert bundle.ppml_benchmark is None
+    assert bundle.metadata["artefact_format"] == 3

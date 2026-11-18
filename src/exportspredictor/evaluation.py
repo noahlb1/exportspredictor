@@ -105,15 +105,22 @@ OPTIONAL_PARTS = (
      "It compares the monotone-constrained model with an unconstrained one."),
     ("Gain ladder", "ladder", "--gain-ladder",
      "It splits the change in the v1 comparison's primary metric from v1 to v2 into steps."),
+    ("PPML benchmark", "ppml_benchmark", "--ppml-benchmark",
+     ("It compares the model's Trade Agreement association with a 3-way fixed-effects PPML gravity model and with "
+     "published estimates.")),
 )
 
 
-def parts_not_run(report: dict) -> list[dict]:
-    """The opt-in parts an evaluation report does not hold, each with its "not run for this version" text.
+def parts_not_run(report: dict, ppml_benchmark: dict | None) -> list[dict]:
+    """The opt-in parts an artefact version does not hold, each with its "not run for this version" text.
 
-    The gain ladder lives inside the v1 comparison; a report with every part lists none.
+    `report` is its evaluation report and `ppml_benchmark` its saved benchmark
+    (`Artefacts.ppml_benchmark`), which lives beside the report, not in it. The gain ladder
+    lives inside the v1 comparison; a version with every part lists none.
     """
     blocks = {**report, **(report.get("v1_comparison") or {})}
+    if ppml_benchmark is not None:
+        blocks["ppml_benchmark"] = ppml_benchmark
     return [
         {"title": title, "text": f"{title}: {NOT_RUN}. {why} It runs when the pipeline is asked for it "
          f"(`python -m exportspredictor.pipeline {switch}`)."}

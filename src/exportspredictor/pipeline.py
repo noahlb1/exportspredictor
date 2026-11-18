@@ -64,6 +64,7 @@ from exportspredictor import (
     fixture,
     freeze,
     loop,
+    ppml,
     search,
 )
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
@@ -169,11 +170,12 @@ class Parts:
     event_backtests: bool = False  # Lift and the Event Backtests (`backtests.run`)
     constraint_comparison: bool = False  # the monotone-constrained model against an unconstrained one
     gain_ladder: bool = False  # rungs A and B of the v1 comparison's gain ladder
+    ppml_benchmark: bool = False  # the PPML benchmark (`ppml.benchmark`): fitted on the CPU, trains no model
 
     @classmethod
     def every(cls) -> "Parts":
-        """Every part: the full run of before the switches."""
-        return cls(event_backtests=True, constraint_comparison=True, gain_ladder=True)
+        """Every part: the full run of before the switches, with the PPML benchmark."""
+        return cls(event_backtests=True, constraint_comparison=True, gain_ladder=True, ppml_benchmark=True)
 
 
 # The fixture's stand-in for v1's frozen held-out Lift Exporters: MEX is outside the fixture's
@@ -321,7 +323,7 @@ def build_artefacts(
         parts=parts,
         year_flows=flows_of_year,
     )
-    return Artefacts(
+    bundle = Artefacts(
         metadata=metadata,
         fold_models=trained.models,
         baseline=trained.baseline,
@@ -333,6 +335,19 @@ def build_artefacts(
         potential_range_bands=trained.potential_range_bands,
         evaluation=report,
     )
+    if not parts.ppml_benchmark:
+        return bundle
+    # The fixture world has no 3-year intervals: its benchmark is fitted on every year it holds.
+    panel = ppml.sector_flows(flows, sources.agreements, years=flows["year"].unique().sort().to_list())
+    return replace(bundle, ppml_benchmark=_timed_benchmark(panel, bundle))
+
+
+def _timed_benchmark(panel: pl.DataFrame, bundle: Artefacts) -> dict:
+    """The PPML benchmark of `bundle` (`ppml.benchmark`) with the seconds it took."""
+    started = time.perf_counter()
+    benchmark = ppml.benchmark(panel, bundle)
+    print(f"PPML benchmark in {time.perf_counter() - started:.0f} s", flush=True)
+    return {**benchmark, "seconds": round(time.perf_counter() - started, 2)}
 
 
 def fixture_training(
@@ -489,7 +504,7 @@ def build_real_artefacts(
         year_flows=flows_of_year,
         earlier_v2=evaluation.V2_REPORTED,
     )
-    return Artefacts(
+    bundle = Artefacts(
         metadata=metadata,
         fold_models=trained.models,
         baseline=trained.baseline,
@@ -501,6 +516,9 @@ def build_real_artefacts(
         potential_range_bands=trained.potential_range_bands,
         evaluation=report,
     )
+    if not parts.ppml_benchmark:
+        return bundle
+    return replace(bundle, ppml_benchmark=_timed_benchmark(ppml.real_sector_flows(root), bundle))
 
 
 def _file_key(path: Path) -> str:
@@ -1078,26 +1096,28 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
 
 def parse_parts(argv: Sequence[str]) -> Parts:
     """The opt-in parts a command line asks for: `--event-backtests`, `--constraint-comparison`,
-    `--gain-ladder`, or `--every-part` for all three. None of them: the default run."""
+    `--gain-ladder`, `--ppml-benchmark`, or `--every-part` for all four. None of them: the default run."""
     import argparse
 
     parser = argparse.ArgumentParser(prog="python -m exportspredictor.pipeline")
     parser.add_argument("--event-backtests", action="store_true", help="also run Lift and the Event Backtests")
     parser.add_argument("--constraint-comparison", action="store_true", help="also run the monotone-constraint comparison")
     parser.add_argument("--gain-ladder", action="store_true", help="also train the v1 comparison's gain ladder")
-    parser.add_argument("--every-part", action="store_true", help="all three: the full run")
+    parser.add_argument("--ppml-benchmark", action="store_true", help="also fit the PPML benchmark (CPU, no training)")
+    parser.add_argument("--every-part", action="store_true", help="all four: the full run")
     args = parser.parse_args(list(argv))
     if args.every_part:
         return Parts.every()
     return Parts(
-        event_backtests=args.event_backtests, constraint_comparison=args.constraint_comparison, gain_ladder=args.gain_ladder
+        event_backtests=args.event_backtests, constraint_comparison=args.constraint_comparison,
+        gain_ladder=args.gain_ladder, ppml_benchmark=args.ppml_benchmark,
     )
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     """`python -m exportspredictor.pipeline` trains and saves a real bundle: by default the fold and
     test-year models only (about 2.5 h on GPU, less when either is cached); `parse_parts` names the
-    switches that add the Event Backtests, the constraint comparison and the gain ladder.
+    switches that add the Event Backtests, the constraint comparison, the gain ladder and the PPML benchmark.
 
     `python -m exportspredictor.pipeline refresh` instead saves a refreshed copy of the newest
     saved bundle (`refresh`), in seconds. `python -m exportspredictor.pipeline compare` saves a

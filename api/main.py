@@ -225,7 +225,7 @@ def create_app(
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
             limitations=known_limitations(artefacts),
-            not_run=parts_not_run(artefacts.evaluation),
+            not_run=parts_not_run(artefacts.evaluation, artefacts.ppml_benchmark),
         )
 
     @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)

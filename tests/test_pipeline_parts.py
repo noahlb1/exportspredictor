@@ -119,3 +119,19 @@ def test_all_three_parts_together_reproduce_the_full_run(runs, fixture_artefacts
 )
 def test_the_command_line_switches_on_the_parts_asked_for(argv, parts):
     assert parse_parts(argv) == parts
+
+
+def test_the_ppml_benchmark_is_opt_in_and_trains_no_model(fixture_world, tuned, default_run):
+    default, default_trained = default_run
+    assert default.ppml_benchmark is None
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        bundle, trained = _run(fixture_world, tuned, monkeypatch, Parts(ppml_benchmark=True))
+    assert trained == default_trained
+    assert bundle.ppml_benchmark is not None and bundle.ppml_benchmark["ppml"]["converged"]
+    assert bundle.ppml_benchmark["model"]["model_form"] == bundle.model_form.to_dict()
+    assert _comparable(bundle.evaluation) == _comparable(default.evaluation)
+
+
+def test_the_command_line_switches_on_the_ppml_benchmark():
+    assert parse_parts(["--ppml-benchmark"]) == Parts(ppml_benchmark=True)
+    assert parse_parts(["--every-part"]).ppml_benchmark
