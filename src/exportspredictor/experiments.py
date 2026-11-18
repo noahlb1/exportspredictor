@@ -51,6 +51,7 @@ from exportspredictor.features import (
     ALL_FEATURES,
     FEATURES,
     GROWTH_YEARS,
+    KEYS,
     MARKET_TREND_FEATURES,
     PROXIMITY_YEARS,
     RELATEDNESS_FEATURES,
@@ -107,6 +108,7 @@ BUILT_ZERO_RATE = 0.10
 # validation deviance by less than this share and the UK Spearman by less than this much.
 PLATEAU_DEVIANCE_SHARE = 0.01
 PLATEAU_SPEARMAN = 0.005
+PREDICT_ROWS = 2_000_000  # rows predicted at a time
 SETTINGS_FILE = "experiments.json"
 RESULTS_FILE = "results.json"
 
@@ -340,36 +342,69 @@ class _Fitter:
         return folded.filter(pl.col("fold") == self.plan.fold).drop("fold")
 
     def fit(self, features: Sequence[str], *, non_uk_rate: float, zero_rate: float) -> dict:
-        plan, started = self.plan, time.perf_counter()
+        """Train the plan's configuration on fresh matrices and measure it."""
+        started = time.perf_counter()
+        train, valid = self.matrices(features, non_uk_rate=non_uk_rate, zero_rate=zero_rate)
+        row = self.measure(
+            train, valid, features, self.plan.params,
+            max_rounds=self.plan.max_rounds, early_stopping_rounds=self.plan.early_stopping_rounds,
+        )
+        del train, valid
+        return {**row, "seconds": round(time.perf_counter() - started, 1)}
+
+    def matrices(
+        self, features: Sequence[str], *, non_uk_rate: float, zero_rate: float
+    ) -> tuple[xgb.QuantileDMatrix, xgb.QuantileDMatrix]:
+        """The training matrix (the plan's Sectors, fold and rates) and the validation matrix.
+
+        Built once, they can train any number of configurations (`measure`), as the
+        hyperparameter search does.
+        """
+        plan = self.plan
         held_out = outside_fold(plan.uk, plan.n_folds, plan.fold)
         in_sectors, built = self.in_sectors, self.data.built_zero_rate
 
         def keep(table: pl.DataFrame) -> pl.DataFrame:
             rows = subsample_zeros(table.filter(in_sectors), built_rate=built, rate=zero_rate, seed=plan.seed, uk=plan.uk)
-            return held_out(rows)
+            # Row order decides which rows `subsample` draws, so fix it: the same rows, the same model.
+            return held_out(rows).sort(KEYS)
 
         prepare = preparer(uk=plan.uk, transform=self.transform, non_uk_rate=non_uk_rate, seed=plan.seed, keep=keep)
         train = training_matrix(self.chunks, prepare, device=plan.device, features=features)
         valid = training_matrix([self.validation], ref=train, device=plan.device, features=features)
-        params = model_params(plan.params, device=plan.device, seed=plan.seed, features=features)
+        return train, valid
+
+    def measure(
+        self,
+        train: xgb.QuantileDMatrix,
+        valid: xgb.QuantileDMatrix,
+        features: Sequence[str],
+        params: Mapping,
+        *,
+        max_rounds: int,
+        early_stopping_rounds: int,
+        callbacks: Sequence[xgb.callback.TrainingCallback] = (),
+    ) -> dict:
+        """Train `params` on the matrices with early stopping on the validation year, and measure the model."""
+        plan, started = self.plan, time.perf_counter()
         model = xgb.train(
-            params | {"eval_metric": SELECTION_METRIC},
+            model_params(dict(params), device=plan.device, seed=plan.seed, features=features)
+            | {"eval_metric": SELECTION_METRIC},
             train,
-            num_boost_round=plan.max_rounds,
+            num_boost_round=max_rounds,
             evals=[(valid, "valid")],
-            early_stopping_rounds=plan.early_stopping_rounds,
+            early_stopping_rounds=early_stopping_rounds,
             verbose_eval=False,
+            callbacks=list(callbacks),
         )
         rounds = model.best_iteration + 1
-        training_rows_used = train.num_row()
-        del train, valid
         scored = self.validation.with_columns(prediction=_predict(model, self.validation, features, rounds, plan.device))
         grid = self.grid.with_columns(prediction=_predict(model, self.grid, features, rounds, plan.device))
         return {
             "features": len(features),
-            "training_rows": training_rows_used,
+            "training_rows": train.num_row(),
             "rounds": rounds,
-            "hit_round_cap": rounds >= plan.max_rounds,
+            "hit_round_cap": rounds >= max_rounds,
             "validation_year": self.data.validation_year,
             "validation_rows": scored.height,
             "validation_deviance": float(scored.select(tweedie_deviance("prediction", power=TWEEDIE_POWER)).item()),
@@ -380,17 +415,20 @@ class _Fitter:
 
 
 def _predict(model: xgb.Booster, table: pl.DataFrame, features: Sequence[str], rounds: int, device: str) -> pl.Series:
+    """Predictions in slices of `PREDICT_ROWS` rows, so that a large table fits on the device beside a training matrix."""
     if table.is_empty():
         return pl.Series([], dtype=pl.Float64)
-    data = np.ascontiguousarray(table.select(features).to_numpy(), dtype=np.float32)
-    if device.startswith("cuda"):
-        import cupy  # only where training runs on the GPU
+    parts = []
+    for start in range(0, table.height, PREDICT_ROWS):
+        data = np.ascontiguousarray(table.slice(start, PREDICT_ROWS).select(features).to_numpy(), dtype=np.float32)
+        if device.startswith("cuda"):
+            import cupy  # only where training runs on the GPU
 
-        prediction = cupy.asnumpy(model.inplace_predict(cupy.asarray(data), iteration_range=(0, rounds)))
-        cupy.get_default_memory_pool().free_all_blocks()
-    else:
-        prediction = model.inplace_predict(data, iteration_range=(0, rounds))
-    return pl.Series(np.asarray(prediction, dtype=np.float64))
+            parts.append(cupy.asnumpy(model.inplace_predict(cupy.asarray(data), iteration_range=(0, rounds))))
+            cupy.get_default_memory_pool().free_all_blocks()
+        else:
+            parts.append(model.inplace_predict(data, iteration_range=(0, rounds)))
+    return pl.Series(np.concatenate([np.asarray(p, dtype=np.float64) for p in parts]))
 
 
 def spearman_within_product(rows: pl.DataFrame, prediction: str) -> float | None:

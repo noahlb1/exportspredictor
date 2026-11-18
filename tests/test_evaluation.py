@@ -132,7 +132,10 @@ def test_the_test_year_is_untouched_during_tuning(fixture_world, fixture_artefac
     rebuilt = build_artefacts(distorted, version="distorted-test-year")
 
     def search(artefacts):
-        return [{k: row[k] for k in ("config", "rounds", "valid_metric")} for row in artefacts.metadata["tuning"]]
+        return [
+            {k: row[k] for k in ("params", "rounds", "validation_deviance")}
+            for row in artefacts.metadata["search"]["trials"]
+        ]
 
     assert search(rebuilt) == search(fixture_artefacts)
     # ...while the test-year evaluation does see the change.
