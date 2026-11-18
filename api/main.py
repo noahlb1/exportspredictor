@@ -6,8 +6,8 @@ Tests inject an artefact root with `create_app(root)`; the module-level `app` re
 
 To add an endpoint: add a route in `create_app`, get the bundle with `Depends(loaded)` (it
 answers 503 until artefacts load), and declare a response model in `api/schemas.py`.
-Every ranking view (the Leaderboard, Blocked Opportunities, by Product, by Market) goes through `_ranked`, which
-calls the package's `rank_opportunities` (the one filter, sort and limit); ranking orders
+Every ranking view (the Leaderboard, Blocked Opportunities, by Product, by Market) goes through the
+package's `rank_opportunities` (the one filter, sort and limit; `ranking` adds the summary); ranking orders
 live in `exportspredictor.rankings.RANK_BY` (and `BLOCKED`, the Blocked Opportunities order).
 
 Loading: artefacts load at startup. If none exist yet, `/health` answers 503 and the load
@@ -63,6 +63,7 @@ from api.schemas import (
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
 from exportspredictor.evaluation import LIMITATIONS, NOT_SERVED
+from exportspredictor.exclusions import not_ranked_message
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
@@ -72,8 +73,7 @@ from exportspredictor.rankings import (
     MIN_POTENTIAL_USD_OPTIONS,
     RANK_BY,
     rank_opportunities,
-    summarise,
-    summarise_blocked,
+    ranking,
 )
 
 RETRY_SECONDS = 30.0
@@ -157,30 +157,15 @@ def create_app(
     @app.get("/opportunities/top", response_model=Leaderboard)
     def top(query: Annotated[LeaderboardQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
         """The Leaderboard: every UK Product–Market pair ranked, with a summary of the filtered pairs."""
-        if query.market is not None:
-            _market(artefacts, query.market)
-        rows = _ranked(artefacts, query.model_copy(update={"limit": None}), iso3=query.market)
-        shown = rows if query.limit is None else rows.head(query.limit)
-        return Leaderboard(
-            **_metadata(artefacts),
-            rank_by=query.rank_by,
-            summary=LeaderboardSummary(**summarise(rows)),
-            opportunities=[_pick(LeaderboardOpportunity, row) for row in shown.iter_rows(named=True)],
-        )
+        return Leaderboard(**_leaderboard(artefacts, query, LeaderboardSummary), rank_by=query.rank_by)
 
     @app.get("/opportunities/blocked", response_model=BlockedOpportunities)
     def blocked(query: Annotated[BlockedQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
         """The Blocked Opportunities page: every UK pair ranked by Blocked Opportunity value, with a summary."""
-        if query.market is not None:
-            _market(artefacts, query.market)
-        rows = _ranked(artefacts, query.model_copy(update={"limit": None}), iso3=query.market)
-        shown = rows if query.limit is None else rows.head(query.limit)
         return BlockedOpportunities(
-            **_metadata(artefacts),
+            **_leaderboard(artefacts, query, BlockedSummary),
             rank_by=BLOCKED.name,
             order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
-            summary=BlockedSummary(**summarise_blocked(rows)),
-            opportunities=[_pick(LeaderboardOpportunity, row) for row in shown.iter_rows(named=True)],
         )
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
@@ -298,13 +283,9 @@ def _product(artefacts: store.Artefacts, hs6: str) -> ProductOut:
     found = artefacts.products.filter(pl.col("hs6") == hs6)
     if found.is_empty():
         raise HTTPException(status_code=404, detail=f"Unknown Product: {hs6}")
-    excluded = artefacts.excluded_products.filter(pl.col("hs6") == hs6)
-    if not excluded.is_empty():
-        row = excluded.row(0, named=True)
-        raise HTTPException(
-            status_code=404,
-            detail=f"{hs6} ({row['description']}) is an Excluded Product, so it is not scored or ranked. {row['reason']}",
-        )
+    reason = not_ranked_message(artefacts.excluded_products, hs6)
+    if reason is not None:
+        raise HTTPException(status_code=404, detail=reason)
     return _pick(ProductOut, found.row(0, named=True))
 
 
@@ -325,28 +306,37 @@ def _metadata(artefacts: store.Artefacts) -> dict:
     }
 
 
-def _ranked(artefacts: store.Artefacts, query: RankingQuery, **subject) -> pl.DataFrame:
-    """The rows of a ranking query: the package's `rank_opportunities` with the query's filters."""
-    return rank_opportunities(
-        artefacts,
-        **subject,
-        sector=query.sector,
-        region=query.region,
-        opportunity_type=query.opportunity_type,
-        min_gap_usd=query.min_gap_usd,
-        trade_agreement=query.trade_agreement,
-        hide_flagged=query.hide_flagged,
-        hide_hubs=query.hide_hubs,
-        hide_uncertain=query.hide_uncertain,
-        rank_by=query.rank_by,
-        min_potential_usd=query.min_potential_usd,
-        limit=query.limit,
-    )
+def _filters(query: RankingQuery) -> dict:
+    """The package's `rank_opportunities` arguments for a ranking query's filters and order."""
+    return {
+        "sector": query.sector,
+        "region": query.region,
+        "opportunity_type": query.opportunity_type,
+        "min_gap_usd": query.min_gap_usd,
+        "trade_agreement": query.trade_agreement,
+        "hide_flagged": query.hide_flagged,
+        "hide_hubs": query.hide_hubs,
+        "hide_uncertain": query.hide_uncertain,
+        "rank_by": query.rank_by,
+        "min_potential_usd": query.min_potential_usd,
+    }
+
+
+def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, summary_model: type[BaseModel]) -> dict:
+    """The fields the Leaderboard and the Blocked Opportunities page share: metadata, summary and top rows."""
+    if query.market is not None:
+        _market(artefacts, query.market)
+    ranked = ranking(artefacts, iso3=query.market, limit=query.limit, **_filters(query))
+    return {
+        **_metadata(artefacts),
+        "summary": summary_model(**ranked.summary),
+        "opportunities": [_pick(LeaderboardOpportunity, row) for row in ranked.rows.iter_rows(named=True)],
+    }
 
 
 def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:
     """The fields the by-Product and by-Market views share: metadata and the ranked rows."""
-    rows = _ranked(artefacts, query, **subject)
+    rows = rank_opportunities(artefacts, **subject, **_filters(query), limit=query.limit)
     return {
         **_metadata(artefacts),
         "rank_by": query.rank_by,

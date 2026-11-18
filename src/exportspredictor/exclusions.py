@@ -132,3 +132,15 @@ def flag_columns(hs6: str = "hs6", iso3: str = "iso3") -> list[pl.Expr]:
 def is_flagged_product(hs6: str) -> bool:
     """Whether `hs6` is a Flagged Product."""
     return hs6.startswith(FLAGGED_PRODUCT_PREFIXES)
+
+
+def not_ranked_message(excluded: pl.DataFrame, hs6: str) -> str | None:
+    """Why `hs6` has no ranking or explanation, from the artefact's `excluded_products` table; None if it has.
+
+    The API answers a ranking or Why? request for an Excluded Product with this message.
+    """
+    found = excluded.filter(pl.col("hs6") == hs6)
+    if found.is_empty():
+        return None
+    row = found.row(0, named=True)
+    return f"{hs6} ({row['description']}) is an Excluded Product, so it is not scored or ranked. {row['reason']}"

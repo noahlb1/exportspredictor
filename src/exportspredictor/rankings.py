@@ -167,3 +167,18 @@ def summarise_blocked(rows: pl.DataFrame) -> dict:
         "blocked_opportunities": blocked.height,
         "blocked_opportunity_value_usd": float(blocked["blocked_opportunity_value_usd"].sum()),
     }
+
+
+@dataclass(frozen=True)
+class Ranking:
+    """A ranking with its summary: the Leaderboard's and the Blocked Opportunities page's answer."""
+
+    rows: pl.DataFrame  # the top `limit` rows, as `rank_opportunities` returns them
+    summary: dict  # `summarise` (`summarise_blocked` for the `BLOCKED` order) over every filtered pair
+
+
+def ranking(artefacts: Artefacts, *, limit: int | None = None, **filters) -> Ranking:
+    """`rank_opportunities` with `filters`, summarised over every filtered pair, then cut to the top `limit` rows."""
+    rows = rank_opportunities(artefacts, **filters)
+    summary = summarise_blocked if filters.get("rank_by") == BLOCKED.name else summarise
+    return Ranking(rows=rows if limit is None else rows.head(limit), summary=summary(rows))

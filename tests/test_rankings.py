@@ -59,3 +59,15 @@ def test_blocked_summary_counts_blocked_opportunities_and_totals_their_value(fix
     assert summary["blocked_opportunity_value_usd"] == pytest.approx(blocked["blocked_opportunity_value_usd"].sum())
     assert summary["blocked_opportunity_value_usd"] > 0
     assert summary["blocked_opportunities"] == blocked.height
+
+
+def test_a_ranking_summarises_every_filtered_pair_before_its_limit(fixture_artefacts):
+    everything = rankings.rank_opportunities(fixture_artefacts)
+
+    top = rankings.ranking(fixture_artefacts, limit=3)
+    blocked = rankings.ranking(fixture_artefacts, rank_by="blocked", limit=3)
+
+    assert top.rows["hs6"].to_list() == everything.head(3)["hs6"].to_list()
+    assert top.summary == rankings.summarise(everything)
+    assert blocked.rows.height == 3
+    assert blocked.summary["pairs"] == 20 and "blocked_opportunities" in blocked.summary
