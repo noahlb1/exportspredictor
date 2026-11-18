@@ -66,7 +66,7 @@ def test_killing_and_rerunning_the_search_resumes_the_study(data, tmp_path):
     # A run killed mid-trial leaves that trial running in the study.
     study = optuna.load_study(study_name=search.STUDY_NAME, storage=f"sqlite:///{(tmp_path / search.STUDY_FILE).as_posix()}")
     killed = study.ask()
-    killed_params = search.suggest(killed)
+    killed_params = search.suggest(killed, search.FIXTURE_SPACE)
 
     resumed = search.run(data, data, replace(short, n_trials=5), tmp_path)
 

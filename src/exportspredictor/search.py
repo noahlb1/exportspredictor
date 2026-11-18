@@ -95,6 +95,7 @@ class SearchPlan:
     # rate); a zero rate of None is the rate the rows were built at.
     recheck_rates: tuple[float, float | None] = (0.65, 0.05)
     threads: int | None = None  # XGBoost threads for the search's models; None: every core
+    space: Mapping[str, tuple] | None = None  # None: `SPACE`
     fold: int = 0
     n_folds: int = N_FOLDS
     device: str = "cuda"
@@ -103,14 +104,17 @@ class SearchPlan:
 
 
 REAL_SEARCH = SearchPlan(timeout_seconds=2 * 3600, n_trials=None)
-# The fixture's tiny search: a handful of trials of a few rounds on a few hundred rows.
+# The fixture's tiny search: a handful of trials on a few hundred rows, so shallow trees
+# with small leaves (v1's trial 0 lies outside this space, and is still tried first).
+FIXTURE_SPACE = {**SPACE, "max_depth": (2, 3), "min_child_weight": (1.0, 10.0)}
 FIXTURE_SEARCH = SearchPlan(
     timeout_seconds=None,
     n_trials=4,
     top=2,
-    max_rounds=30,
+    max_rounds=100,
     early_stopping_rounds=10,
-    eta=0.3,
+    eta=0.2,
+    space=FIXTURE_SPACE,
     sectors=None,
     zero_rate=None,
     pruner_startup_trials=2,
@@ -122,10 +126,10 @@ FIXTURE_SEARCH = SearchPlan(
 )
 
 
-def suggest(trial) -> dict:
-    """One configuration of `SPACE`, as the Optuna `trial` samples it."""
+def suggest(trial, space: Mapping[str, tuple] | None = None) -> dict:
+    """One configuration of `space` (default `SPACE`), as the Optuna `trial` samples it."""
     params = {}
-    for name, (low, high) in SPACE.items():
+    for name, (low, high) in (space or SPACE).items():
         if isinstance(low, int):
             params[name] = trial.suggest_int(name, low, high)
         else:
@@ -175,7 +179,7 @@ def run(subset: Data, everything: Data, plan: SearchPlan, folder: Path | None = 
         _save_results(results, folder)
     results["seconds_this_run"] = round(time.perf_counter() - started, 1)
     _save_results(results, folder)
-    return results
+    return json.loads(_dumps(results))  # as saved: lists, not tuples
 
 
 def scaled_rounds(rounds: int, *, training_rows: float, tuning_rows: float) -> int:
@@ -263,7 +267,7 @@ def _optimise(study, data: Data, plan: SearchPlan, non_uk_rate: float) -> None:
     def objective(trial) -> float:
         trial.set_user_attr("v1_config", bool(trial.user_attrs.get("v1_config")))
         row = fitter.measure(
-            train, valid, FEATURES, xgboost_params(suggest(trial), plan),
+            train, valid, FEATURES, xgboost_params(suggest(trial, plan.space), plan),
             max_rounds=plan.max_rounds, early_stopping_rounds=plan.early_stopping_rounds,
             callbacks=[XGBoostPruningCallback(trial, PRUNING_METRIC)],
         )
@@ -435,8 +439,12 @@ def _save_results(results: dict, folder: Path | None) -> None:
         return
     path = folder / RESULTS_FILE
     partial = path.with_suffix(".partial")
-    partial.write_text(json.dumps(results, indent=2, default=experiments._json_default), encoding="utf-8")
+    partial.write_text(_dumps(results), encoding="utf-8")
     partial.replace(path)
+
+
+def _dumps(results: dict) -> str:
+    return json.dumps(results, indent=2, default=experiments._json_default)
 
 
 def main(argv: Sequence[str]) -> None:

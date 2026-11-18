@@ -223,6 +223,8 @@ def build_artefacts(
         flows,
         sources,
     )
+    if row_budget is not None:  # refuse before the search trains anything
+        check_row_budget(count_rows(list(training.values()), uk=UK), 1.0, row_budget)
     validation_year = baseline_year - 2
     tuning_data = experiments.Data(
         training={y: rows for y, rows in training.items() if y < validation_year},
