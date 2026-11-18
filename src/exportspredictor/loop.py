@@ -66,6 +66,7 @@ from exportspredictor.features import (
 )
 from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.paths import data_dir
+from exportspredictor.prediction import export_potential
 from exportspredictor.training import (
     model_params,
     preparer,
@@ -494,7 +495,9 @@ class Loop:
 
     def _predict(self, model: xgb.Booster, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
         """Export Potential in dollars: the model at its chosen round count, blended with the naive baseline if asked."""
-        predicted = experiments._predict(model, table, list(settings.features), meta["rounds"], self.plan.device)
+        predicted = export_potential(
+            table, model, features=list(settings.features), rounds=meta["rounds"], device=self.plan.device
+        )
         w = settings.naive_weight
         if w == 0:
             return predicted
