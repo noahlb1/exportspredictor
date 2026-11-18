@@ -523,7 +523,7 @@ class Loop:
         started = time.perf_counter()
         self.data, self.plan, self.folder = data, plan, folder
         self.models_dir = models_dir if models_dir is not None else (folder / MODELS_DIR if folder else None)
-        self._models: dict[str, tuple[xgb.Booster, dict]] = {}
+        self._models: dict[str, tuple[xgb.Booster | TwoPart, dict]] = {}
         self._matrix_key, self._matrices = None, None
         self._detail: pl.DataFrame | None = None
         self.results = _load(folder) or {}
@@ -691,7 +691,7 @@ class Loop:
     def _model_file(self, key: str) -> Path:
         return Path(self.models_dir or ".nowhere") / f"{key}.ubj"
 
-    def _model(self, settings: Settings, key: str) -> tuple[xgb.Booster, dict]:
+    def _model(self, settings: Settings, key: str) -> tuple[xgb.Booster | TwoPart, dict]:
         if key in self._models:
             return self._models[key]
         path = self._model_file(key)
@@ -841,7 +841,7 @@ class Loop:
             self._matrix_key, self._matrices = key, (train, grid)
         return self._matrices
 
-    def _model_potential(self, model: "xgb.Booster | TwoPart", meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
+    def _model_potential(self, model: xgb.Booster | TwoPart, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
         """The model's Export Potential in dollars at its chosen round count."""
         table = self._with_product_detail(table, settings)
         if isinstance(model, TwoPart):
@@ -887,13 +887,8 @@ class Loop:
         )
 
     def _save(self) -> None:
-        if self.folder is None:
-            return
-        self.folder.mkdir(parents=True, exist_ok=True)
-        path = self.folder / RESULTS_FILE
-        partial = path.with_suffix(".partial")
-        partial.write_text(json.dumps(self.results, indent=2, default=experiments._json_default), encoding="utf-8")
-        partial.replace(path)
+        if self.folder is not None:
+            _save_results(self.folder, self.results)
 
 
 def _any_flow(value: pl.Expr) -> pl.Expr:
@@ -1036,7 +1031,7 @@ def _save_results(folder: Path, results: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / RESULTS_FILE
     partial = path.with_suffix(".partial")
-    partial.write_text(json.dumps(results, indent=2, default=experiments._json_default), encoding="utf-8")
+    partial.write_text(json.dumps(results, indent=2, default=experiments.json_default), encoding="utf-8")
     partial.replace(path)
 
 
@@ -1225,7 +1220,7 @@ def time_one_arm(root: Path | None = None) -> dict:
     path = loop_dir(root) / RESULTS_FILE
     results = json.loads(path.read_text(encoding="utf-8"))
     results["timing"] = timing
-    path.write_text(json.dumps(results, indent=2, default=experiments._json_default), encoding="utf-8")
+    path.write_text(json.dumps(results, indent=2, default=experiments.json_default), encoding="utf-8")
     return timing
 
 

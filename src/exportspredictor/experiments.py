@@ -596,7 +596,7 @@ def results_path(root: Path | None = None) -> Path:
 def save(results: dict, root: Path | None = None) -> Path:
     path = results_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(results, indent=2, default=_json_default), encoding="utf-8")
+    path.write_text(json.dumps(results, indent=2, default=json_default), encoding="utf-8")
     return path
 
 
@@ -605,7 +605,8 @@ def load(root: Path | None = None) -> dict:
     return json.loads(results_path(root).read_text(encoding="utf-8"))
 
 
-def _json_default(value):
+def json_default(value):
+    """`json.dumps(default=...)` for results holding NumPy scalars."""
     if isinstance(value, np.generic):
         return value.item()
     raise TypeError(f"{type(value).__name__} is not JSON serialisable")
