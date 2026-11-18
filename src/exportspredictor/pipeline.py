@@ -60,6 +60,7 @@ from exportspredictor.exclusions import (
 )
 from exportspredictor.features import (
     FEATURES,
+    KEYS,
     MONOTONE_CONSTRAINTS,
     FeatureTransform,
     build_features,
@@ -251,7 +252,8 @@ def fixture_training(
         if year < baseline_year:
             year_flows = flows.filter(pl.col("year") == year)
             rows = training_rows(year_flows, rate=zero_sampling_rate, seed=seed, uk=UK, exporters=exporters)
-            training[year] = build_features(rows, flows, world.sources)
+            # Sorted: row order decides which rows `subsample` draws, so the fixture models are reproducible.
+            training[year] = build_features(rows, flows, world.sources).sort(KEYS)
     return training
 
 
