@@ -637,14 +637,14 @@ class Loop:
         if arm.grid:
             # Choose the scoring setting on the validation year's held-out UK grid only.
             (name, values), = arm.grid.items()
-            candidates = []
+            by_value = []
             for value in values:
-                candidate = replace(settings, **{name: value})
-                scored_grid = self.grid.with_columns(export_potential_usd=self._score(model_grid, candidate, self.grid))
-                candidates.append({name: value, **measures(scored_grid, None, "export_potential_usd")})
-            chosen = max(candidates, key=lambda c: -2.0 if c[SELECTION_MEASURE] is None else c[SELECTION_MEASURE])
+                value_settings = replace(settings, **{name: value})
+                scored_grid = self.grid.with_columns(export_potential_usd=self._score(model_grid, value_settings, self.grid))
+                by_value.append({name: value, **measures(scored_grid, None, "export_potential_usd")})
+            chosen = max(by_value, key=lambda v: -2.0 if v[SELECTION_MEASURE] is None else v[SELECTION_MEASURE])
             settings = replace(settings, **{name: chosen[name]})
-            extra["grid"] = candidates
+            extra["grid"] = by_value
         if arm.grid.keys() & {"naive_weight"}:
             extra["rank_average"] = rank_average_measures(self.grid.with_columns(model_usd=model_grid))
             # The model unblended (w = 0), a reference only: the blend's grid leaves 0 out.
@@ -969,8 +969,8 @@ def confirm(
     validation year must not be the test year: `Loop` refuses it.
     """
     experiments._check_years([data.validation_year])
-    candidates = {V2: v2, WINNER: winner}  # v2 first: a winner that only re-scores reuses its model
-    settings = {name: s.to_dict() for name, s in candidates.items()}
+    arms = {V2: v2, WINNER: winner}  # v2 first: a winner that only re-scores reuses its model
+    settings = {name: s.to_dict() for name, s in arms.items()}
     results = _load(folder) or {}
     section = results.get(CONFIRMATION, {})
     if section.get("settings") != settings or section.get("n_folds") != plan.n_folds:
@@ -984,16 +984,16 @@ def confirm(
             grids[fold] = pl.read_parquet(saved)
             continue
         section["folds"] = [row for row in section["folds"] if row["fold"] != fold]
-        row, grids[fold] = _confirm_fold(data, replace(plan, fold=fold), candidates, models_dir)
+        row, grids[fold] = _confirm_fold(data, replace(plan, fold=fold), arms, models_dir)
         section["folds"] = sorted([*section["folds"], row], key=lambda r: r["fold"])
         if saved is not None:
             saved.parent.mkdir(parents=True, exist_ok=True)
             grids[fold].write_parquet(saved)
         if folder is not None:
             _save_results(folder, results | {CONFIRMATION: section})
-        _log(f"fold {fold}: {json.dumps({n: row[n][SELECTION_MEASURE] for n in candidates})}")
+        _log(f"fold {fold}: {json.dumps({n: row[n][SELECTION_MEASURE] for n in arms})}")
     pooled = pl.concat([grids[fold] for fold in range(plan.n_folds)])
-    for name in candidates:
+    for name in arms:
         deviances = [row[name]["tweedie_deviance"] for row in section["folds"]]
         section[name] = {
             **measures(pooled, None, name),
@@ -1014,14 +1014,14 @@ def confirm(
 
 
 def _confirm_fold(
-    data: LoopData, plan: LoopPlan, candidates: Mapping[str, Settings], models_dir: Path | None
+    data: LoopData, plan: LoopPlan, arms: Mapping[str, Settings], models_dir: Path | None
 ) -> tuple[dict, pl.DataFrame]:
-    """One fold: each candidate's model (cached or trained) scores the fold's held-out UK grid and validation rows."""
+    """One fold: each Arm's model (cached or trained) scores the fold's held-out UK grid and validation rows."""
     started = time.perf_counter()
     lp = Loop(data, plan, models_dir=models_dir)
     grid = lp.grid.select("hs6", "importer", "value_usd", "naive_usd")
     row: dict = {"fold": plan.fold, "uk_pairs": lp.grid.height, "setup_seconds": lp.results["setup_seconds"]}
-    for name, settings in candidates.items():
+    for name, settings in arms.items():
         resolved = lp._resolved(settings)
         key = training_key(resolved, lp._fingerprint())
         trained = key not in lp._models and not lp._model_file(key).exists()
