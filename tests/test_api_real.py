@@ -20,22 +20,20 @@ GOLD, CRUDE_OIL = "710812", "270900"
 
 
 @pytest.fixture(scope="module")
-def real():
-    try:
-        bundle = store.load_latest(artefacts_dir())
-    except store.ArtefactsNotFound:
-        pytest.skip("No real artefacts under EXPORTSPREDICTOR_ARTEFACTS_DIR")
-    except store.UnreadableArtefacts as error:
-        pytest.skip(f"The newest real artefacts are not artefact format {store.ARTEFACT_FORMAT}: {error}")
-    if bundle.metadata.get("source", "fixture") == "fixture":
-        pytest.skip("The artefacts are fixture artefacts")
-    return bundle
+def client():
+    with TestClient(create_app(artefacts_dir())) as client:
+        bundle = client.app.state.artefacts
+        if bundle is None:
+            pytest.skip(f"No real format-{store.ARTEFACT_FORMAT} artefacts served: {client.app.state.load_error}")
+        if bundle.metadata.get("source", "fixture") == "fixture":
+            pytest.skip("The artefacts are fixture artefacts")
+        yield client
 
 
 @pytest.fixture(scope="module")
-def client(real):
-    with TestClient(create_app(artefacts_dir())) as client:
-        yield client
+def real(client):
+    """The artefact bundle the API serves (loaded once, by the API)."""
+    return client.app.state.artefacts
 
 
 def test_health_reports_format_2_and_the_gap_period_of_the_served_artefacts(client, real):
