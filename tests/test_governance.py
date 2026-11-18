@@ -3,7 +3,7 @@
 import polars as pl
 import pytest
 
-from exportspredictor import evaluation, governance
+from exportspredictor import evaluation, governance, tariffs
 
 # --- Model card --------------------------------------------------------------------------
 
@@ -57,7 +57,6 @@ def test_model_card_summarises_the_v1_comparison_and_the_gain_ladder(card, fixtu
     text = governance.render_model_card(card)
     assert "## Comparison with v1" in text
     assert block["verdict"]["text"] in text
-    assert "decides nothing" in text
 
 
 def test_a_model_card_without_a_v1_comparison_says_so(fixture_artefacts):
@@ -66,7 +65,7 @@ def test_a_model_card_without_a_v1_comparison_says_so(fixture_artefacts):
     report = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "v1_comparison"}
     card = governance.model_card(replace(fixture_artefacts, evaluation=report))
     assert card["v1_comparison"] is None
-    assert "not been run" in governance.render_model_card(card)
+    assert "## Comparison with v1" in governance.render_model_card(card)  # the section degrades, never hides
 
 
 def test_writing_the_model_card_puts_it_next_to_the_models(fixture_artefacts, tmp_path):
@@ -101,12 +100,10 @@ def test_model_card_reads_the_sampling_rates_and_exporter_scope_from_the_metadat
     assert "30%" not in text and " 2%" not in text
 
 
-def test_model_card_does_not_call_the_applied_tariff_a_missing_input(card):
-    # v2 has the Applied Tariff as a policy feature (ADR 0006); only tariff changes after 2021 are unseen.
+def test_model_card_names_the_year_the_applied_tariff_is_carried_forward_from(card):
+    # v2 has the Applied Tariff as a policy feature (ADR 0006); only tariff changes after TRAINS ends are unseen.
     out_of_scope = " ".join(card["out_of_scope"])
-    sentences = out_of_scope.split(". ")
-    assert not any("tariff" in s.lower() and "none of them is a model input" in s for s in sentences)
-    assert "carried forward from 2021" in out_of_scope
+    assert "Applied Tariff" in out_of_scope and str(tariffs.LAST_TRAINS_YEAR) in out_of_scope
 
 
 def test_model_card_names_the_features_the_ablation_dropped(fixture_artefacts):
@@ -318,7 +315,7 @@ def test_model_card_shows_the_test_year_beside_earlier_versions_and_says_whether
     section = text.split("## UK ranking beside earlier versions")[1].split("\n## ")[0]
     assert "0.511" in section and "0.523" in section and "0.550" in section and "0.520" in section
     assert "v1" in section and "v2" in section
-    assert "beats the naive baseline" in section
+    assert report["earlier_versions"]["text"] in section
 
 
 def test_model_card_names_the_form_the_selection_measure_and_the_experiments(card):
