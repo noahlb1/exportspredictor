@@ -20,3 +20,11 @@ Two couplings keep the tariff consistent with the Trade Agreement flags, so the 
 - The notebook reports test metrics split by imputed and observed tariff rows.
 - The API's pair detail carries a "tariff carried forward from 2021" caveat.
 - If real 2022+ data ever arrives, it replaces the carried values without changing the feature's definition.
+
+## Addendum: an unknown tariff stays unknown under an added agreement
+
+*Added in the code review of spec #39.* "Adding a Trade Agreement sets the Applied Tariff to 0" applies only where the tariff is known, observed or carried forward. Where a pair has no tariff at all (TRAINS reports none, so the feature is missing), an added agreement leaves it missing, in Scenarios, in the Trading Bloc presets, in the Blocked Opportunity values and in the Event Backtest's "agreement on" state. One expression in `exportspredictor.scenarios` (`AGREEMENT_TARIFF`) states the rule for all of them.
+
+A missing tariff is unknown, so "removing" it is not a defined policy change. And XGBoost's monotone constraints bound the model only along observed values: a missing value follows each split's learned default branch, which the constraint does not cover, so a missing tariff replaced by 0 can lower a prediction. In the first real v2 artefact this gave 22,135 UK pairs, every one with a missing tariff, a negative Trade Agreement Scenario Effect. With the rule, the Trade Agreement flag is the only change on those pairs, and its +1 constraint keeps their Scenario Effect non-negative.
+
+Considered and rejected: imputing missing tariffs and retraining (it re-tunes the model after the test year was read), and clipping negative effects at 0 (it hides the cause).

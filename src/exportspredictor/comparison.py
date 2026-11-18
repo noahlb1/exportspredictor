@@ -55,6 +55,7 @@ from exportspredictor.features import (
     Sources,
     build_features,
 )
+from exportspredictor.wording import number_text
 
 SEED = 0
 RESAMPLES = 1000
@@ -554,9 +555,7 @@ def verdict(primary: dict, secondary: Sequence[dict]) -> dict:
 
 
 def _number(value: float | None, signed: bool = False) -> str:
-    if value is None:
-        return "n/a"
-    return f"{value:+.3f}" if signed else f"{value:.3f}"
+    return number_text(value, "+.3f" if signed else ".3f")
 
 
 def _primary_text(primary: dict, margins: dict) -> str:

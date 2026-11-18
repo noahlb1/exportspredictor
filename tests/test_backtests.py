@@ -315,7 +315,7 @@ def test_the_off_state_keeps_the_tariff_where_no_mfn_rate_is_known():
 
     on, off = backtests.agreement_states(rows)
 
-    assert on["log_applied_tariff"].to_list() == [0.0, 0.0]
+    assert on["log_applied_tariff"].to_list() == [0.0, None]  # an unknown tariff stays unknown (ADR 0006)
     assert off["log_applied_tariff"].to_list() == pytest.approx([0.1, 0.11332869])
     assert on.schema == off.schema == rows.schema
 

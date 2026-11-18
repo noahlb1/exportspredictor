@@ -8,21 +8,18 @@ import pandas as pd
 import streamlit as st
 
 from app import client
+from app.format import format_usd, years_text
 from app.ui import (
     banner,
     fetch,
-    gap_period_label,
+    labels,
     potential_range_bar,
     product_picker,
     show_caveats,
+    usd_unit,
 )
-from exportspredictor.conformal import potential_range_text
-from exportspredictor.currency import USD_UNIT, format_usd
-from exportspredictor.tariffs import LAST_TRAINS_YEAR
 
 TOP_FACTORS = 8
-# The history's mark of each year's Applied Tariff (ADR 0006); blank for a year with no row.
-TARIFF_MARKS = {True: f"Carried forward from {LAST_TRAINS_YEAR}", False: "From tariff data"}
 
 st.title("Why?")
 
@@ -57,7 +54,7 @@ if banner() is not None:
             show_caveats(body)
             if body["tariff_caveat"]:
                 st.warning(body["tariff_caveat"])
-            averaged = gap_period_label(body["gap_years"])
+            averaged = body["gap_period_label"]
             st.markdown(
                 f"{averaged[0].upper()}{averaged[1:]}: "
                 f"Export Potential **{format_usd(body['export_potential_usd'])}**, "
@@ -68,14 +65,7 @@ if banner() is not None:
                 f"**{format_usd(body['baseline_export_potential_usd'])}**."
             )
             potential_range_bar(body)
-            st.markdown(
-                potential_range_text(
-                    body["potential_range_low_usd"],
-                    body["potential_range_high_usd"],
-                    body["actual_exports_usd"],
-                    uncertain=body["uncertain"],
-                )
-            )
+            st.markdown(body["potential_range_text"])
             st.markdown(
                 "Each factor below is something the model associates with higher or lower UK exports "
                 "of this Product to this Market. These are associations the model has learned, not causes: "
@@ -119,23 +109,26 @@ if banner() is not None:
                 "actual_exports_usd": 0.0, "export_potential_usd": None, "export_gap_usd": None, "tariff_imputed": None
             }
             yearly = [points.get(year, empty) for year in years]
+            unit = usd_unit()
+            # Each year's Applied Tariff mark (ADR 0006); blank for a year with no row.
+            tariff_marks = {True: f"Carried forward from {labels()['last_tariff_year']}", False: "From tariff data"}
             st.dataframe(
                 pd.DataFrame(
                     {
                         "Year": years,
-                        f"Export Potential ({USD_UNIT})": [p["export_potential_usd"] for p in yearly],
-                        f"Actual Exports ({USD_UNIT})": [p["actual_exports_usd"] for p in yearly],
-                        f"Export Gap ({USD_UNIT})": [p["export_gap_usd"] for p in yearly],
+                        f"Export Potential ({unit})": [p["export_potential_usd"] for p in yearly],
+                        f"Actual Exports ({unit})": [p["actual_exports_usd"] for p in yearly],
+                        f"Export Gap ({unit})": [p["export_gap_usd"] for p in yearly],
                     },
                     dtype=float,
                 ).astype({"Year": int}).assign(
-                    **{"Applied Tariff": [TARIFF_MARKS.get(p["tariff_imputed"], "") for p in yearly]}
+                    **{"Applied Tariff": [tariff_marks.get(p["tariff_imputed"], "") for p in yearly]}
                 ),
                 hide_index=True,
             )
-            first, last = body["gap_years"]
+            span = years_text(body["gap_years"])
             st.caption(
-                f"The Export Gap above is the {averaged} of the yearly Export Gaps of {first}–{last}, the Gap Period; "
+                f"The Export Gap above is the {averaged} of the yearly Export Gaps of {span}, the Gap Period; "
                 "each year's Export Potential is scored from that year's conditions. Earlier years show UK Actual "
                 f"Exports only. {baseline_year} figures are provisional. A year with no recorded UK exports shows 0."
             )

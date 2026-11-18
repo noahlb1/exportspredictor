@@ -105,14 +105,14 @@ def test_scenario_effects_start_from_the_baseline_year_not_the_gap_period_mean(f
     )
     assert not joined["baseline_potential_usd"].equals(joined["export_potential_usd"])
     blocked = joined["effect_usd"].to_list()
-    assert joined["blocked_effect_usd"].to_list() == pytest.approx(blocked)
+    assert joined["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked)
 
 
 def test_blocked_values_can_be_rebuilt_from_saved_fold_models(fixture_artefacts, tmp_path):
     older = replace(
         fixture_artefacts,
         metadata={**fixture_artefacts.metadata, "version": "20260101T000000Z"},
-        baseline=fixture_artefacts.baseline.drop("blocked_effect_usd"),
+        baseline=fixture_artefacts.baseline.drop("blocked_opportunity_value_usd"),
     )
     store.save(older, tmp_path)
 
@@ -130,8 +130,8 @@ def test_blocked_values_are_zero_where_a_trade_agreement_exists(fixture_artefact
         fixture_artefacts.baseline_features.select("hs6", "iso3", "trade_agreement"), on=["hs6", "iso3"]
     )
 
-    assert (values.filter(pl.col("trade_agreement") == 1)["blocked_effect_usd"] == 0).all()
-    assert (values.filter(pl.col("trade_agreement") == 0)["blocked_effect_usd"] >= 0).all()
+    assert (values.filter(pl.col("trade_agreement") == 1)["blocked_opportunity_value_usd"] == 0).all()
+    assert (values.filter(pl.col("trade_agreement") == 0)["blocked_opportunity_value_usd"] >= 0).all()
 
 
 # --- Tariffs in Scenarios (ADR 0006) ------------------------------------------------------
@@ -154,6 +154,63 @@ def test_adding_a_trade_agreement_removes_the_tariff(fixture_artefacts):
     assert after.height == 5 and (after["log_applied_tariff"] == 0).all()
 
 
+def _unknown_tariffs(features: pl.DataFrame, hs6: tuple[str, ...]) -> pl.DataFrame:
+    """The Baseline feature rows with the Applied Tariff unknown (null) for these Products in India and HKG,
+    which are made EU and CPTPP members so the bloc presets add an agreement there too."""
+    unknown = pl.col("hs6").is_in(list(hs6)) & pl.col("iso3").is_in(["IND", "HKG"])
+    members = pl.col("iso3").is_in(["IND", "HKG"])
+    return features.with_columns(
+        pl.when(unknown).then(None).otherwise(pl.col("log_applied_tariff")).alias("log_applied_tariff"),
+        *(pl.when(members).then(1).otherwise(pl.col(c)).cast(features.schema[c]).alias(c) for c in ("eu_d", "cptpp_d")),
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        scenarios.Scenario(add_agreements=("IND", "HKG")),
+        scenarios.Scenario(preset="eu_rejoin"),
+        scenarios.Scenario(preset="eu_customs_union"),
+        scenarios.Scenario(preset="cptpp"),
+    ],
+)
+def test_adding_a_trade_agreement_leaves_an_unknown_tariff_unknown(fixture_artefacts, scenario):
+    # XGBoost's monotone constraints do not cover the missing-value branch, so zeroing an
+    # unknown tariff could lower a prediction: a missing tariff stays missing (ADR 0006).
+    unknown = ("220830", "851712")
+    before = _unknown_tariffs(fixture_artefacts.baseline_features, unknown)
+    after = scenarios.apply(before, scenario).filter(pl.col("iso3").is_in(["IND", "HKG"]))
+    known = after.filter(~pl.col("hs6").is_in(list(unknown)))
+
+    assert after.filter(pl.col("hs6").is_in(list(unknown)))["log_applied_tariff"].null_count() == 4
+    assert known.height > 0 and (known["log_applied_tariff"] == 0).all()
+
+
+def test_blocked_values_leave_an_unknown_tariff_unknown(fixture_artefacts):
+    unknown = ("220830", "851712")
+    features = _unknown_tariffs(fixture_artefacts.baseline_features, unknown)
+    rows = features.filter(pl.col("iso3") == "IND").with_columns(
+        trade_agreement=pl.lit(1, features.schema["trade_agreement"]),
+        log_applied_tariff=pl.when(pl.col("hs6").is_in(list(unknown)))
+        .then(None)
+        .otherwise(0.0)
+        .cast(features.schema["log_applied_tariff"]),
+    )
+    expected = (
+        rows.select("hs6", "iso3")
+        .with_columns(scenario=scenarios.predict(rows, fixture_artefacts.fold_models))
+        .join(fixture_artefacts.baseline, on=["hs6", "iso3"])
+        .select("hs6", effect=pl.col("scenario") - pl.col("baseline_export_potential_usd"))
+        .sort("hs6")
+    )
+
+    values = scenarios.blocked_opportunity_values(features, fixture_artefacts.baseline, fixture_artefacts.fold_models)
+    india = values.filter(pl.col("iso3") == "IND").sort("hs6")
+
+    assert india["hs6"].to_list() == expected["hs6"].to_list()
+    assert india["blocked_opportunity_value_usd"].to_list() == pytest.approx(expected["effect"].to_list(), rel=1e-6)
+
+
 def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
     result = scenarios.run(
         fixture_artefacts.baseline_features,
@@ -163,7 +220,7 @@ def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
     )
     blocked = fixture_artefacts.baseline.join(result.pairs, on=["hs6", "iso3"])
 
-    assert blocked["blocked_effect_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
+    assert blocked["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
 
 
 def test_a_tariff_scenario_sets_the_tariff_in_the_chosen_markets_and_sectors(fixture_artefacts):

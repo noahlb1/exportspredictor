@@ -51,6 +51,7 @@ import xgboost as xgb
 
 from exportspredictor import artefacts as store
 from exportspredictor import baci
+from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import FEATURES, FeatureTransform, features_dir
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
@@ -58,6 +59,7 @@ from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
+from exportspredictor.wording import number_text, rate_text
 
 TWEEDIE_POWER = 1.5
 # Predictions are floored at $1 before the deviance, so that a zero naive prediction of a
@@ -150,6 +152,73 @@ LIMITATIONS = [
         "its fundamentals, not the sanctions in force since 2022. Check such Markets before acting on them.",
     },
 ]
+
+
+def known_limitations(artefacts: store.Artefacts) -> list[dict]:
+    """Every known limitation of an artefact version that can be read from it: its results, its
+    Potential Range bands and the fixed `LIMITATIONS`. The API serves these; the model card adds
+    the gravity benchmark, which no artefact holds.
+    """
+    report = artefacts.evaluation or {}
+    return [
+        *result_limitations(artefacts.metadata, report),
+        *range_limitations(artefacts.potential_range_bands),
+        *LIMITATIONS,
+    ]
+
+
+def result_limitations(metadata: dict, report: dict) -> list[dict]:
+    """The limitations an artefact's own results show: its headline, Lift, Event Backtest and sampling."""
+    limits = []
+    headline = report.get("headline")
+    if headline and headline.get("beats_naive") is False:
+        limits.append({"title": "Does not beat a naive ranking for UK pairs",
+                       "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
+                       f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share "
+                       f"times each Market's imports: on the headline measure it does not beat that naive rule. Its "
+                       f"value is in the size of Export Potential (a much lower deviance), not in the order of Markets."})
+    elif headline:
+        limits.append({"title": "Only slightly better than a naive ranking for UK pairs",
+                       "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
+                       f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share times "
+                       f"each Market's imports. Its value is mostly in the size of Export Potential, not its order."})
+    lift = report.get("lift")
+    if lift:
+        limits.append({"title": "Large Export Gaps mostly mark large pairs",
+                       "text": f"Lift is {number_text(lift['lift'], '.1f')}, but against pairs of similar Export Potential it is "
+                       f"{number_text(lift['size_matched']['lift'], '.2f')}: an Opportunity is worth a look, not more likely to grow "
+                       f"than its peers of the same size."})
+    events = report.get("event_backtest", {}).get("events", [])
+    if events:
+        pooled = events[0]["directions"][0]["pooled"]
+        limits.append({"title": "Scenario Effects are larger than observed changes",
+                       "text": f"For {events[0]['title'][0].lower() + events[0]['title'][1:]}, the model associated the agreement with "
+                       f"{number_text(pooled['predicted'], '+.0%')}, against an observed {number_text(pooled['observed'], '+.0%')}. Read Scenario "
+                       f"Effects as an upper-end association."})
+    rate = metadata.get("non_uk_sampling_rate")
+    if rate is not None:
+        limits.append({"title": "Trained on a sample of other Exporters' Flows",
+                       "text": f"The models train on every UK row but a reweighted {rate_text(rate)} sample of other "
+                       f"Exporters' rows (and {rate_text(metadata.get('zero_sampling_rate'))} of their Zero Cells), to fit "
+                       f"the GPU's memory. Unbiased, but noisier than training on all rows."})
+    return limits
+
+
+def range_limitations(bands: pl.DataFrame) -> list[dict]:
+    """The Potential Range's offsets are dollars per band, so the top band gives every large pair one width."""
+    if bands.is_empty():
+        return []
+    top = bands.sort("min_export_potential_usd").row(-1, named=True)
+    width = top["high_offset_usd"] - top["low_offset_usd"]
+    return [{
+        "title": "The Potential Range is a fixed width in dollars",
+        "text": f"Its offsets are fixed amounts of dollars within each band of Export Potential (ADR 0007), so every "
+        f"pair in the top band, from {format_usd(top['min_export_potential_usd'])} of Export Potential upwards, gets "
+        f"the same range, {format_usd(width)} wide, whatever its size. For a large pair that range is a sliver, and "
+        f"it is an Uncertain Opportunity only when its Export Gap is under the band's lower offset, "
+        f"{format_usd(-top['low_offset_usd'])}. Read the badge on large pairs as \"a small gap for its size\", "
+        f"not as a measure of how sure the model is. A relative (log-scale) range is a candidate for a later version.",
+    }]
 
 
 # --- Metrics ---------------------------------------------------------------------------

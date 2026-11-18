@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 from exportspredictor import artefacts as store
 from exportspredictor.evaluation import LIMITATIONS
 
-PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "5_Model_Evaluation.py"
+PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "6_Model_Evaluation.py"
 
 
 def _run(monkeypatch, url: str) -> AppTest:
@@ -55,6 +55,8 @@ def test_page_lists_every_known_limitation(page):
 
     for limitation in LIMITATIONS:
         assert limitation["title"] in text
+    # and those the artefact shows, the Potential Range's fixed dollar width included (spec story 44)
+    assert "The Potential Range is a fixed width in dollars" in text
 
 
 def test_page_shows_the_imputed_observed_tariff_split(page, fixture_artefacts):

@@ -6,8 +6,8 @@ Tests inject an artefact root with `create_app(root)`; the module-level `app` re
 
 To add an endpoint: add a route in `create_app`, get the bundle with `Depends(loaded)` (it
 answers 503 until artefacts load), and declare a response model in `api/schemas.py`.
-Every ranking view (the Leaderboard, Blocked Opportunities, by Product, by Market) goes through `_ranked`, which
-calls the package's `rank_opportunities` (the one filter, sort and limit); ranking orders
+Every ranking view (the Leaderboard, Blocked Opportunities, by Product, by Market) goes through the
+package's `rank_opportunities` (the one filter, sort and limit; `ranking` adds the summary); ranking orders
 live in `exportspredictor.rankings.RANK_BY` (and `BLOCKED`, the Blocked Opportunities order).
 
 Loading: artefacts load at startup. If none exist yet, `/health` answers 503 and the load
@@ -35,12 +35,14 @@ from api.schemas import (
     BlockedOpportunities,
     BlockedQuery,
     BlockedSummary,
+    Caveat,
     Evaluation,
     ExcludedProductOut,
     Explanation,
     FactorOut,
     Health,
     HistoryOut,
+    Labels,
     Leaderboard,
     LeaderboardOpportunity,
     LeaderboardQuery,
@@ -62,8 +64,20 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
-from exportspredictor.evaluation import LIMITATIONS, NOT_SERVED
+from exportspredictor.conformal import (
+    UNCERTAIN_OPPORTUNITY_CAVEAT,
+    potential_range_text,
+)
+from exportspredictor.currency import USD_CAPTION, USD_UNIT
+from exportspredictor.evaluation import NOT_SERVED, known_limitations
+from exportspredictor.exclusions import (
+    FLAGGED_PRODUCT_CAVEAT,
+    REEXPORT_HUB_CAVEAT,
+    not_ranked_message,
+)
 from exportspredictor.explain import UnknownPair, explain_pair
+from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
@@ -72,9 +86,9 @@ from exportspredictor.rankings import (
     MIN_POTENTIAL_USD_OPTIONS,
     RANK_BY,
     rank_opportunities,
-    summarise,
-    summarise_blocked,
+    ranking,
 )
+from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -121,6 +135,23 @@ def create_app(
             artefact_format=artefacts.metadata["artefact_format"],
             baseline_year=artefacts.baseline_year,
             gap_years=list(artefacts.gap_years),
+            gap_period_label=gap_period_label(artefacts.gap_years),
+        )
+
+    @app.get("/labels", response_model=Labels)
+    def labels():
+        """The wording and options the app shows: unit, Opportunity Types, caveats and the last tariff year."""
+        return Labels(
+            usd_caption=USD_CAPTION,
+            usd_unit=USD_UNIT,
+            opportunity_types=list(OPPORTUNITY_TYPES),
+            caveats={
+                "flagged_product": Caveat(badge="Flagged Product", text=FLAGGED_PRODUCT_CAVEAT),
+                "reexport_hub": Caveat(badge="Re-export Hub", text=REEXPORT_HUB_CAVEAT),
+                "uncertain_opportunity": Caveat(badge="Uncertain Opportunity", text=UNCERTAIN_OPPORTUNITY_CAVEAT),
+            },
+            last_tariff_year=LAST_TRAINS_YEAR,
+            tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
         )
 
     @app.get("/products", response_model=list[ProductMatch])
@@ -157,30 +188,15 @@ def create_app(
     @app.get("/opportunities/top", response_model=Leaderboard)
     def top(query: Annotated[LeaderboardQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
         """The Leaderboard: every UK Product–Market pair ranked, with a summary of the filtered pairs."""
-        if query.market is not None:
-            _market(artefacts, query.market)
-        rows = _ranked(artefacts, query.model_copy(update={"limit": None}), iso3=query.market)
-        shown = rows if query.limit is None else rows.head(query.limit)
-        return Leaderboard(
-            **_metadata(artefacts),
-            rank_by=query.rank_by,
-            summary=LeaderboardSummary(**summarise(rows)),
-            opportunities=[_pick(LeaderboardOpportunity, row) for row in shown.iter_rows(named=True)],
-        )
+        return Leaderboard(**_leaderboard(artefacts, query, LeaderboardSummary), rank_by=query.rank_by)
 
     @app.get("/opportunities/blocked", response_model=BlockedOpportunities)
     def blocked(query: Annotated[BlockedQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
         """The Blocked Opportunities page: every UK pair ranked by Blocked Opportunity value, with a summary."""
-        if query.market is not None:
-            _market(artefacts, query.market)
-        rows = _ranked(artefacts, query.model_copy(update={"limit": None}), iso3=query.market)
-        shown = rows if query.limit is None else rows.head(query.limit)
         return BlockedOpportunities(
-            **_metadata(artefacts),
+            **_leaderboard(artefacts, query, BlockedSummary),
             rank_by=BLOCKED.name,
             order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
-            summary=BlockedSummary(**summarise_blocked(rows)),
-            opportunities=[_pick(LeaderboardOpportunity, row) for row in shown.iter_rows(named=True)],
         )
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
@@ -208,7 +224,7 @@ def create_app(
             **served,
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
-            limitations=LIMITATIONS,
+            limitations=known_limitations(artefacts),
         )
 
     @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)
@@ -232,13 +248,19 @@ def create_app(
                 "reexport_hub",
                 "potential_range_low_usd",
                 "potential_range_high_usd",
-                "uncertain",
+                "uncertain_opportunity",
             )
             .row(0, named=True)
         )
         return Explanation(
             **_metadata(artefacts),
             **values,
+            potential_range_text=potential_range_text(
+                values["potential_range_low_usd"],
+                values["potential_range_high_usd"],
+                values["actual_exports_usd"],
+                uncertain=values["uncertain_opportunity"],
+            ),
             product=product,
             market=market,
             fold=explanation.fold,
@@ -298,13 +320,9 @@ def _product(artefacts: store.Artefacts, hs6: str) -> ProductOut:
     found = artefacts.products.filter(pl.col("hs6") == hs6)
     if found.is_empty():
         raise HTTPException(status_code=404, detail=f"Unknown Product: {hs6}")
-    excluded = artefacts.excluded_products.filter(pl.col("hs6") == hs6)
-    if not excluded.is_empty():
-        row = excluded.row(0, named=True)
-        raise HTTPException(
-            status_code=404,
-            detail=f"{hs6} ({row['description']}) is an Excluded Product, so it is not scored or ranked. {row['reason']}",
-        )
+    reason = not_ranked_message(artefacts.excluded_products, hs6)
+    if reason is not None:
+        raise HTTPException(status_code=404, detail=reason)
     return _pick(ProductOut, found.row(0, named=True))
 
 
@@ -322,31 +340,41 @@ def _metadata(artefacts: store.Artefacts) -> dict:
         "artefact_version": artefacts.version,
         "baseline_year": artefacts.baseline_year,
         "gap_years": list(artefacts.gap_years),
+        "gap_period_label": gap_period_label(artefacts.gap_years),
     }
 
 
-def _ranked(artefacts: store.Artefacts, query: RankingQuery, **subject) -> pl.DataFrame:
-    """The rows of a ranking query: the package's `rank_opportunities` with the query's filters."""
-    return rank_opportunities(
-        artefacts,
-        **subject,
-        sector=query.sector,
-        region=query.region,
-        opportunity_type=query.opportunity_type,
-        min_gap_usd=query.min_gap_usd,
-        trade_agreement=query.trade_agreement,
-        hide_flagged=query.hide_flagged,
-        hide_hubs=query.hide_hubs,
-        hide_uncertain=query.hide_uncertain,
-        rank_by=query.rank_by,
-        min_potential_usd=query.min_potential_usd,
-        limit=query.limit,
-    )
+def _filters(query: RankingQuery) -> dict:
+    """The package's `rank_opportunities` arguments for a ranking query's filters and order."""
+    return {
+        "sector": query.sector,
+        "region": query.region,
+        "opportunity_type": query.opportunity_type,
+        "min_gap_usd": query.min_gap_usd,
+        "trade_agreement": query.trade_agreement,
+        "hide_flagged": query.hide_flagged,
+        "hide_hubs": query.hide_hubs,
+        "hide_uncertain": query.hide_uncertain,
+        "rank_by": query.rank_by,
+        "min_potential_usd": query.min_potential_usd,
+    }
+
+
+def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, summary_model: type[BaseModel]) -> dict:
+    """The fields the Leaderboard and the Blocked Opportunities page share: metadata, summary and top rows."""
+    if query.market is not None:
+        _market(artefacts, query.market)
+    ranked = ranking(artefacts, iso3=query.market, limit=query.limit, **_filters(query))
+    return {
+        **_metadata(artefacts),
+        "summary": summary_model(**ranked.summary),
+        "opportunities": [_pick(LeaderboardOpportunity, row) for row in ranked.rows.iter_rows(named=True)],
+    }
 
 
 def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:
     """The fields the by-Product and by-Market views share: metadata and the ranked rows."""
-    rows = _ranked(artefacts, query, **subject)
+    rows = rank_opportunities(artefacts, **subject, **_filters(query), limit=query.limit)
     return {
         **_metadata(artefacts),
         "rank_by": query.rank_by,

@@ -115,7 +115,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 **Blocked Opportunities**
 - [ ] Open Blocked Opportunities from the sidebar: every UK pair is ranked by Blocked Opportunity value, largest first, with no "Rank by" toggle; the Leaderboard and ranking pages no longer offer that order.
 - [ ] Pairs with a Market that has a UK Trade Agreement in force (e.g. Japan) have a value of 0; rows clearing 20% and $1M are marked as Blocked Opportunities.
-- [ ] The summary shows the number of pairs, the number of Blocked Opportunities and their total value; all three change with the filters.
+- [ ] The summary shows the number of pairs, the number of Blocked Opportunities and the total value of those Blocked Opportunities (not of every pair); all three change with the filters. No pair has a negative value: an added agreement never lowers Export Potential.
 - [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
 - [ ] Every caption describes the value as what the model associates with adding a Trade Agreement, not as a cause or a forecast.
 - [ ] Export the table to CSV and open it: the columns and rows match the table on screen.
@@ -143,6 +143,6 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
 - [ ] "Observed against carried-forward tariffs" splits the test rows by Applied Tariff (observed, carried forward from 2021) for both scopes, with a sentence saying how they split (on 2023 every row is carried forward).
 - [ ] The stability sentence renders, followed by the Potential Range's held-out coverage against its 80% target and a coverage table per Exporter.
-- [ ] The known-limitations panel (goods only, tariffs carried forward from 2021, Excluded Products, the top-100 Exporter scope, nominal US dollars, what the Potential Range assumes, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) renders, with no "no tariffs" entry.
+- [ ] The known-limitations panel (the result limitations such as "Does not beat a naive ranking for UK pairs" when it does not, the Potential Range's fixed width in dollars, goods only, tariffs carried forward from 2021, Excluded Products, the top-100 Exporter scope, nominal US dollars, what the Potential Range assumes, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) renders, with no "no tariffs" entry.
 - [ ] The Lift section states how many times more often the largest Export Gaps grew, with a 95% interval, worded as a tendency, shows size-matched Lift next to raw Lift with the explanation that raw Lift mostly reflects pair size, and shows the growth share for each tenth of Export Gaps.
 - [ ] The Event Backtest shows, for EU exports to Japan and Japan's exports to the EU, a table of predicted against observed change per year, names the control Markets, says the Applied Tariff is 0 with the agreement on and the MFN rate with it off, and states the COVID caveat; the UK–Australia/New Zealand secondary check follows.

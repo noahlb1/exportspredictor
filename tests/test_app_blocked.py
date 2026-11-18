@@ -60,7 +60,9 @@ def test_the_page_ranks_every_uk_pair_by_blocked_opportunity_value(monkeypatch, 
     assert "rank_by" not in {radio.key for radio in page.radio}
     metrics = _metrics(page)
     assert metrics["Product–Market pairs"] == "20"
-    assert metrics["Total Blocked Opportunity value"] == f"${sum(values) / 1e3:,.1f}k"
+    # The total covers the Blocked Opportunities only; the fixture's values are under the $1M threshold.
+    blocked_total = table.loc[table["Blocked Opportunity"], VALUE].sum()
+    assert blocked_total == 0 and metrics["Total Blocked Opportunity value"] == "$0"
     assert metrics["Blocked Opportunities"] == str(int(table["Blocked Opportunity"].sum()))
 
 

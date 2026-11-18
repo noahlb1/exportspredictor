@@ -18,10 +18,14 @@ from pathlib import Path
 import polars as pl
 
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.currency import format_usd
-from exportspredictor.evaluation import LIMITATIONS
+from exportspredictor.evaluation import (
+    LIMITATIONS,
+    range_limitations,
+    result_limitations,
+)
 from exportspredictor.paths import data_dir
 from exportspredictor.ppml import LITERATURE
+from exportspredictor.wording import number_text, rate_text, years_text
 
 OWNER = "UNASSIGNED"
 MODEL_CARD_FILE = "model_card.md"
@@ -179,8 +183,8 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
         "v1_comparison": _comparison_summary(report.get("v1_comparison")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
         "limitations": [
-            *_result_limitations(metadata, report), *_benchmark_limitations(gravity_benchmark),
-            *_range_limitations(artefacts.potential_range_bands), *LIMITATIONS,
+            *result_limitations(metadata, report), *_benchmark_limitations(gravity_benchmark),
+            *range_limitations(artefacts.potential_range_bands), *LIMITATIONS,
         ],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
@@ -191,9 +195,9 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
 def _model_summary(metadata: dict) -> str:
     params = metadata.get("params", {})
     return (
-        f"XGBoost, Tweedie objective (variance power {_f(params.get('tweedie_variance_power'), '.2f')}), depth "
-        f"{params.get('max_depth', '?')}, {_f(metadata.get('rounds'), ',')} rounds; {metadata.get('n_folds', '?')} "
-        f"out-of-fold models trained on {_years(metadata.get('training_years'))}, scoring the "
+        f"XGBoost, Tweedie objective (variance power {number_text(params.get('tweedie_variance_power'), '.2f')}), depth "
+        f"{params.get('max_depth', '?')}, {number_text(metadata.get('rounds'), ',')} rounds; {metadata.get('n_folds', '?')} "
+        f"out-of-fold models trained on {years_text(metadata.get('training_years'))}, scoring the "
         f"{metadata.get('baseline_year', '?')} Baseline. Source: {metadata.get('source', '?')}."
     )
 
@@ -207,8 +211,8 @@ def _training_scope(metadata: dict) -> dict:
     text = (
         f"The models train on Flows and Zero Cells of {len(scope)} Exporters (the top economies by mean GDP, the "
         f"UK {'included' if 'GBR' in scope else 'NOT included'}) into every Market. Every UK row is kept, with "
-        f"{_f(uk_zeros, '.0%')} of UK Zero Cells. Other Exporters' Zero Cells are kept at {_rate(zeros)}, and their "
-        f"rows are then kept at {_rate(non_uk)}; each sampled row is weighted by the inverse of its rate "
+        f"{number_text(uk_zeros, '.0%')} of UK Zero Cells. Other Exporters' Zero Cells are kept at {rate_text(zeros)}, and their "
+        f"rows are then kept at {rate_text(non_uk)}; each sampled row is weighted by the inverse of its rate "
         f"(Horvitz–Thompson), so weighted totals stay unbiased."
     )
     return {
@@ -239,24 +243,25 @@ def _excluded_products(table: pl.DataFrame) -> list[dict]:
     return [{"reason": row["reason"], "products": row["hs6"]} for row in groups.iter_rows(named=True)]
 
 
-def _rate(rate) -> str:
-    """A sampling rate as a percentage, with a decimal only where it matters (58.9%, 5%)."""
-    if rate is None:
-        return "an unrecorded rate"
-    return f"{rate:.0%}" if round(rate * 100, 1) == round(rate * 100) else f"{rate:.1%}"
+# The row budget spec #39 planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
+SPEC_ROW_BUDGET_M = 110
 
 
 def _sampling_decision(metadata: dict) -> tuple[str, str]:
     scope = _training_scope(metadata)
+    budget = metadata.get("row_budget")
+    measured = (
+        f" The budget measured on the RTX 3080 (`scripts/gpu_check.py`) is {budget:,} rows, about "
+        f"{1 - budget / (SPEC_ROW_BUDGET_M * 1e6):.0%} below the about {SPEC_ROW_BUDGET_M} M rows the spec planned "
+        "around, so the non-UK rate is lower than planned."
+        if budget
+        else ""
+    )
     return (
         f"Train on {scope['exporters']} Exporters into every Market, keeping every UK row (ADR 0004)",
         (f"The full HS6 world does not fit the GPU's 10 GB. {scope['text']} The non-UK rate is the largest the "
-         "VRAM row budget allows, because the learning curve was still falling at the highest rate tried."),
+         f"VRAM row budget allows, because the learning curve was still falling at the highest rate tried.{measured}"),
     )
-
-
-def _years(years) -> str:
-    return f"{min(years)}–{max(years)}" if years else "?"
 
 
 def _metrics(report: dict) -> list[dict]:
@@ -312,48 +317,7 @@ def _comparison_summary(block: dict | None) -> dict | None:
 def _ci(interval, *, percent: bool = False) -> str:
     low, high = interval or (None, None)
     spec = "+.0%" if percent else ".2f"
-    return f"{_f(low, spec)} to {_f(high, spec)}"
-
-
-def _f(value, spec: str) -> str:
-    """Format a number that may be missing (tiny fixture worlds leave some results undefined)."""
-    return "n/a" if value is None or (isinstance(value, float) and math.isnan(value)) else format(value, spec)
-
-
-def _result_limitations(metadata: dict, report: dict) -> list[dict]:
-    limits = []
-    headline = report.get("headline")
-    if headline and headline.get("beats_naive") is False:
-        limits.append({"title": "Does not beat a naive ranking for UK pairs",
-                       "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
-                       f"{_f(headline['model'], '.2f')}, against {_f(headline['naive'], '.2f')} for the UK's market share "
-                       f"times each Market's imports: on the headline measure it does not beat that naive rule. Its "
-                       f"value is in the size of Export Potential (a much lower deviance), not in the order of Markets."})
-    elif headline:
-        limits.append({"title": "Only slightly better than a naive ranking for UK pairs",
-                       "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
-                       f"{_f(headline['model'], '.2f')}, against {_f(headline['naive'], '.2f')} for the UK's market share times "
-                       f"each Market's imports. Its value is mostly in the size of Export Potential, not its order."})
-    lift = report.get("lift")
-    if lift:
-        limits.append({"title": "Large Export Gaps mostly mark large pairs",
-                       "text": f"Lift is {_f(lift['lift'], '.1f')}, but against pairs of similar Export Potential it is "
-                       f"{_f(lift['size_matched']['lift'], '.2f')}: an Opportunity is worth a look, not more likely to grow "
-                       f"than its peers of the same size."})
-    events = report.get("event_backtest", {}).get("events", [])
-    if events:
-        pooled = events[0]["directions"][0]["pooled"]
-        limits.append({"title": "Scenario Effects are larger than observed changes",
-                       "text": f"For {events[0]['title'][0].lower() + events[0]['title'][1:]}, the model associated the agreement with "
-                       f"{_f(pooled['predicted'], '+.0%')}, against an observed {_f(pooled['observed'], '+.0%')}. Read Scenario "
-                       f"Effects as an upper-end association."})
-    rate = metadata.get("non_uk_sampling_rate")
-    if rate is not None:
-        limits.append({"title": "Trained on a sample of other Exporters' Flows",
-                       "text": f"The models train on every UK row but a reweighted {_rate(rate)} sample of other "
-                       f"Exporters' rows (and {_rate(metadata.get('zero_sampling_rate'))} of their Zero Cells), to fit "
-                       f"the GPU's memory. Unbiased, but noisier than training on all rows."})
-    return limits
+    return f"{number_text(low, spec)} to {number_text(high, spec)}"
 
 
 # A per-Exporter coverage more than this far from the target is reported as too wide or too narrow.
@@ -404,7 +368,7 @@ def _range_review_lines(review: dict | None) -> list[str]:
         return ["The artefact holds no Potential Range coverage by Exporter."]
     tolerance = f"{RANGE_COVERAGE_TOLERANCE * 100:.0f} percentage points"
     lines = [(
-        f"On a held-out half of the calibration rows, {_f(review['coverage'], '.0%')} of Actual Exports fell inside "
+        f"On a held-out half of the calibration rows, {number_text(review['coverage'], '.0%')} of Actual Exports fell inside "
         f"their Potential Range (target {review['target']:.0%}). Per Exporter, {review['near_target']} of "
         f"{review['exporters']} are within {tolerance} of the target; the lowest is "
         f"{review['lowest']['exporter']} at {review['lowest']['coverage']:.0%}."
@@ -441,23 +405,6 @@ def _benchmark_limitations(benchmark: dict | None) -> list[dict]:
 
 def _signed_pct(value: float) -> str:
     return f"{value:+.1f}%".replace("-", "−")
-
-
-def _range_limitations(bands: pl.DataFrame) -> list[dict]:
-    """The Potential Range's offsets are dollars per band, so the top band gives every large pair one width."""
-    if bands.is_empty():
-        return []
-    top = bands.sort("min_export_potential_usd").row(-1, named=True)
-    width = top["high_offset_usd"] - top["low_offset_usd"]
-    return [{
-        "title": "The Potential Range is a fixed width in dollars",
-        "text": f"Its offsets are fixed amounts of dollars within each band of Export Potential (ADR 0007), so every "
-        f"pair in the top band, from {format_usd(top['min_export_potential_usd'])} of Export Potential upwards, gets "
-        f"the same range, {format_usd(width)} wide, whatever its size. For a large pair that range is a sliver, and "
-        f"it is an Uncertain Opportunity only when its Export Gap is under the band's lower offset, "
-        f"{format_usd(-top['low_offset_usd'])}. Read the badge on large pairs as \"a small gap for its size\", "
-        f"not as a measure of how sure the model is. A relative (log-scale) range is a candidate for a later version.",
-    }]
 
 
 def render_model_card(card: dict) -> str:
@@ -506,16 +453,16 @@ def _comparison_lines(summary: dict | None) -> list[str]:
         f"**Verdict.** {summary['verdict']}",
         "",
         (
-            f"Primary metric ({primary['label']}): v1 {_f(primary['v1'], '.3f')}, v2 {_f(primary['v2'], '.3f')}, "
-            f"naive {_f(primary['naive'], '.3f')}; v2 − v1 {_f(primary['difference'], '+.3f')} (95% interval "
-            f"{_f(primary['ci'][0], '+.3f')} to {_f(primary['ci'][1], '+.3f')})."
+            f"Primary metric ({primary['label']}): v1 {number_text(primary['v1'], '.3f')}, v2 {number_text(primary['v2'], '.3f')}, "
+            f"naive {number_text(primary['naive'], '.3f')}; v2 − v1 {number_text(primary['difference'], '+.3f')} (95% interval "
+            f"{number_text(primary['ci'][0], '+.3f')} to {number_text(primary['ci'][1], '+.3f')})."
         ),
     ]
     if summary["ladder"]:
         lines += ["", "Gain ladder (change in the primary metric at each cumulative step):", ""]
         lines += [
-            f"- {step['from']} → {step['to']} ({step['label']}): {_f(step['change'], '+.3f')} (95% interval "
-            f"{_f(step['ci'][0], '+.3f')} to {_f(step['ci'][1], '+.3f')})"
+            f"- {step['from']} → {step['to']} ({step['label']}): {number_text(step['change'], '+.3f')} (95% interval "
+            f"{number_text(step['ci'][0], '+.3f')} to {number_text(step['ci'][1], '+.3f')})"
             for step in summary["ladder"]
         ]
         lines += ["", summary["ladder_note"]]
@@ -523,11 +470,9 @@ def _comparison_lines(summary: dict | None) -> list[str]:
 
 
 def _number(value, percent: bool = False) -> str:
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return "–"
     if percent:
-        return f"{value:+.0%}"
-    return f"{value:,.0f}" if abs(value) >= 100 else f"{value:.2f}"
+        return number_text(value, "+.0%")
+    return number_text(value, ",.0f" if value is not None and abs(value) >= 100 else ".2f")
 
 
 def write_model_card(artefacts: Artefacts, folder: Path, *, gravity_benchmark: dict | None = None) -> Path:

@@ -8,16 +8,15 @@ Leaderboard's filters, summary and table, with one fixed order, and reads the AP
 import streamlit as st
 
 from app import client
+from app.format import format_usd
 from app.ui import (
+    ROWS_SHOWN,
     banner,
     excluded_products_list,
     fetch,
     ranking_filters,
-    show_ranking,
+    show_leaderboard,
 )
-from exportspredictor.currency import format_usd
-
-ROWS_SHOWN = 500  # the top of the ranking sent to the page; the summary covers every filtered pair
 
 st.title("Blocked Opportunities")
 if banner() is not None:
@@ -39,7 +38,7 @@ if banner() is not None:
         pairs_column, count_column, value_column = st.columns(3)
         pairs_column.metric("Product–Market pairs", f"{summary['pairs']:,}")
         count_column.metric("Blocked Opportunities", f"{summary['blocked_opportunities']:,}")
-        value_column.metric("Total Blocked Opportunity value", format_usd(summary["blocked_effect_usd"]))
+        value_column.metric("Total Blocked Opportunity value", format_usd(summary["blocked_opportunity_value_usd"]))
         st.caption(
             f"The Blocked Opportunity value is the change in {body['baseline_year']} Export Potential the model "
             "associates with adding a UK Trade Agreement and removing the tariff where no agreement is in force; "
@@ -48,8 +47,4 @@ if banner() is not None:
             f"{body['baseline_year']} Export Potential and at least {format_usd(thresholds['min_effect_usd'])}. "
             "Try other agreements and thresholds on the Scenarios page."
         )
-        if summary["pairs"] > len(body["opportunities"]):
-            st.caption(f"Showing the top {len(body['opportunities']):,} of {summary['pairs']:,} pairs.")
-        st.caption("Open **Why?** on a row to see which factors raised or lowered its Export Potential.")
-        columns = {"hs6": "HS6", "description": "Product", "sector": "Sector", "market": "Market", "region": "Region"}
-        show_ranking(body, columns, file_name="blocked_opportunities")
+        show_leaderboard(body, file_name="blocked_opportunities")

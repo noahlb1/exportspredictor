@@ -11,6 +11,7 @@ from exportspredictor.exclusions import (
     exclusion_reason,
     flag_columns,
     is_flagged_product,
+    not_ranked_message,
 )
 
 
@@ -84,6 +85,17 @@ def test_the_excluded_products_table_lists_each_one_with_its_reason():
     assert table.columns == ["hs6", "description", "sector", "reason"]
     assert table["hs6"].to_list() == ["270900", "710812"]
     assert table["reason"].to_list() == [exclusion_reason("270900"), exclusion_reason("710812")]
+
+
+def test_an_excluded_product_is_not_ranked_with_its_reason_named():
+    table = pl.DataFrame(
+        {"hs6": ["270900"], "description": ["Crude oil"], "sector": ["27"], "reason": ["Pipelines."]}
+    )
+
+    assert not_ranked_message(table, "270900") == (
+        "270900 (Crude oil) is an Excluded Product, so it is not scored or ranked. Pipelines."
+    )
+    assert not_ranked_message(table, "220830") is None
 
 
 # --- Flagged Products and Re-export Hubs: scored as normal, shown with a caveat ------------

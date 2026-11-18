@@ -12,7 +12,7 @@ from streamlit.testing.v1 import AppTest
 from app import client
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
-SCENARIOS = APP_DIR / "pages" / "3_Scenarios.py"
+SCENARIOS = APP_DIR / "pages" / "4_Scenarios.py"
 PRODUCT_TO_MARKETS = APP_DIR / "pages" / "1_Product_to_Markets.py"
 
 

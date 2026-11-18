@@ -58,7 +58,7 @@ DEFAULT_RANK_BY = "gap"
 # pages do not offer it: Blocked Opportunities show no Export Gap and have their own page.
 BLOCKED = RankOrder(
     "blocked",
-    "blocked_effect_usd",
+    "blocked_opportunity_value_usd",
     "Blocked Opportunity value",
     "The Scenario Effect the model associates with adding a Trade Agreement and removing the tariff where no "
     f"agreement exists (0 where one does). Flagged rows clear {DEFAULT_MIN_SHARE:.0%} of Baseline Export Potential "
@@ -128,7 +128,7 @@ def rank_opportunities(
     if hide_hubs:
         rows = rows.filter(~pl.col("reexport_hub"))
     if hide_uncertain:
-        rows = rows.filter(~pl.col("uncertain"))
+        rows = rows.filter(~pl.col("uncertain_opportunity"))
     if order.min_potential:
         floor = DEFAULT_MIN_POTENTIAL_USD if min_potential_usd is None else min_potential_usd
         rows = rows.filter((pl.col("export_potential_usd") >= floor) & pl.col(order.column).is_not_null())
@@ -143,7 +143,7 @@ def rank_opportunities(
     return (
         rows.join(artefacts.products, on="hs6", how="left", maintain_order="left")
         .join(artefacts.markets.rename({"name": "market"}), on="iso3", how="left", maintain_order="left")
-        .with_columns(blocked_opportunity=is_blocked("blocked_effect_usd", "baseline_export_potential_usd"))
+        .with_columns(blocked_opportunity=is_blocked("blocked_opportunity_value_usd", "baseline_export_potential_usd"))
     )
 
 
@@ -156,9 +156,29 @@ def summarise(rows: pl.DataFrame) -> dict:
 
 
 def summarise_blocked(rows: pl.DataFrame) -> dict:
-    """The Blocked Opportunities page's summary: `summarise`, plus the Blocked Opportunities and total value (USD)."""
+    """The Blocked Opportunities page's summary: `summarise`, plus the Blocked Opportunities and their total value (USD).
+
+    The total sums the Blocked Opportunity values of the Blocked Opportunities only, not of
+    every filtered pair: most pairs without a Trade Agreement have a small value below the thresholds.
+    """
+    blocked = rows.filter("blocked_opportunity")
     return {
         **summarise(rows),
-        "blocked_opportunities": int(rows["blocked_opportunity"].sum()),
-        "blocked_effect_usd": float(rows["blocked_effect_usd"].sum()),
+        "blocked_opportunities": blocked.height,
+        "blocked_opportunity_value_usd": float(blocked["blocked_opportunity_value_usd"].sum()),
     }
+
+
+@dataclass(frozen=True)
+class Ranking:
+    """A ranking with its summary: the Leaderboard's and the Blocked Opportunities page's answer."""
+
+    rows: pl.DataFrame  # the top `limit` rows, as `rank_opportunities` returns them
+    summary: dict  # `summarise` (`summarise_blocked` for the `BLOCKED` order) over every filtered pair
+
+
+def ranking(artefacts: Artefacts, *, limit: int | None = None, **filters) -> Ranking:
+    """`rank_opportunities` with `filters`, summarised over every filtered pair, then cut to the top `limit` rows."""
+    rows = rank_opportunities(artefacts, **filters)
+    summary = summarise_blocked if filters.get("rank_by") == BLOCKED.name else summarise
+    return Ranking(rows=rows if limit is None else rows.head(limit), summary=summary(rows))

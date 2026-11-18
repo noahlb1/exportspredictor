@@ -116,7 +116,7 @@ def test_the_models_trade_agreement_effect_is_measured_on_pairs_without_one():
             "hs6": ["220830", "220830", "870323", "870323"],
             "iso3": ["JPN", "IND", "JPN", "IND"],
             "baseline_export_potential_usd": [100.0, 300.0, 50.0, 1000.0],
-            "blocked_effect_usd": [0.0, 30.0, 0.0, 300.0],
+            "blocked_opportunity_value_usd": [0.0, 30.0, 0.0, 300.0],
         }
     )
     baseline_features = pl.DataFrame(

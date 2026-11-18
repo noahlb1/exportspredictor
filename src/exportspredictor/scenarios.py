@@ -19,14 +19,14 @@ flags, and a bloc Scenario changes only the rows of the bloc's member Markets:
   Union with that bloc's members are switched off.
 
 **Tariffs** (ADR 0006). Adding a Trade Agreement (directly, in a preset or in a Blocked
-Opportunity value) sets the Applied Tariff to 0, and removing one restores the Importer's
+Opportunity value) sets a known Applied Tariff to 0 (an unknown one stays unknown), and removing one restores the Importer's
 2021 MFN rate (`mfn_tariff`), so the model is never asked about an agreement with full
 tariffs, a combination it rarely saw in training. A tariff Scenario sets `ln(1 + t)` for
 the chosen pairs. Every tariff a Scenario sets is clipped to the training range, so the
 Scenario Effect of a very large hike flattens; `ScenarioResult.clipped_pairs` counts them.
 
 **Blocked Opportunities**: pairs whose Scenario Effect is at least `min_share` of their
-Baseline Export Potential and at least `min_usd`. `blocked_effects` precomputes, for every
+Baseline Export Potential and at least `min_usd`. `blocked_opportunity_values` precomputes, for every
 pair without a Trade Agreement, the Scenario Effect of adding one: the value that the
 `rank_by=blocked` rankings sort by.
 
@@ -302,22 +302,19 @@ def run(
     return ScenarioResult(scenario=scenario, pairs=pairs, clipped_pairs=clipped_pairs)
 
 
-def blocked_effects(
+def blocked_opportunity_values(
     baseline_features: pl.DataFrame, baseline: pl.DataFrame, models: Sequence[xgb.Booster]
 ) -> pl.DataFrame:
     """Every pair's Scenario Effect of adding a Trade Agreement where none exists (0 where one does).
 
-    The agreement removes the tariff too, as in every Scenario (ADR 0006). Measured against
-    the Baseline year's Export Potential (`baseline_export_potential_usd`).
+    It is the Scenario that adds a Trade Agreement with every Market, so the agreement removes
+    a known tariff exactly as in every Scenario and leaves an unknown one unknown (ADR 0006).
+    Measured against the Baseline year's Export Potential (`baseline_export_potential_usd`).
 
-    Returns hs6, iso3, blocked_effect_usd: the Blocked Opportunity value.
+    Returns hs6, iso3, blocked_opportunity_value_usd: the Blocked Opportunity value.
     """
-    without = baseline_features.filter(pl.col("trade_agreement") == 0)
-    added = without.with_columns(
-        pl.lit(1, without.schema["trade_agreement"]).alias("trade_agreement"),
-        pl.lit(0.0, without.schema[TARIFF]).alias(TARIFF),
-    )
-    check_only_policy_changed(baseline_features, added)
+    every_market = Scenario(add_agreements=tuple(baseline_features["iso3"].unique().sort()))
+    added = apply(baseline_features, every_market)
     effects = added.select("hs6", "iso3").with_columns(scenario=predict(added, models))
     return (
         baseline.select("hs6", "iso3", "baseline_export_potential_usd")
@@ -325,17 +322,17 @@ def blocked_effects(
         .select(
             "hs6",
             "iso3",
-            blocked_effect_usd=pl.when(pl.col("scenario").is_null())
+            blocked_opportunity_value_usd=pl.when(pl.col("scenario").is_null())
             .then(0.0)
             .otherwise(pl.col("scenario") - pl.col("baseline_export_potential_usd")),
         )
     )
 
 
-def with_blocked_effects(baseline: pl.DataFrame, effects: pl.DataFrame) -> pl.DataFrame:
-    """The Baseline table with its `blocked_effect_usd` column (replaced if already there)."""
-    return baseline.drop("blocked_effect_usd", strict=False).join(
-        effects.select("hs6", "iso3", "blocked_effect_usd"), on=["hs6", "iso3"], how="left", maintain_order="left"
+def with_blocked_opportunity_values(baseline: pl.DataFrame, effects: pl.DataFrame) -> pl.DataFrame:
+    """The Baseline table with its `blocked_opportunity_value_usd` column (replaced if already there)."""
+    return baseline.drop("blocked_opportunity_value_usd", strict=False).join(
+        effects.select("hs6", "iso3", "blocked_opportunity_value_usd"), on=["hs6", "iso3"], how="left", maintain_order="left"
     )
 
 
@@ -386,7 +383,11 @@ def check_only_policy_changed(before: pl.DataFrame, after: pl.DataFrame) -> None
 
 
 _ON, _OFF = pl.lit(1), pl.lit(0)
-_NO_TARIFF = pl.lit(0.0)
+# The Applied Tariff under an added Trade Agreement: 0 where the tariff is known (observed or
+# carried forward), and still unknown (null) where it is unknown. A missing tariff is not a
+# rate, so removing it is no defined policy change; and XGBoost's monotone constraints do not
+# cover the missing-value branch, so setting it to 0 could lower a prediction (ADR 0006).
+AGREEMENT_TARIFF = pl.when(pl.col(TARIFF).is_not_null()).then(pl.lit(0.0))
 # The Importer's 2021 MFN rate, never below the current tariff (MFN is the ceiling of the
 # rates an agreement grants). Where the MFN rate is unknown, the current tariff stays.
 _MFN_TARIFF = pl.max_horizontal(pl.col(TARIFF), (pl.col("mfn_tariff") / 100).log1p())
@@ -408,7 +409,7 @@ def _changes(rows: pl.DataFrame, scenario: Scenario) -> list[tuple[str, pl.Expr,
         add = pl.col("iso3").is_in(list(scenario.add_agreements))
         remove = pl.col("iso3").is_in(list(scenario.remove_agreements))
         return [
-            (TARIFF, add & (pl.col("trade_agreement") == 0), _NO_TARIFF),
+            (TARIFF, add & (pl.col("trade_agreement") == 0), AGREEMENT_TARIFF),
             (TARIFF, remove & _has_agreement(), _MFN_TARIFF),
             ("trade_agreement", add, _ON),
             ("trade_agreement", remove, _OFF),
@@ -417,15 +418,15 @@ def _changes(rows: pl.DataFrame, scenario: Scenario) -> list[tuple[str, pl.Expr,
         ]
     if scenario.preset == "eu_rejoin":
         eu = pl.col("eu_d") == 1
-        return [(TARIFF, eu, _NO_TARIFF), ("trade_agreement", eu, _ON), ("customs_union", eu, _ON), ("eu_o", eu, _ON)]
+        return [(TARIFF, eu, AGREEMENT_TARIFF), ("trade_agreement", eu, _ON), ("customs_union", eu, _ON), ("eu_o", eu, _ON)]
     if scenario.preset == "eu_customs_union":
         # Customs Union pairs trade tariff-free in training (ADR 0006).
         eu = pl.col("eu_d") == 1
-        return [(TARIFF, eu, _NO_TARIFF), ("customs_union", eu, _ON)]
+        return [(TARIFF, eu, AGREEMENT_TARIFF), ("customs_union", eu, _ON)]
     if scenario.preset == "cptpp":
         cptpp = pl.col("cptpp_d") == 1
         new = cptpp & (pl.col("trade_agreement") == 0)
-        return [(TARIFF, new, _NO_TARIFF), ("trade_agreement", cptpp, _ON), ("cptpp_o", cptpp, _ON)]
+        return [(TARIFF, new, AGREEMENT_TARIFF), ("trade_agreement", cptpp, _ON), ("cptpp_o", cptpp, _ON)]
     # Leave: every bloc the UK belongs to in the Baseline year, every bloc's tariffs first.
     blocs = {bloc: pl.col(f"{bloc}_d") == 1 for bloc in _uk_blocs(rows)}
     tariffs = [(TARIFF, members & _has_agreement(), _MFN_TARIFF) for members in blocs.values()]
@@ -454,7 +455,7 @@ def _sectors(rows: pl.DataFrame) -> list[str]:
 
 
 def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
-    """Recompute `blocked_effect_usd` from the newest artefact's saved fold models.
+    """Recompute `blocked_opportunity_value_usd` from the newest artefact's saved fold models.
 
     Writes a new artefact version (models and tables copied) and returns its folder, so
     this step re-runs on its own without retraining. Nothing is trained here.
@@ -463,14 +464,14 @@ def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
 
     source = store.load_latest(root)
     started = time.perf_counter()
-    effects = blocked_effects(source.baseline_features, source.baseline, source.fold_models)
+    effects = blocked_opportunity_values(source.baseline_features, source.baseline, source.fold_models)
     metadata = {
         **source.metadata,
         "version": version or store.new_version(),
         "blocked_values_from": source.version,
         "blocked_values_seconds": round(time.perf_counter() - started, 2),
     }
-    rebuilt = replace(source, metadata=metadata, baseline=with_blocked_effects(source.baseline, effects))
+    rebuilt = replace(source, metadata=metadata, baseline=with_blocked_opportunity_values(source.baseline, effects))
     return store.save(rebuilt, root)
 
 

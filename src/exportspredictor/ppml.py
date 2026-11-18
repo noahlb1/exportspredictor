@@ -152,7 +152,7 @@ def real_sector_flows(root: Path | None = None, *, years: Sequence[int] = YEARS)
 def model_agreement_effect(baseline: pl.DataFrame, baseline_features: pl.DataFrame) -> dict:
     """The model's mean Trade Agreement Scenario Effect over every UK pair without an agreement.
 
-    Read from the saved Blocked Opportunity values (`blocked_effect_usd`, scored out-of-fold,
+    Read from the saved Blocked Opportunity values (`blocked_opportunity_value_usd`, scored out-of-fold,
     ADR 0001): a Trade Agreement added, with the tariff removed as every Scenario does
     (ADR 0006), against the 2024 Baseline Export Potential. `effect_pct` weights pairs by their
     Baseline, as PPML weights pairs by their Flows; the per-pair mean and median weight each
@@ -161,12 +161,12 @@ def model_agreement_effect(baseline: pl.DataFrame, baseline_features: pl.DataFra
     pairs = (
         baseline_features.filter(pl.col("trade_agreement") == 0)
         .select("hs6", "iso3")
-        .join(baseline.select("hs6", "iso3", "baseline_export_potential_usd", "blocked_effect_usd"), on=["hs6", "iso3"])
+        .join(baseline.select("hs6", "iso3", "baseline_export_potential_usd", "blocked_opportunity_value_usd"), on=["hs6", "iso3"])
         .filter(pl.col("baseline_export_potential_usd") > 0)
-        .with_columns(pair_pct=pl.col("blocked_effect_usd") / pl.col("baseline_export_potential_usd") * 100)
+        .with_columns(pair_pct=pl.col("blocked_opportunity_value_usd") / pl.col("baseline_export_potential_usd") * 100)
     )
     baseline_usd = float(pairs["baseline_export_potential_usd"].sum())
-    effect_usd = float(pairs["blocked_effect_usd"].sum())
+    effect_usd = float(pairs["blocked_opportunity_value_usd"].sum())
     return {
         "pairs": pairs.height,
         "baseline_usd": baseline_usd,

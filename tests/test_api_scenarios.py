@@ -138,7 +138,7 @@ def _blocked_summary(rows: list[dict]) -> dict:
         "pairs": len(rows),
         "positive_export_gap_usd": pytest.approx(sum(max(r["export_gap_usd"], 0) for r in rows)),
         "blocked_opportunities": sum(r["blocked_opportunity"] for r in rows),
-        "blocked_effect_usd": pytest.approx(sum(r["blocked_effect_usd"] for r in rows)),
+        "blocked_opportunity_value_usd": pytest.approx(sum(r["blocked_opportunity_value_usd"] for r in rows if r["blocked_opportunity"])),
     }
 
 
@@ -146,7 +146,7 @@ def test_blocked_ranks_every_uk_pair_by_blocked_opportunity_value_with_a_summary
     body = _blocked(client)
 
     rows = body["opportunities"]
-    values = [row["blocked_effect_usd"] for row in rows]
+    values = [row["blocked_opportunity_value_usd"] for row in rows]
     assert len(rows) == 20
     assert values == sorted(values, reverse=True)
     assert values[0] > 0
@@ -170,9 +170,9 @@ def test_blocked_value_is_zero_where_a_trade_agreement_is_in_force(client):
 
     with_agreement = [row for row in rows if row["trade_agreement"]]
     assert {row["iso3"] for row in with_agreement} == {"JPN", "CAN"}
-    assert {row["blocked_effect_usd"] for row in with_agreement} == {0}
+    assert {row["blocked_opportunity_value_usd"] for row in with_agreement} == {0}
     assert not any(row["blocked_opportunity"] for row in with_agreement)
-    assert all(row["blocked_effect_usd"] >= 0 for row in rows)  # monotone: adding an agreement never lowers
+    assert all(row["blocked_opportunity_value_usd"] >= 0 for row in rows)  # monotone: adding an agreement never lowers
 
 
 @pytest.mark.parametrize(
@@ -218,7 +218,7 @@ def test_blocked_value_matches_a_scenario_adding_that_agreement(client):
 
     [india] = ranked
     pair = next(row for row in scenario["top_pairs"] if row["hs6"] == FIXTURE_HS6)
-    assert india["blocked_effect_usd"] == pytest.approx(pair["effect_usd"])
+    assert india["blocked_opportunity_value_usd"] == pytest.approx(pair["effect_usd"])
 
 
 @pytest.mark.parametrize("path", [f"/opportunities/by-product/{FIXTURE_HS6}", "/opportunities/by-market/IND"])

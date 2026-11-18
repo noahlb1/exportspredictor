@@ -153,7 +153,7 @@ def test_an_uncertain_opportunity_is_an_opportunity_whose_actual_exports_lie_ins
     assert ranged["potential_range_low_usd"].to_list() == [60.0] * 5
     assert ranged["potential_range_high_usd"].to_list() == [140.0] * 5
     # Inside and an Opportunity; on the edge; below the range; inside but no Opportunity (twice).
-    assert ranged["uncertain"].to_list() == [True, True, False, False, False]
+    assert ranged["uncertain_opportunity"].to_list() == [True, True, False, False, False]
 
 
 def test_coverage_is_measured_on_a_held_out_half_overall_per_band_and_per_exporter(scored):

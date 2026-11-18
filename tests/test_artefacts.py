@@ -27,6 +27,16 @@ def test_round_trip_keeps_tables_metadata_and_predictions(fixture_artefacts, tmp
         assert after.predict(probe) == pytest.approx(before.predict(probe))
 
 
+def test_an_older_folder_is_read_under_the_glossary_column_names(fixture_artefacts, tmp_path):
+    # The first real format-2 folders named these columns blocked_effect_usd and uncertain.
+    older = fixture_artefacts.baseline.rename(
+        {"blocked_opportunity_value_usd": "blocked_effect_usd", "uncertain_opportunity": "uncertain"}
+    )
+    store.save(replace(fixture_artefacts, baseline=older), tmp_path)
+
+    assert_frame_equal(store.load_latest(tmp_path).baseline, fixture_artefacts.baseline)
+
+
 def test_load_latest_picks_the_newest_version(fixture_artefacts, tmp_path):
     for version in ["20260101T000000Z", "20260301T000000Z", "20260201T000000Z"]:
         store.save(replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "version": version}), tmp_path)

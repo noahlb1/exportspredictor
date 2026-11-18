@@ -31,7 +31,25 @@ def test_health_reports_version_format_baseline_year_and_gap_period_once_loaded(
         "artefact_format": 2,
         "baseline_year": 2024,
         "gap_years": [2022, 2024],
+        "gap_period_label": "2022–2024 average",
     }
+
+
+def test_labels_serve_the_wording_and_options_the_app_shows(client):
+    body = client.get("/labels").json()
+
+    assert body["usd_unit"] == "USD, nominal"
+    assert "nominal US dollars" in body["usd_caption"]
+    assert body["opportunity_types"] == ["Expand", "New Market", "New Product"]
+    assert {field: caveat["badge"] for field, caveat in body["caveats"].items()} == {
+        "flagged_product": "Flagged Product",
+        "reexport_hub": "Re-export Hub",
+        "uncertain_opportunity": "Uncertain Opportunity",
+    }
+    assert all(caveat["text"].startswith(caveat["badge"]) for caveat in body["caveats"].values())
+    # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
+    assert body["last_tariff_year"] == 2021
+    assert "carried forward from 2021" in body["tariff_carried_forward"]
 
 
 def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
@@ -98,13 +116,13 @@ def test_by_product_rows_have_the_documented_shape(client):
         "relative_export_gap",
         "opportunity_type",
         "trade_agreement",
-        "blocked_effect_usd",
+        "blocked_opportunity_value_usd",
         "blocked_opportunity",
         "flagged_product",
         "reexport_hub",
         "potential_range_low_usd",
         "potential_range_high_usd",
-        "uncertain",
+        "uncertain_opportunity",
     }
 
 
@@ -195,6 +213,19 @@ def test_evaluation_returns_the_imputed_observed_split_and_v2s_limitations(clien
             "Values are nominal US dollars", "What the Potential Range assumes"} <= set(titles)
     assert 0 <= body["potential_range"]["coverage"] <= 1
     assert "MFN" in body["event_backtest"]["events"][0]["states"]
+
+
+def test_evaluation_serves_the_limitations_the_artefact_shows(client, fixture_artefacts):
+    body = client.get("/evaluation").json()
+
+    limitations = {item["title"]: item["text"] for item in body["limitations"]}
+    # The Potential Range's fixed dollar width (spec story 44), from the artefact's own bands
+    fixed_width = limitations["The Potential Range is a fixed width in dollars"]
+    assert "Uncertain Opportunity" in fixed_width
+    # and what its results show, as on the model card
+    headline = "Does not beat" if not fixture_artefacts.evaluation["headline"]["beats_naive"] else "Only slightly better"
+    assert any(title.startswith(headline) for title in limitations)
+    assert "Trained on a sample of other Exporters' Flows" in limitations
 
 
 def test_evaluation_is_404_when_the_artefact_has_none(fixture_artefacts, tmp_path):
@@ -360,7 +391,9 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "reexport_hub",
         "potential_range_low_usd",
         "potential_range_high_usd",
-        "uncertain",
+        "uncertain_opportunity",
+        "potential_range_text",
+        "gap_period_label",
         "tariff_caveat",
         "factors",
         "history",
@@ -369,6 +402,8 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
     assert body["market"] == {"iso3": "JPN", "name": "Japan", "region": "East Asia & Pacific"}
     assert set(body["factors"][0]) == {"label", "value_text", "contribution", "multiplier", "direction"}
     assert [point["year"] for point in body["history"]] == sorted(point["year"] for point in body["history"])
+    assert body["potential_range_text"].startswith("**Potential Range ")
+    assert body["gap_period_label"] == "2022–2024 average"
 
 
 def test_explain_describes_relatedness_and_reexports_in_plain_english(client):
@@ -567,7 +602,7 @@ def test_leaderboard_ranks_every_uk_pair_by_export_gap_with_a_summary(client, fi
         fixture_artefacts.baseline.select("hs6", "iso3").iter_rows()
     )
     assert body["rank_by"] == "gap"
-    assert body["gap_years"] == [2022, 2024]
+    assert body["gap_years"] == [2022, 2024] and body["gap_period_label"] == "2022–2024 average"
     assert body["summary"]["pairs"] == 20
     assert body["summary"]["positive_export_gap_usd"] == pytest.approx(sum(gap for gap in gaps if gap > 0))
     assert {"hs6", "description", "sector", "iso3", "market", "region", "opportunity_type"} <= set(rows[0])
@@ -738,9 +773,9 @@ def test_every_ranking_row_has_a_potential_range_from_zero_up_and_flags_uncertai
         low, high = row["potential_range_low_usd"], row["potential_range_high_usd"]
         assert 0 <= low <= high
         inside = low <= row["actual_exports_usd"] <= high
-        assert row["uncertain"] is (row["export_gap_usd"] > 0 and inside)
-    assert any(row["uncertain"] for row in rows)
-    assert not all(row["uncertain"] for row in rows if row["export_gap_usd"] > 0)
+        assert row["uncertain_opportunity"] is (row["export_gap_usd"] > 0 and inside)
+    assert any(row["uncertain_opportunity"] for row in rows)
+    assert not all(row["uncertain_opportunity"] for row in rows if row["export_gap_usd"] > 0)
 
 
 @pytest.mark.parametrize(
@@ -757,7 +792,7 @@ def test_hide_uncertain_is_off_by_default_and_removes_exactly_the_uncertain_rows
     for rank_by in ("gap", "relative"):
         ranked = rows(rank_by=rank_by, min_potential_usd=0)
         assert rows(rank_by=rank_by, min_potential_usd=0, hide_uncertain=True) == [
-            row for row in ranked if not row["uncertain"]
+            row for row in ranked if not row["uncertain_opportunity"]
         ]
 
 
@@ -765,7 +800,7 @@ def test_hide_uncertain_removes_uncertain_opportunities_from_the_leaderboard_sum
     everything, shown = _top(client), _top(client, hide_uncertain=True)
 
     assert shown["summary"]["pairs"] == everything["summary"]["pairs"] - sum(
-        row["uncertain"] for row in everything["opportunities"]
+        row["uncertain_opportunity"] for row in everything["opportunities"]
     )
     assert shown["summary"]["pairs"] < everything["summary"]["pairs"]
 
@@ -773,7 +808,7 @@ def test_hide_uncertain_removes_uncertain_opportunities_from_the_leaderboard_sum
 def test_an_explanation_carries_the_pairs_potential_range_as_its_ranking_row_does(client):
     for row in _ranked(client, "/opportunities/by-market/JPN"):
         body = client.get(f"/explain/{row['hs6']}/JPN").json()
-        for field in ("potential_range_low_usd", "potential_range_high_usd", "uncertain"):
+        for field in ("potential_range_low_usd", "potential_range_high_usd", "uncertain_opportunity"):
             assert body[field] == row[field]
 
 

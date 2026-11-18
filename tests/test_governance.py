@@ -290,3 +290,14 @@ def test_feature_drift_rates_each_feature_with_the_course_thresholds():
 
     assert drift["feature"].to_list() == ["moved", "steady"]  # largest first
     assert drift["status"].to_list() == ["act", "stable"]
+
+
+def test_the_sampling_decision_notes_the_measured_row_budget_against_the_specs_figure(fixture_artefacts):
+    from dataclasses import replace
+
+    measured = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "row_budget": 100_032_198})
+
+    decisions = {row["title"]: row["text"] for row in governance.model_card(measured)["decisions"]}
+    sampling = next(text for title, text in decisions.items() if "keeping every UK row" in title)
+
+    assert "100,032,198" in sampling and "110 M" in sampling

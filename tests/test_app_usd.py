@@ -43,9 +43,10 @@ SHOW = {
     "Home.py": _home,
     "pages/1_Product_to_Markets.py": _product_to_markets,
     "pages/2_Market_to_Products.py": _market_to_products,
-    "pages/3_Scenarios.py": _scenarios,
-    "pages/4_Why.py": _why,
-    "pages/5_Model_Evaluation.py": _home,
+    "pages/3_Blocked_Opportunities.py": _home,
+    "pages/4_Scenarios.py": _scenarios,
+    "pages/5_Why.py": _why,
+    "pages/6_Model_Evaluation.py": _home,
 }
 
 
