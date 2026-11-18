@@ -502,7 +502,6 @@ class Explanation(BaseModel):
     market: MarketOut
     fold: int  # the fold model that held the pair out, scored its Baseline and explains it
     base_value: float  # SHAP base value (log scale)
-    model_form_text: str  # how the served model form makes Export Potential, and how the factors count it
     log_export_potential: float  # base_value + sum of contributions
     export_potential_usd: float  # Gap Period means, as in the rankings
     actual_exports_usd: float
