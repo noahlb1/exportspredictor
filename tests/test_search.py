@@ -82,3 +82,8 @@ def test_killing_and_rerunning_the_search_resumes_the_study(data, tmp_path):
 def test_the_search_never_reads_the_test_year(fixture_world):
     with pytest.raises(experiments.TestYearRead):
         experiments.fixture_data(fixture_world, validation_year=2023)
+
+
+def test_the_round_count_scales_with_the_training_rows():
+    assert search.scaled_rounds(1000, training_rows=120_000_000, tuning_rows=100_000_000) == 1200
+    assert search.scaled_rounds(7, training_rows=110, tuning_rows=100) == 8

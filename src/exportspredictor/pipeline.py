@@ -5,11 +5,12 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 0. **Fit the row budget** (ADR 0004): count the training years' UK and other rows, then
    derive the largest non-UK sampling rate that fits the VRAM row budget, or refuse a
    given rate that does not, before any training.
-1. **Tune** on the validation year (Baseline year − 2, i.e. 2022): one model per
-   hyperparameter configuration, trained on the years before it, with early stopping on
-   it. The test year (Baseline year − 1) is never read here.
+1. **Tune** on the validation year (Baseline year − 2, i.e. 2022) with the hyperparameter
+   search (`search`): the real run reads the saved search, the fixture runs a tiny one.
+   The test year (Baseline year − 1) is never read here.
 2. **Refit** the fold models (ADR 0001) on every year before the Baseline year, with the
-   best configuration and its round count; the feature transform is fitted on the same years.
+   tuned configuration and its early-stopped round count scaled by the ratio of training
+   rows (`search.scaled_rounds`, a heuristic); the feature transform is fitted on the same years.
 3. **Score** every year of the Gap Period (`gap_period`, 2022–2024): each year's UK grid
    (the union of the Gap Period's pairs) out-of-fold, with that year's features. The
    Baseline table holds the Gap Period means and the Baseline year's Export Potential; the
@@ -47,6 +48,7 @@ from exportspredictor import (
     evaluation,
     experiments,
     freeze,
+    search,
 )
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.exclusions import (
@@ -91,27 +93,12 @@ from exportspredictor.training import (
     model_params,
     read_chunk,
     scan_chunks,
-    tune,
 )
 from exportspredictor.training import row_budget as vram_row_budget
 
 # The fixture world has only a few dozen relevant zeros, so it keeps half of them. Real
 # data uses `features.ZERO_SAMPLING_RATE`, chosen in the notebook.
 FIXTURE_ZERO_SAMPLING_RATE = 0.5
-FIXTURE_CONFIGS = [{"max_depth": 2, "eta": 0.3}, {"max_depth": 3, "eta": 0.3}]
-FIXTURE_MAX_ROUNDS = 50
-
-_COMMON = {"eta": 0.1, "subsample": 0.8, "colsample_bytree": 0.8, "min_child_weight": 1}
-# A deliberately small search on the 2022 validation year: tree depth around a middle
-# value, and the Tweedie variance power either side of 1.5.
-REAL_CONFIGS = [
-    {**_COMMON, "max_depth": 8},
-    {**_COMMON, "max_depth": 6},
-    {**_COMMON, "max_depth": 10},
-    {**_COMMON, "max_depth": 8, "tweedie_variance_power": 1.3},
-    {**_COMMON, "max_depth": 8, "tweedie_variance_power": 1.7},
-]
-REAL_MAX_ROUNDS = 1500
 # Share of non-UK training rows kept (reweighted by 1/rate; UK rows are always kept). None
 # derives it: the largest rate whose 2012–2023 rows fit the VRAM row budget (ADR 0004,
 # `training.fit_non_uk_rate`). A given rate is checked against the budget before training.
@@ -172,8 +159,7 @@ def build_artefacts(
     device: str = "cpu",
     source: str = "fixture",
     zero_sampling_rate: float = FIXTURE_ZERO_SAMPLING_RATE,
-    configs: Sequence[dict] = FIXTURE_CONFIGS,
-    max_rounds: int = FIXTURE_MAX_ROUNDS,
+    search_plan: search.SearchPlan = search.FIXTURE_SEARCH,
     seed: int = 0,
     row_budget: int | None = None,
     min_band_rows: int = FIXTURE_MIN_BAND_ROWS,
@@ -182,7 +168,8 @@ def build_artefacts(
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
     `zero_sampling_rate` is the share of other Exporters' Zero Cells kept for training; it
-    is recorded in the metadata. `row_budget` overrides the VRAM row budget.
+    is recorded in the metadata. `row_budget` overrides the VRAM row budget. A tiny
+    hyperparameter search (`search_plan`) tunes on the validation year.
     `min_band_rows` is the Potential Range's minimum band size. `experiment_results` (the
     feature ablation and learning curve, `experiments.run`) are recorded in the metadata.
     """
@@ -203,8 +190,17 @@ def build_artefacts(
         flows,
         sources,
     )
+    validation_year = baseline_year - 2
+    tuning_data = experiments.Data(
+        training={y: rows for y, rows in training.items() if y < validation_year},
+        validation=training[validation_year],
+        grid=build_features(uk_grid(flows.filter(pl.col("year") == validation_year), UK), flows, sources),
+        validation_year=validation_year,
+        built_zero_rate=zero_sampling_rate,
+    )
+    search_results = search.run(tuning_data, tuning_data, replace(search_plan, device=device, seed=seed))
     trained = _train_and_score(
-        training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
+        training, grids, baseline_year=baseline_year, search_results=search_results,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed, row_budget=row_budget,
         calibration=calibration, min_band_rows=min_band_rows,
     )
@@ -264,8 +260,7 @@ def build_real_artefacts(
     *,
     version: str | None = None,
     baseline_year: int = 2024,
-    configs: Sequence[dict] = REAL_CONFIGS,
-    max_rounds: int = REAL_MAX_ROUNDS,
+    search_results: dict | None = None,
     n_folds: int = N_FOLDS,
     device: str = "cuda",
     non_uk_rate: float | None = REAL_NON_UK_RATE,
@@ -282,7 +277,8 @@ def build_real_artefacts(
     Backtest models are cached under the data root (`backtests.cache_dir`). The Lift model
     holds out v1's frozen held-out Exporters within scope, read from `v1_frozen`
     (default: `freeze.v1_folder()`). The saved feature ablation and learning curve
-    (`experiments.save`) are recorded in the metadata.
+    (`experiments.save`) are recorded in the metadata. The tuned configuration comes from
+    `search_results`, by default the saved hyperparameter search (`search.load`).
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -308,10 +304,16 @@ def build_real_artefacts(
             f"The feature files in {folder} were built without the training scope (ADR 0004); "
             "rebuild them with `python -m exportspredictor.features`"
         )
+    if search_results is None:
+        if not search.results_path(root).exists():
+            raise ValueError(
+                f"No hyperparameter search in {search.search_dir(root)}; run `python -m exportspredictor.search`"
+            )
+        search_results = search.load(root)
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
     grids = {y: folder / f"uk_grid_{y}.parquet" for y in gap_years(baseline_year)}
     trained = _train_and_score(
-        training, grids, baseline_year=baseline_year, configs=configs, max_rounds=max_rounds,
+        training, grids, baseline_year=baseline_year, search_results=search_results,
         n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
         calibration=folder / f"training_{baseline_year}.parquet", min_band_rows=min_band_rows,
     )
@@ -373,8 +375,7 @@ def _train_and_score(
     grids: Mapping[int, Chunk],
     *,
     baseline_year: int,
-    configs: Sequence[dict],
-    max_rounds: int,
+    search_results: dict,
     n_folds: int,
     device: str,
     non_uk_rate: float | None,
@@ -402,24 +403,20 @@ def _train_and_score(
         check_row_budget(counts, non_uk_rate, budget)
     print(f"Training rows: {counts.uk:,} UK + {counts.non_uk:,} other at rate {non_uk_rate}", flush=True)
 
-    # 1. Tune on the validation year (the test year, baseline_year - 1, is not read).
-    started = time.perf_counter()
-    tuning_chunks = [training[y] for y in tuning_years]
-    tuning = tune(
-        tuning_chunks,
-        [training[validation_year]],
-        configs,
-        uk=UK,
-        transform=FeatureTransform.fit(scan_chunks(tuning_chunks), tuning_years),
-        device=device,
-        non_uk_rate=non_uk_rate,
-        max_rounds=max_rounds,
-        seed=seed,
-    )
-    tuning_seconds = time.perf_counter() - started
-    best = tuning.row(0, named=True)
-    params, rounds = json.loads(best["config"]), best["rounds"]
-    print(f"Tuned in {tuning_seconds:.0f} s: {params}, {rounds} rounds", flush=True)
+    # 1. The tuned configuration (the test year, baseline_year - 1, was not read). Its
+    # early-stopped round count was found on the tuning years' rows; the fold models train on
+    # more years, so the count is scaled by the ratio of training rows (a heuristic).
+    if search_results["validation_year"] != validation_year:
+        raise ValueError(
+            f"The hyperparameter search validated on {search_results['validation_year']}, not {validation_year}"
+        )
+    winner = search_results["winner"]
+    params, tuned_rounds = winner["params"], winner["rounds"]
+    tuning_counts = count_rows([training[y] for y in tuning_years], uk=UK)
+    training_rows, tuning_rows = counts.expected(non_uk_rate), tuning_counts.expected(non_uk_rate)
+    rounds = search.scaled_rounds(tuned_rounds, training_rows=training_rows, tuning_rows=tuning_rows)
+    tuning_seconds = search.seconds(search_results)
+    print(f"Tuned configuration: {params}, {tuned_rounds} rounds scaled to {rounds}", flush=True)
 
     # 2. Refit the fold models on every year before the Baseline year.
     started = time.perf_counter()
@@ -501,7 +498,16 @@ def _train_and_score(
         "params": params,
         "model_params": model_params(params, device=device, seed=seed),
         "rounds": rounds,
-        "tuning": [{**row, "config": json.loads(row["config"])} for row in tuning.iter_rows(named=True)],
+        "round_scaling": {
+            "tuned_rounds": tuned_rounds,
+            "tuning_years": tuning_years,
+            "training_years": training_years,
+            "tuning_rows": round(tuning_rows),
+            "training_rows": round(training_rows),
+            "ratio": round(training_rows / tuning_rows, 4),
+            "rounds": rounds,
+        },
+        "search": search_results,
         "device": device,
         "xgboost_version": xgb.__version__,
         "tuning_seconds": round(tuning_seconds, 2),

@@ -91,7 +91,10 @@ class SearchPlan:
     non_uk_rate: float | None = None  # None: the largest rate the VRAM budget allows (`final_non_uk_rate`)
     pruner_startup_trials: int = 5  # trials never pruned, so the median has a basis
     pruner_warmup_rounds: int = 100  # rounds before a trial can be pruned
-    recheck_rates: tuple[float, float] = (0.65, 0.05)  # (non-UK, zero) learning-curve point re-checked
+    # The learning-curve point re-checked with the tuned configuration: (non-UK rate, zero
+    # rate); a zero rate of None is the rate the rows were built at.
+    recheck_rates: tuple[float, float | None] = (0.65, 0.05)
+    threads: int | None = None  # XGBoost threads for the search's models; None: every core
     fold: int = 0
     n_folds: int = N_FOLDS
     device: str = "cuda"
@@ -112,7 +115,8 @@ FIXTURE_SEARCH = SearchPlan(
     zero_rate=None,
     pruner_startup_trials=2,
     pruner_warmup_rounds=5,
-    recheck_rates=(1.0, 1.0),
+    recheck_rates=(1.0, None),
+    threads=1,  # a few hundred rows: more threads only add overhead
     n_folds=2,
     device="cpu",
 )
@@ -131,7 +135,7 @@ def suggest(trial) -> dict:
 
 def xgboost_params(params: Mapping, plan: SearchPlan) -> dict:
     """A searched configuration as XGBoost parameters (eta fixed by the plan)."""
-    return {**params, "eta": plan.eta}
+    return {**params, "eta": plan.eta} | ({"nthread": plan.threads} if plan.threads else {})
 
 
 # --- The run ----------------------------------------------------------------------------------
@@ -157,7 +161,7 @@ def run(subset: Data, everything: Data, plan: SearchPlan, folder: Path | None = 
     _optimise(study, subset, plan, non_uk_rate)
     results["trials"] = trial_table(study)
     results["capped_trials"] = [t["number"] for t in results["trials"] if t["hit_round_cap"]]
-    results["stage1_seconds"] = round(sum(t["seconds"] or 0 for t in results["trials"]), 1)
+    results["stage1_seconds"] = round(sum(t["seconds"] or 0 for t in results["trials"]), 3)
     _save_results(results, folder)
 
     results["confirmation"] = _confirm(everything, plan, non_uk_rate, results, folder)
@@ -172,6 +176,21 @@ def run(subset: Data, everything: Data, plan: SearchPlan, folder: Path | None = 
     results["seconds_this_run"] = round(time.perf_counter() - started, 1)
     _save_results(results, folder)
     return results
+
+
+def scaled_rounds(rounds: int, *, training_rows: float, tuning_rows: float) -> int:
+    """The early-stopped round count scaled by the ratio of training rows (a heuristic).
+
+    The search stops early on models trained on the tuning years; the fold models train on
+    more years (2012–2023 against 2012–2021, about 1.2 times the rows), so they get
+    proportionally more rounds at the same learning rate. Nothing validates the scaled count.
+    """
+    return max(1, round(rounds * training_rows / tuning_rows))
+
+
+def seconds(results: Mapping) -> float:
+    """Time spent by both stages of the search, over every run that resumed it."""
+    return round(results["stage1_seconds"] + sum(row["seconds"] for row in results["confirmation"]), 3)
 
 
 def final_non_uk_rate(data: Data, n_features: int = len(FEATURES)) -> float:
@@ -254,7 +273,6 @@ def _optimise(study, data: Data, plan: SearchPlan, non_uk_rate: float) -> None:
         return row["validation_deviance"]
 
     study.optimize(objective, n_trials=n_trials, timeout=timeout, gc_after_trial=True)
-    del train, valid
 
 
 def trial_table(study) -> list[dict]:
@@ -275,7 +293,7 @@ def trial_table(study) -> list[dict]:
                 "hit_round_cap": bool(attrs.get("hit_round_cap", False)),
                 "uk_spearman": attrs.get("uk_spearman"),
                 "training_rows": attrs.get("training_rows"),
-                "seconds": round(trial.duration.total_seconds(), 1) if trial.duration else None,
+                "seconds": round(trial.duration.total_seconds(), 3) if trial.duration else None,
             }
         )
     return rows
@@ -338,8 +356,12 @@ def _winner(results: dict) -> dict:
 def _recheck(subset: Data, plan: SearchPlan, params: Mapping) -> dict:
     """One learning-curve point of ticket #53 again, with the tuned configuration instead of v1's."""
     non_uk_rate, zero_rate = plan.recheck_rates
+    zero_rate = zero_rate or subset.built_zero_rate
     curve_plan = replace(
-        _fitter_plan(plan, subset, plan.sectors), params=dict(params), non_uk_rates=(non_uk_rate,), zero_rates=(zero_rate,)
+        _fitter_plan(plan, subset, plan.sectors),
+        params=xgboost_params(params, plan),
+        non_uk_rates=(non_uk_rate,),
+        zero_rates=(zero_rate,),
     )
     tuned = experiments.run_learning_curve(subset, curve_plan)["learning_curve"][0]
     return {"non_uk_rate": non_uk_rate, "zero_rate": zero_rate, "tuned": tuned}

@@ -51,6 +51,7 @@ from exportspredictor.features import (
     ALL_FEATURES,
     FEATURES,
     GROWTH_YEARS,
+    KEYS,
     MARKET_TREND_FEATURES,
     PROXIMITY_YEARS,
     RELATEDNESS_FEATURES,
@@ -365,7 +366,8 @@ class _Fitter:
 
         def keep(table: pl.DataFrame) -> pl.DataFrame:
             rows = subsample_zeros(table.filter(in_sectors), built_rate=built, rate=zero_rate, seed=plan.seed, uk=plan.uk)
-            return held_out(rows)
+            # Row order decides which rows `subsample` draws, so fix it: the same rows, the same model.
+            return held_out(rows).sort(KEYS)
 
         prepare = preparer(uk=plan.uk, transform=self.transform, non_uk_rate=non_uk_rate, seed=plan.seed, keep=keep)
         train = training_matrix(self.chunks, prepare, device=plan.device, features=features)

@@ -16,6 +16,7 @@ from exportspredictor.features import (
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
 from exportspredictor.pipeline import build_artefacts, fixture_training, refresh
+from exportspredictor.search import FIXTURE_SEARCH
 
 CRUDE_OIL = "270900"  # the fixture world's Excluded Product
 
@@ -150,12 +151,24 @@ def test_baseline_year_data_never_reaches_the_fitted_transform(world, artefacts)
 def test_hyperparameters_are_tuned_on_the_validation_year_and_recorded(artefacts):
     metadata = artefacts.metadata
 
-    assert metadata["validation_year"] == 2022
+    assert metadata["validation_year"] == metadata["search"]["validation_year"] == 2022
     assert metadata["training_years"] == [2021, 2022, 2023]
-    assert len(metadata["tuning"]) >= 2
-    best = min(metadata["tuning"], key=lambda result: result["valid_metric"])
-    assert metadata["params"] == best["config"]
-    assert metadata["rounds"] == best["rounds"]
+    assert metadata["search"]["trials"][0]["v1_config"]
+    assert len(metadata["search"]["trials"]) == FIXTURE_SEARCH.n_trials
+    assert metadata["params"] == metadata["search"]["winner"]["params"]
+
+
+def test_fold_models_take_the_tuned_rounds_scaled_by_their_training_rows(artefacts):
+    metadata = artefacts.metadata
+    scaling = metadata["round_scaling"]
+
+    assert scaling["tuned_rounds"] == metadata["search"]["winner"]["rounds"]
+    assert scaling["tuning_years"] == [2021]
+    assert scaling["training_years"] == [2021, 2022, 2023]
+    assert scaling["ratio"] == pytest.approx(scaling["training_rows"] / scaling["tuning_rows"], rel=1e-3)
+    assert 2.5 < scaling["ratio"] < 3.5  # three years of rows against one
+    assert metadata["rounds"] == scaling["rounds"]
+    assert metadata["rounds"] == pytest.approx(scaling["tuned_rounds"] * scaling["ratio"], abs=1)
 
 
 def test_metadata_records_the_device_and_the_search_and_training_time(artefacts):

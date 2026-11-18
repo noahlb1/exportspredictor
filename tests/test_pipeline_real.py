@@ -5,17 +5,22 @@ import json
 import polars as pl
 import pytest
 
-from exportspredictor import constraints, features, pipeline
+from exportspredictor import constraints, features, pipeline, search
 from exportspredictor.lookups import market_lookup
 
-CONFIGS = [{"max_depth": 2, "eta": 0.3}, {"max_depth": 3, "eta": 0.3}]
+
+
+def _tiny_search(root):
+    data = search.feature_data(root)
+    return search.run(data, data, search.FIXTURE_SEARCH)
 
 
 @pytest.fixture
 def trained(derived_data_root, v1_frozen):
     features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
     return pipeline.build_real_artefacts(
-        derived_data_root, version="real-test", configs=CONFIGS, device="cpu", max_rounds=30, non_uk_rate=0.5,
+        derived_data_root, version="real-test", search_results=_tiny_search(derived_data_root), device="cpu",
+        non_uk_rate=0.5,
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
     )
 
@@ -42,7 +47,7 @@ def test_metadata_records_the_real_source_tuning_and_sampling(trained):
     assert metadata["baseline_year"] == 2024
     assert metadata["validation_year"] == 2022
     assert metadata["training_years"] == [2021, 2022, 2023]
-    assert len(metadata["tuning"]) == len(CONFIGS)
+    assert len(metadata["search"]["trials"]) == search.FIXTURE_SEARCH.n_trials
     assert metadata["zero_sampling_rate"] == 1.0
     assert metadata["non_uk_sampling_rate"] == 0.5
 
@@ -138,7 +143,7 @@ def test_feature_files_built_without_the_exclusions_are_refused(derived_data_roo
     (folder / "features.json").write_text(json.dumps(settings))
 
     with pytest.raises(ValueError, match="rebuild"):
-        pipeline.build_real_artefacts(derived_data_root, configs=CONFIGS, device="cpu", max_rounds=30)
+        pipeline.build_real_artefacts(derived_data_root, device="cpu")
 
 
 def test_feature_files_built_without_the_gap_period_union_are_refused(derived_data_root):
@@ -148,7 +153,7 @@ def test_feature_files_built_without_the_gap_period_union_are_refused(derived_da
     (folder / "features.json").write_text(json.dumps(settings))
 
     with pytest.raises(ValueError, match="Gap Period"):
-        pipeline.build_real_artefacts(derived_data_root, configs=CONFIGS, device="cpu", max_rounds=30)
+        pipeline.build_real_artefacts(derived_data_root, device="cpu")
 
 
 def test_the_real_run_scores_every_gap_period_year(trained):
@@ -156,3 +161,10 @@ def test_the_real_run_scores_every_gap_period_year(trained):
     gap_rows = trained.history.filter(pl.col("year") >= 2022)
     assert gap_rows.height == trained.baseline.height * 3
     assert gap_rows["export_gap_usd"].is_not_null().all()
+
+
+def test_the_real_run_without_a_saved_search_is_refused(derived_data_root):
+    features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
+
+    with pytest.raises(ValueError, match="exportspredictor.search"):
+        pipeline.build_real_artefacts(derived_data_root, device="cpu")
