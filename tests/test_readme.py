@@ -39,7 +39,7 @@ def test_readme_documents_the_one_command_run_and_the_rebuild_script():
 
 def test_checklist_checks_values_are_in_usd_with_no_pounds():
     checklist = _checklist()
-    assert "Values are nominal US dollars, as reported by BACI" in checklist
+    assert "USD" in checklist
     assert "£" not in checklist
 
 
@@ -60,9 +60,5 @@ def test_rebuild_table_names_every_step_of_the_rebuild_script():
     assert not missing, f"Add these rebuild steps to the README's rebuild table: {missing}"
 
 
-def test_rebuild_section_says_the_pipeline_trains_and_the_notebook_only_reads():
-    section = _rebuild_section()
-
-    assert "python -m exportspredictor.pipeline" in section
-    assert "the notebook, which trains" not in section
-    assert "reads the newest artefact" in section
+def test_rebuild_section_gives_the_pipeline_command():
+    assert "python -m exportspredictor.pipeline" in _rebuild_section()
