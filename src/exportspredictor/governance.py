@@ -402,12 +402,13 @@ def _range_review(potential_range: dict | None) -> dict | None:
 def _range_review_lines(review: dict | None) -> list[str]:
     if review is None:
         return ["The artefact holds no Potential Range coverage by Exporter."]
-    lines = [
+    tolerance = f"{RANGE_COVERAGE_TOLERANCE * 100:.0f} percentage points"
+    lines = [(
         f"On a held-out half of the calibration rows, {_f(review['coverage'], '.0%')} of Actual Exports fell inside "
         f"their Potential Range (target {review['target']:.0%}). Per Exporter, {review['near_target']} of "
-        f"{review['exporters']} are within {RANGE_COVERAGE_TOLERANCE * 100:.0f} percentage points of the target; the lowest is "
-        f"{review['lowest']['exporter']} at {review['lowest']['coverage']:.0%}.",
-    ]
+        f"{review['exporters']} are within {tolerance} of the target; the lowest is "
+        f"{review['lowest']['exporter']} at {review['lowest']['coverage']:.0%}."
+    )]
     if review["too_narrow"]:
         lines += ["", f"Too narrow (the range understates their variation): {_some(review['too_narrow'])}."]
     if review["too_wide"]:
