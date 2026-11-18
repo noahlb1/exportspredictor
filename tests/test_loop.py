@@ -160,3 +160,72 @@ def test_the_real_path_refuses_the_test_year_and_never_reads_its_files(derived_d
     assert loop.load(derived_data_root)["noise_floor"] == results
     assert read and not [path for path in read if "2023" in Path(path).name or "2024" in Path(path).name]
     assert any("flows_2022" in path for path in read)
+
+
+# --- #70: the naive baseline as a blend and as the starting point -------------------------------
+
+
+def test_the_blend_arm_chooses_its_weight_from_the_fixed_grid_by_the_selection_measure(data):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+
+    results = lp.run_experiment("naive", [loop.blend_arm()])
+
+    row = results["experiments"]["naive"]["arms"][0]
+    candidates = row["grid"]
+    assert [c["naive_weight"] for c in candidates] == list(loop.BLEND_WEIGHTS)
+    best = max(candidates, key=lambda c: c["selection_measure"])
+    assert row["settings"]["naive_weight"] == best["naive_weight"]
+    assert row["selection_measure"] == pytest.approx(best["selection_measure"])
+    assert row["trained"] is False  # the blend scores the best so far's model
+
+
+def test_blended_export_potential_is_in_dollars_and_positive_for_every_pair():
+    model = pl.Series([0.0, 100.0, 400.0])
+    naive = pl.Series([10_000.0, 0.0, 100.0])
+
+    blended = loop.blend(model, naive, 0.5)
+
+    # Geometric means in dollars, each side floored at $1: sqrt(1 × 10,000), sqrt(100 × 1), sqrt(400 × 100).
+    assert blended.to_list() == pytest.approx([100.0, 10.0, 200.0])
+    assert (blended > 0).all()
+
+
+def test_the_blend_records_the_rank_average_of_model_and_naive_as_a_reference_without_dollars(data):
+    results = loop.Loop(data, loop.FIXTURE_LOOP).run_experiment("naive", [loop.blend_arm()])
+
+    reference = results["experiments"]["naive"]["arms"][0]["rank_average"]
+    assert -1 <= reference["selection_measure"] <= 1
+    assert reference["tweedie_deviance"] is None
+
+
+def test_a_starting_point_model_that_learns_nothing_ranks_as_the_naive_baseline(data):
+    # With a learning rate of 0 the trees add nothing, so Export Potential is the naive baseline.
+    arm = replace(loop.starting_point_arm(), changes={**loop.starting_point_arm().changes, "params": {"eta": 0.0}})
+
+    results = loop.Loop(data, loop.FIXTURE_LOOP).run_experiment("naive", [arm])
+
+    row = results["experiments"]["naive"]["arms"][0]
+    assert row["trained"] is True
+    assert row["settings"]["base_margin"] == "naive"
+    assert row["selection_measure"] == pytest.approx(results["naive"]["selection_measure"])
+
+
+def test_a_starting_point_model_learns_a_correction_to_the_naive_baseline(data):
+    results = loop.Loop(data, loop.FIXTURE_LOOP).run_experiment("naive", [loop.starting_point_arm()])
+
+    row = results["experiments"]["naive"]["arms"][0]
+    assert row["trained"] is True and row["rounds"] >= 1
+    assert MEASURES <= set(row)
+
+
+def test_the_training_rows_naive_baseline_from_their_features_is_the_naive_baseline_from_flows(fixture_world, data):
+    from exportspredictor.evaluation import naive_potential
+
+    rows = data.data.validation
+    flows = fixture_world.flows.filter(pl.col("year") == 2022)
+
+    from_features = loop.naive_from_features(rows, loop.world_products(fixture_world.flows))
+
+    expected = naive_potential(rows, flows)["naive_usd"]
+    assert (expected > 0).any()
+    assert from_features.to_list() == pytest.approx(expected.to_list(), rel=1e-5, abs=1e-3)

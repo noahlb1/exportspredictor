@@ -6,8 +6,10 @@ Range, the explanations, the evaluation, the backtests and the API all get Expor
 every number the app shows comes from the same model in the same way, and a change to the
 form of the model (spec #65) is made here only.
 
-The only model form today is the single XGBoost model with a Tweedie objective and a log
-link: Export Potential is the exponential of its margin.
+The model form is a single XGBoost model with a Tweedie objective and a log link: Export
+Potential is the exponential of its margin. A model trained from a starting point (spec
+#65, experiment 2) takes that point per row as `base_margin` on the log scale, and its trees
+add a correction to it.
 
 `by="fold"` scores each row with the fold model named by its `fold` column, the model that
 held the row's Product–Market pair out (ADR 0001). `by="mean"` scores every row with the mean
@@ -37,21 +39,25 @@ def export_potential(
     by: Literal["fold", "mean"] = "fold",
     rounds: int | None = None,
     device: str = "cpu",
+    base_margin: np.ndarray | pl.Series | None = None,
 ) -> pl.Series:
     """Export Potential (USD) for feature rows (holding `features`, transformed as the models saw them).
 
     `rounds` limits prediction to the first trees (a search trial); `device` is where the
-    models predict ("cuda" only where they were trained there). Raises ValueError if a row's
-    `fold` has no model, or a fold model held out another fold.
+    models predict ("cuda" only where they were trained there); `base_margin` is each row's
+    starting point on the log scale, for models trained from one. Raises ValueError if a
+    row's `fold` has no model, or a fold model held out another fold.
     """
+    margin = None if base_margin is None else np.asarray(base_margin, dtype=np.float32)
     if isinstance(models, xgb.Booster):
         models, by = [models], "mean"
     if by == "mean":
-        potential = np.mean([_predict(model, rows, features, rounds, device) for model in models], axis=0)
+        potential = np.mean([_predict(model, rows, features, rounds, device, margin) for model in models], axis=0)
         return pl.Series("export_potential_usd", potential, dtype=pl.Float64)
     potential = np.zeros(rows.height)
     for k, mask in _fold_masks(rows, models):
-        potential[mask] = _predict(models[k], rows.filter(pl.Series(mask)), features, rounds, device)
+        part = None if margin is None else margin[mask]
+        potential[mask] = _predict(models[k], rows.filter(pl.Series(mask)), features, rounds, device, part)
     return pl.Series("export_potential_usd", potential)
 
 
@@ -88,7 +94,12 @@ def _fold_masks(rows: pl.DataFrame, models: Sequence[xgb.Booster]):
 
 
 def _predict(
-    model: xgb.Booster, rows: pl.DataFrame, features: Sequence[str], rounds: int | None, device: str
+    model: xgb.Booster,
+    rows: pl.DataFrame,
+    features: Sequence[str],
+    rounds: int | None,
+    device: str,
+    margin: np.ndarray | None = None,
 ) -> np.ndarray:
     """One model's predictions (float32), `PREDICT_ROWS` rows at a time."""
     if rows.is_empty():
@@ -97,11 +108,13 @@ def _predict(
     parts = []
     for start in range(0, rows.height, PREDICT_ROWS):
         data = np.ascontiguousarray(rows.slice(start, PREDICT_ROWS).select(features).to_numpy(), dtype=np.float32)
+        offset = {} if margin is None else {"base_margin": margin[start : start + PREDICT_ROWS]}
         if device.startswith("cuda"):
             import cupy  # only where the models were trained on the GPU
 
-            parts.append(cupy.asnumpy(model.inplace_predict(cupy.asarray(data), **extra)))
+            offset = {k: cupy.asarray(v) for k, v in offset.items()}
+            parts.append(cupy.asnumpy(model.inplace_predict(cupy.asarray(data), **extra, **offset)))
             cupy.get_default_memory_pool().free_all_blocks()
         else:
-            parts.append(model.inplace_predict(data, **extra))
+            parts.append(model.inplace_predict(data, **extra, **offset))
     return np.concatenate(parts)

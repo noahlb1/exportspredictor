@@ -29,6 +29,7 @@ are saved as each arm finishes, and a re-run skips finished arms, so a killed ru
 refuses it, and `real_data` refuses it before opening a file.
 
     uv run python -m exportspredictor.loop noise   # GPU, three arms of about 11 minutes each
+    uv run python -m exportspredictor.loop naive   # #70: the blend (no training) and the starting point (one model)
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -68,6 +69,7 @@ from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import export_potential
 from exportspredictor.training import (
+    BASE_MARGIN,
     model_params,
     preparer,
     read_chunk,
@@ -116,6 +118,9 @@ class Settings:
     seed: int = 0  # the non-UK hash sample and the XGBoost seed, together
     max_rounds: int = MAX_ROUNDS
     patience: int = PATIENCE
+    # The model's starting point: None (a constant, XGBoost's base score) or "naive" (the log of
+    # the naive baseline, so the trees learn a correction to it).
+    base_margin: str | None = None
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
 
@@ -142,15 +147,22 @@ class Arm:
     `changes` maps `Settings` fields to new values; `params` is merged into the best arm's
     parameters (so a full configuration should name every parameter it sets), every other
     field is replaced.
+
+    `grid` names one scoring setting (`SCORING_FIELDS`) and a fixed list of values for it:
+    the arm scores its model with each value on the validation year and keeps the value
+    with the highest selection measure. Every value's measures are recorded in the row.
     """
 
     name: str
     changes: Mapping = field(default_factory=dict)
+    grid: Mapping[str, Sequence] = field(default_factory=dict)
 
     def apply(self, base: Settings) -> Settings:
         unknown = set(self.changes) - {f.name for f in fields(Settings)}
         if unknown:
             raise ValueError(f"Arm {self.name!r} changes unknown settings {sorted(unknown)}")
+        if len(self.grid) > 1 or set(self.grid) - set(SCORING_FIELDS):
+            raise ValueError(f"Arm {self.name!r}: a grid names one scoring setting of {SCORING_FIELDS}")
         changes = dict(self.changes)
         if "params" in changes:
             changes["params"] = {**base.params, **changes["params"]}
@@ -180,6 +192,9 @@ class LoopData:
     data: Data
     flows: Callable[[], pl.DataFrame]  # every Flow of the validation year (exporter, importer, hs6, value_usd)
     zero_seed: int = 0  # the seed the rows' Zero Cells were sampled with
+    # World exports of each Product in each training year (hs6, year, world_product), for the
+    # naive baseline of the training rows; read only by an arm that starts from it.
+    world_products: Callable[[], pl.DataFrame] | None = None
 
     @property
     def validation_year(self) -> int:
@@ -231,11 +246,11 @@ def decide(rows: Sequence[Mapping], best_so_far: float, threshold: float) -> tup
 # --- The measures -----------------------------------------------------------------------------
 
 
-def measures(grid: pl.DataFrame, validation: pl.DataFrame, prediction: str) -> dict:
+def measures(grid: pl.DataFrame, validation: pl.DataFrame | None, prediction: str) -> dict:
     """The selection measure and every diagnostic of `prediction`.
 
     `grid` is the held-out UK grid of the validation year (hs6, value_usd); `validation`
-    its training rows (value_usd, weight) for the deviance.
+    its training rows (value_usd, weight) for the deviance (None: no deviance, as for a rank).
     """
     within = _within_product(grid, prediction, pl.col("value_usd"))
     weights = grid.group_by("hs6").agg(_uk=pl.col("value_usd").cast(pl.Float64).sum())
@@ -254,7 +269,10 @@ def measures(grid: pl.DataFrame, validation: pl.DataFrame, prediction: str) -> d
             float(top.filter(pl.col("_rank") <= TOP_MARKETS)["value_usd"].cast(pl.Float64).sum() / uk_value)
             if uk_value > 0 else None
         ),
-        "tweedie_deviance": float(validation.select(tweedie_deviance(prediction, power=TWEEDIE_POWER)).item()),
+        "tweedie_deviance": (
+            None if validation is None
+            else float(validation.select(tweedie_deviance(prediction, power=TWEEDIE_POWER)).item())
+        ),
         "uk_pairs": grid.height,
         "ranked_products": within.height,
     }
@@ -272,6 +290,88 @@ def _within_product(rows: pl.DataFrame, prediction: str, target: pl.Expr) -> pl.
 def _mean(within: pl.DataFrame) -> float | None:
     return float(within["_rho"].mean()) if within.height else None
 
+
+
+# --- The naive baseline in the model (#70) ----------------------------------------------------
+
+# The weights of the naive baseline the blend chooses from. The ends are left out: 0 is the
+# model alone (the best so far), and 1 is the naive baseline alone, which is no model at all
+# (no Scenario could move it).
+BLEND_WEIGHTS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+BLEND = "blend"
+STARTING_POINT = "starting point"
+NAIVE_EXPERIMENT = "naive baseline"  # experiments 1 and 2: the blend and the starting point, one decision
+
+
+def blend(model_usd: pl.Series, naive_usd: pl.Series, naive_weight: float) -> pl.Series:
+    """Export Potential in dollars: exp((1 − w) · log model + w · log naive), both floored at MIN_PREDICTION_USD.
+
+    With w = 0 the model's Export Potential is returned unchanged.
+    """
+    if naive_weight == 0:
+        return model_usd
+    model = model_usd.cast(pl.Float64).clip(lower_bound=MIN_PREDICTION_USD).log()
+    naive = naive_usd.cast(pl.Float64).clip(lower_bound=MIN_PREDICTION_USD).log()
+    return ((1 - naive_weight) * model + naive_weight * naive).exp().alias("export_potential_usd")
+
+
+def starting_point_arm() -> Arm:
+    """Experiment 2: the log of the naive baseline is the model's base margin; the trees learn the correction."""
+    return Arm(STARTING_POINT, {"base_margin": "naive"})
+
+
+def naive_margin(naive_usd: pl.Series) -> pl.Series:
+    """The naive baseline as a starting point on the log scale, floored at MIN_PREDICTION_USD (a Zero Cell's is 0)."""
+    return naive_usd.cast(pl.Float64).clip(lower_bound=MIN_PREDICTION_USD).log()
+
+
+def naive_from_features(rows: pl.DataFrame, world_products: pl.DataFrame) -> pl.Series:
+    """The naive baseline (`evaluation.naive_potential`) of untransformed feature rows, from their own features.
+
+    The rows' leave-one-out supply and demand are already features (`log_supply_loo`,
+    `log_demand_loo`); `world_products` (hs6, year, world_product) gives the Product's world
+    exports, from which the row's own Flow is left out. So the training rows need no Flows.
+    """
+    world = world_products.select(
+        _p=pl.col("hs6").cast(pl.String), _y=pl.col("year").cast(pl.Int32), _w=pl.col("world_product").cast(pl.Float64)
+    )
+    keys = rows.select(
+        _p=pl.col("hs6").cast(pl.String),
+        _y=pl.col("year").cast(pl.Int32),
+        _s=pl.col("log_supply_loo").cast(pl.Float64).exp() - 1,
+        _d=pl.col("log_demand_loo").cast(pl.Float64).exp() - 1,
+        _own=pl.col("value_usd").cast(pl.Float64),
+    ).join(world, on=["_p", "_y"], how="left", maintain_order="left")
+    other_world = pl.col("_w").fill_null(0.0) - pl.col("_own")
+    return keys.select(
+        naive_usd=pl.when(other_world > 0)
+        .then(pl.col("_s").clip(lower_bound=0) * pl.col("_d").clip(lower_bound=0) / other_world)
+        .otherwise(0.0)
+    )["naive_usd"]
+
+
+def world_products(flows: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
+    """World exports of each Product in each year (hs6, year, world_product), from non-zero Flows."""
+    value = pl.col("value_usd")
+    return (
+        flows.lazy().filter(value > 0).group_by("hs6", "year").agg(world_product=value.cast(pl.Float64).sum()).collect()
+    )
+
+
+def blend_arm(weights: Sequence[float] = BLEND_WEIGHTS) -> Arm:
+    """Experiment 1: the best so far's model blended with the naive baseline, the weight chosen on 2022."""
+    return Arm(BLEND, grid={"naive_weight": tuple(weights)})
+
+
+def rank_average_measures(grid: pl.DataFrame) -> dict:
+    """The rank-average of the model (`model_usd`) and the naive baseline within each Product: a reference only.
+
+    It has no dollar value, so no Export Gap and no deviance; it is never selected.
+    """
+    ranked = grid.with_columns(
+        rank_average=(pl.col("model_usd").rank().over("hs6") + pl.col("naive_usd").rank().over("hs6")) / 2
+    )
+    return measures(ranked, None, "rank_average")
 
 # --- The loop ---------------------------------------------------------------------------------
 
@@ -382,9 +482,26 @@ class Loop:
         key = training_key(settings, self._fingerprint())
         trained = key not in self._models and not self._model_file(key).exists()
         model, meta = self._model(settings, key)
-        scored_grid = self.grid.with_columns(export_potential_usd=self._predict(model, meta, settings, self.grid))
+        model_grid = self._model_potential(model, meta, settings, self.grid)
+        extra = {}
+        if arm.grid:
+            # Choose the scoring setting on the validation year's held-out UK grid only.
+            (name, values), = arm.grid.items()
+            candidates = []
+            for value in values:
+                candidate = replace(settings, **{name: value})
+                scored_grid = self.grid.with_columns(export_potential_usd=self._score(model_grid, candidate, self.grid))
+                candidates.append({name: value, **measures(scored_grid, None, "export_potential_usd")})
+            chosen = max(candidates, key=lambda c: -2.0 if c[SELECTION_MEASURE] is None else c[SELECTION_MEASURE])
+            settings = replace(settings, **{name: chosen[name]})
+            extra["grid"] = candidates
+        if arm.grid.keys() & {"naive_weight"}:
+            extra["rank_average"] = rank_average_measures(self.grid.with_columns(model_usd=model_grid))
+        scored_grid = self.grid.with_columns(export_potential_usd=self._score(model_grid, settings, self.grid))
         scored = self.validation.with_columns(
-            export_potential_usd=self._predict(model, meta, settings, self.validation)
+            export_potential_usd=self._score(
+                self._model_potential(model, meta, settings, self.validation), settings, self.validation
+            )
         )
         return {
             "arm": arm.name,
@@ -393,6 +510,7 @@ class Loop:
             "training_key": key,
             "trained": trained,
             **measures(scored_grid, scored, "export_potential_usd"),
+            **extra,
             "validation_year": self.data.validation_year,
             **meta,
             "seconds": round(time.perf_counter() - started, 1),
@@ -474,35 +592,51 @@ class Loop:
 
     def _training_matrices(self, settings: Settings):
         """The training matrix and the held-out grid's, reused while the rows' settings stay the same."""
-        key = (settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed)
+        key = (settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin)
         if key != self._matrix_key:
             self._matrices = None  # free the device memory before building the next
             plan, built = self.plan, self.data.data.built_zero_rate
             held_out = outside_fold(plan.uk, plan.n_folds, plan.fold)
             zero_seed = self.data.zero_seed
+            world = self._world_products() if settings.base_margin else None
+            grid_rows = self.grid
 
             def keep(table: pl.DataFrame) -> pl.DataFrame:
                 rows = subsample_zeros(table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk)
-                return held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
+                rows = held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
+                if world is None:
+                    return rows
+                # Before the transform clips the supply and demand features: the naive baseline as built.
+                return rows.with_columns(naive_margin(naive_from_features(rows, world)).alias(BASE_MARGIN))
+
+            if settings.base_margin:
+                grid_rows = self.grid.with_columns(naive_margin(self.grid["naive_usd"]).alias(BASE_MARGIN))
 
             prepare = preparer(
                 uk=plan.uk, transform=self.transform, non_uk_rate=settings.non_uk_rate, seed=settings.seed, keep=keep
             )
             train = training_matrix(self.chunks, prepare, device=plan.device, features=settings.features)
-            grid = training_matrix([self.grid], ref=train, device=plan.device, features=settings.features)
+            grid = training_matrix([grid_rows], ref=train, device=plan.device, features=settings.features)
             self._matrix_key, self._matrices = key, (train, grid)
         return self._matrices
 
-    def _predict(self, model: xgb.Booster, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
-        """Export Potential in dollars: the model at its chosen round count, blended with the naive baseline if asked."""
-        predicted = export_potential(
-            table, model, features=list(settings.features), rounds=meta["rounds"], device=self.plan.device
+    def _model_potential(self, model: xgb.Booster, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
+        """The model's Export Potential in dollars at its chosen round count."""
+        margin = naive_margin(table["naive_usd"]) if settings.base_margin else None
+        return export_potential(
+            table, model, features=list(settings.features), rounds=meta["rounds"], device=self.plan.device,
+            base_margin=margin,
         )
-        w = settings.naive_weight
-        if w == 0:
-            return predicted
-        naive = table["naive_usd"].cast(pl.Float64).clip(lower_bound=MIN_PREDICTION_USD)
-        return ((1 - w) * predicted.clip(lower_bound=MIN_PREDICTION_USD).log() + w * naive.log()).exp()
+
+    def _world_products(self) -> pl.DataFrame:
+        if self.data.world_products is None:
+            raise ValueError("This loop's data has no world exports by Product, so no arm can start from the naive baseline")
+        return self.data.world_products()
+
+    @staticmethod
+    def _score(predicted: pl.Series, settings: Settings, table: pl.DataFrame) -> pl.Series:
+        """Export Potential in dollars as the arm scores it: the model, blended with the naive baseline if asked."""
+        return blend(predicted, table["naive_usd"], settings.naive_weight)
 
     def _save(self) -> None:
         if self.folder is None:
@@ -552,7 +686,8 @@ def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR) -
     """The fixture world's rows for every Product, built only from Flows up to the validation year."""
     rows = experiments.fixture_data(world, validation_year=validation_year)
     flows = world.flows.filter(pl.col("year") == validation_year)
-    return LoopData(data=rows, flows=lambda: flows)
+    world_exports = world_products(world.flows.filter(pl.col("year") < validation_year))
+    return LoopData(data=rows, flows=lambda: flows, world_products=lambda: world_exports)
 
 
 def real_data(root: Path | None = None, *, validation_year: int = experiments.VALIDATION_YEAR) -> LoopData:
@@ -573,7 +708,14 @@ def real_data(root: Path | None = None, *, validation_year: int = experiments.VA
         country_map = pl.read_parquet(root / "derived" / "country_map.parquet").select("baci_iso3", "iso3").unique()
         return experiments._year_flows(root, validation_year, dict(country_map.iter_rows()))
 
-    return LoopData(data=rows, flows=flows, zero_seed=settings.get("zero_sampling_seed", 0))
+    def world_exports() -> pl.DataFrame:
+        # Each training year's own file, so no later year is ever opened.
+        files = [str(experiments._flows_file(root, y)) for y in sorted(rows.training)]
+        return world_products(pl.scan_parquet(files).select("hs6", "year", "value_usd"))
+
+    return LoopData(
+        data=rows, flows=flows, zero_seed=settings.get("zero_sampling_seed", 0), world_products=world_exports
+    )
 
 
 def loop_dir(root: Path | None = None) -> Path:
@@ -604,10 +746,14 @@ def main(argv: Sequence[str]) -> None:
         floor = lp.noise_floor()
         summary = {k: floor[k] for k in ("seeds", "selection_measures", "sd", "win_threshold")}
         print(json.dumps({**summary, "seconds": [row["seconds"] for row in floor["arms"]]}), flush=True)
+    elif command == "naive":
+        lp = Loop(real_data(), v2_plan(), loop_dir())
+        section = lp.run_experiment(NAIVE_EXPERIMENT, [blend_arm(), starting_point_arm()])["experiments"][NAIVE_EXPERIMENT]
+        print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
     elif command == "time":
         print(json.dumps(time_one_arm()), flush=True)
     else:
-        raise SystemExit("usage: python -m exportspredictor.loop noise|time")
+        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|time")
 
 
 def time_one_arm(root: Path | None = None) -> dict:
