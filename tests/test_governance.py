@@ -301,3 +301,28 @@ def test_the_sampling_decision_notes_the_measured_row_budget_against_the_specs_f
     sampling = next(text for title, text in decisions.items() if "keeping every UK row" in title)
 
     assert "100,032,198" in sampling and "110 M" in sampling
+
+
+def test_model_card_shows_the_test_year_beside_earlier_versions_and_says_whether_it_beats_the_naive_baseline(
+    fixture_artefacts,
+):
+    from dataclasses import replace
+
+    report = {**fixture_artefacts.evaluation, "headline": {
+        **fixture_artefacts.evaluation["headline"], "model": 0.55, "naive": 0.52, "beats_naive": True}}
+    v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
+          "tweedie_deviance_all_exporters": 355.5, "tweedie_deviance_uk": 568.6}
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    text = governance.render_model_card(governance.model_card(replace(fixture_artefacts, evaluation=report)))
+
+    section = text.split("## UK ranking beside earlier versions")[1].split("\n## ")[0]
+    assert "0.511" in section and "0.523" in section and "0.550" in section and "0.520" in section
+    assert "v1" in section and "v2" in section
+    assert "beats the naive baseline" in section
+
+
+def test_model_card_names_the_form_the_selection_measure_and_the_experiments(card):
+    model = card["model"]
+    assert "blend" in model.lower() or "naive baseline" in model
+    ranking = card["ranking_experiments"]
+    assert ranking["selection_measure"] and ranking["experiments"]

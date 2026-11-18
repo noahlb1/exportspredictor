@@ -463,6 +463,64 @@ def headline(overall: dict, test_year: int) -> dict:
     }
 
 
+# v2's 2023 figures, from its evaluation report (artefact 20261118T100524Z, model alone). Its naive
+# baseline was computed from the test year's training rows (top-100 Exporters' Flows and sampled
+# Zero Cells); since spec #65 the naive baseline comes from every Exporter's Flows, so this run's
+# naive figure is reported beside it, not in place of it.
+V2_REPORTED = {
+    "version": "20261118T100524Z",
+    "uk_ranking": 0.5114955233364546,
+    "naive": 0.5233246980004151,
+    "lift": 5.226937575036582,
+    "size_matched_lift": 0.7876591646085601,
+    "tweedie_deviance_all_exporters": 355.5288087632071,
+    "tweedie_deviance_uk": 568.5883343927953,
+}
+NAIVE_THIS_RUN = "Naive baseline, every Exporter's Flows (this run)"
+NAIVE_AS_REPORTED_FOR_V2 = "Naive baseline as reported for v2 (training rows' Flows)"
+
+
+def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED) -> dict:
+    """The test year's UK ranking, size-matched Lift and Tweedie deviance beside v2's and v1's.
+
+    `report` is this version's evaluation report; v1's UK ranking is the v1 comparison's (the same
+    test-year rows). `v2` holds v2's reported figures (`V2_REPORTED`), or None where they do not
+    apply (the fixture). Both naive figures are listed, each named by the Flows it was computed from.
+    Whether the model beats the naive baseline is judged against this run's naive baseline.
+    """
+    head, year = report["headline"], report["test_year"]
+    overall = {scope: report["accuracy"][scope]["overall"] for scope in ("all_exporters", "uk_out_of_fold")}
+    lift = report.get("lift") or {}
+    form = (report.get("model_form") or {}).get("form", "model alone")
+    rows = [{
+        "name": f"This version ({form})",
+        "uk_ranking": head["model"],
+        "lift": lift.get("lift"),
+        "size_matched_lift": (lift.get("size_matched") or {}).get("lift"),
+        "tweedie_deviance_all_exporters": overall["all_exporters"]["model_tweedie_deviance"],
+        "tweedie_deviance_uk": overall["uk_out_of_fold"]["model_tweedie_deviance"],
+    }]
+    naive = [{"name": NAIVE_THIS_RUN, "uk_ranking": head["naive"]}]
+    if v2 is not None:
+        rows.append({"name": "v2", **{k: v for k, v in v2.items() if k != "naive"}})
+        naive.append({"name": NAIVE_AS_REPORTED_FOR_V2, "uk_ranking": v2["naive"]})
+    v1 = (report.get("v1_comparison") or {}).get("primary", {}).get("v1")
+    if v1 is not None:
+        rows.append({"name": "v1", "uk_ranking": v1})
+    beats = head["model"] is not None and head["naive"] is not None and head["model"] > head["naive"]
+    verdict = "beats the naive baseline" if beats else "does not beat the naive baseline"
+    others = ", ".join(f"{row['name']} {row['uk_ranking']:.3f}" for row in rows[1:])
+    text = (
+        f"On {year}, read once, the UK ranking of this version is {head['model']:.3f}: it {verdict} "
+        f"({head['naive']:.3f} from every Exporter's Flows"
+        + (f"; {v2['naive']:.3f} as reported for v2" if v2 is not None else "")
+        + ")."
+        + (f" Earlier versions: {others}." if others else "")
+        + " These are associations on one test year, not a forecast."
+    )
+    return {"test_year": year, "rows": rows, "naive": naive, "beats_naive": beats, "text": text}
+
+
 def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STABILITY_TOP_N) -> dict:
     """How much UK rankings move between two years scored by the same models.
 

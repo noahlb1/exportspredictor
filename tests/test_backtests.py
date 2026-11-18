@@ -1,5 +1,6 @@
 """Lift and Event Backtests: Opportunities and Scenario Effects checked against what actually happened."""
 
+import numpy as np
 import polars as pl
 import pytest
 
@@ -517,3 +518,57 @@ def test_control_markets_leave_out_excluded_markets():
     controls = backtests.control_markets(rows, exporters=["GBR"], treated=["AUS"], pre_years=[2022], high_income=None, n=5, exclude=["RUS"])
 
     assert controls == ["USA"]
+
+
+def test_lift_rows_in_a_blend_sit_between_the_model_and_that_years_naive_baseline(fixture_world):
+    from exportspredictor.prediction import ModelForm
+
+    chunks = pipeline.fixture_training(fixture_world, baseline_year=2025)  # 2021–2024
+    settings = backtests.LiftSettings(training_years=(2021, 2022), gap_years=(2021, 2022), outcome_year=2024)
+    model = backtests.train_backtest_model(
+        chunks, name="lift", training_years=settings.training_years, before=settings.before,
+        uk=UK, params={"max_depth": 2}, rounds=20, device="cpu", held_out=["FRA"],
+    )
+    flows = fixture_world.flows
+    year_flows = lambda year: flows.filter(pl.col("year") == year)
+    keys = ["exporter", "importer", "hs6", "year"]
+
+    alone = backtests.lift_rows(chunks, settings, model)
+    blended = backtests.lift_rows(chunks, settings, model, form=ModelForm(0.3), year_flows=year_flows)
+    # The naive baseline of a 2021 row comes from 2021's Flows: changing 2022's moves no 2021 row.
+    shifted = backtests.lift_rows(
+        chunks, settings, model, form=ModelForm(0.3),
+        year_flows=lambda year: year_flows(year).with_columns(value_usd=pl.col("value_usd") * (3 if year == 2022 else 1)),
+    )
+
+    both = alone.join(blended, on=keys, suffix="_blend").join(shifted, on=keys, suffix="_shifted")
+    assert both.height == alone.height == blended.height > 0
+    model_usd = both["export_potential_usd"].clip(lower_bound=1.0).to_numpy()
+    naive_usd = both["naive_usd"].clip(lower_bound=1.0).to_numpy()
+    served = both["export_potential_usd_blend"].to_numpy()
+    lower, upper = np.minimum(model_usd, naive_usd), np.maximum(model_usd, naive_usd)
+    assert (served >= lower * (1 - 1e-9)).all() and (served <= upper * (1 + 1e-9)).all()
+    assert (served != both["export_potential_usd"].to_numpy()).any()
+    early = both.filter(pl.col("year") == 2021)
+    assert early["export_potential_usd_blend"].equals(early["export_potential_usd_shifted"], check_names=False)
+    later = both.filter(pl.col("year") == 2022)
+    assert not later["export_potential_usd_blend"].equals(later["export_potential_usd_shifted"], check_names=False)
+
+
+def test_a_blend_needs_the_years_flows_for_its_lift_rows(fixture_world):
+    from exportspredictor.prediction import ModelForm
+
+    chunks = pipeline.fixture_training(fixture_world, baseline_year=2025)
+    settings = backtests.LiftSettings(training_years=(2021, 2022), gap_years=(2021, 2022), outcome_year=2024)
+    model = backtests.train_backtest_model(
+        chunks, name="lift", training_years=settings.training_years, before=settings.before,
+        uk=UK, params={"max_depth": 2}, rounds=5, device="cpu", held_out=["FRA"],
+    )
+
+    with pytest.raises(ValueError, match="naive baseline"):
+        backtests.lift_rows(chunks, settings, model, form=ModelForm(0.3))
+
+
+def test_lift_is_measured_on_the_served_model_form(report, fixture_artefacts):
+    assert report["lift"]["model_form"] == fixture_artefacts.metadata["model_form"]
+    assert report["lift"]["model_form"]["form"] == "blend"

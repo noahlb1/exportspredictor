@@ -186,6 +186,8 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
         "metrics": _metrics(report),
         "not_run": parts_not_run(report) if report else [],
         "v1_comparison": _comparison_summary(report.get("v1_comparison")),
+        "earlier_versions": report.get("earlier_versions"),
+        "ranking_experiments": _ranking_summary(metadata.get("ranking_experiments")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
         "limitations": [
             *result_limitations(metadata, report), *_benchmark_limitations(gravity_benchmark),
@@ -213,6 +215,84 @@ def _model_summary(metadata: dict) -> str:
         f"out-of-fold models trained on {years_text(metadata.get('training_years'))}, scoring the "
         f"{metadata.get('baseline_year', '?')} Baseline.{blended} Source: {metadata.get('source', '?')}."
     )
+
+
+def _ranking_summary(record: dict | None) -> dict | None:
+    """How the experiment loop chose the served form (ADR 0008): the selection measure, the noise
+    floor's win threshold, each experiment's best arm and whether it was kept, and the confirmation."""
+    if not record:
+        return None
+    floor = record.get("noise_floor") or {}
+    experiments = []
+    for name, section in (record.get("experiments") or {}).items():
+        best = next((row for row in section.get("arms", []) if row.get("best")), None)
+        experiments.append({
+            "name": name,
+            "kept": section.get("kept"),
+            "best_arm": best["arm"] if best else None,
+            "selection_measure": best["selection_measure"] if best else None,
+            "change": best.get("change") if best else None,
+        })
+    confirmation = record.get("confirmation")
+    return {
+        "selection_measure": record.get("selection_measure"),
+        "validation_year": record.get("validation_year"),
+        "win_threshold": floor.get("win_threshold"),
+        "experiments": experiments,
+        "confirmation": {key: confirmation[key] for key in ("n_folds", "difference", "win_threshold", "beats_v2")}
+        | {name: confirmation[name]["selection_measure"] for name in ("winner", "v2", "naive")}
+        if confirmation else None,
+    }
+
+
+def _ranking_lines(summary: dict | None) -> list[str]:
+    if summary is None:
+        return ["No experiment loop is recorded for this version."]
+    lines = [
+        (f"Every choice was made on one selection measure, on {summary['validation_year']} only: "
+        f"{summary['selection_measure']}. An arm was kept only if it beat the best so far by more than the win "
+        f"threshold, {number_text(summary['win_threshold'], '.4f')} (twice the SD of three seeds of one configuration)."),
+        "",
+        "| Experiment | Best arm | Selection measure | Change on the best so far | Kept |",
+        "| --- | --- | --- | --- | --- |",
+        *[
+            f"| {e['name']} | {e['best_arm'] or 'n/a'} | {number_text(e['selection_measure'], '.4f')} | "
+            f"{number_text(e['change'], '+.4f')} | {e['kept'] or 'no'} |"
+            for e in summary["experiments"]
+        ],
+    ]
+    confirmation = summary["confirmation"]
+    if confirmation:
+        lines += ["", (
+            f"Confirmed on all {confirmation['n_folds']} folds of {summary['validation_year']}: the chosen form "
+            f"{number_text(confirmation['winner'], '.4f')}, v2's form (the model alone) {number_text(confirmation['v2'], '.4f')}, "
+            f"the naive baseline {number_text(confirmation['naive'], '.4f')}; difference "
+            f"{number_text(confirmation['difference'], '+.4f')} against a threshold of "
+            f"{number_text(confirmation['win_threshold'], '.4f')} ("
+            f"{'confirmed' if confirmation['beats_v2'] else 'not confirmed'})."
+        )]
+    return lines
+
+
+def _earlier_lines(block: dict | None) -> list[str]:
+    if block is None:
+        return ["The test year has not been set beside earlier versions for this version."]
+    def cell(row, key, fmt):
+        value = row.get(key)
+        return "n/a" if value is None else number_text(value, fmt)
+    return [
+        f"**{block['text']}**",
+        "",
+        "| Version | UK ranking | Size-matched Lift | Lift | Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |",
+        "| --- | --- | --- | --- | --- | --- |",
+        *[
+            f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'size_matched_lift', '.2f')} | "
+            f"{cell(row, 'lift', '.2f')} | {cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | "
+            f"{cell(row, 'tweedie_deviance_uk', ',.1f')} |"
+            for row in block["rows"]
+        ],
+        *[f"| {row['name']} | {number_text(row['uk_ranking'], '.3f')} | | | | |" for row in block["naive"]],
+    ]
 
 
 def _training_scope(metadata: dict) -> dict:
@@ -446,6 +526,8 @@ def render_model_card(card: dict) -> str:
     ]
     if card.get("not_run"):
         lines += ["", "## Parts not run", "", *[f"- {part['text']}" for part in card["not_run"]]]
+    lines += ["", "## UK ranking beside earlier versions", "", *_earlier_lines(card.get("earlier_versions"))]
+    lines += ["", "## How the model form was chosen", "", *_ranking_lines(card.get("ranking_experiments"))]
     lines += ["", "## Bias review: Potential Range coverage by Exporter", "",
               *_range_review_lines(card["range_coverage_by_exporter"]), ""]
     lines += ["## Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
