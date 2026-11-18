@@ -81,3 +81,9 @@ def test_healthcheck_passes_once_the_real_v2_artefacts_are_loaded(services, live
 
     with live_api(root) as url:
         assert _healthcheck(services, url) == 0
+
+
+def test_the_app_never_resolves_the_api_through_the_host_dns_search_domains(services):
+    """While the API container is stopped, a bare `api` must not fall through to the host's search
+    domains (where it can resolve to a public host and hang the page); it must fail fast."""
+    assert services["app"]["dns_search"] == ["dns.podman"]
