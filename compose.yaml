@@ -40,6 +40,11 @@ services:
       - --browser.gatherUsageStats=false
     environment:
       EXPORTSPREDICTOR_API_URL: http://api:8000
+    # Search only podman's own DNS domain. With the host's search domains, a bare `api` can
+    # resolve to a public host while the API container is stopped, and each page then hangs
+    # for a minute before saying the API is unavailable. Docker still resolves the bare name.
+    dns_search:
+      - dns.podman
     ports:
       - "8501:8501"
     depends_on:
