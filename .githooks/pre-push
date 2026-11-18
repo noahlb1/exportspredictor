@@ -4,7 +4,20 @@
 # Enable once per clone:  git config core.hooksPath .githooks
 # Applies to every worktree; each runs its own code through scripts/wt.ps1.
 root=$(git rev-parse --show-toplevel)
+head=$(git rev-parse HEAD)
 run() { powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$root/scripts/wt.ps1" "$@"; }
+
+# The checks run on the checked-out code, so push a branch from the worktree that has it checked out.
+while read -r local_ref local_sha remote_ref remote_sha; do
+	case "$local_ref" in refs/heads/*) ;; *) continue ;; esac
+	if [ "$local_sha" != "$head" ]; then
+		echo "pre-push: $local_ref is not checked out here; push it from its own worktree so its code is tested" >&2
+		exit 1
+	fi
+done
+
+# Git sets GIT_DIR and friends for hooks; tests that run git in a temporary repo must not inherit them.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
 
 run ruff check . || { echo "pre-push: ruff check failed" >&2; exit 1; }
 run pytest -q -p no:cacheprovider || { echo "pre-push: tests failed" >&2; exit 1; }

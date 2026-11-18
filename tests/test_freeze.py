@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import replace
 
@@ -225,7 +226,12 @@ def test_v1_loaded_from_its_data_root_freezes_the_same_tables(v1, frozen, tmp_pa
 
 
 def _git(repo, *args):
-    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo, check=True, capture_output=True)
+    # Inside a git hook, GIT_DIR and friends point at the real repository and override `cwd`,
+    # so a test's commit or tag would land there. The test repo must be the only one git sees.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo, env=env, check=True, capture_output=True
+    )
 
 
 def test_provenance_names_the_v1_tag_only_when_it_points_at_the_commit(tmp_path):
