@@ -386,7 +386,7 @@ class FoldPredictor:
     uk: str
 
     @property
-    def trainingyears_text(self) -> list[int]:
+    def training_years(self) -> list[int]:
         return list(self.test_models.training_years)
 
     def predict(self, rows: pl.DataFrame) -> np.ndarray:

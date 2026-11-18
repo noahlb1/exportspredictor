@@ -572,3 +572,13 @@ def test_a_blend_needs_the_years_flows_for_its_lift_rows(fixture_world):
 def test_lift_is_measured_on_the_served_model_form(report, fixture_artefacts):
     assert report["lift"]["model_form"] == fixture_artefacts.metadata["model_form"]
     assert report["lift"]["model_form"]["form"] == "blend"
+
+
+def test_an_event_backtest_refuses_fold_models_trained_after_the_event(fixture_world):
+    from types import SimpleNamespace
+
+    chunks = pipeline.fixture_training(fixture_world)
+    late = backtests.FoldPredictor(SimpleNamespace(training_years=[2021, 2022, 2023], models=[]), UK)
+
+    with pytest.raises(backtests.LeakageError):
+        backtests.event_backtest(chunks, EVENT, late, high_income=None, resamples=10)

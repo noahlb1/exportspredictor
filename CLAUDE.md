@@ -24,7 +24,7 @@ These encode the project's core integrity. Each one exists because breaking it s
 - **UK Flows are scored out-of-fold** (ADR 0001). Every UK Export Potential, Export Gap and Scenario Effect comes from the fold model that held that Product–Market pair out. Folds group a pair's years together.
 - **Leave-one-out supply features**: any feature built from UK data excludes the target pair's own Market.
 - **Time split**: fit on earlier years and evaluate on later ones. Fit scalers, encoders and aggregates on training years only.
-- **Policy features are monotone-constrained**, and tariffs are clipped to the training range (ADR 0002). Scenarios change only policy features and re-predict.
+- **Policy features are monotone-constrained**, and tariffs are clipped to the training range (ADR 0008 kept the constraints after testing them against the ranking; ADR 0006). Export Potential is the model blended with the naive baseline (ADR 0008). Scenarios change only policy features and re-predict through `prediction.export_potential`; the naive baseline has no policy features, so a Scenario leaves it unchanged.
 - **Language about results stays associational**: "the model associates a Trade Agreement with +X%", not "the agreement causes +X%". Lift is a tendency, not a forecast.
 
 ## Environment
