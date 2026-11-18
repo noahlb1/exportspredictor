@@ -78,11 +78,11 @@ from exportspredictor.paths import data_dir
 from exportspredictor.prediction import (
     MIN_PREDICTION_USD,
     ModelForm,
+    blend,
     export_potential,
     flow_probability,
     two_part_potential,
 )
-from exportspredictor.prediction import blend as blend_usd
 from exportspredictor.training import (
     BASE_MARGIN,
     model_params,
@@ -328,19 +328,6 @@ BLEND_WEIGHTS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 BLEND = "blend"
 STARTING_POINT = "starting point"
 NAIVE_EXPERIMENT = "naive baseline"  # experiments 1 and 2: the blend and the starting point, one decision
-
-
-def blend(model_usd: pl.Series, naive_usd: pl.Series, naive_weight: float) -> pl.Series:
-    """Export Potential in dollars: exp((1 − w) · log model + w · log naive), both floored at MIN_PREDICTION_USD.
-
-    With w = 0 the model's Export Potential is returned unchanged. The served blend is the same
-    function (`prediction.blend`).
-    """
-    if naive_weight == 0:
-        return model_usd
-    return pl.Series(
-        "export_potential_usd", blend_usd(model_usd.to_numpy(), naive_usd.to_numpy(), naive_weight), dtype=pl.Float64
-    )
 
 
 def starting_point_arm() -> Arm:
@@ -892,8 +879,12 @@ class Loop:
 
     @staticmethod
     def _score(predicted: pl.Series, settings: Settings, table: pl.DataFrame) -> pl.Series:
-        """Export Potential in dollars as the arm scores it: the model, blended with the naive baseline if asked."""
-        return blend(predicted, table["naive_usd"], settings.naive_weight)
+        """Export Potential in dollars as the arm scores it: the served blend (`prediction.blend`), the model alone at w = 0."""
+        return pl.Series(
+            "export_potential_usd",
+            blend(predicted.to_numpy(), table["naive_usd"].to_numpy(), settings.naive_weight),
+            dtype=pl.Float64,
+        )
 
     def _save(self) -> None:
         if self.folder is None:

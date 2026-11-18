@@ -179,17 +179,6 @@ def test_the_blend_arm_chooses_its_weight_from_the_fixed_grid_by_the_selection_m
     assert row["trained"] is False  # the blend scores the best so far's model
 
 
-def test_blended_export_potential_is_in_dollars_and_positive_for_every_pair():
-    model = pl.Series([0.0, 100.0, 400.0])
-    naive = pl.Series([10_000.0, 0.0, 100.0])
-
-    blended = loop.blend(model, naive, 0.5)
-
-    # Geometric means in dollars, each side floored at $1: sqrt(1 × 10,000), sqrt(100 × 1), sqrt(400 × 100).
-    assert blended.to_list() == pytest.approx([100.0, 10.0, 200.0])
-    assert (blended > 0).all()
-
-
 def test_the_blend_records_the_rank_average_of_model_and_naive_as_a_reference_without_dollars(data):
     results = loop.Loop(data, loop.FIXTURE_LOOP).run_experiment("naive", [loop.blend_arm()])
 
