@@ -1,6 +1,6 @@
 # Choosing the model on Opportunity ranking: the experiment loop and its five-fold confirmation
 
-For spec #65 (tickets #67 and #70–#76), under [ADR 0008](../adr/0008-opportunity-ranking-is-the-one-objective.md). This note lists every experiment the loop ran, the arms that failed included, the rule that kept or dropped each one, and the five-fold confirmation of the result. Every figure is on the 2022 validation year. **The 2023 test year was not read** for any of it: the loop's data refuses it (`experiments.TestYearRead`). 2023 is read once, later, in the final run (#77).
+For spec #65 (tickets #67 and #70–#76), under [ADR 0008](../adr/0008-opportunity-ranking-is-the-one-objective.md). This note lists every experiment the loop ran, the arms that failed included, the rule that kept or dropped each one, and the five-fold confirmation of the result. Every figure is on the 2022 validation year. **The 2023 test year was not read** for any of it: the loop's data refuses it (`experiments.TestYearRead`). 2023 is read once, later, in the final run (#78); its result is the last section.
 
 Every result here is an association measured on held-out UK pairs in one year. An arm that "wins" ranked the UK's 2022 Markets better on that year's data. That does not say why, and it is not a forecast.
 
@@ -106,7 +106,29 @@ The one-fold win was checked on every UK pair before the test year is read. The 
 - Rounds chosen per fold by the selection measure of the model alone (patience 100, max 5,000): 951 / 1,075 / 1,097 / 1,303 / 1,120.
 - No starting point, no two-part model, no Product-detail features.
 
-The five confirmed fold models are in `data/derived/loop_V202601/models/`: `a9314febb8f2e546` (fold 0), `47a1d779af67057c` (1), `f5531a1394b61d75` (2), `6a511c331b5547e0` (3) and `2b7d1510b9dca2b0` (4), each `.ubj` with a `.json` holding its rounds. The final run (#77) builds the served artefact with this form and reads 2023 once.
+The five confirmed fold models are in `data/derived/loop_V202601/models/`: `a9314febb8f2e546` (fold 0), `47a1d779af67057c` (1), `f5531a1394b61d75` (2), `6a511c331b5547e0` (3) and `2b7d1510b9dca2b0` (4), each `.ubj` with a `.json` holding its rounds. The final run (#78) serves this form and reads 2023 once.
+
+## The 2023 test year, read once (#78)
+
+The final run (`python -m exportspredictor.pipeline --event-backtests`, artefact `20261118T185910Z`) serves the blend at naive weight 0.3. Its fold and test-year models are the pipeline's own, read from the cache. They have v2's configuration, trained on 2012–2023 for the Baseline and on 2012–2022 for the test year, with the search's 1,198 rounds scaled to 1,453. So the served model differs from v2 only in its form. 2023 was read in this run only, after the confirmation.
+
+**Success was stated in advance: the UK ranking beats the naive baseline on 2023. It does.**
+
+| 2023, UK out-of-fold | UK ranking | Size-matched Lift (95% interval) | Raw Lift (95% interval) | Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |
+|---|---|---|---|---|---|
+| **This version (blend, w 0.3)** | **0.555** | 0.76 (0.68–0.83) | 4.99 (3.52–8.58) | 433.8 | 566.3 |
+| v2 (model alone, `20261118T100524Z`) | 0.511 | 0.79 (0.72–0.86) | 5.23 (3.56–9.48) | 355.5 | 568.6 |
+| v1 | 0.540 | 0.83 (0.79–0.88) | 5.80 (4.23–9.43) | 401.8 | – |
+| Naive baseline, every Exporter's Flows (this run) | 0.5231 | – | – | 3,954.7 | 2,094.9 |
+| Naive baseline as reported for v2 (training rows' Flows) | 0.5233 | – | – | – | – |
+
+- Both naive figures are given because their Flows differ. Since #77 the naive baseline comes from every Exporter's Flows of the year, which is how the blend's own naive side is computed. v2's report took it from the test year's training rows. The two agree to 0.0002, so either reading gives the same verdict.
+- **Ranking**: the blend's margin over the naive baseline is +0.032, compared with −0.012 for v2 and +0.017 for v1. In the pre-registered v1 comparison (same 5,073 Products), it ranks above v1 by +0.016 (95% interval +0.015 to +0.016). The comparison's verdict is still "mixed", because two secondaries are worse beyond their intervals: deviance over all Exporters (433.6 against 401.8) and size-matched Lift (0.76 against 0.83). The comparison code calls this version "v2".
+- **What choosing on ranking cost** (story 22): deviance over all Exporters rose by 22% on v2 (433.8 against 355.5), as the 2022 confirmation foretold (449 against 371). Deviance on UK pairs is about the same (566 against 569). Size-matched Lift fell from 0.79 to 0.76, with overlapping intervals; it stays below 1, so the largest gaps still grow less often than pairs of similar size. Lift is measured on the blend: the cached Lift model (2012–2017, v1's held-out Exporters within scope) is blended with each Gap Period year's naive baseline from that year's Flows.
+- The Event Backtests and the secondary UK–Australia/New Zealand check measure the model alone (#77). The served Scenario Effect is 0.7 of their effect on the log scale. EU→Japan: predicted +35% against +2% observed. Japan→EU: +42% against −0%. UK→Australia/NZ: +31% against −16%.
+- The ranking is stable. The 2024 ranking agrees with 2023 at 0.86, and 62% of the top 1,000 Opportunities are the same in both years. The Potential Range covers 85% of held-out rows, against a target of 80%.
+
+These are associations on one test year. The blend ranks the UK's 2023 Markets closer to what the UK exported than the naive rule, v2 or v1 did. It does not say why, and it is not a forecast.
 
 ## Reproducing
 

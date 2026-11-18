@@ -25,7 +25,13 @@ What v2 showed (artefact `20261118T100524Z`):
 
 ## Consequences
 
-- **The code still follows ADR 0002 until the ranking work lands.** The constraints, the Tweedie objective and the model card's wording are unchanged by this ADR. `CLAUDE.md`'s guardrail on policy features changes when the code does.
+- **The code followed ADR 0002 until the ranking work landed** (spec #65); see *Outcome* below for the model as built.
 - **The Scenarios and Blocked Opportunities pages need the illustrative label and the benchmark beside them.** Until then they overstate what the model knows.
 - **The selection measure must be fixed before any experiment is read**, and the 2023 test year, already read for v2, is read once more at the end and reported beside v2's figures.
 - **Export Potential's size may get worse.** v2's strength is its deviance. A model chosen on ranking may estimate the size of Flows less well, and the write-up reports both.
+
+## Outcome (spec #65, artefact `20261118T185910Z`)
+
+- **The form is a blend.** Export Potential = exp(0.7 · log model + 0.3 · log naive baseline), each floored at $1, with the naive weight chosen on 2022. Every other experiment (a starting point, five configurations, a two-part model, the Zero Cell scope, three Product-detail features) stayed inside the noise floor or below it. The blend beat the model alone on all five folds of 2022 (0.5635 against 0.5206).
+- **The monotone constraints stay.** Removing them ranked slightly worse on 2022 (0.5708 against 0.5771, inside the noise), so the open point above is closed without a further ADR. The policy features stay monotone-constrained and tariffs stay clipped to the training range. Scenarios change only policy features and re-predict through the one prediction function. The naive baseline has no policy features, so a Scenario leaves it unchanged, and every Scenario Effect is the model's effect scaled by 0.7 on the log scale.
+- **2023, read once:** the UK ranking is 0.555, against 0.523 for the naive baseline, 0.511 for v2 and 0.540 for v1. On this measure the blend beats the naive baseline, the success bar stated in advance. As this ADR expected, size got worse: Tweedie deviance over all Exporters rose from 355.5 (v2) to 433.8. Size-matched Lift is 0.76 (v2 0.79), still below 1. These are associations on one test year.

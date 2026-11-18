@@ -326,3 +326,8 @@ def test_model_card_names_the_form_the_selection_measure_and_the_experiments(car
     assert "blend" in model.lower() or "naive baseline" in model
     ranking = card["ranking_experiments"]
     assert ranking["selection_measure"] and ranking["experiments"]
+
+
+def test_model_card_says_the_event_backtests_measure_the_model_alone_when_a_blend_is_served(card):
+    events = [m for m in card["metrics"] if m["name"].startswith("Event Backtest")]
+    assert events and all("model alone" in m["text"] for m in events)

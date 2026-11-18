@@ -373,13 +373,15 @@ def _metrics(report: dict) -> list[dict]:
         rows.append({"name": "Lift", "model": lift["lift"], "naive": 1.0, "text": f"95% interval {_ci(lift['ci'])}"})
         rows.append({"name": "Lift against pairs of similar size", "model": lift["size_matched"]["lift"],
                      "naive": 1.0, "text": f"95% interval {_ci(lift['size_matched']['ci'])}"})
+    # The Event Backtests measure the model alone; a served blend scales Scenario Effects by 1 − w.
+    alone = "; the model alone, before the blend" if (report.get("model_form") or {}).get("naive_weight") else ""
     for event in report.get("event_backtest", {}).get("events", []):
         for direction in event["directions"]:
             pooled = direction["pooled"]
             rows.append({"name": f"Event Backtest: {direction['label']}", "model": pooled["predicted"],
                          "naive": pooled["observed"], "percent": True,
                          "text": f"model's Scenario Effect against the observed change (95% interval "
-                         f"{_ci(pooled['observed_ci'], percent=True)})"})
+                         f"{_ci(pooled['observed_ci'], percent=True)}){alone}"})
     uk = report.get("accuracy", {}).get("uk_out_of_fold", {})
     for group in uk.get("by_income", []):
         rows.append({"name": f"UK ranking, {group['group']} Markets", "model": group["model_spearman_within_product"],
