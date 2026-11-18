@@ -62,7 +62,7 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
-from exportspredictor.evaluation import LIMITATIONS, NOT_SERVED
+from exportspredictor.evaluation import NOT_SERVED, known_limitations
 from exportspredictor.exclusions import not_ranked_message
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.lookups import search_products
@@ -193,7 +193,7 @@ def create_app(
             **served,
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
-            limitations=LIMITATIONS,
+            limitations=known_limitations(artefacts),
         )
 
     @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)

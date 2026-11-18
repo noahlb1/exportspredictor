@@ -197,6 +197,19 @@ def test_evaluation_returns_the_imputed_observed_split_and_v2s_limitations(clien
     assert "MFN" in body["event_backtest"]["events"][0]["states"]
 
 
+def test_evaluation_serves_the_limitations_the_artefact_shows(client, fixture_artefacts):
+    body = client.get("/evaluation").json()
+
+    limitations = {item["title"]: item["text"] for item in body["limitations"]}
+    # The Potential Range's fixed dollar width (spec story 44), from the artefact's own bands
+    fixed_width = limitations["The Potential Range is a fixed width in dollars"]
+    assert "Uncertain Opportunity" in fixed_width
+    # and what its results show, as on the model card
+    headline = "Does not beat" if not fixture_artefacts.evaluation["headline"]["beats_naive"] else "Only slightly better"
+    assert any(title.startswith(headline) for title in limitations)
+    assert "Trained on a sample of other Exporters' Flows" in limitations
+
+
 def test_evaluation_is_404_when_the_artefact_has_none(fixture_artefacts, tmp_path):
     from dataclasses import replace
 

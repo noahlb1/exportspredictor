@@ -61,6 +61,7 @@ from exportspredictor.training import (
     scan_chunks,
     training_matrix,
 )
+from exportspredictor.wording import years_text
 
 MODEL_FILE = "backtest_model.json"
 HELD_OUT_SHARE = 0.2
@@ -379,7 +380,7 @@ class FoldPredictor:
     uk: str
 
     @property
-    def training_years(self) -> list[int]:
+    def trainingyears_text(self) -> list[int]:
         return list(self.test_models.training_years)
 
     def predict(self, rows: pl.DataFrame) -> np.ndarray:
@@ -595,7 +596,7 @@ def lift_text(result: dict) -> str:
         size = f" They grew {verdict} (ratio {matched:.2f}{m_interval}). {meaning}"
     return (
         f"For countries the model never trained on, the tenth of Product–Market pairs with the largest Export Gaps "
-        f"averaged over {_years(result['gap_years'])} {growth} from their {_years(result['gap_years'])} mean by "
+        f"averaged over {years_text(result['gap_years'])} {growth} from their {years_text(result['gap_years'])} mean by "
         f"{result['outcome_year']} {lift_value:.1f} times as often as pairs "
         f"picked at random{interval}: {result['top_rate']:.0%} of them against {result['base_rate']:.0%}.{size} "
         f"This is a tendency across many pairs, not a promise that any one Opportunity will grow."
@@ -703,7 +704,7 @@ def event_backtest(
 
 
 AGREEMENT_STATES = (
-    "With the agreement on, the Trade Agreement flag is set and the Applied Tariff is 0; with it off, the flag is "
+    "With the agreement on, the Trade Agreement flag is set and a known Applied Tariff is 0 (an unknown one stays unknown); with it off, the flag is "
     "cleared and the Importer's MFN tariff is restored (the pair's own tariff where no MFN rate is known). These are "
     "the states a Trade Agreement Scenario compares (ADR 0006)."
 )
@@ -739,14 +740,10 @@ def _control_rule(event: Event, high_income: bool) -> str:
     income = "high-income " if high_income else ""
     return (
         f"The {event.n_controls} largest {income}Markets by imports from the same Exporters in "
-        f"{_years(event.pre_years)} that had no Trade Agreement with any of them in any year from "
+        f"{years_text(event.pre_years)} that had no Trade Agreement with any of them in any year from "
         f"{event.pre_years[0]} to {event.post_years[-1]}"
         + (f", leaving out {', '.join(event.excluded_controls)}." if event.excluded_controls else ".")
     )
-
-
-def _years(years: Sequence[int]) -> str:
-    return str(years[0]) if len(years) == 1 else f"{years[0]}–{years[-1]}"
 
 
 def _pct(value: float | None) -> str:
@@ -770,13 +767,13 @@ def event_text(report: dict) -> str:
         else:
             verdict = " The model's effect is within the observed interval."
         parts.append(
-            f"For {d['label']} in {_years(report['post_years'])}, the model associated the agreement with "
+            f"For {d['label']} in {years_text(report['post_years'])}, the model associated the agreement with "
             f"{_pct(predicted)} in Export Potential; the observed difference-in-differences against "
             f"{len(d['controls'])} similar Markets without an agreement was {_pct(pooled['observed'])}{interval}.{verdict}"
         )
     return (
         f"{report['title']} (in force {report['in_force']}), with a model trained only on "
-        f"{_years(report['training_years'])}: " + " ".join(parts)
+        f"{years_text(report['training_years'])}: " + " ".join(parts)
     )
 
 
