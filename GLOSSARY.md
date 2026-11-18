@@ -116,6 +116,24 @@ _Avoid_: validation event, natural experiment
 In an Event Backtest, a similar Market that had no Trade Agreement with the same Exporters throughout the period compared, whose change stands in for what the affected Flows would otherwise have done.
 _Avoid_: comparison country, untreated unit
 
+### Model selection
+
+**Selection Measure**:
+The one measure every modelling choice is made on: the mean over Products of the rank correlation between Export Potential and Actual Exports across Markets, for held-out UK pairs in the validation year. Every other metric is reported beside it, never chosen on.
+_Avoid_: objective, score, headline (the headline is the same measure on the test year)
+
+**Arm**:
+One tried setting of an experiment, run against the best Arm so far and kept or dropped by the Win Threshold.
+_Avoid_: trial, variant, candidate
+
+**Noise Floor**:
+How far the Selection Measure moves when only the random seed changes, measured by training the same Arm with several seeds.
+_Avoid_: variance, error bar
+
+**Win Threshold**:
+The margin an Arm must beat the best so far by to be kept: twice the Noise Floor's standard deviation, and at least 0.005.
+_Avoid_: significance level, tolerance
+
 ### Scenarios
 
 **Baseline**:
