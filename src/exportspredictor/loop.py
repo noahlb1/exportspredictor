@@ -32,6 +32,7 @@ refuses it, and `real_data` refuses it before opening a file.
     uv run python -m exportspredictor.loop naive   # #70: the blend (no training) and the starting point (one model)
     uv run python -m exportspredictor.loop select  # #71: v1, three confirmed v2 configurations, depth 6 (four models)
     uv run python -m exportspredictor.loop two-part  # #72: a binary "any Flow" part times a size part (two models)
+    uv run python -m exportspredictor.loop scope   # #73: UK Zero Cells sampled; the zero rate at 2% (two models)
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -130,6 +131,9 @@ class Settings:
     # True: a two-part model (#72), a binary model of "any Flow" times a size model fitted on
     # non-zero Flows; False: one Tweedie model.
     two_part: bool = False
+    # True: UK Zero Cells sampled at `zero_rate` and weighted 1/rate as other Exporters' are
+    # (#73, v1's rule); False: every UK Zero Cell kept at weight 1 (ADR 0004).
+    uk_zeros_sampled: bool = False
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
 
@@ -438,6 +442,22 @@ class TwoPart:
     size: xgb.Booster
 
 
+# --- Split the scope change (#73) ------------------------------------------------------------
+
+# Experiment 5, split in two experiments run in this order, so that each arm is compared with
+# the best so far and is kept if it clears the win threshold (the second starts from the
+# first's result). Both subsample the built feature rows; nothing is rebuilt.
+UK_ZEROS_EXPERIMENT = "scope: UK Zero Cells"
+ZERO_RATE_EXPERIMENT = "scope: zero rate"
+UK_ZEROS_SAMPLED = "UK Zero Cells sampled"
+LOWER_ZERO_RATE = 0.02  # v1's rate for other Exporters' Zero Cells
+BLEND_GRID = {"naive_weight": BLEND_WEIGHTS}  # the blend weight re-chosen for each arm's model (#71)
+SCOPE_EXPERIMENTS = (
+    (UK_ZEROS_EXPERIMENT, [Arm(UK_ZEROS_SAMPLED, {"uk_zeros_sampled": True}, BLEND_GRID)]),
+    (ZERO_RATE_EXPERIMENT, [Arm(f"zero rate {LOWER_ZERO_RATE:.0%}", {"zero_rate": LOWER_ZERO_RATE}, BLEND_GRID)]),
+)
+
+
 # --- The loop ---------------------------------------------------------------------------------
 
 
@@ -725,7 +745,10 @@ class Loop:
         For a two-part model's binary part (`ANY_FLOW`) the label is "any Flow" (0 or 1) and
         every row keeps its weight; its size part (`SIZE`) trains on non-zero Flows only.
         """
-        key = (settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin, part)
+        key = (
+            settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin,
+            settings.uk_zeros_sampled, part,
+        )
         if key != self._matrix_key:
             self._matrices = None  # free the device memory before building the next
             plan, built = self.plan, self.data.data.built_zero_rate
@@ -735,7 +758,10 @@ class Loop:
             grid_rows = self.grid
 
             def keep(table: pl.DataFrame) -> pl.DataFrame:
-                rows = subsample_zeros(table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk)
+                rows = subsample_zeros(
+                    table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk,
+                    uk_zeros_sampled=settings.uk_zeros_sampled,
+                )
                 rows = held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
                 if part == ANY_FLOW:
                     rows = rows.with_columns(_any_flow(pl.col("value_usd")))
@@ -908,10 +934,15 @@ def main(argv: Sequence[str]) -> None:
         lp = Loop(real_data(), v2_plan(), loop_dir())
         section = lp.run_experiment(TWO_PART_EXPERIMENT, [two_part_arm()])["experiments"][TWO_PART_EXPERIMENT]
         print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
+    elif command == "scope":
+        lp = Loop(real_data(), v2_plan(), loop_dir())
+        for name, arms in SCOPE_EXPERIMENTS:
+            section = lp.run_experiment(name, arms)["experiments"][name]
+            print(json.dumps({name: section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
     elif command == "time":
         print(json.dumps(time_one_arm()), flush=True)
     else:
-        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|two-part|time")
+        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|two-part|scope|time")
 
 
 def time_one_arm(root: Path | None = None) -> dict:

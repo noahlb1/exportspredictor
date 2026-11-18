@@ -339,3 +339,83 @@ def test_adding_a_trade_agreement_never_lowers_the_two_part_export_potential(dat
         on = lp.export_potential(scored, lp.grid.with_columns(trade_agreement=pl.lit(1, agreement)))
         assert (off > 0).all()
         assert (on >= off * (1 - 1e-6)).all()
+
+
+def test_the_scope_split_has_uk_zero_cells_sampled_and_the_lower_zero_rate_as_two_experiments():
+    uk_zeros, zero_rate = loop.SCOPE_EXPERIMENTS
+
+    assert uk_zeros == (loop.UK_ZEROS_EXPERIMENT, [loop.Arm(loop.UK_ZEROS_SAMPLED, {"uk_zeros_sampled": True}, loop.BLEND_GRID)])
+    assert zero_rate == (loop.ZERO_RATE_EXPERIMENT, [loop.Arm("zero rate 2%", {"zero_rate": 0.02}, loop.BLEND_GRID)])
+
+
+def _with_more_uk_zero_cells(data: loop.LoopData, uk: str) -> loop.LoopData:
+    """The fixture's training rows plus UK Zero Cells in made-up Products: it has only one of its own.
+
+    Each UK row is copied as a Zero Cell into five Products "9<copy>…", which no other row uses.
+    """
+
+    def more(rows: pl.DataFrame) -> pl.DataFrame:
+        uk_rows = rows.filter(pl.col("exporter").cast(pl.String) == uk)
+        copies = [
+            uk_rows.with_columns(
+                (pl.lit(f"9{copy}") + pl.col("hs6").cast(pl.String).str.slice(2)).cast(rows["hs6"].dtype).alias("hs6"),
+                value_usd=pl.lit(0.0),
+                weight=pl.lit(1.0),
+            )
+            for copy in range(5)
+        ]
+        return pl.concat([rows, *copies])
+
+    training = {year: more(rows) for year, rows in data.data.training.items()}
+    return replace(data, data=replace(data.data, training=training))
+
+
+def test_the_scope_arms_subsample_the_built_rows_and_weight_them_by_the_inverse_rate(data, monkeypatch):
+    # Two folds, so the other fold's UK pairs train; the fixture's rows are built with every Zero Cell.
+    plan = replace(loop.FIXTURE_LOOP, n_folds=2, start=replace(loop.FIXTURE_LOOP.start, zero_rate=0.5))
+    data = _with_more_uk_zero_cells(data, plan.uk)
+    trained_on = []
+    original = loop.training_matrix
+
+    def spy(chunks, prepare=None, **kwargs):
+        if prepare is not None:
+            trained_on.append(pl.concat([prepare(c if isinstance(c, pl.DataFrame) else pl.read_parquet(c)) for c in chunks]))
+        return original(chunks, prepare, **kwargs)
+
+    monkeypatch.setattr(loop, "training_matrix", spy)
+    lp = loop.Loop(data, plan)
+    for arm in (loop.Arm("as built"), loop.Arm("UK sampled", {"uk_zeros_sampled": True}), loop.Arm("lower", {"zero_rate": 0.25})):
+        lp.run_arm(arm, plan.start)
+
+    def zero_weights(rows, uk):
+        is_uk = pl.col("exporter").cast(pl.String) == plan.uk
+        return rows.filter((pl.col("value_usd") == 0) & (is_uk if uk else ~is_uk))["weight"]
+
+    as_built, uk_sampled, lower = trained_on
+    assert set(zero_weights(as_built, uk=True)) == {1.0}
+    assert set(zero_weights(as_built, uk=False)) == {2.0}
+    assert 0 < len(zero_weights(uk_sampled, uk=True)) < len(zero_weights(as_built, uk=True))
+    assert set(zero_weights(uk_sampled, uk=True)) == {2.0}
+    assert set(zero_weights(lower, uk=True)) == {1.0}
+    assert len(zero_weights(lower, uk=True)) == len(zero_weights(as_built, uk=True))
+    assert set(zero_weights(lower, uk=False)) == {4.0}
+    flows = pl.col("value_usd") > 0
+    for rows in (uk_sampled, lower):
+        assert rows.filter(flows).height == as_built.filter(flows).height
+
+
+def test_the_two_scope_experiments_run_in_order_each_from_the_best_so_far(data):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+
+    for name, arms in loop.SCOPE_EXPERIMENTS:
+        best_before = lp.results.get("best")
+        section = lp.run_experiment(name, arms)["experiments"][name]
+
+        assert section["decided"]
+        if best_before is not None:
+            assert section["base"] == best_before
+        (row,) = section["arms"]
+        assert row["status"] in {"kept", "dropped"}
+        assert row["settings"]["naive_weight"] in loop.BLEND_WEIGHTS
+    zero_rate_row = lp.results["experiments"][loop.ZERO_RATE_EXPERIMENT]["arms"][0]
+    assert zero_rate_row["settings"]["zero_rate"] == 0.02
