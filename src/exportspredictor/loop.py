@@ -34,6 +34,7 @@ refuses it, and `real_data` refuses it before opening a file.
     uv run python -m exportspredictor.loop two-part  # #72: a binary "any Flow" part times a size part (two models)
     uv run python -m exportspredictor.loop scope   # #73: UK Zero Cells sampled; the zero rate at 2% (two models)
     uv run python -m exportspredictor.loop product-detail  # #74: three Product features, one experiment each (three models)
+    uv run python -m exportspredictor.loop constraints  # #75: the monotone constraints on (cached) and off (one model)
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -137,6 +138,9 @@ class Settings:
     # True: UK Zero Cells sampled at `zero_rate` and weighted 1/rate as other Exporters' are
     # (#73, v1's rule); False: every UK Zero Cell kept at weight 1 (ADR 0004).
     uk_zeros_sampled: bool = False
+    # True: the monotone constraints on policy features (ADR 0002, kept by ADR 0008 until
+    # tested); False: none (#75).
+    monotone: bool = True
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
 
@@ -490,6 +494,20 @@ def run_product_detail(lp: "Loop") -> dict:
     return lp.results
 
 
+# --- The monotone constraints on and off (#75) ------------------------------------------------
+
+# Experiment 7, which answers the open point of ADR 0008. "On" is the best so far itself (its
+# cached model, nothing trained); "off" is the same settings with no monotone constraints.
+# Both re-choose the blend weight. If "off" wins beyond the threshold the constraints go, and
+# a further ADR says what serves Scenarios; otherwise they stay.
+CONSTRAINTS_EXPERIMENT = "monotone constraints"
+
+
+def constraint_arms(weights: Sequence[float] = BLEND_WEIGHTS) -> list[Arm]:
+    grid = {"naive_weight": tuple(weights)}
+    return [Arm("constraints on", {"monotone": True}, grid), Arm("constraints off", {"monotone": False}, grid)]
+
+
 # --- The loop ---------------------------------------------------------------------------------
 
 
@@ -734,7 +752,10 @@ class Loop:
         started = time.perf_counter()
         train, grid = self._training_matrices(settings, part)
         matrix_seconds = round(time.perf_counter() - started, 1)  # 0 when the matrices were reused
-        params = model_params(dict(settings.params), device=self.plan.device, seed=settings.seed, features=settings.features)
+        params = model_params(
+            dict(settings.params), device=self.plan.device, seed=settings.seed, features=settings.features,
+            monotone=settings.monotone,
+        )
         if part == ANY_FLOW:
             params = {k: v for k, v in params.items() if k not in TWEEDIE_ONLY} | ANY_FLOW_PARAMS
         params |= {"disable_default_eval_metric": 1} | ({"nthread": self.plan.threads} if self.plan.threads else {})
@@ -1005,10 +1026,14 @@ def main(argv: Sequence[str]) -> None:
         for feature in PRODUCT_DETAIL_FEATURES:
             section = results["experiments"][product_detail_experiment(feature)]
             print(json.dumps({feature: section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
+    elif command == "constraints":
+        lp = Loop(real_data(), v2_plan(), loop_dir())
+        section = lp.run_experiment(CONSTRAINTS_EXPERIMENT, constraint_arms())["experiments"][CONSTRAINTS_EXPERIMENT]
+        print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
     elif command == "time":
         print(json.dumps(time_one_arm()), flush=True)
     else:
-        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|two-part|scope|product-detail|time")
+        raise SystemExit("usage: python -m exportspredictor.loop noise|naive|select|two-part|scope|product-detail|constraints|time")
 
 
 def time_one_arm(root: Path | None = None) -> dict:
