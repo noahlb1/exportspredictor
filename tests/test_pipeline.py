@@ -6,6 +6,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from exportspredictor.evaluation import naive_potential
 from exportspredictor.features import (
     FEATURES,
     POLICY_FEATURES,
@@ -15,7 +16,9 @@ from exportspredictor.features import (
 )
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
+from exportspredictor.loop import NAIVE_EXPERIMENT, SELECTION_MEASURE_TEXT
 from exportspredictor.pipeline import build_artefacts, fixture_training, refresh
+from exportspredictor.prediction import blend
 from exportspredictor.search import FIXTURE_SEARCH
 
 CRUDE_OIL = "270900"  # the fixture world's Excluded Product
@@ -86,20 +89,23 @@ def test_baseline_export_potential_is_the_baseline_years_score(artefacts):
 
 def test_each_gap_years_uk_score_comes_from_the_fold_model_that_held_the_pair_out(world, artefacts):
     transform = FeatureTransform.from_dict(artefacts.metadata["feature_transform"])
+    weight = artefacts.model_form.naive_weight
     for year in (2022, 2023, 2024):
         year_flows = world.flows.filter(pl.col("year") == year)
         grid = assign_folds(
-            transform.apply(build_features(uk_grid(year_flows, UK), world.flows, world.sources)).rename(
-                {"importer": "iso3"}
-            )
+            transform.apply(
+                naive_potential(build_features(uk_grid(year_flows, UK), world.flows, world.sources), year_flows)
+            ).rename({"importer": "iso3"})
         )
         scored = artefacts.history.filter(pl.col("year") == year).join(grid.drop("year"), on=["hs6", "iso3"])
         assert scored.height == 20
         for (fold,), rows in scored.group_by("fold"):
             model = artefacts.fold_models[fold]
             assert model.attr("held_out_fold") == str(fold)
-            # The pair's fold model never trained on any of the pair's years (ADR 0001).
-            expected = model.inplace_predict(rows.select(FEATURES).to_numpy().astype(np.float32))
+            # The pair's fold model never trained on any of the pair's years (ADR 0001); the
+            # served blend takes its Export Potential with the year's naive baseline.
+            model_alone = model.inplace_predict(rows.select(FEATURES).to_numpy().astype(np.float32))
+            expected = blend(model_alone, rows["naive_usd"].to_numpy(), weight)
             assert rows["export_potential_usd"].to_list() == pytest.approx(expected.tolist(), rel=1e-5)
 
 
@@ -155,20 +161,29 @@ def test_hyperparameters_are_tuned_on_the_validation_year_and_recorded(artefacts
     assert metadata["training_years"] == [2021, 2022, 2023]
     assert metadata["search"]["trials"][0]["v1_config"]
     assert len(metadata["search"]["trials"]) == FIXTURE_SEARCH.n_trials
-    assert metadata["params"] == metadata["search"]["winner"]["params"]
 
 
-def test_fold_models_take_the_tuned_rounds_scaled_by_their_training_rows(artefacts):
+def test_fold_models_take_the_configuration_the_ranking_experiments_chose_not_the_searchs(artefacts):
+    metadata = artefacts.metadata
+    best = metadata["ranking_experiments"]["best"]
+
+    assert metadata["params"] == best["settings"]["params"]
+
+
+def test_fold_models_take_the_rounds_the_selection_measure_chose_scaled_by_their_training_rows(artefacts):
     metadata = artefacts.metadata
     scaling = metadata["round_scaling"]
+    kept = metadata["ranking_experiments"]["experiments"][NAIVE_EXPERIMENT]["arms"][0]
 
-    assert scaling["tuned_rounds"] == metadata["search"]["winner"]["rounds"]
+    # The fixture's loop has no five-fold confirmation: the kept arm's own rounds, never the search's.
+    assert scaling["selected_rounds"] == kept["rounds"]
+    assert "tuned_rounds" not in scaling
     assert scaling["tuning_years"] == [2021]
     assert scaling["training_years"] == [2021, 2022, 2023]
     assert scaling["ratio"] == pytest.approx(scaling["training_rows"] / scaling["tuning_rows"], rel=1e-3)
     assert 2.5 < scaling["ratio"] < 3.5  # three years of rows against one
     assert metadata["rounds"] == scaling["rounds"]
-    assert metadata["rounds"] == pytest.approx(scaling["tuned_rounds"] * scaling["ratio"], abs=1)
+    assert metadata["rounds"] == pytest.approx(scaling["selected_rounds"] * scaling["ratio"], abs=1)
 
 
 def test_metadata_records_the_device_and_the_search_and_training_time(artefacts):
@@ -179,11 +194,26 @@ def test_metadata_records_the_device_and_the_search_and_training_time(artefacts)
     assert metadata["training_seconds"] > 0
 
 
-def test_baseline_features_hold_each_pairs_fold_and_model_inputs(artefacts):
+def test_the_artefact_serves_the_form_the_ranking_experiments_chose_and_records_them(artefacts):
+    ranking = artefacts.metadata["ranking_experiments"]
+
+    assert artefacts.metadata["model_form"] == {
+        "form": "blend",
+        "naive_weight": ranking["best"]["settings"]["naive_weight"],
+    }
+    assert ranking["selection_measure"] == SELECTION_MEASURE_TEXT
+    assert {"selection_measures", "mean", "sd", "win_threshold"} <= set(ranking["noise_floor"])
+    assert ranking["best"]["experiment"] == NAIVE_EXPERIMENT
+    assert ranking["experiments"][NAIVE_EXPERIMENT]["arms"][0]["status"] == "kept"
+
+
+def test_baseline_features_hold_each_pairs_fold_model_inputs_and_naive_baseline(artefacts):
     inputs = artefacts.baseline_features
 
     assert inputs.select("hs6", "iso3").sort("hs6", "iso3").equals(artefacts.baseline.select("hs6", "iso3"))
     assert set(FEATURES) <= set(inputs.columns)
+    assert inputs["naive_usd"].null_count() == 0
+    assert (inputs["naive_usd"] >= 0).all()
     assert inputs.equals(assign_folds(inputs.drop("fold")).select(inputs.columns))
 
 
@@ -267,3 +297,10 @@ def test_baseline_flags_flagged_products_and_re_export_hubs(artefacts):
     assert artefacts.baseline.schema["flagged_product"] == pl.Boolean
     assert sum(flagged for flagged, _ in flags.values()) == 4  # one Product in every Market
     assert sum(hub for _, hub in flags.values()) == 5  # every Product in one Market
+
+
+def test_loop_results_validated_on_another_year_are_refused(world, artefacts):
+    ranking = {**artefacts.metadata["ranking_experiments"], "validation_year": 2021}
+
+    with pytest.raises(ValueError, match="validated on 2021"):
+        build_artefacts(world, version="mismatch", search_results=artefacts.metadata["search"], ranking_results=ranking)

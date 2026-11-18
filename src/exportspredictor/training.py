@@ -51,14 +51,22 @@ DEFAULT_ROUNDS = 100
 
 
 def model_params(
-    params: dict | None = None, *, device: str = "cpu", seed: int = 0, features: Sequence[str] = FEATURES
+    params: dict | None = None,
+    *,
+    device: str = "cpu",
+    seed: int = 0,
+    features: Sequence[str] = FEATURES,
+    monotone: bool = True,
 ) -> dict:
     """Full XGBoost parameters: defaults, the given overrides and the monotone constraints.
 
     `features` are the matrix's columns, in order (a feature ablation trains on fewer).
+    `monotone=False` leaves the constraints out (the experiment loop's #75 arm).
     """
-    constraints = "(" + ",".join(str(MONOTONE_CONSTRAINTS.get(f, 0)) for f in features) + ")"
-    return {**DEFAULT_PARAMS, **(params or {}), "monotone_constraints": constraints, "device": device, "seed": seed}
+    full = {**DEFAULT_PARAMS, **(params or {}), "device": device, "seed": seed}
+    if monotone:
+        full["monotone_constraints"] = "(" + ",".join(str(MONOTONE_CONSTRAINTS.get(f, 0)) for f in features) + ")"
+    return full
 
 
 def read_chunk(chunk: Chunk) -> pl.DataFrame:
@@ -202,6 +210,9 @@ def sample_non_uk(table: pl.DataFrame, *, uk: str, rate: float, seed: int = 0) -
     )
 
 
+BASE_MARGIN = "base_margin"  # a prepared chunk's per-row starting point on the log scale, if it has one
+
+
 class _ChunkIter(xgb.DataIter):
     """Feeds one prepared chunk at a time to XGBoost.
 
@@ -227,11 +238,16 @@ class _ChunkIter(xgb.DataIter):
             table = self._prepare(read_chunk(self._chunks[self._i]))
             self._i += 1
             if table.height:
+                # A table with a `base_margin` column trains from that starting point (log scale).
+                margin = {} if BASE_MARGIN not in table.columns else {
+                    "base_margin": self.device.array(table[BASE_MARGIN].to_numpy())
+                }
                 input_data(
                     data=self.device.array(table.select(self._features).to_numpy()),
                     label=self.device.array(table["value_usd"].to_numpy()),
                     weight=self.device.array(table["weight"].to_numpy()),
                     feature_names=self._features,
+                    **margin,
                 )
                 return True
         return False

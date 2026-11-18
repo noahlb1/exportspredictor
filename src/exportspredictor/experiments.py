@@ -43,6 +43,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import xgboost as xgb
+from xgboost.callback import TrainingCallback
 
 from exportspredictor import baci, scope
 from exportspredictor.downloads import write_parquet
@@ -68,6 +69,7 @@ from exportspredictor.features import (
 from exportspredictor.fixture import World
 from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.paths import data_dir
+from exportspredictor.prediction import export_potential
 from exportspredictor.training import (
     SECTOR_SUBSET,
     SELECTION_METRIC,
@@ -108,7 +110,6 @@ BUILT_ZERO_RATE = 0.10
 # validation deviance by less than this share and the UK Spearman by less than this much.
 PLATEAU_DEVIANCE_SHARE = 0.01
 PLATEAU_SPEARMAN = 0.005
-PREDICT_ROWS = 2_000_000  # rows predicted at a time
 SETTINGS_FILE = "experiments.json"
 RESULTS_FILE = "results.json"
 
@@ -383,7 +384,7 @@ class _Fitter:
         *,
         max_rounds: int,
         early_stopping_rounds: int,
-        callbacks: Sequence[xgb.callback.TrainingCallback] = (),
+        callbacks: Sequence[TrainingCallback] = (),
     ) -> dict:
         """Train `params` on the matrices with early stopping on the validation year, and measure the model."""
         plan, started = self.plan, time.perf_counter()
@@ -415,20 +416,8 @@ class _Fitter:
 
 
 def _predict(model: xgb.Booster, table: pl.DataFrame, features: Sequence[str], rounds: int, device: str) -> pl.Series:
-    """Predictions in slices of `PREDICT_ROWS` rows, so that a large table fits on the device beside a training matrix."""
-    if table.is_empty():
-        return pl.Series([], dtype=pl.Float64)
-    parts = []
-    for start in range(0, table.height, PREDICT_ROWS):
-        data = np.ascontiguousarray(table.slice(start, PREDICT_ROWS).select(features).to_numpy(), dtype=np.float32)
-        if device.startswith("cuda"):
-            import cupy  # only where training runs on the GPU
-
-            parts.append(cupy.asnumpy(model.inplace_predict(cupy.asarray(data), iteration_range=(0, rounds))))
-            cupy.get_default_memory_pool().free_all_blocks()
-        else:
-            parts.append(model.inplace_predict(data, iteration_range=(0, rounds)))
-    return pl.Series(np.concatenate([np.asarray(p, dtype=np.float64) for p in parts]))
+    """The first `rounds` trees' predictions, on the device the model trained on."""
+    return export_potential(table, model, features=features, rounds=rounds, device=device)
 
 
 def spearman_within_product(rows: pl.DataFrame, prediction: str) -> float | None:
@@ -608,7 +597,7 @@ def results_path(root: Path | None = None) -> Path:
 def save(results: dict, root: Path | None = None) -> Path:
     path = results_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(results, indent=2, default=_json_default), encoding="utf-8")
+    path.write_text(json.dumps(results, indent=2, default=json_default), encoding="utf-8")
     return path
 
 
@@ -617,7 +606,8 @@ def load(root: Path | None = None) -> dict:
     return json.loads(results_path(root).read_text(encoding="utf-8"))
 
 
-def _json_default(value):
+def json_default(value):
+    """`json.dumps(default=...)` for results holding NumPy scalars."""
     if isinstance(value, np.generic):
         return value.item()
     raise TypeError(f"{type(value).__name__} is not JSON serialisable")

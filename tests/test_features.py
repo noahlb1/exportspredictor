@@ -7,6 +7,7 @@ then the world's Flows are perturbed to show what each feature does and does not
 import polars as pl
 import pytest
 
+from exportspredictor import features
 from exportspredictor.features import (
     DEMAND_FEATURES,
     FEATURES,
@@ -310,3 +311,54 @@ def test_training_rows_and_the_uk_grid_keep_flagged_products_and_re_export_hubs(
     assert JEWELLERY in set(rows["hs6"]) and "HKG" in set(rows["importer"])
     assert rows.filter(_is(*JEWELLERY_HUB)).height == world.flows.filter(_is(*JEWELLERY_HUB)).height
     assert grid.filter(_is(*JEWELLERY_HUB)).height == 1
+
+
+# --- Product detail finer than Sector (#74) -----------------------------------------------------
+
+
+def _detail_flows() -> pl.DataFrame:
+    """Two training years of Flows of two Products among three non-UK Exporters, and a UK Flow."""
+    rows = [
+        # 2020: four trading pairs; Product 010110 is traded by three of them, into two Markets.
+        ("DEU", "FRA", "010110", 2020, 10.0),
+        ("DEU", "USA", "010110", 2020, 5.0),
+        ("FRA", "USA", "010110", 2020, 1.0),
+        ("USA", "DEU", "020120", 2020, 7.0),
+        ("FRA", "DEU", "010110", 2020, 0.0),  # a Zero Cell, not a trading pair
+        # 2021: two trading pairs; Product 010110 by one, into one Market.
+        ("DEU", "FRA", "010110", 2021, 4.0),
+        ("USA", "DEU", "020120", 2021, 2.0),
+        # The UK: never counted.
+        ("GBR", "JPN", "010110", 2021, 99.0),
+    ]
+    return pl.DataFrame(
+        rows, schema={"exporter": pl.String, "importer": pl.String, "hs6": pl.String, "year": pl.Int16, "value_usd": pl.Float64},
+        orient="row",
+    )
+
+
+def test_product_detail_is_the_mean_over_training_years_of_trading_pair_share_and_importing_markets():
+    detail = features.fit_product_detail(_detail_flows(), [2020, 2021], uk="GBR").sort("hs6")
+
+    assert detail["hs6"].to_list() == ["010110", "020120"]
+    # 010110: 3 of 4 pairs in 2020, 1 of 2 in 2021; 2 Markets then 1.
+    assert detail["trading_pair_share"].to_list() == pytest.approx([(3 / 4 + 1 / 2) / 2, (1 / 4 + 1 / 2) / 2])
+    assert detail["importing_markets"].to_list() == pytest.approx([1.5, 1.0])
+    assert detail["hs4"].to_list() == [101, 201]
+
+
+def test_product_detail_does_not_move_when_a_later_year_or_any_uk_flow_changes():
+    flows = _detail_flows()
+    fitted = features.fit_product_detail(flows, [2020, 2021], uk="GBR").sort("hs6")
+    changed = pl.concat([
+        flows.with_columns(
+            value_usd=pl.when(pl.col("exporter") == "GBR").then(0.0).otherwise(pl.col("value_usd"))
+        ),
+        pl.DataFrame(
+            {"exporter": ["DEU", "GBR"], "importer": ["JPN", "USA"], "hs6": ["020120", "020120"], "year": [2022, 2020],
+             "value_usd": [50.0, 8.0]},
+            schema=flows.schema,
+        ),
+    ])
+
+    assert features.fit_product_detail(changed, [2020, 2021], uk="GBR").sort("hs6").equals(fitted)

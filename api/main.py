@@ -69,7 +69,7 @@ from exportspredictor.conformal import (
     potential_range_text,
 )
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
-from exportspredictor.evaluation import NOT_SERVED, known_limitations
+from exportspredictor.evaluation import NOT_SERVED, known_limitations, parts_not_run
 from exportspredictor.exclusions import (
     FLAGGED_PRODUCT_CAVEAT,
     REEXPORT_HUB_CAVEAT,
@@ -225,6 +225,7 @@ def create_app(
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
             limitations=known_limitations(artefacts),
+            not_run=parts_not_run(artefacts.evaluation),
         )
 
     @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)
@@ -302,6 +303,7 @@ def create_app(
                 artefacts.fold_models,
                 request.to_scenario(),
                 tariff_range=scenarios.tariff_range(artefacts.metadata),
+                form=artefacts.model_form,
             )
         except scenarios.InvalidScenario as error:
             raise HTTPException(status_code=422, detail=str(error)) from error

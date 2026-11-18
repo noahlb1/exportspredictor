@@ -38,6 +38,32 @@ def test_subsampling_zeros_keeps_every_flow_and_every_uk_zero_cell(fixture_world
     assert set(subsampled.filter(~uk_or_flow)["weight"]) <= {50.0}
 
 
+def test_uk_zero_cells_can_be_sampled_and_weighted_as_other_exporters_zero_cells_are(fixture_world):
+    built = training_rows(fixture_world.flows, rate=0.8, seed=3, uk=UK)  # every year: a few UK Zero Cells
+    uk_zero = (pl.col("exporter") == UK) & (pl.col("value_usd") == 0)
+
+    sampled = features.subsample_zeros(built, built_rate=0.8, rate=0.4, seed=3, uk=UK, uk_zeros_sampled=True)
+
+    # The UK treated as any other Exporter: the rows of a subsample that knows no UK at all.
+    as_any_exporter = features.subsample_zeros(built, built_rate=0.8, rate=0.4, seed=3, uk="no UK")
+    assert _keys(sampled).equals(_keys(as_any_exporter))
+    assert 0 < sampled.filter(uk_zero).height < built.filter(uk_zero).height
+    assert set(sampled.filter(uk_zero)["weight"]) == {2.5}
+
+
+def test_uk_zero_cells_are_sampled_at_the_rate_the_rows_were_built_at_too(fixture_world):
+    built = training_rows(fixture_world.flows, rate=0.8, seed=3, uk=UK)  # every year: a few UK Zero Cells
+    uk_zero = (pl.col("exporter") == UK) & (pl.col("value_usd") == 0)
+
+    at_built = features.subsample_zeros(built, built_rate=0.8, rate=0.8, seed=3, uk=UK, uk_zeros_sampled=True)
+    lower = features.subsample_zeros(built, built_rate=0.8, rate=0.4, seed=3, uk=UK, uk_zeros_sampled=True)
+
+    kept = _keys(at_built.filter(uk_zero))
+    assert lower.filter(uk_zero).height < kept.height < built.filter(uk_zero).height
+    assert set(kept["weight"]) == {1.25}
+    assert _keys(at_built.filter(~uk_zero)).equals(_keys(built.filter(~uk_zero)))
+
+
 def test_subsampling_cannot_raise_the_zero_rate(fixture_world):
     built = training_rows(fixture_world.flows.filter(pl.col("year") == 2022), rate=0.05, uk=UK)
 

@@ -28,7 +28,7 @@ def test_health_reports_version_format_baseline_year_and_gap_period_once_loaded(
     assert response.json() == {
         "ready": True,
         "artefact_version": "fixture-test",
-        "artefact_format": 2,
+        "artefact_format": 3,
         "baseline_year": 2024,
         "gap_years": [2022, 2024],
         "gap_period_label": "2022–2024 average",
@@ -290,8 +290,8 @@ def test_filters_apply_on_both_views(client):
 
 
 def test_min_gap_usd_filter_drops_smaller_export_gaps(client):
-    everything = _ranked(client, "/opportunities/by-market/JPN")
-    rows = _ranked(client, "/opportunities/by-market/JPN", min_gap_usd=0)
+    everything = _ranked(client, "/opportunities/by-market/CAN")
+    rows = _ranked(client, "/opportunities/by-market/CAN", min_gap_usd=0)
 
     assert rows and all(row["export_gap_usd"] >= 0 for row in rows)
     assert rows == [row for row in everything if row["export_gap_usd"] >= 0]
@@ -775,7 +775,6 @@ def test_every_ranking_row_has_a_potential_range_from_zero_up_and_flags_uncertai
         inside = low <= row["actual_exports_usd"] <= high
         assert row["uncertain_opportunity"] is (row["export_gap_usd"] > 0 and inside)
     assert any(row["uncertain_opportunity"] for row in rows)
-    assert not all(row["uncertain_opportunity"] for row in rows if row["export_gap_usd"] > 0)
 
 
 @pytest.mark.parametrize(

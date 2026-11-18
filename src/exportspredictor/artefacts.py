@@ -2,7 +2,9 @@
 
 Layout of `<root>/<version>/`:
 
-    metadata.json      artefact_format, version, baseline_year, gap_years, n_folds, features, ...
+    metadata.json      artefact_format, version, baseline_year, gap_years, n_folds, features,
+                       model_form (`prediction.ModelForm`), ranking_experiments (the selection
+                       measure, the noise floor and the experiment results that chose the form), ...
                        (free-form beyond those)
     models/fold_<k>.ubj
     baseline.parquet   one row per UK Product–Market pair: Gap Period means of Export Potential,
@@ -10,7 +12,8 @@ Layout of `<root>/<version>/`:
                        the Blocked Opportunity value; its Flagged Product and Re-export Hub
                        flags (ADR 0005); its Potential Range and Uncertain Opportunity flag (ADR 0007);
                        whether its Baseline-year Applied Tariff is carried forward from 2021 (ADR 0006)
-    baseline_features.parquet  the same pairs' Baseline-year model inputs and fold (for Scenarios, explanations)
+    baseline_features.parquet  the same pairs' Baseline-year model inputs, fold and naive baseline
+                       (`naive_usd`), for Scenarios and explanations
     history.parquet    per pair and year, last six years: UK Actual Exports (non-zero only before
                        the Gap Period) and, in Gap Period years, Export Potential and Export Gap;
                        every year marks a carried-forward Applied Tariff (tariff_imputed)
@@ -20,9 +23,10 @@ Layout of `<root>/<version>/`:
     potential_range_bands.parquet  the Potential Range's band offsets (ADR 0007, `conformal.fit_bands`)
     evaluation.json    accuracy on the test year, stability and later checks (optional)
 
-`artefact_format` is 2. `load` refuses any other format, including v1 folders (which
-carry none), and a folder missing any table above, so the API never serves a bundle it
-cannot read.
+`artefact_format` is 3: format 2 served the model alone and recorded no model form (spec
+#65 made the served form a choice). `load` refuses any other format, including v1 folders
+(which carry none), and a folder missing any table above, so the API never serves a bundle
+it cannot read.
 
 Version names sort chronologically (default: a UTC timestamp), so the newest folder is
 the lexically greatest one that holds a metadata file.
@@ -37,9 +41,11 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
+from exportspredictor.prediction import ModelForm
+
 METADATA_FILE = "metadata.json"
 EVALUATION_FILE = "evaluation.json"
-ARTEFACT_FORMAT = 2
+ARTEFACT_FORMAT = 3
 _TABLES = (
     "baseline",
     "baseline_features",
@@ -73,7 +79,8 @@ class Artefacts:
     # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_opportunity_value_usd,
     # potential_range_low_usd, potential_range_high_usd, uncertain_opportunity, tariff_imputed
     baseline: pl.DataFrame
-    # hs6, iso3, fold, FEATURES (transformed, as the models saw them), mfn_tariff (percent, the 2021 MFN rate)
+    # hs6, iso3, fold, FEATURES (transformed, as the models saw them), mfn_tariff (percent, the 2021 MFN rate),
+    # naive_usd (the naive baseline a blend takes)
     baseline_features: pl.DataFrame
     history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd, tariff_imputed
     products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
@@ -87,6 +94,11 @@ class Artefacts:
     @property
     def version(self) -> str:
         return self.metadata["version"]
+
+    @property
+    def model_form(self) -> ModelForm:
+        """How Export Potential is made from the fold models: pass it to every `prediction` call."""
+        return ModelForm.from_dict(self.metadata["model_form"])
 
     @property
     def baseline_year(self) -> int:
@@ -120,13 +132,16 @@ def save(artefacts: Artefacts, root: Path) -> Path:
 
 
 def load(folder: Path) -> Artefacts:
-    """Load one artefact folder; `UnreadableArtefacts` if it is not a complete format-2 folder."""
+    """Load one artefact folder; `UnreadableArtefacts` if it is not a complete format-3 folder."""
     folder = Path(folder)
     metadata = json.loads((folder / METADATA_FILE).read_text(encoding="utf-8"))
     found = metadata.get("artefact_format")
     if found != ARTEFACT_FORMAT:
         named = "no artefact_format" if found is None else f"artefact format {found}"
-        raise UnreadableArtefacts(f"{folder} has {named}; this code reads only artefact format {ARTEFACT_FORMAT}")
+        raise UnreadableArtefacts(
+            f"{folder} has {named}; this code reads only artefact format {ARTEFACT_FORMAT}, which records the "
+            "model form it serves. Rebuild it with `python -m exportspredictor.pipeline`"
+        )
     missing = [name for name in _TABLES if not (folder / f"{name}.parquet").exists()]
     if missing:
         raise UnreadableArtefacts(f"{folder} is missing the table(s) {', '.join(missing)}")

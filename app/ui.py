@@ -5,6 +5,7 @@ column or row link is added here once.
 """
 
 import json
+from typing import Any
 from urllib.parse import urlencode
 
 import pandas as pd
@@ -37,7 +38,7 @@ _AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def fetch(path: str, api_url: str, **params) -> dict | list:
+def fetch(path: str, api_url: str, **params) -> Any:
     """Cached API read. `api_url` is part of the cache key so a changed API is re-read."""
     del api_url
     return client.get(path, **params)

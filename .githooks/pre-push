@@ -20,4 +20,5 @@ done
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
 
 run ruff check . || { echo "pre-push: ruff check failed" >&2; exit 1; }
+run pyright || { echo "pre-push: pyright failed" >&2; exit 1; }
 run pytest -q -p no:cacheprovider || { echo "pre-push: tests failed" >&2; exit 1; }

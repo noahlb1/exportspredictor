@@ -444,7 +444,7 @@ def _save_results(results: dict, folder: Path | None) -> None:
 
 
 def _dumps(results: dict) -> str:
-    return json.dumps(results, indent=2, default=experiments._json_default)
+    return json.dumps(results, indent=2, default=experiments.json_default)
 
 
 def main(argv: Sequence[str]) -> None:

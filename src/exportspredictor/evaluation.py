@@ -45,7 +45,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import xgboost as xgb
 
@@ -53,18 +52,27 @@ from exportspredictor import artefacts as store
 from exportspredictor import baci
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
-from exportspredictor.features import FEATURES, FeatureTransform, features_dir
+from exportspredictor.features import (
+    FEATURES,
+    FeatureTransform,
+    features_dir,
+    load_sources,
+    load_year_flows,
+)
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
+from exportspredictor.prediction import (
+    MIN_PREDICTION_USD,
+    MODEL_ALONE,
+    ModelForm,
+    export_potential,
+)
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
 from exportspredictor.wording import number_text, rate_text
 
 TWEEDIE_POWER = 1.5
-# Predictions are floored at $1 before the deviance, so that a zero naive prediction of a
-# non-zero Flow is penalised heavily but finitely.
-MIN_PREDICTION_USD = 1.0
 # A Product (or Product within a group) needs this many rows for its rank correlation.
 MIN_RANKED_ROWS = 3
 STABILITY_TOP_N = 1000
@@ -85,6 +93,33 @@ TARIFF_GROUPS = ("observed", "imputed")
 # Evaluation results kept in the artefact (and the model card) but never served by the API:
 # the pre-registered v1/v2 comparison (`comparison`, spec #39).
 NOT_SERVED = frozenset({"v1_comparison"})
+
+NOT_RUN = "not run for this version"
+# The opt-in parts of a pipeline run (`pipeline.Parts`, spec #65 story 23): title, the report
+# block that holds its result, and the switch that runs it. A part whose block is absent was skipped.
+OPTIONAL_PARTS = (
+    ("Event Backtests", "event_backtest", "--event-backtests",
+     ("Lift and the Event Backtests test Export Gaps against later growth and Scenario Effects against a real Trade "
+     "Agreement.")),
+    ("Monotone-constraint comparison", "monotone_constraints", "--constraint-comparison",
+     "It compares the monotone-constrained model with an unconstrained one."),
+    ("Gain ladder", "ladder", "--gain-ladder",
+     "It splits the change in the v1 comparison's primary metric from v1 to v2 into steps."),
+)
+
+
+def parts_not_run(report: dict) -> list[dict]:
+    """The opt-in parts an evaluation report does not hold, each with its "not run for this version" text.
+
+    The gain ladder lives inside the v1 comparison; a report with every part lists none.
+    """
+    blocks = {**report, **(report.get("v1_comparison") or {})}
+    return [
+        {"title": title, "text": f"{title}: {NOT_RUN}. {why} It runs when the pipeline is asked for it "
+         f"(`python -m exportspredictor.pipeline {switch}`)."}
+        for title, block, switch, why in OPTIONAL_PARTS
+        if block not in blocks
+    ]
 
 LIMITATIONS = [
     {
@@ -246,6 +281,20 @@ def _rmse_log(prediction: str) -> pl.Expr:
     return error.filter(pl.col("value_usd") > 0).pow(2).mean().sqrt()
 
 
+def naive_from_totals(supply_usd: pl.Expr, demand_usd: pl.Expr, world_usd: pl.Expr) -> pl.Expr:
+    """The Naive Baseline's one formula: supply × demand / world exports, 0 where the world exports nothing.
+
+    Each total leaves the row's own Flow out: the Exporter's exports of the Product, the
+    Importer's imports of it and the Product's world exports. A negative total (float
+    error) counts as 0.
+    """
+    return (
+        pl.when(world_usd > 0)
+        .then(supply_usd.clip(lower_bound=0) * demand_usd.clip(lower_bound=0) / world_usd)
+        .otherwise(0.0)
+    )
+
+
 def naive_potential(rows: pl.DataFrame, flows: pl.DataFrame) -> pl.DataFrame:
     """Add `naive_usd`: the Exporter's share of the Product's world exports times the Importer's imports of it.
 
@@ -256,14 +305,14 @@ def naive_potential(rows: pl.DataFrame, flows: pl.DataFrame) -> pl.DataFrame:
     active = flows.filter(value > 0).select(
         pl.col("exporter", "importer", "hs6").cast(pl.String), value.cast(pl.Float64)
     )
-    supply = active.group_by("exporter", "hs6").agg(_supply=value.sum())
-    demand = active.group_by("importer", "hs6").agg(_demand=value.sum())
-    world = active.group_by("hs6").agg(_world=value.sum())
+    supply = active.group_by("exporter", "hs6").agg(_supply_usd=value.sum())
+    demand = active.group_by("importer", "hs6").agg(_demand_usd=value.sum())
+    world = active.group_by("hs6").agg(_world_usd=value.sum())
     keys = rows.select(
         _e=pl.col("exporter").cast(pl.String),
         _i=pl.col("importer").cast(pl.String),
         _p=pl.col("hs6").cast(pl.String),
-        _own=pl.col("value_usd").cast(pl.Float64),
+        _own_usd=pl.col("value_usd").cast(pl.Float64),
     )
     joined = (
         keys.join(supply.rename({"exporter": "_e", "hs6": "_p"}), on=["_e", "_p"], how="left", maintain_order="left")
@@ -271,12 +320,9 @@ def naive_potential(rows: pl.DataFrame, flows: pl.DataFrame) -> pl.DataFrame:
         .join(world.rename({"hs6": "_p"}), on="_p", how="left", maintain_order="left")
         .fill_null(0.0)
     )
-    own = pl.col("_own")
-    other_world = pl.col("_world") - own
+    own = pl.col("_own_usd")
     naive = joined.select(
-        naive_usd=pl.when(other_world > 0)
-        .then((pl.col("_supply") - own).clip(lower_bound=0) * (pl.col("_demand") - own).clip(lower_bound=0) / other_world)
-        .otherwise(0.0)
+        naive_usd=naive_from_totals(pl.col("_supply_usd") - own, pl.col("_demand_usd") - own, pl.col("_world_usd") - own)
     )
     return rows.with_columns(naive["naive_usd"])
 
@@ -430,6 +476,64 @@ def headline(overall: dict, test_year: int) -> dict:
     }
 
 
+# v2's 2023 figures, from its evaluation report (artefact 20261118T100524Z, model alone). Its naive
+# baseline was computed from the test year's training rows (top-100 Exporters' Flows and sampled
+# Zero Cells); since spec #65 the naive baseline comes from every Exporter's Flows, so this run's
+# naive figure is reported beside it, not in place of it.
+V2_REPORTED = {
+    "version": "20261118T100524Z",
+    "uk_ranking": 0.5114955233364546,
+    "naive": 0.5233246980004151,
+    "lift": 5.226937575036582,
+    "size_matched_lift": 0.7876591646085601,
+    "tweedie_deviance_all_exporters": 355.5288087632071,
+    "tweedie_deviance_uk": 568.5883343927953,
+}
+NAIVE_THIS_RUN = "Naive baseline, every Exporter's Flows (this run)"
+NAIVE_AS_REPORTED_FOR_V2 = "Naive baseline as reported for v2 (training rows' Flows)"
+
+
+def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED) -> dict:
+    """The test year's UK ranking, size-matched Lift and Tweedie deviance beside v2's and v1's.
+
+    `report` is this version's evaluation report; v1's UK ranking is the v1 comparison's (the same
+    test-year rows). `v2` holds v2's reported figures (`V2_REPORTED`), or None where they do not
+    apply (the fixture). Both naive figures are listed, each named by the Flows it was computed from.
+    Whether the model beats the naive baseline is judged against this run's naive baseline.
+    """
+    head, year = report["headline"], report["test_year"]
+    overall = {scope: report["accuracy"][scope]["overall"] for scope in ("all_exporters", "uk_out_of_fold")}
+    lift = report.get("lift") or {}
+    form = (report.get("model_form") or {}).get("form", "model alone")
+    rows = [{
+        "name": f"This version ({form})",
+        "uk_ranking": head["model"],
+        "lift": lift.get("lift"),
+        "size_matched_lift": (lift.get("size_matched") or {}).get("lift"),
+        "tweedie_deviance_all_exporters": overall["all_exporters"]["model_tweedie_deviance"],
+        "tweedie_deviance_uk": overall["uk_out_of_fold"]["model_tweedie_deviance"],
+    }]
+    naive = [{"name": NAIVE_THIS_RUN, "uk_ranking": head["naive"]}]
+    if v2 is not None:
+        rows.append({"name": "v2", **{k: v for k, v in v2.items() if k != "naive"}})
+        naive.append({"name": NAIVE_AS_REPORTED_FOR_V2, "uk_ranking": v2["naive"]})
+    v1 = (report.get("v1_comparison") or {}).get("primary", {}).get("v1")
+    if v1 is not None:
+        rows.append({"name": "v1", "uk_ranking": v1})
+    beats = head["model"] is not None and head["naive"] is not None and head["model"] > head["naive"]
+    verdict = "beats the naive baseline" if beats else "does not beat the naive baseline"
+    others = ", ".join(f"{row['name']} {row['uk_ranking']:.3f}" for row in rows[1:])
+    text = (
+        f"On {year}, read once, the UK ranking of this version is {head['model']:.3f}: it {verdict} "
+        f"({head['naive']:.3f} from every Exporter's Flows"
+        + (f"; {v2['naive']:.3f} as reported for v2" if v2 is not None else "")
+        + ")."
+        + (f" Earlier versions: {others}." if others else "")
+        + " These are associations on one test year, not a forecast."
+    )
+    return {"test_year": year, "rows": rows, "naive": naive, "beats_naive": beats, "text": text}
+
+
 def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STABILITY_TOP_N) -> dict:
     """How much UK rankings move between two years scored by the same models.
 
@@ -550,19 +654,18 @@ def score_rows(
     uk: str,
     *,
     features: Sequence[str] = FEATURES,
+    form: ModelForm = MODEL_ALONE,
 ) -> pl.DataFrame:
     """Add `export_potential_usd`: UK rows out-of-fold, other rows by the mean of the fold models.
 
-    `features` are the models' inputs, in order.
+    `features` are the models' inputs, in order; `form` is the model form (a blend needs `naive_usd`).
     """
     transformed = transform.apply(table)
     is_uk = pl.col("exporter").cast(pl.String) == uk
-    uk_rows = score_out_of_fold(transformed, list(models), uk=uk, inputs=features).drop("fold")
+    uk_rows = score_out_of_fold(transformed, list(models), uk=uk, inputs=features, form=form).drop("fold")
     others = transformed.filter(~is_uk)
     if others.height:
-        data = others.select(features).to_numpy().astype(np.float32)
-        mean = np.mean([model.inplace_predict(data) for model in models], axis=0)
-        others = others.with_columns(export_potential_usd=pl.Series(mean, dtype=pl.Float64))
+        others = others.with_columns(export_potential(others, models, features=features, by="mean", form=form))
     else:
         others = others.with_columns(export_potential_usd=pl.lit(None, pl.Float64))
     return pl.concat([uk_rows.select(others.columns), others])
@@ -588,6 +691,8 @@ def evaluate(
     markets: pl.DataFrame,
     uk: str,
     settings: dict,
+    flows: pl.DataFrame | None = None,
+    form: ModelForm = MODEL_ALONE,
 ) -> dict:
     """The evaluation report for the test year.
 
@@ -595,7 +700,9 @@ def evaluate(
     `test_grid` its full UK grid, both with features untransformed. `baseline` holds the
     Baseline year's UK scores (`gap_period.baseline_year_scores`) and `baseline_models` /
     `baseline_transform` the models that scored them, used for the stability check. `settings` (validation year, params, sampling rates, ...)
-    is recorded in the report.
+    is recorded in the report. `flows` are the test year's Flows the naive baseline is computed
+    from (default: the non-zero Flows among `test_rows`); `form` is the model form the test-year
+    models are scored in (a blend takes that naive baseline).
     """
     year = test_models.test_year
     if set(test_rows["year"].unique().to_list()) != {year} or set(test_grid["year"].unique().to_list()) != {year}:
@@ -603,15 +710,20 @@ def evaluate(
     if year in test_models.training_years:
         raise ValueError("The test-year models were trained on the test year")
 
-    flows = test_rows.filter(pl.col("value_usd") > 0).select("exporter", "importer", "hs6", "value_usd")
-    scored_rows = naive_potential(score_rows(test_rows, test_models.models, test_models.transform, uk), flows)
-    scored_grid = naive_potential(score_rows(test_grid, test_models.models, test_models.transform, uk), flows)
+    if flows is None:
+        flows = test_rows.filter(pl.col("value_usd") > 0)
+    flows = flows.select("exporter", "importer", "hs6", "value_usd")
+    test_rows, test_grid = naive_potential(test_rows, flows), naive_potential(test_grid, flows)
+    scored_rows = score_rows(test_rows, test_models.models, test_models.transform, uk, form=form)
+    scored_grid = score_rows(test_grid, test_models.models, test_models.transform, uk, form=form)
     accuracy_by_scope = {
         "all_exporters": accuracy(scored_rows, markets),
         "uk_out_of_fold": accuracy(scored_grid, markets),
     }
 
-    previous = _uk_table(score_out_of_fold(baseline_transform.apply(test_grid), list(baseline_models), uk=uk))
+    previous = _uk_table(
+        score_out_of_fold(baseline_transform.apply(test_grid), list(baseline_models), uk=uk, form=form)
+    )
     baseline_year = year + 1
     stable = stability(baseline, previous)
     stable["years"] = [year, baseline_year]
@@ -621,6 +733,7 @@ def evaluate(
         "test_year": year,
         "test_training_years": test_models.training_years,
         **settings,
+        "model_form": form.to_dict(),
         "tweedie_power": TWEEDIE_POWER,
         "min_prediction_usd": MIN_PREDICTION_USD,
         "metrics": {name: METRIC_INFO[name] for name in METRICS},
@@ -702,7 +815,7 @@ def real_test_models(artefacts, root: Path | None = None, *, device: str = "cuda
 
 
 def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) -> dict:
-    """The evaluation report of a real artefact, from the per-year feature files."""
+    """The evaluation report of a real artefact, from the per-year feature files, in its model form."""
     folder = features_dir(root)
     year = test_models.test_year
     return evaluate(
@@ -715,6 +828,8 @@ def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) 
         markets=markets_with_income(artefacts.markets, root),
         uk=baci.UK,
         settings=report_settings(artefacts.metadata),
+        flows=load_year_flows(year, load_sources(root)[1], root),
+        form=artefacts.model_form,
     )
 
 

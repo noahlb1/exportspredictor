@@ -15,6 +15,7 @@ from polars.testing import assert_frame_equal
 from exportspredictor import artefacts as store
 from exportspredictor import policy, scenarios
 from exportspredictor.features import FEATURES, POLICY_FEATURES
+from exportspredictor.prediction import export_potential
 
 NON_POLICY = [f for f in FEATURES if f not in POLICY_FEATURES]
 
@@ -59,8 +60,9 @@ def test_switching_a_trade_agreement_on_never_lowers_a_prediction(fixture_artefa
     without = pair.with_columns(trade_agreement=pl.lit(0, pl.Int8))
     with_agreement = pair.with_columns(trade_agreement=pl.lit(1, pl.Int8))
 
-    off = scenarios.predict(without, fixture_artefacts.fold_models)
-    on = scenarios.predict(with_agreement, fixture_artefacts.fold_models)
+    form = fixture_artefacts.model_form
+    off = export_potential(without, fixture_artefacts.fold_models, form=form)
+    on = export_potential(with_agreement, fixture_artefacts.fold_models, form=form)
 
     assert on[0] >= off[0]
 
@@ -75,19 +77,11 @@ def test_raising_the_applied_tariff_never_raises_a_prediction(fixture_artefacts,
     pair = fixture_artefacts.baseline_features[row]
     models = fixture_artefacts.fold_models
 
-    lower = scenarios.predict(pair.with_columns(log_applied_tariff=pl.lit(low, pl.Float32)), models)
-    higher = scenarios.predict(pair.with_columns(log_applied_tariff=pl.lit(high, pl.Float32)), models)
+    form = fixture_artefacts.model_form
+    lower = export_potential(pair.with_columns(log_applied_tariff=pl.lit(low, pl.Float32)), models, form=form)
+    higher = export_potential(pair.with_columns(log_applied_tariff=pl.lit(high, pl.Float32)), models, form=form)
 
     assert higher[0] <= lower[0]
-
-
-def test_predict_reproduces_the_out_of_fold_baseline(fixture_artefacts):
-    features = fixture_artefacts.baseline_features
-    baseline = fixture_artefacts.baseline.join(features.select("hs6", "iso3"), on=["hs6", "iso3"], how="right")
-
-    predicted = scenarios.predict(features, fixture_artefacts.fold_models)
-
-    assert predicted.to_list() == pytest.approx(baseline["baseline_export_potential_usd"].to_list(), rel=1e-6)
 
 
 def test_scenario_effects_start_from_the_baseline_year_not_the_gap_period_mean(fixture_artefacts):
@@ -96,6 +90,7 @@ def test_scenario_effects_start_from_the_baseline_year_not_the_gap_period_mean(f
         fixture_artefacts.baseline,
         fixture_artefacts.fold_models,
         scenarios.Scenario(add_agreements=("IND",)),
+        form=fixture_artefacts.model_form,
     )
     joined = result.pairs.join(fixture_artefacts.baseline, on=["hs6", "iso3"])
 
@@ -198,13 +193,15 @@ def test_blocked_values_leave_an_unknown_tariff_unknown(fixture_artefacts):
     )
     expected = (
         rows.select("hs6", "iso3")
-        .with_columns(scenario=scenarios.predict(rows, fixture_artefacts.fold_models))
+        .with_columns(scenario=export_potential(rows, fixture_artefacts.fold_models, form=fixture_artefacts.model_form))
         .join(fixture_artefacts.baseline, on=["hs6", "iso3"])
         .select("hs6", effect=pl.col("scenario") - pl.col("baseline_export_potential_usd"))
         .sort("hs6")
     )
 
-    values = scenarios.blocked_opportunity_values(features, fixture_artefacts.baseline, fixture_artefacts.fold_models)
+    values = scenarios.blocked_opportunity_values(
+        features, fixture_artefacts.baseline, fixture_artefacts.fold_models, form=fixture_artefacts.model_form
+    )
     india = values.filter(pl.col("iso3") == "IND").sort("hs6")
 
     assert india["hs6"].to_list() == expected["hs6"].to_list()
@@ -217,6 +214,7 @@ def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
         fixture_artefacts.baseline,
         fixture_artefacts.fold_models,
         scenarios.Scenario(add_agreements=("IND",)),
+        form=fixture_artefacts.model_form,
     )
     blocked = fixture_artefacts.baseline.join(result.pairs, on=["hs6", "iso3"])
 
@@ -242,6 +240,7 @@ def test_a_tariff_beyond_the_training_range_is_clipped_and_counted(fixture_artef
         fixture_artefacts.fold_models,
         scenarios.Scenario(tariff=scenarios.TariffChange(markets=("JPN",), rate_pct=400.0)),
         tariff_range=(low, high),
+        form=fixture_artefacts.model_form,
     )
     after = scenarios.apply(
         fixture_artefacts.baseline_features,
@@ -286,3 +285,23 @@ def test_every_scenario_changes_only_policy_columns(fixture_artefacts, scenario)
 
     assert after.columns == before.columns
     assert_frame_equal(after.sort("hs6", "iso3").select(fixed), original.select(fixed))
+
+
+def test_a_scenario_re_predicts_in_the_served_form_and_leaves_the_naive_baseline_unchanged(fixture_artefacts):
+    features = fixture_artefacts.baseline_features
+    scenario = scenarios.Scenario(add_agreements=("IND",))
+    changed = scenarios.apply(features, scenario)
+
+    result = scenarios.run(
+        features, fixture_artefacts.baseline, fixture_artefacts.fold_models, scenario, form=fixture_artefacts.model_form
+    )
+
+    before = features.join(changed.select("hs6", "iso3"), on=["hs6", "iso3"]).sort("hs6", "iso3")
+    assert changed.sort("hs6", "iso3")["naive_usd"].to_list() == before["naive_usd"].to_list()
+    expected = changed.select("hs6", "iso3").with_columns(
+        expected=export_potential(changed, fixture_artefacts.fold_models, form=fixture_artefacts.model_form)
+    )
+    joined = result.pairs.join(expected, on=["hs6", "iso3"])
+    assert joined.height == changed.height > 0
+    assert joined["scenario_potential_usd"].to_list() == pytest.approx(joined["expected"].to_list())
+    assert (joined["effect_usd"] >= -1e-3).all()

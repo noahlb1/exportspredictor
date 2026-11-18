@@ -13,7 +13,7 @@ from api.main import create_app
 from exportspredictor import artefacts as store
 from exportspredictor import baci, policy, tariffs
 from exportspredictor.fixture import build_world
-from exportspredictor.pipeline import build_artefacts
+from exportspredictor.pipeline import Parts, build_artefacts
 
 FIXTURE_VERSION = "fixture-test"
 TAIWAN_BACI = "S19"  # BACI's code for Taiwan ("Other Asia, nes")
@@ -26,7 +26,25 @@ def fixture_world():
 
 @pytest.fixture(scope="session")
 def fixture_artefacts(fixture_world):
-    return build_artefacts(fixture_world, version=FIXTURE_VERSION)
+    return build_artefacts(fixture_world, version=FIXTURE_VERSION, parts=Parts.every())
+
+
+@pytest.fixture(scope="session")
+def fixture_default_artefacts(fixture_world, fixture_artefacts):
+    """A default run (`Parts()`): no Event Backtests, constraint comparison or gain ladder.
+
+    It reuses the full run's search results, so it trains only the fold and test-year models.
+    """
+    return build_artefacts(
+        fixture_world, version="fixture-default", search_results=fixture_artefacts.metadata["search"]
+    )
+
+
+@pytest.fixture(scope="session")
+def fixture_default_artefacts_dir(fixture_default_artefacts, tmp_path_factory):
+    root = tmp_path_factory.mktemp("default_artefacts")
+    store.save(fixture_default_artefacts, root)
+    return root
 
 
 @pytest.fixture(scope="session")

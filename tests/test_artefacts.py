@@ -78,13 +78,19 @@ def test_a_folder_without_an_evaluation_still_loads(fixture_artefacts, tmp_path)
     assert store.load(folder).evaluation is None
 
 
-def test_fixture_artefacts_are_saved_as_format_2(fixture_artefacts, tmp_path):
+def test_fixture_artefacts_are_saved_as_format_3_with_the_model_form_they_serve(fixture_artefacts, tmp_path):
     folder = store.save(fixture_artefacts, tmp_path)
+    loaded = store.load(folder)
 
-    assert json.loads((folder / "metadata.json").read_text())["artefact_format"] == 2
+    assert json.loads((folder / "metadata.json").read_text())["artefact_format"] == 3
+    assert loaded.model_form == fixture_artefacts.model_form
+    assert loaded.model_form.name == "blend"
+    assert 0 < loaded.model_form.naive_weight < 1
 
 
-@pytest.mark.parametrize(("artefact_format", "named"), [(1, "format 1"), (None, "no artefact_format")])
+@pytest.mark.parametrize(
+    ("artefact_format", "named"), [(2, "artefact format 2"), (1, "format 1"), (None, "no artefact_format")]
+)
 def test_load_refuses_folders_of_another_format(fixture_artefacts, tmp_path, artefact_format, named):
     metadata = {k: v for k, v in fixture_artefacts.metadata.items() if k != "artefact_format"}
     if artefact_format is not None:
@@ -95,7 +101,7 @@ def test_load_refuses_folders_of_another_format(fixture_artefacts, tmp_path, art
         store.load(folder)
 
 
-def test_load_refuses_a_format_2_folder_missing_a_table(fixture_artefacts, tmp_path):
+def test_load_refuses_a_folder_missing_a_table(fixture_artefacts, tmp_path):
     folder = store.save(fixture_artefacts, tmp_path)
     (folder / "history.parquet").unlink()
 

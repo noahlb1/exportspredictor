@@ -5,7 +5,7 @@ import json
 import polars as pl
 import pytest
 
-from exportspredictor import comparison, constraints, features, pipeline, search
+from exportspredictor import comparison, constraints, features, loop, pipeline, search
 from exportspredictor.lookups import market_lookup
 
 
@@ -14,14 +14,20 @@ def _tiny_search(root):
     return search.run(data, data, search.FIXTURE_SEARCH)
 
 
+@pytest.fixture(scope="module")
+def ranking(fixture_world):
+    """The fixture world's experiment loop results, which choose the form the run serves."""
+    return loop.fixture_ranking(fixture_world)
+
+
 @pytest.fixture
-def trained(derived_data_root, v1_frozen):
+def trained(derived_data_root, v1_frozen, ranking):
     features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
     return pipeline.build_real_artefacts(
         derived_data_root, version="real-test", search_results=_tiny_search(derived_data_root), device="cpu",
-        non_uk_rate=0.5,
+        non_uk_rate=0.5, ranking_results=ranking,
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
-        ladder_plan=comparison.FIXTURE_LADDER,
+        ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(),
     )
 
 
@@ -156,6 +162,19 @@ def test_feature_files_built_without_the_gap_period_union_are_refused(derived_da
         pipeline.build_real_artefacts(derived_data_root, device="cpu")
 
 
+def test_the_real_run_without_saved_loop_results_is_refused(derived_data_root):
+    features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
+
+    with pytest.raises(ValueError, match="exportspredictor.loop"):
+        pipeline.build_real_artefacts(derived_data_root, device="cpu", search_results=_tiny_search(derived_data_root))
+
+
+def test_the_real_run_serves_the_blend_its_loop_chose_with_the_naive_baseline_of_every_exporter(trained, ranking):
+    assert trained.metadata["model_form"] == {"form": "blend", "naive_weight": 0.3}
+    assert trained.metadata["ranking_experiments"]["best"] == ranking["best"]
+    assert (trained.baseline_features["naive_usd"] > 0).any()
+
+
 def test_the_real_run_scores_every_gap_period_year(trained):
     assert trained.metadata["gap_years"] == [2022, 2024]
     gap_rows = trained.history.filter(pl.col("year") >= 2022)
@@ -185,9 +204,9 @@ def test_the_real_run_caches_its_fold_models_so_a_rerun_does_not_retrain(
     monkeypatch.setattr(evaluation, "train_fold_models", no_training)
     again = pipeline.build_real_artefacts(
         derived_data_root, version="real-test-again", search_results=trained.metadata["search"], device="cpu",
-        non_uk_rate=0.5,
+        non_uk_rate=0.5, ranking_results=trained.metadata["ranking_experiments"],
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
-        ladder_plan=comparison.FIXTURE_LADDER,
+        ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(),
     )
 
     assert again.baseline.equals(trained.baseline)

@@ -73,6 +73,9 @@ SUPPLY_FEATURES = ["log_supply_loo", "rca_loo"]
 # those imports that come from high-income Exporters.
 DEMAND_FEATURES = ["log_demand_loo", "high_income_share_loo"]
 PRODUCT_FEATURES = ["sector"]  # HS2 chapter, as a number
+# Product features finer than Sector (#74), fitted on training years by `fit_product_detail`
+# and joined on the Product; built for the experiment loop's rows only, not by `build_features`.
+PRODUCT_DETAIL_FEATURES = ["trading_pair_share", "importing_markets", "hs4"]
 # Relatedness: how close the Product is to the Products the Exporter already exports
 # competitively (RCA > 1, leaving out the row's Importer), weighted by proximity.
 RELATEDNESS_FEATURES = ["relatedness"]
@@ -202,11 +205,19 @@ def _zero_cell_kept(rate: float, seed: int) -> pl.Expr:
 
     A cell kept at one rate is kept at every higher rate, so samples at different rates nest.
     """
+    if rate >= 1:
+        return pl.lit(True)  # every cell; rate × 2^64 does not fit in a UInt64
     return pl.struct(KEYS).hash(seed) < pl.lit(int(rate * 2**64), pl.UInt64)
 
 
 def subsample_zeros(
-    rows: pl.DataFrame, *, built_rate: float, rate: float, seed: int = 0, uk: str = baci.UK
+    rows: pl.DataFrame,
+    *,
+    built_rate: float,
+    rate: float,
+    seed: int = 0,
+    uk: str = baci.UK,
+    uk_zeros_sampled: bool = False,
 ) -> pl.DataFrame:
     """Training rows built at zero rate `built_rate`, cut to the rows `training_rows` would keep at `rate`.
 
@@ -214,14 +225,23 @@ def subsample_zeros(
     rule as `training_rows` (same `seed`), and reweighted to 1/`rate`. Samples nest, so this
     gives exactly the rows a build at `rate` would have written, without rebuilding the
     features: the learning curve uses it to vary the zero rate below the built one.
+
+    With `uk_zeros_sampled`, UK Zero Cells are sampled and weighted as other Exporters' are
+    (v1's rule, before ADR 0004 kept them all at weight 1), at `rate` even when it is the
+    built rate, since the built rows keep every UK Zero Cell.
     """
     if not 0 < rate <= built_rate:
         raise ValueError(f"The zero rate must be in (0, {built_rate}], the rate the rows were built at; got {rate}")
-    if rate == built_rate:
+    zero = pl.col("value_usd") == 0
+    is_uk = pl.col("exporter").cast(pl.String) == uk
+    if uk_zeros_sampled:
+        sampled = zero
+    elif rate == built_rate:
         return rows
-    other_zero = (pl.col("value_usd") == 0) & (pl.col("exporter").cast(pl.String) != uk)
-    return rows.filter(~other_zero | _zero_cell_kept(rate, seed)).with_columns(
-        weight=pl.when(other_zero).then(pl.lit(1.0 / rate)).otherwise(pl.col("weight"))
+    else:
+        sampled = zero & ~is_uk
+    return rows.filter(~sampled | _zero_cell_kept(rate, seed)).with_columns(
+        weight=pl.when(sampled).then(pl.lit(1.0 / rate)).otherwise(pl.col("weight"))
     )
 
 
@@ -369,6 +389,53 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
             "value_usd",
             "weight",
         )
+    )
+
+
+def fit_product_detail(flows: pl.DataFrame | pl.LazyFrame, training_years: list[int], *, uk: str) -> pl.DataFrame:
+    """Product features finer than Sector (#74), one row per Product (`hs6` as text), fitted on `training_years`.
+
+    - `trading_pair_share`: the share of Exporter–Importer pairs trading anything that year
+      which trade the Product, averaged over the years;
+    - `importing_markets`: the number of Markets importing the Product, averaged over the years;
+    - `hs4`: the Product's HS4 heading, as a number.
+
+    Only Flows of `training_years` are read, and only other Exporters' Flows: no UK Flow
+    reaches a feature, so no UK pair can see its own Market or its own past trade. A Product
+    is the same for every row, so the features say how widely a Product is traded, never
+    anything about one pair. A Product with no Flow in those years gets none (missing).
+    """
+    active = (
+        flows.lazy()
+        .filter(pl.col("year").is_in(list(training_years)) & (pl.col("value_usd") > 0))
+        .filter(pl.col("exporter").cast(pl.String) != uk)
+        .select(
+            exporter=pl.col("exporter").cast(pl.String),
+            importer=pl.col("importer").cast(pl.String),
+            hs6=pl.col("hs6").cast(pl.String),
+            year=pl.col("year").cast(pl.Int32),
+        )
+    )
+    pairs = active.group_by("year").agg(_pairs=pl.struct("exporter", "importer").n_unique())
+    by_year = (
+        active.group_by("hs6", "year")
+        .agg(_traded=pl.struct("exporter", "importer").n_unique(), _markets=pl.col("importer").n_unique())
+        .join(pairs, on="year")
+    )
+    # A year in which the Product has no Flow counts as 0 pairs and 0 Markets.
+    n_years = pl.lit(len(set(training_years)), pl.Float64)
+    return (
+        by_year.group_by("hs6")
+        .agg(
+            trading_pair_share=(pl.col("_traded") / pl.col("_pairs")).sum() / n_years,
+            importing_markets=pl.col("_markets").sum().cast(pl.Float64) / n_years,
+        )
+        .with_columns(
+            pl.col("trading_pair_share", "importing_markets").cast(pl.Float32),
+            hs4=pl.col("hs6").str.slice(0, 4).cast(pl.Int16),
+        )
+        .select("hs6", *PRODUCT_DETAIL_FEATURES)
+        .collect()
     )
 
 
