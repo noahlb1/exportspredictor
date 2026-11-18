@@ -46,7 +46,9 @@ STEPS = [
     Step("Hyperparameter search on 2022 (GPU, resumable, about 3 h)", [PY, "-m", "exportspredictor.search"]),
     # Trains the fold models, scores the Gap Period, evaluates on 2023 (read here for the first
     # time) and saves a new artefact version. Fold and test-year models are cached, so a re-run resumes.
-    Step("Train, evaluate and save the artefacts (GPU, several hours)", [PY, "-m", "exportspredictor.pipeline"]),
+    # The default run: the Event Backtests, the constraint comparison and the gain ladder are opt-in
+    # (`--every-part` for all three, about two more hours).
+    Step("Train the fold and test-year models, evaluate and save the artefacts (GPU, about 2.5 h)", [PY, "-m", "exportspredictor.pipeline"]),
     # The notebook runs on real data here (it defaults to fixture mode, as the tests run it) and
     # reads the artefact the step before saved.
     Step(

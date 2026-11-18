@@ -45,7 +45,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 import xgboost as xgb
 
@@ -57,6 +56,7 @@ from exportspredictor.features import FEATURES, FeatureTransform, features_dir
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
+from exportspredictor.prediction import export_potential
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
 from exportspredictor.wording import number_text, rate_text
@@ -85,6 +85,33 @@ TARIFF_GROUPS = ("observed", "imputed")
 # Evaluation results kept in the artefact (and the model card) but never served by the API:
 # the pre-registered v1/v2 comparison (`comparison`, spec #39).
 NOT_SERVED = frozenset({"v1_comparison"})
+
+NOT_RUN = "not run for this version"
+# The opt-in parts of a pipeline run (`pipeline.Parts`, spec #65 story 23): title, the report
+# block that holds its result, and the switch that runs it. A part whose block is absent was skipped.
+OPTIONAL_PARTS = (
+    ("Event Backtests", "event_backtest", "--event-backtests",
+     ("Lift and the Event Backtests test Export Gaps against later growth and Scenario Effects against a real Trade "
+     "Agreement.")),
+    ("Monotone-constraint comparison", "monotone_constraints", "--constraint-comparison",
+     "It compares the monotone-constrained model with an unconstrained one."),
+    ("Gain ladder", "ladder", "--gain-ladder",
+     "It splits the change in the v1 comparison's primary metric from v1 to v2 into steps."),
+)
+
+
+def parts_not_run(report: dict) -> list[dict]:
+    """The opt-in parts an evaluation report does not hold, each with its "not run for this version" text.
+
+    The gain ladder lives inside the v1 comparison; a report with every part lists none.
+    """
+    blocks = {**report, **(report.get("v1_comparison") or {})}
+    return [
+        {"title": title, "text": f"{title}: {NOT_RUN}. {why} It runs when the pipeline is asked for it "
+         f"(`python -m exportspredictor.pipeline {switch}`)."}
+        for title, block, switch, why in OPTIONAL_PARTS
+        if block not in blocks
+    ]
 
 LIMITATIONS = [
     {
@@ -560,9 +587,7 @@ def score_rows(
     uk_rows = score_out_of_fold(transformed, list(models), uk=uk, inputs=features).drop("fold")
     others = transformed.filter(~is_uk)
     if others.height:
-        data = others.select(features).to_numpy().astype(np.float32)
-        mean = np.mean([model.inplace_predict(data) for model in models], axis=0)
-        others = others.with_columns(export_potential_usd=pl.Series(mean, dtype=pl.Float64))
+        others = others.with_columns(export_potential(others, models, features=features, by="mean"))
     else:
         others = others.with_columns(export_potential_usd=pl.lit(None, pl.Float64))
     return pl.concat([uk_rows.select(others.columns), others])

@@ -20,6 +20,7 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.evaluation import (
     LIMITATIONS,
+    parts_not_run,
     range_limitations,
     result_limitations,
 )
@@ -180,6 +181,7 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
         "dropped_features": _dropped_features(metadata),
         "excluded_products": _excluded_products(artefacts.excluded_products),
         "metrics": _metrics(report),
+        "not_run": parts_not_run(report) if report else [],
         "v1_comparison": _comparison_summary(report.get("v1_comparison")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
         "limitations": [
@@ -431,6 +433,8 @@ def render_model_card(card: dict) -> str:
         f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"
         for m in card["metrics"]
     ]
+    if card.get("not_run"):
+        lines += ["", "## Parts not run", "", *[f"- {part['text']}" for part in card["not_run"]]]
     lines += ["", "## Bias review: Potential Range coverage by Exporter", "",
               *_range_review_lines(card["range_coverage_by_exporter"]), ""]
     lines += ["## Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
