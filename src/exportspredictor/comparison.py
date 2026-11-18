@@ -589,8 +589,8 @@ def compare(
     *,
     v2: Mapping[str, pl.DataFrame],
     flows: pl.DataFrame,
-    lift_v2: dict,
-    event_v2: dict,
+    lift_v2: dict | None,
+    event_v2: dict | None,
     lift_settings: backtests.LiftSettings,
     scope: Sequence[str],
     uk: str,
@@ -610,19 +610,33 @@ def compare(
     (`backtests.event_backtest`). The bootstraps are seeded by `seed`. `ladder` maps the gain
     ladder's rungs "A" and "B" to their scores on the UK common rows (`ladder_plan` is the v1
     configuration they were trained with, recorded); the ladder is reported, never judged.
+    When the Event Backtests were not run (`lift_v2` and `event_v2` None), their secondaries are
+    left out and listed under `secondaries_not_run`, and the verdict says so.
     """
     if frozen.manifest.get("test_year") != test_year:
         raise ValueError(f"The frozen v1 tables are for {frozen.manifest.get('test_year')}, not the test year {test_year}")
     scored = scored_rows(frozen, v2=v2, flows=flows, scope=scope, uk=uk)
     primary = _primary(scored["uk"], resamples=resamples, seed=seed, level=level)
-    lifts, lift_info = _lift_secondaries(
-        frozen, lift_v2=lift_v2, flows=flows, settings=lift_settings, scope=scope, uk=uk, seed=seed
-    )
+    lifts, lift_info, not_run = [], None, []
+    if lift_v2 is None:
+        not_run.append("Lift")
+    else:
+        lifts, lift_info = _lift_secondaries(
+            frozen, lift_v2=lift_v2, flows=flows, settings=lift_settings, scope=scope, uk=uk, seed=seed
+        )
+    if event_v2 is None:
+        not_run.append("Event Backtest")
     secondary = [
         *_accuracy_secondaries(scored["all_exporters"], resamples=resamples, seed=seed, level=level),
         *lifts,
-        *_event_secondaries(frozen, event_v2=event_v2),
+        *([] if event_v2 is None else _event_secondaries(frozen, event_v2=event_v2)),
     ]
+    judged = verdict(primary, secondary)
+    if not_run:
+        judged["text"] += (
+            f" The {' and '.join(not_run)} secondaries were not run for this version, so the third condition "
+            "is judged on the other secondaries only."
+        )
     block = {
         "test_year": test_year,
         "frozen": {key: frozen.manifest.get(key) for key in ("tag", "commit", "source_models", "frozen_at")},
@@ -634,8 +648,10 @@ def compare(
         "secondary": secondary,
         "lift": lift_info,
         "v1_all_products": _all_products(frozen, scored, scope=scope, uk=uk),
-        "verdict": verdict(primary, secondary),
+        "verdict": judged,
     }
+    if not_run:
+        block["secondaries_not_run"] = not_run
     if ladder is not None:
         block["ladder"] = _ladder(scored["uk"], ladder, resamples=resamples, seed=seed, level=level)
         if ladder_plan is not None:

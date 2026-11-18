@@ -326,6 +326,13 @@ class EventBacktest(BaseModel):
     caveat: str
 
 
+class NotRun(BaseModel):
+    """An opt-in part of the pipeline that this artefact version skipped (`evaluation.parts_not_run`)."""
+
+    title: str
+    text: str
+
+
 class Limitation(BaseModel):
     title: str
     text: str
@@ -353,6 +360,7 @@ class Evaluation(BaseModel):
     stability: Stability
     lift: Lift | None = None
     event_backtest: EventBacktest | None = None
+    not_run: list[NotRun] = []  # the opt-in parts skipped by the run that built this version
     limitations: list[Limitation]
 
 

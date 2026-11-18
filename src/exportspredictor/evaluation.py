@@ -86,6 +86,33 @@ TARIFF_GROUPS = ("observed", "imputed")
 # the pre-registered v1/v2 comparison (`comparison`, spec #39).
 NOT_SERVED = frozenset({"v1_comparison"})
 
+NOT_RUN = "not run for this version"
+# The opt-in parts of a pipeline run (`pipeline.Parts`, spec #65 story 23): title, the report
+# block that holds its result, and the switch that runs it. A part whose block is absent was skipped.
+OPTIONAL_PARTS = (
+    ("Event Backtests", "event_backtest", "--event-backtests",
+     ("Lift and the Event Backtests test Export Gaps against later growth and Scenario Effects against a real Trade "
+     "Agreement.")),
+    ("Monotone-constraint comparison", "monotone_constraints", "--constraint-comparison",
+     "It compares the monotone-constrained model with an unconstrained one."),
+    ("Gain ladder", "ladder", "--gain-ladder",
+     "It splits the change in the v1 comparison's primary metric from v1 to v2 into steps."),
+)
+
+
+def parts_not_run(report: dict) -> list[dict]:
+    """The opt-in parts an evaluation report does not hold, each with its "not run for this version" text.
+
+    The gain ladder lives inside the v1 comparison; a report with every part lists none.
+    """
+    blocks = {**report, **(report.get("v1_comparison") or {})}
+    return [
+        {"title": title, "text": f"{title}: {NOT_RUN}. {why} It runs when the pipeline is asked for it "
+         f"(`python -m exportspredictor.pipeline {switch}`)."}
+        for title, block, switch, why in OPTIONAL_PARTS
+        if block not in blocks
+    ]
+
 LIMITATIONS = [
     {
         "title": "Goods only",
