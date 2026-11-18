@@ -497,3 +497,67 @@ def test_the_constrained_model_never_lowers_export_potential_for_an_added_trade_
     on = lp.export_potential(start, lp.grid.with_columns(trade_agreement=pl.lit(1, agreement)))
 
     assert (on >= off * (1 - 1e-6)).all()
+
+
+# --- #76: the five-fold confirmation -------------------------------------------------------------
+
+# Two folds on the fixture: each fold's grid is too small to rank, but pooled they hold every UK pair.
+TWO_FOLDS = replace(loop.FIXTURE_LOOP, n_folds=2)
+
+
+def _uk_grid_pairs(data) -> int:
+    return loop.Loop(data, loop.FIXTURE_LOOP).grid.height  # one fixture "fold" holds every UK pair out
+
+
+def test_the_confirmation_pools_every_held_out_uk_pair_and_compares_the_winner_with_v2_by_the_threshold(data):
+    v2 = TWO_FOLDS.start
+    winner = replace(v2, naive_weight=0.5)
+
+    section = loop.confirm(data, TWO_FOLDS, winner, v2, threshold=0.01)
+
+    assert [row["fold"] for row in section["folds"]] == [0, 1]
+    assert sum(row["uk_pairs"] for row in section["folds"]) == _uk_grid_pairs(data)
+    for name in ("winner", "v2", "naive"):
+        assert section[name]["uk_pairs"] == _uk_grid_pairs(data)
+        assert -1 <= section[name]["selection_measure"] <= 1
+    assert section["winner"]["settings"]["naive_weight"] == 0.5
+    assert section["v2"]["settings"]["naive_weight"] == 0.0
+    difference = section["winner"]["selection_measure"] - section["v2"]["selection_measure"]
+    assert section["difference"] == pytest.approx(difference)
+    assert section["win_threshold"] == 0.01
+    assert section["beats_v2"] is (difference > 0.01)
+
+
+def test_the_confirmation_reuses_the_loops_fold_0_model_shares_v2s_model_and_a_rerun_trains_nothing(
+    data, tmp_path, monkeypatch
+):
+    v2 = TWO_FOLDS.start
+    winner = replace(v2, naive_weight=0.3)  # differs from v2 only in how the model is scored
+    fold_0 = loop.Loop(data, TWO_FOLDS, tmp_path)
+    fold_0.export_potential(v2, fold_0.grid)  # the experiments' fold-0 model, now in the cache
+    trained = []
+    original = xgb.train
+
+    def spy(*args, **kwargs):
+        trained.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(xgb, "train", spy)
+
+    first = loop.confirm(data, TWO_FOLDS, winner, v2, threshold=0.01, folder=tmp_path)
+
+    assert len(trained) == 1  # fold 1 only, shared by the winner and v2
+    by_fold = {row["fold"]: row for row in first["folds"]}
+    assert by_fold[0]["v2"]["trained"] is False
+    assert by_fold[1]["v2"]["trained"] is True
+    for row in first["folds"]:
+        assert row["winner"]["training_key"] == row["v2"]["training_key"]
+        assert row["winner"]["trained"] is False
+    _no_training(monkeypatch)
+
+    again = loop.confirm(data, TWO_FOLDS, winner, v2, threshold=0.01, folder=tmp_path)
+
+    assert again["folds"] == first["folds"]
+    for name in ("winner", "v2", "naive"):  # pooled means over Products: equal up to summation order
+        assert again[name]["selection_measure"] == pytest.approx(first[name]["selection_measure"])
+    assert json.loads((tmp_path / loop.RESULTS_FILE).read_text())[loop.CONFIRMATION]["folds"] == first["folds"]
