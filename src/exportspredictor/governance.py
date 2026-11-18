@@ -77,7 +77,7 @@ DECISIONS = [
      "gap look normal. An Opportunity whose Actual Exports lie inside its range is an Uncertain Opportunity.")),
     ("Features kept by an ablation on 2022",
      ("Relatedness, Market import growth, the re-export ratio and the Applied Tariff were each removed in turn from "
-     "a model on a Sector subset and judged on 2022 deviance; a feature whose removal lowered deviance was dropped. "
+     "a model on a Sector subset and judged on 2022; a feature was dropped when the model without it had both a lower deviance and a better UK ranking. "
      "A learning curve over the sampling rates, also on 2022, set the rates.")),
     ("Hyperparameters chosen by a Tree-structured Parzen Estimator search on 2022",
      ("Optuna's TPE with a median pruner replaced v1's five hand-picked configurations, with v1's configuration as "
@@ -468,7 +468,7 @@ def render_model_card(card: dict) -> str:
     dropped = card["dropped_features"]
     lines += ["## Features", "", (
         f"The model uses {card['features']} features. The 2022 ablation dropped "
-        f"{', '.join(_feature_name(f) for f in dropped)}: removing it lowered the validation deviance, so it is "
+        f"{', '.join(_feature_name(f) for f in dropped)}: the model without it had both a lower 2022 deviance and a better UK ranking, so it is "
         "still built but not trained on." if dropped else
         f"The model uses {card['features']} features; the ablation dropped none of the candidates."), ""]
     lines += ["## Excluded Products", "", (
