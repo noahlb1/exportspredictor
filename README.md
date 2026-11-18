@@ -4,6 +4,8 @@ A model that learns from global HS6 goods trade to estimate the UK's **Export Po
 
 Results are associations the model has learned, not causes.
 
+This is **v2**. It trains on the top 100 Exporters into every Market, leaves out Excluded Products, adds the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. Under a comparison rule fixed before the 2023 test year was read, v2 does **not** beat v1 on the headline UK ranking measure (0.511 against 0.540, and below the naive baseline's 0.523), though it estimates the size of Flows better; the notebook and the model card give the detail.
+
 ## Run the app (one command)
 
 You need [podman](https://podman.io/) with `podman compose`, and a trained artefact folder in `./artefacts` (see [Rebuild the data](#rebuild-the-data-and-artefacts); a fixture run takes seconds).
@@ -37,7 +39,7 @@ Settings are environment variables:
 | Variable | Default | Used by |
 | --- | --- | --- |
 | `EXPORTSPREDICTOR_DATA_DIR` | `<repo>/data` | data download and build steps, notebook |
-| `EXPORTSPREDICTOR_ARTEFACTS_DIR` | `<repo>/artefacts` | notebook (writes), API (reads) |
+| `EXPORTSPREDICTOR_ARTEFACTS_DIR` | `<repo>/artefacts` | pipeline (writes), notebook (fixture artefacts and the model card), API (reads) |
 | `EXPORTSPREDICTOR_API_URL` | `http://localhost:8000` | app |
 
 The layout:
@@ -55,18 +57,24 @@ uv run python scripts/rebuild.py --list   # show the steps
 uv run python scripts/rebuild.py          # run them all, in order
 ```
 
-The script downloads every source, builds the derived Parquet in `EXPORTSPREDICTOR_DATA_DIR`, then runs the notebook, which trains, evaluates and saves a new artefact version in `EXPORTSPREDICTOR_ARTEFACTS_DIR`. It stops at the first step that fails.
+The script downloads every source and builds the derived Parquet in `EXPORTSPREDICTOR_DATA_DIR`. It then makes every modelling choice on the 2022 validation year (the feature ablation, the learning curve and the hyperparameter search), and `python -m exportspredictor.pipeline` trains the v2 fold models, evaluates them on 2023 and saves a new artefact version (format 2) in `EXPORTSPREDICTOR_ARTEFACTS_DIR`. Last, it runs the notebook on the real data: the notebook reads the newest artefact and trains nothing, and it writes `model_card.md` into that artefact's folder. The script stops at the first step that fails. Long steps cache their results under `data/derived/`, so a re-run resumes rather than starting again.
 
-The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild.py). Each data ticket adds its own lines there:
+The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild.py). The times are from an RTX 3080 (10 GB) with a Ryzen 7 5800X and 32 GB of RAM.
 
-| Step | Status |
+| Step | What it runs and what it costs |
 | --- | --- |
-| BACI Flows and lookups (download, convert to Parquet) | in place: `python -m exportspredictor.baci`; idempotent, about 1.3 GB download, 30 s convert, 2.5 GB peak memory |
-| Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet) | in place: `python -m exportspredictor.gravity`; needs the BACI step first (country codes); about 210 MB download, 40 s build |
-| Trade Agreement and Trading Bloc features (WTO RTA-IS download, build) | in place: `python -m exportspredictor.policy`; idempotent (skips the download if `raw/wto/AllRTAs.xlsx` exists), about 200 KB download, 2 s build |
-| Feature table (training rows with sampled zeros, UK grid; per year) | in place: `python -m exportspredictor.features`; needs the three steps above; writes `derived/features_V202601/`, about 3.4 GB, 90 s build, 8 GB peak memory |
-| HMRC OTS 2023 exports for the BACI cross-check (download, HS 2022 -> 2012) | in place: `python -m exportspredictor.hmrc`; downloads HMRC's 2023 bulk export archive (36 MB) and the UN HS 2022 -> HS 2012 conversion table into `raw/hmrc/` once, then writes `derived/hmrc_ots_2023.parquet` in a few seconds; used only by the notebook's cross-check, never by the model |
-| Train, evaluate and save artefacts (notebook) | in place: runs the notebook with `EXPORTSPREDICTOR_FIXTURE_MODE=0`; tunes on 2022, trains five fold models on the GPU (about 30 minutes on an RTX 3080) and saves a new artefact version. To train without the notebook: `python -m exportspredictor.pipeline`. The run also precomputes the Blocked Opportunity values; to recompute only those from the newest artefact's saved fold models, run `python -m exportspredictor.scenarios` (seconds, CPU, writes a new artefact version) |
+| BACI Flows and lookups (download, convert to Parquet) | `python -m exportspredictor.baci`; idempotent, about 1.3 GB download, 30 s convert, 2.5 GB peak memory |
+| Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet) | `python -m exportspredictor.gravity`; needs the BACI step first (country codes); about 210 MB download, 40 s build |
+| Trade Agreement and Trading Bloc features (WTO RTA-IS download, build) | `python -m exportspredictor.policy`; skips the download if `raw/wto/AllRTAs.xlsx` exists; about 200 KB download, 2 s build |
+| Applied Tariffs (TRAINS download via WITS, HS17/HS07 -> HS12, EU schedule, gap fill) | `python -m exportspredictor.tariffs`; downloads UNCTAD TRAINS for 2012–2021 (about 1,300 files, 62 MB, resumable) and the UN HS 2017 and HS 2007 -> HS 2012 tables into `raw/trains/` and `raw/unsd/`, then writes `derived/tariffs/` (ADR 0006) |
+| Feature table (training rows with sampled zeros, UK grid; per year) | `python -m exportspredictor.features`; needs the four steps above; writes `derived/features_V202601/` (top-100 Exporter scope, every UK Zero Cell, 5% of other Zero Cells; about 5.7 GB), about 15 minutes, 14 GB peak memory |
+| HMRC OTS 2023 exports for the BACI cross-check (download, HS 2022 -> 2012) | `python -m exportspredictor.hmrc`; downloads HMRC's 2023 bulk export archive (36 MB) and the UN HS 2022 -> HS 2012 table into `raw/hmrc/` once, then writes `derived/hmrc_ots_2023.parquet` in a few seconds; used only by the notebook's cross-check, never by the model |
+| Experiment rows (Sector subset, 2012–2022) | `python -m exportspredictor.experiments build`; the rows the ablation and the learning curve share |
+| Feature ablation on 2022 (GPU) | `python -m exportspredictor.experiments ablation`; 2–4 minutes a model; results in `derived/experiments_V202601/results.json` |
+| Learning curve on 2022 (GPU) | `python -m exportspredictor.experiments curve`; nine models, about half an hour |
+| Hyperparameter search on 2022 (GPU, resumable, about 3 h) | `python -m exportspredictor.search`; Optuna TPE, the study in `derived/search_V202601/study.sqlite3`, so a killed run resumes |
+| Train, evaluate and save the artefacts (GPU, several hours) | `python -m exportspredictor.pipeline`; trains the five fold models (about 75 minutes), scores the 2022–2024 Gap Period and the Potential Range, trains and evaluates the 2023 test-year models (about 75 minutes), the backtests, the monotone-constraint comparison and the v1 comparison with its gain ladder (together about two hours), and saves a new artefact version. Fold, test-year, backtest and ladder models are cached under `data/derived/`, so a re-run only scores. `python -m exportspredictor.pipeline compare` adds only the v1 comparison to a copy of the newest version |
+| The notebook (reads the saved artefact) | runs `notebooks/exports_predictor.ipynb` with `EXPORTSPREDICTOR_FIXTURE_MODE=0`. It reads the newest artefact and trains nothing; it rebuilds the gravity, policy and feature tables (about 15 minutes, 14 GB), fits the PPML gravity benchmark (about 30 minutes on the CPU) and writes `model_card.md` into the newest artefact folder |
 
 ## Manual UI checklist
 
