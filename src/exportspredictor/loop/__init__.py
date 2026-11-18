@@ -49,6 +49,44 @@ The package, one module per concern; everything public is importable from `expor
 - `confirmation`: the five-fold confirmation.
 - `served`: what the pipeline serves of the loop's choice.
 - `cli`: the commands above (`__main__` runs them).
+
+Working on the loop
+-------------------
+
+**Adding an experiment.** An arm's `changes` replace fields of the best so far's `Settings`,
+except `params`, which is merged into the best's params, so a full configuration names
+every parameter. A new kind of change adds a `Settings` field whose default means "as
+before": a training field, or a scoring field listed in `SCORING_FIELDS` if it only changes
+how a saved model is scored. `training_key` hashes a later field only when it leaves its
+default, so every cached model keeps its key; leave `KEYED_FIELDS` as it is. An arm that
+re-chooses the blend weight carries `grid=BLEND_GRID` (scoring only, seconds). Each
+experiment gets a command in `cli`, so it can be launched in the background, and trains at
+most `MAX_TRAINED_MODELS`; a two-part arm counts as two.
+
+**Cache and results** live in `loop_dir()` (`data/derived/loop_V202601/`), shared by every
+worktree through `scripts/wt.ps1`. Models are `models/<training_key>.ubj` with a `.json` of
+their rounds; `results.json` holds the naive baseline, the noise floor, every experiment's
+rows and decision, `best` and `confirmation`. `load()` reads it. A re-run skips arms by
+name, so to re-run an arm, give it a new name; the file is written only by the loop.
+
+**Pitfalls.**
+
+- Rounds stop on the selection measure of the *model alone*, while an arm that blends is
+  selected on the blend. A model that is weak at first stops early: a best round under
+  about 50 (`rounds` in the row) means the stopping rule decided the result, not the
+  configuration. In spec #65 this decided v1, depth 6, the starting point and the two-part
+  model's binary part (`docs/research/opportunity-ranking-experiments.md`).
+- GPU training is not bit-reproducible: a retrained arm is a fresh draw within the noise
+  floor. Re-scoring a cached model is exact.
+- One trained arm on every Product takes about 11 minutes on a quiet machine and about
+  twice that while other jobs load the CPU, since the per-round measure runs on the CPU.
+  Setup holds the whole 2022 validation year (about 13.5 M rows) in RAM.
+- `features.subsample_zeros` is correct only with the seed the rows were built with; the
+  loop passes the build seed (`LoopData.zero_seed`) whatever the arm's seed. A zero rate
+  below the built 0.05 subsamples for free; above it needs a feature rebuild.
+- On the fixture the seeds give identical models, so the noise floor's SD is about 0, and
+  its grid is too small for the measure to mean anything. A test that needs a sure win sets
+  `min_win_threshold=0.0` on the plan.
 """
 
 from exportspredictor.experiments import TestYearRead
