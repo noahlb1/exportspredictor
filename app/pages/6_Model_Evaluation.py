@@ -258,6 +258,10 @@ if banner() is not None:
         if report.get("event_backtest"):
             names = {market["iso3"]: market["name"] for market in fetch("/markets", client.api_url())}
             _show_event_backtest(report["event_backtest"], names)
+        if report.get("not_run"):
+            st.subheader("Parts not run")
+            for part in report["not_run"]:
+                st.markdown(part["text"])
 
         st.subheader("Known limitations")
         with st.container(border=True):

@@ -23,7 +23,11 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    on a held-out half of those rows.
 5. **Evaluate** on the test year (Baseline year − 1): fold models refitted on the years
    before it with the tuned configuration score it, against a naive baseline
-   (`evaluation`). The report is saved in the artefact as `evaluation.json`.
+   (`evaluation`), and the v1 comparison's primary metric is read against the frozen v1
+   tables. The report is saved in the artefact as `evaluation.json`.
+6. **Opt-in parts** (`Parts`), each run only when asked for: the Event Backtests (Lift
+   included), the monotone-constraint comparison and the gain ladder. A skipped part is
+   absent from the report, which then shows it as "not run for this version".
 
 `build_artefacts(world)` runs this on the fixture world (CPU, seconds).
 `build_real_artefacts()` runs it on the per-year feature files of `features.build()`
@@ -146,6 +150,22 @@ FIXTURE_BACKTESTS = backtests.Plan(
 )
 
 
+@dataclass(frozen=True)
+class Parts:
+    """The opt-in parts of a run (spec #65, story 23). The default trains only the fold models
+    and the test-year models; each part switched on adds exactly its own models and report block.
+    """
+
+    event_backtests: bool = False  # Lift and the Event Backtests (`backtests.run`)
+    constraint_comparison: bool = False  # the monotone-constrained model against an unconstrained one
+    gain_ladder: bool = False  # rungs A and B of the v1 comparison's gain ladder
+
+    @classmethod
+    def every(cls) -> "Parts":
+        """Every part: the full run of before the switches."""
+        return cls(event_backtests=True, constraint_comparison=True, gain_ladder=True)
+
+
 # The fixture's stand-in for v1's frozen held-out Lift Exporters: MEX is outside the fixture's
 # Exporter scope, so the Lift model holds out FRA alone.
 FIXTURE_V1_LIFT_EXPORTERS = ("FRA", "MEX")
@@ -204,6 +224,8 @@ def build_artefacts(
     min_band_rows: int = FIXTURE_MIN_BAND_ROWS,
     experiment_results: dict | None = None,
     v1_frozen: comparison.Frozen | None = None,
+    search_results: dict | None = None,
+    parts: Parts = Parts(),
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
@@ -213,7 +235,8 @@ def build_artefacts(
     `min_band_rows` is the Potential Range's minimum band size. `experiment_results` (the
     feature ablation and learning curve, `experiments.run`) are recorded in the metadata.
     `v1_frozen` is the frozen v1 the evaluation compares with (default: the fixture's
-    synthetic one, `fixture_v1_frozen`).
+    synthetic one, `fixture_v1_frozen`). `search_results` skips the search and uses these
+    (`metadata["search"]` of an earlier run). `parts` switches on the opt-in parts (`Parts`).
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
@@ -242,7 +265,8 @@ def build_artefacts(
         validation_year=validation_year,
         built_zero_rate=zero_sampling_rate,
     )
-    search_results = search.run(tuning_data, tuning_data, replace(search_plan, device=device, seed=seed))
+    if search_results is None:
+        search_results = search.run(tuning_data, tuning_data, replace(search_plan, device=device, seed=seed))
     trained = _train_and_score(
         training, grids, baseline_year=baseline_year, search_results=search_results,
         n_folds=n_folds, device=device, non_uk_rate=1.0, seed=seed, row_budget=row_budget,
@@ -272,6 +296,7 @@ def build_artefacts(
         constraint_plan=constraints.FIXTURE_PLAN,
         lift_held_out=backtests.lift_exporters(frozen.lift_held_out_exporters, scope=scope, uk=UK),
         v1=v1,
+        parts=parts,
     )
     return Artefacts(
         metadata=metadata,
@@ -324,6 +349,7 @@ def build_real_artefacts(
     constraint_plan: constraints.Plan = constraints.REAL_PLAN,
     v1_frozen: Path | None = None,
     ladder_plan: comparison.LadderPlan = comparison.REAL_LADDER,
+    parts: Parts = Parts(),
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
@@ -334,7 +360,8 @@ def build_real_artefacts(
     (`experiments.save`) are recorded in the metadata. The tuned configuration comes from
     `search_results`, by default the saved hyperparameter search (`search.load`). The evaluation
     runs the pre-registered v1 comparison against the same frozen v1, with the gain ladder's
-    rungs trained with `ladder_plan` (cached under `ladder_dir`).
+    rungs trained with `ladder_plan` (cached under `ladder_dir`). The Event Backtests, the
+    constraint comparison and the gain ladder run only when switched on in `parts` (`Parts`).
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -420,6 +447,7 @@ def build_real_artefacts(
             lift_outcome_year=backtest_plan.lift.outcome_year, ladder_plan=ladder_plan,
         ),
         ladder_cache=ladder_dir(root),
+        parts=parts,
     )
     return Artefacts(
         metadata=metadata,
@@ -679,16 +707,18 @@ def _evaluate(
     v1: comparison.Inputs | None = None,
     test_models_cache: Path | None = None,
     ladder_cache: Path | None = None,
+    parts: Parts = Parts(),
 ) -> dict:
-    """Evaluate on the test year, run Lift and the Event Backtests (`backtests`), then compare
-    the monotone-constrained model with an unconstrained one (`constraints`).
+    """Evaluate on the test year; with `parts`, run Lift and the Event Backtests (`backtests`)
+    and compare the monotone-constrained model with an unconstrained one (`constraints`).
 
     The test-year fold models are trained with the tuned configuration; the backtest
     models use it too. `backtest_chunks` defaults to `training`. With `v1`, the report
     gains the pre-registered `v1_comparison` (`comparison.compare`), scored by the same
     test-year fold models. With `test_models_cache` (a folder), the test-year models are
     read from it when saved there, or saved there after training. The gain ladder's rung
-    models (`v1.ladder`) are cached under `ladder_cache` the same way.
+    models (`v1.ladder`, trained only with `parts.gain_ladder`) are cached under `ladder_cache`
+    the same way.
     """
     test_year = metadata["test_year"]
     started = time.perf_counter()
@@ -723,30 +753,34 @@ def _evaluate(
     )
     report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
     print(f"Evaluated on {test_year} in {report['evaluation_seconds']:.0f} s", flush=True)
-    report |= backtests.run(
-        backtest_chunks or training, backtest_plan, uk=UK, params=metadata["params"], rounds=metadata["rounds"],
-        device=device, non_uk_rate=non_uk_rate, seed=seed, high_income=high_income, test_models=test_models,
-        cache=backtest_cache, lift_held_out=lift_held_out,
-    )
-    print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
-    report["monotone_constraints"] = constraints.compare(
-        {y: chunk for y, chunk in training.items() if y in metadata["training_years"]},
-        trained.baseline_features,
-        plan=constraint_plan,
-        uk=UK,
-        params=metadata["params"],
-        rounds=metadata["rounds"],
-        transform=FeatureTransform.from_dict(metadata["feature_transform"]),
-        n_folds=metadata["n_folds"],
-        non_uk_rate=non_uk_rate,
-        device=device,
-        seed=seed,
-    )
-    print(f"Monotone-constraint comparison in {report['monotone_constraints']['seconds']:.0f} s", flush=True)
+    if parts.event_backtests:
+        report |= backtests.run(
+            backtest_chunks or training, backtest_plan, uk=UK, params=metadata["params"], rounds=metadata["rounds"],
+            device=device, non_uk_rate=non_uk_rate, seed=seed, high_income=high_income, test_models=test_models,
+            cache=backtest_cache, lift_held_out=lift_held_out,
+        )
+        print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
+    if parts.constraint_comparison:
+        report["monotone_constraints"] = constraints.compare(
+            {y: chunk for y, chunk in training.items() if y in metadata["training_years"]},
+            trained.baseline_features,
+            plan=constraint_plan,
+            uk=UK,
+            params=metadata["params"],
+            rounds=metadata["rounds"],
+            transform=FeatureTransform.from_dict(metadata["feature_transform"]),
+            n_folds=metadata["n_folds"],
+            non_uk_rate=non_uk_rate,
+            device=device,
+            seed=seed,
+        )
+        print(f"Monotone-constraint comparison in {report['monotone_constraints']['seconds']:.0f} s", flush=True)
     report["potential_range"] = {
         **trained.potential_range_report, "text": conformal.coverage_text(trained.potential_range_report)
     }
     if v1 is not None:
+        if not parts.gain_ladder:
+            v1 = replace(v1, ladder=None)
         report["v1_comparison"] = _v1_comparison(
             v1, test_models, report, metadata, training=training, lift_settings=backtest_plan.lift, device=device,
             non_uk_rate=non_uk_rate, seed=seed, ladder_cache=ladder_cache,
@@ -767,7 +801,8 @@ def _v1_comparison(
     seed: int,
     ladder_cache: Path | None,
 ) -> dict:
-    """The pre-registered `v1_comparison` block (`comparison.compare`) for a report holding the Lift and Event Backtests.
+    """The pre-registered `v1_comparison` block (`comparison.compare`); its Lift and Event Backtest
+    secondaries only when the report holds them.
 
     v2 is scored by its test-year fold models (`test_models`, rung C). With `v1.ladder`, rungs
     A and B are trained like them (or read from `ladder_cache`) with v1's configuration, and
@@ -791,8 +826,8 @@ def _v1_comparison(
             for name, rows in v1.rows.items()
         },
         flows=v1.flows,
-        lift_v2=report["lift"],
-        event_v2=report["event_backtest"]["events"][0],
+        lift_v2=report.get("lift"),
+        event_v2=report["event_backtest"]["events"][0] if "event_backtest" in report else None,
         lift_settings=lift_settings,
         scope=metadata["exporter_scope"],
         uk=UK,
@@ -961,8 +996,28 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
     return replace(bundle, metadata=metadata)
 
 
+def parse_parts(argv: Sequence[str]) -> Parts:
+    """The opt-in parts a command line asks for: `--event-backtests`, `--constraint-comparison`,
+    `--gain-ladder`, or `--every-part` for all three. None of them: the default run."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="python -m exportspredictor.pipeline")
+    parser.add_argument("--event-backtests", action="store_true", help="also run Lift and the Event Backtests")
+    parser.add_argument("--constraint-comparison", action="store_true", help="also run the monotone-constraint comparison")
+    parser.add_argument("--gain-ladder", action="store_true", help="also train the v1 comparison's gain ladder")
+    parser.add_argument("--every-part", action="store_true", help="all three: the full run")
+    args = parser.parse_args(list(argv))
+    if args.every_part:
+        return Parts.every()
+    return Parts(
+        event_backtests=args.event_backtests, constraint_comparison=args.constraint_comparison, gain_ladder=args.gain_ladder
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
-    """`python -m exportspredictor.pipeline` trains and saves a real bundle (about 30 min on GPU).
+    """`python -m exportspredictor.pipeline` trains and saves a real bundle: by default the fold and
+    test-year models only (about 2.5 h on GPU, less when either is cached); `parse_parts` names the
+    switches that add the Event Backtests, the constraint comparison and the gain ladder.
 
     `python -m exportspredictor.pipeline refresh` instead saves a refreshed copy of the newest
     saved bundle (`refresh`), in seconds. `python -m exportspredictor.pipeline compare` saves a
@@ -984,7 +1039,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         # Copied file for file, so files this step does not know about (e.g. the model card) survive.
         print(artefacts.copy_version(source, artefacts_dir(), metadata=bundle.metadata), flush=True)
         return
-    bundle = build_real_artefacts()
+    bundle = build_real_artefacts(parts=parse_parts(argv))
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}
     print(json.dumps(summary), flush=True)
     print(artefacts.save(bundle, artefacts_dir()), flush=True)
