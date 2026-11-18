@@ -51,14 +51,22 @@ DEFAULT_ROUNDS = 100
 
 
 def model_params(
-    params: dict | None = None, *, device: str = "cpu", seed: int = 0, features: Sequence[str] = FEATURES
+    params: dict | None = None,
+    *,
+    device: str = "cpu",
+    seed: int = 0,
+    features: Sequence[str] = FEATURES,
+    monotone: bool = True,
 ) -> dict:
     """Full XGBoost parameters: defaults, the given overrides and the monotone constraints.
 
     `features` are the matrix's columns, in order (a feature ablation trains on fewer).
+    `monotone=False` leaves the constraints out (the experiment loop's #75 arm).
     """
-    constraints = "(" + ",".join(str(MONOTONE_CONSTRAINTS.get(f, 0)) for f in features) + ")"
-    return {**DEFAULT_PARAMS, **(params or {}), "monotone_constraints": constraints, "device": device, "seed": seed}
+    full = {**DEFAULT_PARAMS, **(params or {}), "device": device, "seed": seed}
+    if monotone:
+        full["monotone_constraints"] = "(" + ",".join(str(MONOTONE_CONSTRAINTS.get(f, 0)) for f in features) + ")"
+    return full
 
 
 def read_chunk(chunk: Chunk) -> pl.DataFrame:

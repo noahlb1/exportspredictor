@@ -455,3 +455,45 @@ def test_the_product_detail_experiments_add_one_feature_each_in_order_from_the_b
         assert row["settings"]["features"] == [*base_features, feature]
         assert row["settings"]["naive_weight"] in loop.BLEND_WEIGHTS
         assert row["status"] in {"kept", "dropped"}
+
+
+# --- #75: the monotone constraints on and off ----------------------------------------------------
+
+
+def test_the_constraints_experiment_reuses_the_best_so_fars_model_and_trains_one_without_constraints(data, monkeypatch):
+    trained_with = []
+    original = xgb.train
+
+    def spy(params, *args, **kwargs):
+        trained_with.append(params)
+        return original(params, *args, **kwargs)
+
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+    lp.noise_floor()
+    monkeypatch.setattr(xgb, "train", spy)
+
+    results = lp.run_experiment(loop.CONSTRAINTS_EXPERIMENT, loop.constraint_arms())
+
+    section = results["experiments"][loop.CONSTRAINTS_EXPERIMENT]
+    rows = {row["arm"]: row for row in section["arms"]}
+    assert list(rows) == ["constraints on", "constraints off"]
+    assert rows["constraints on"]["trained"] is False
+    assert rows["constraints on"]["training_key"] == results["noise_floor"]["arms"][0]["training_key"]
+    assert rows["constraints off"]["trained"] is True
+    assert rows["constraints off"]["settings"]["monotone"] is False
+    (params,) = trained_with
+    assert "monotone_constraints" not in params
+    for row in rows.values():
+        assert row["settings"]["naive_weight"] in loop.BLEND_WEIGHTS
+        assert row["status"] in {"kept", "dropped"}
+
+
+def test_the_constrained_model_never_lowers_export_potential_for_an_added_trade_agreement(data):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+    start = lp.plan.start
+    agreement = lp.grid["trade_agreement"].dtype
+
+    off = lp.export_potential(start, lp.grid.with_columns(trade_agreement=pl.lit(0, agreement)))
+    on = lp.export_potential(start, lp.grid.with_columns(trade_agreement=pl.lit(1, agreement)))
+
+    assert (on >= off * (1 - 1e-6)).all()
