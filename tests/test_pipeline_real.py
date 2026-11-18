@@ -21,7 +21,7 @@ def trained(derived_data_root, v1_frozen):
         derived_data_root, version="real-test", search_results=_tiny_search(derived_data_root), device="cpu",
         non_uk_rate=0.5,
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
-        ladder_plan=comparison.FIXTURE_LADDER,
+        ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(),
     )
 
 
@@ -187,7 +187,7 @@ def test_the_real_run_caches_its_fold_models_so_a_rerun_does_not_retrain(
         derived_data_root, version="real-test-again", search_results=trained.metadata["search"], device="cpu",
         non_uk_rate=0.5,
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
-        ladder_plan=comparison.FIXTURE_LADDER,
+        ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(),
     )
 
     assert again.baseline.equals(trained.baseline)
