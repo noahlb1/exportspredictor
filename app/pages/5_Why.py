@@ -73,18 +73,18 @@ if banner() is not None:
             )
             factors = pd.DataFrame(body["factors"])
             factors["effect"] = [
-                f"{row.direction} ×{row.multiplier:,.2f}" if row.direction != "no effect" else "no effect"
-                for row in factors.itertuples()
+                f"{row['direction']} ×{row['multiplier']:,.2f}" if row["direction"] != "no effect" else "no effect"
+                for row in factors.to_dict("records")
             ]
             top = factors.head(TOP_FACTORS)
-            raised = [f for f in top.itertuples() if f.direction == "raised"][:3]
-            lowered = [f for f in top.itertuples() if f.direction == "lowered"][:3]
+            raised = [f for f in top.to_dict("records") if f["direction"] == "raised"][:3]
+            lowered = [f for f in top.to_dict("records") if f["direction"] == "lowered"][:3]
             if raised:
                 st.markdown("**Most associated with higher Export Potential:** " + "; ".join(
-                    f"{f.label} ({f.value_text})" for f in raised))
+                    f"{f['label']} ({f['value_text']})" for f in raised))
             if lowered:
                 st.markdown("**Most associated with lower Export Potential:** " + "; ".join(
-                    f"{f.label} ({f.value_text})" for f in lowered))
+                    f"{f['label']} ({f['value_text']})" for f in lowered))
             st.dataframe(
                 factors.rename(
                     columns={

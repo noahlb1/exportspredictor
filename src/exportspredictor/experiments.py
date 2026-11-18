@@ -43,6 +43,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import xgboost as xgb
+from xgboost.callback import TrainingCallback
 
 from exportspredictor import baci, scope
 from exportspredictor.downloads import write_parquet
@@ -383,7 +384,7 @@ class _Fitter:
         *,
         max_rounds: int,
         early_stopping_rounds: int,
-        callbacks: Sequence[xgb.callback.TrainingCallback] = (),
+        callbacks: Sequence[TrainingCallback] = (),
     ) -> dict:
         """Train `params` on the matrices with early stopping on the validation year, and measure the model."""
         plan, started = self.plan, time.perf_counter()

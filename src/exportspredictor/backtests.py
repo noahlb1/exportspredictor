@@ -46,6 +46,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
@@ -69,6 +70,9 @@ from exportspredictor.training import (
     training_matrix,
 )
 from exportspredictor.wording import years_text
+
+if TYPE_CHECKING:
+    from exportspredictor.evaluation import TestModels
 
 MODEL_FILE = "backtest_model.json"
 HELD_OUT_SHARE = 0.2
@@ -382,7 +386,7 @@ class BacktestModel:
 class FoldPredictor:
     """Fold models (`evaluation.TestModels`) scoring UK rows out-of-fold and other rows by their mean."""
 
-    test_models: object  # evaluation.TestModels
+    test_models: "TestModels"
     uk: str
 
     @property

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import polars as pl
 import xgboost as xgb
+from xgboost.callback import EarlyStopping
 
 from exportspredictor import experiments, search
 from exportspredictor.evaluation import naive_potential
@@ -390,7 +391,7 @@ class Loop:
             evals=[(grid, "grid")],
             custom_metric=metric,
             callbacks=[
-                xgb.callback.EarlyStopping(
+                EarlyStopping(
                     rounds=settings.patience, metric_name=SELECTION_MEASURE, data_name="grid", maximize=True
                 )
             ],
