@@ -105,14 +105,14 @@ def test_scenario_effects_start_from_the_baseline_year_not_the_gap_period_mean(f
     )
     assert not joined["baseline_potential_usd"].equals(joined["export_potential_usd"])
     blocked = joined["effect_usd"].to_list()
-    assert joined["blocked_effect_usd"].to_list() == pytest.approx(blocked)
+    assert joined["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked)
 
 
 def test_blocked_values_can_be_rebuilt_from_saved_fold_models(fixture_artefacts, tmp_path):
     older = replace(
         fixture_artefacts,
         metadata={**fixture_artefacts.metadata, "version": "20260101T000000Z"},
-        baseline=fixture_artefacts.baseline.drop("blocked_effect_usd"),
+        baseline=fixture_artefacts.baseline.drop("blocked_opportunity_value_usd"),
     )
     store.save(older, tmp_path)
 
@@ -130,8 +130,8 @@ def test_blocked_values_are_zero_where_a_trade_agreement_exists(fixture_artefact
         fixture_artefacts.baseline_features.select("hs6", "iso3", "trade_agreement"), on=["hs6", "iso3"]
     )
 
-    assert (values.filter(pl.col("trade_agreement") == 1)["blocked_effect_usd"] == 0).all()
-    assert (values.filter(pl.col("trade_agreement") == 0)["blocked_effect_usd"] >= 0).all()
+    assert (values.filter(pl.col("trade_agreement") == 1)["blocked_opportunity_value_usd"] == 0).all()
+    assert (values.filter(pl.col("trade_agreement") == 0)["blocked_opportunity_value_usd"] >= 0).all()
 
 
 # --- Tariffs in Scenarios (ADR 0006) ------------------------------------------------------
@@ -204,11 +204,11 @@ def test_blocked_values_leave_an_unknown_tariff_unknown(fixture_artefacts):
         .sort("hs6")
     )
 
-    values = scenarios.blocked_effects(features, fixture_artefacts.baseline, fixture_artefacts.fold_models)
+    values = scenarios.blocked_opportunity_values(features, fixture_artefacts.baseline, fixture_artefacts.fold_models)
     india = values.filter(pl.col("iso3") == "IND").sort("hs6")
 
     assert india["hs6"].to_list() == expected["hs6"].to_list()
-    assert india["blocked_effect_usd"].to_list() == pytest.approx(expected["effect"].to_list(), rel=1e-6)
+    assert india["blocked_opportunity_value_usd"].to_list() == pytest.approx(expected["effect"].to_list(), rel=1e-6)
 
 
 def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
@@ -220,7 +220,7 @@ def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
     )
     blocked = fixture_artefacts.baseline.join(result.pairs, on=["hs6", "iso3"])
 
-    assert blocked["blocked_effect_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
+    assert blocked["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
 
 
 def test_a_tariff_scenario_sets_the_tariff_in_the_chosen_markets_and_sectors(fixture_artefacts):

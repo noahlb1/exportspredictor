@@ -39,7 +39,7 @@ if banner() is not None:
         pairs_column, count_column, value_column = st.columns(3)
         pairs_column.metric("Product–Market pairs", f"{summary['pairs']:,}")
         count_column.metric("Blocked Opportunities", f"{summary['blocked_opportunities']:,}")
-        value_column.metric("Total Blocked Opportunity value", format_usd(summary["blocked_effect_usd"]))
+        value_column.metric("Total Blocked Opportunity value", format_usd(summary["blocked_opportunity_value_usd"]))
         st.caption(
             f"The Blocked Opportunity value is the change in {body['baseline_year']} Export Potential the model "
             "associates with adding a UK Trade Agreement and removing the tariff where no agreement is in force; "

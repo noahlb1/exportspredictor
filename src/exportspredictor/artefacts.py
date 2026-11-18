@@ -49,6 +49,12 @@ _TABLES = (
     "excluded_products",
     "potential_range_bands",
 )
+# Baseline columns renamed after the first format-2 folders were written (code review of
+# spec #39): `load` reads an older folder under the current names.
+_RENAMED_BASELINE_COLUMNS = {
+    "blocked_effect_usd": "blocked_opportunity_value_usd",
+    "uncertain": "uncertain_opportunity",
+}
 
 
 class ArtefactsNotFound(FileNotFoundError):
@@ -64,8 +70,8 @@ class Artefacts:
     metadata: dict
     fold_models: list[xgb.Booster]
     # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd (Gap Period means),
-    # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_effect_usd,
-    # potential_range_low_usd, potential_range_high_usd, uncertain, tariff_imputed
+    # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_opportunity_value_usd,
+    # potential_range_low_usd, potential_range_high_usd, uncertain_opportunity, tariff_imputed
     baseline: pl.DataFrame
     # hs6, iso3, fold, FEATURES (transformed, as the models saw them), mfn_tariff (percent, the 2021 MFN rate)
     baseline_features: pl.DataFrame
@@ -130,6 +136,7 @@ def load(folder: Path) -> Artefacts:
         model.load_model(folder / "models" / f"fold_{k}.ubj")
         models.append(model)
     tables = {name: pl.read_parquet(folder / f"{name}.parquet") for name in _TABLES}
+    tables["baseline"] = tables["baseline"].rename(_RENAMED_BASELINE_COLUMNS, strict=False)
     return Artefacts(metadata=metadata, fold_models=models, **tables, evaluation=_read_json(folder / EVALUATION_FILE))
 
 

@@ -232,7 +232,7 @@ def create_app(
                 "reexport_hub",
                 "potential_range_low_usd",
                 "potential_range_high_usd",
-                "uncertain",
+                "uncertain_opportunity",
             )
             .row(0, named=True)
         )

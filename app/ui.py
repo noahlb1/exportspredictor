@@ -22,7 +22,7 @@ _VALUES = {
     "export_potential": "Export Potential",
     "actual_exports": "Actual Exports",
     "export_gap": "Export Gap",
-    "blocked_effect": "Blocked Opportunity value",
+    "blocked_opportunity_value": "Blocked Opportunity value",
 }
 # The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's.
 _GAP_PERIOD_MEANS = ("export_potential", "actual_exports", "export_gap")
@@ -30,7 +30,7 @@ _GAP_PERIOD_MEANS = ("export_potential", "actual_exports", "export_gap")
 CAVEATS = {
     "flagged_product": ("Flagged Product", FLAGGED_PRODUCT_CAVEAT),
     "reexport_hub": ("Re-export Hub", REEXPORT_HUB_CAVEAT),
-    "uncertain": ("Uncertain Opportunity", UNCERTAIN_OPPORTUNITY_CAVEAT),
+    "uncertain_opportunity": ("Uncertain Opportunity", UNCERTAIN_OPPORTUNITY_CAVEAT),
 }
 
 
@@ -131,7 +131,7 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
     )
     hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=CAVEATS["reexport_hub"][1])
     hide_uncertain = uncertain_column.checkbox(
-        "Hide Uncertain Opportunities", key="hide_uncertain", help=CAVEATS["uncertain"][1]
+        "Hide Uncertain Opportunities", key="hide_uncertain", help=CAVEATS["uncertain_opportunity"][1]
     )
     rank_by = min_potential_usd = options = None
     if rank_by_toggle:

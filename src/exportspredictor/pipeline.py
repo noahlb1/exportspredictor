@@ -16,7 +16,7 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    Baseline table holds the Gap Period means and the Baseline year's Export Potential; the
    history holds each year's scores; the Scenario inputs are the Baseline year's features.
 4. **Blocked Opportunity values**: re-predict every pair without a Trade Agreement with
-   one added (`scenarios.blocked_effects`), against the Baseline year only.
+   one added (`scenarios.blocked_opportunity_values`), against the Baseline year only.
    **Potential Range** (ADR 0007, `conformal`): score other Exporters' Baseline-year
    training rows (never the UK's) with their hash-assigned fold models, fit the band
    offsets, apply them around the Gap Period mean Export Potential, and measure coverage
@@ -90,8 +90,8 @@ from exportspredictor.rankings import DEFAULT_MIN_POTENTIAL_USD
 from exportspredictor.scenarios import (
     DEFAULT_MIN_SHARE,
     DEFAULT_MIN_USD,
-    blocked_effects,
-    with_blocked_effects,
+    blocked_opportunity_values,
+    with_blocked_opportunity_values,
 )
 from exportspredictor.scope import exporter_scope
 from exportspredictor.sources import source_versions
@@ -570,7 +570,7 @@ def _train_and_score(
         flush=True,
     )
     # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
-    baseline = with_blocked_effects(baseline, blocked_effects(baseline_features, baseline, models))
+    baseline = with_blocked_opportunity_values(baseline, blocked_opportunity_values(baseline_features, baseline, models))
     metadata = {
         "artefact_format": ARTEFACT_FORMAT,
         "baseline_year": baseline_year,

@@ -172,7 +172,7 @@ def with_potential_range(baseline: pl.DataFrame, bands: pl.DataFrame) -> pl.Data
     ranged = potential_range(baseline, bands).drop("band")
     actual = pl.col("actual_exports_usd")
     return ranged.with_columns(
-        uncertain=(pl.col("export_gap_usd") > 0)
+        uncertain_opportunity=(pl.col("export_gap_usd") > 0)
         & (actual >= pl.col("potential_range_low_usd"))
         & (actual <= pl.col("potential_range_high_usd"))
     )
@@ -181,7 +181,7 @@ def with_potential_range(baseline: pl.DataFrame, bands: pl.DataFrame) -> pl.Data
 def uncertain_share(baseline: pl.DataFrame) -> dict:
     """How many Opportunities (positive Export Gap) there are and the share that are Uncertain Opportunities."""
     opportunities = baseline.filter(pl.col("export_gap_usd") > 0)
-    uncertain = int(opportunities["uncertain"].sum())
+    uncertain = int(opportunities["uncertain_opportunity"].sum())
     return {
         "opportunities": opportunities.height,
         "uncertain_opportunities": uncertain,

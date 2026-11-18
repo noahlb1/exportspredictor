@@ -73,7 +73,7 @@ if banner() is not None:
                     body["potential_range_low_usd"],
                     body["potential_range_high_usd"],
                     body["actual_exports_usd"],
-                    uncertain=body["uncertain"],
+                    uncertain=body["uncertain_opportunity"],
                 )
             )
             st.markdown(

@@ -26,7 +26,7 @@ the chosen pairs. Every tariff a Scenario sets is clipped to the training range,
 Scenario Effect of a very large hike flattens; `ScenarioResult.clipped_pairs` counts them.
 
 **Blocked Opportunities**: pairs whose Scenario Effect is at least `min_share` of their
-Baseline Export Potential and at least `min_usd`. `blocked_effects` precomputes, for every
+Baseline Export Potential and at least `min_usd`. `blocked_opportunity_values` precomputes, for every
 pair without a Trade Agreement, the Scenario Effect of adding one: the value that the
 `rank_by=blocked` rankings sort by.
 
@@ -302,7 +302,7 @@ def run(
     return ScenarioResult(scenario=scenario, pairs=pairs, clipped_pairs=clipped_pairs)
 
 
-def blocked_effects(
+def blocked_opportunity_values(
     baseline_features: pl.DataFrame, baseline: pl.DataFrame, models: Sequence[xgb.Booster]
 ) -> pl.DataFrame:
     """Every pair's Scenario Effect of adding a Trade Agreement where none exists (0 where one does).
@@ -311,7 +311,7 @@ def blocked_effects(
     a known tariff exactly as in every Scenario and leaves an unknown one unknown (ADR 0006).
     Measured against the Baseline year's Export Potential (`baseline_export_potential_usd`).
 
-    Returns hs6, iso3, blocked_effect_usd: the Blocked Opportunity value.
+    Returns hs6, iso3, blocked_opportunity_value_usd: the Blocked Opportunity value.
     """
     every_market = Scenario(add_agreements=tuple(baseline_features["iso3"].unique().sort()))
     added = apply(baseline_features, every_market)
@@ -322,17 +322,17 @@ def blocked_effects(
         .select(
             "hs6",
             "iso3",
-            blocked_effect_usd=pl.when(pl.col("scenario").is_null())
+            blocked_opportunity_value_usd=pl.when(pl.col("scenario").is_null())
             .then(0.0)
             .otherwise(pl.col("scenario") - pl.col("baseline_export_potential_usd")),
         )
     )
 
 
-def with_blocked_effects(baseline: pl.DataFrame, effects: pl.DataFrame) -> pl.DataFrame:
-    """The Baseline table with its `blocked_effect_usd` column (replaced if already there)."""
-    return baseline.drop("blocked_effect_usd", strict=False).join(
-        effects.select("hs6", "iso3", "blocked_effect_usd"), on=["hs6", "iso3"], how="left", maintain_order="left"
+def with_blocked_opportunity_values(baseline: pl.DataFrame, effects: pl.DataFrame) -> pl.DataFrame:
+    """The Baseline table with its `blocked_opportunity_value_usd` column (replaced if already there)."""
+    return baseline.drop("blocked_opportunity_value_usd", strict=False).join(
+        effects.select("hs6", "iso3", "blocked_opportunity_value_usd"), on=["hs6", "iso3"], how="left", maintain_order="left"
     )
 
 
@@ -455,7 +455,7 @@ def _sectors(rows: pl.DataFrame) -> list[str]:
 
 
 def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
-    """Recompute `blocked_effect_usd` from the newest artefact's saved fold models.
+    """Recompute `blocked_opportunity_value_usd` from the newest artefact's saved fold models.
 
     Writes a new artefact version (models and tables copied) and returns its folder, so
     this step re-runs on its own without retraining. Nothing is trained here.
@@ -464,14 +464,14 @@ def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
 
     source = store.load_latest(root)
     started = time.perf_counter()
-    effects = blocked_effects(source.baseline_features, source.baseline, source.fold_models)
+    effects = blocked_opportunity_values(source.baseline_features, source.baseline, source.fold_models)
     metadata = {
         **source.metadata,
         "version": version or store.new_version(),
         "blocked_values_from": source.version,
         "blocked_values_seconds": round(time.perf_counter() - started, 2),
     }
-    rebuilt = replace(source, metadata=metadata, baseline=with_blocked_effects(source.baseline, effects))
+    rebuilt = replace(source, metadata=metadata, baseline=with_blocked_opportunity_values(source.baseline, effects))
     return store.save(rebuilt, root)
 
 

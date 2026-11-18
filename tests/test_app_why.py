@@ -172,7 +172,7 @@ def test_why_page_shows_the_pairs_opportunity_type(monkeypatch, api_url):
 
 def _pairs_by_uncertainty(api_url: str) -> tuple[dict, dict]:
     rows = httpx.get(f"{api_url}/opportunities/top").json()["opportunities"]
-    return next(r for r in rows if r["uncertain"]), next(r for r in rows if not r["uncertain"])
+    return next(r for r in rows if r["uncertain_opportunity"]), next(r for r in rows if not r["uncertain_opportunity"])
 
 
 def test_why_page_shows_the_potential_range_bar_in_plain_words(monkeypatch, api_url):

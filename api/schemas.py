@@ -113,14 +113,14 @@ class _Values(BaseModel):
     relative_export_gap: float | None  # Export Gap / Export Potential; missing where Export Potential is 0
     opportunity_type: OpportunityType  # how far the UK already trades the pair over the Gap Period
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
-    blocked_effect_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
+    blocked_opportunity_value_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
     blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
     flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
     reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
     # The Potential Range (ADR 0007): where Actual Exports fall 80% of the time for comparable pairs
     potential_range_low_usd: float
     potential_range_high_usd: float
-    uncertain: bool  # an Uncertain Opportunity: an Opportunity whose Actual Exports lie inside its range
+    uncertain_opportunity: bool  # an Uncertain Opportunity: an Opportunity whose Actual Exports lie inside its range
 
 
 class MarketOpportunity(_Values):
@@ -163,7 +163,7 @@ class Leaderboard(_Ranking):
 
 class BlockedSummary(LeaderboardSummary):
     blocked_opportunities: int  # the filtered pairs that clear the default Blocked Opportunity thresholds
-    blocked_effect_usd: float  # the sum of their Blocked Opportunity values (2024 Scenario Effects)
+    blocked_opportunity_value_usd: float  # the sum of their Blocked Opportunity values (2024 Scenario Effects)
 
 
 class BlockedOpportunities(Leaderboard):
@@ -485,7 +485,7 @@ class Explanation(BaseModel):
     reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
     potential_range_low_usd: float  # the Potential Range around the Gap Period mean (ADR 0007)
     potential_range_high_usd: float
-    uncertain: bool  # an Uncertain Opportunity
+    uncertain_opportunity: bool  # an Uncertain Opportunity
     tariff_caveat: str | None  # set when the Baseline year's Applied Tariff is carried forward (ADR 0006)
     factors: list[FactorOut]  # largest absolute contribution first
     # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
