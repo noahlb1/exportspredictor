@@ -35,12 +35,14 @@ from api.schemas import (
     BlockedOpportunities,
     BlockedQuery,
     BlockedSummary,
+    Caveat,
     Evaluation,
     ExcludedProductOut,
     Explanation,
     FactorOut,
     Health,
     HistoryOut,
+    Labels,
     Leaderboard,
     LeaderboardOpportunity,
     LeaderboardQuery,
@@ -62,9 +64,20 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
+from exportspredictor.conformal import (
+    UNCERTAIN_OPPORTUNITY_CAVEAT,
+    potential_range_text,
+)
+from exportspredictor.currency import USD_CAPTION, USD_UNIT
 from exportspredictor.evaluation import NOT_SERVED, known_limitations
-from exportspredictor.exclusions import not_ranked_message
+from exportspredictor.exclusions import (
+    FLAGGED_PRODUCT_CAVEAT,
+    REEXPORT_HUB_CAVEAT,
+    not_ranked_message,
+)
 from exportspredictor.explain import UnknownPair, explain_pair
+from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.lookups import search_products
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
@@ -75,6 +88,7 @@ from exportspredictor.rankings import (
     rank_opportunities,
     ranking,
 )
+from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -121,6 +135,23 @@ def create_app(
             artefact_format=artefacts.metadata["artefact_format"],
             baseline_year=artefacts.baseline_year,
             gap_years=list(artefacts.gap_years),
+            gap_period_label=gap_period_label(artefacts.gap_years),
+        )
+
+    @app.get("/labels", response_model=Labels)
+    def labels():
+        """The wording and options the app shows: unit, Opportunity Types, caveats and the last tariff year."""
+        return Labels(
+            usd_caption=USD_CAPTION,
+            usd_unit=USD_UNIT,
+            opportunity_types=list(OPPORTUNITY_TYPES),
+            caveats={
+                "flagged_product": Caveat(badge="Flagged Product", text=FLAGGED_PRODUCT_CAVEAT),
+                "reexport_hub": Caveat(badge="Re-export Hub", text=REEXPORT_HUB_CAVEAT),
+                "uncertain_opportunity": Caveat(badge="Uncertain Opportunity", text=UNCERTAIN_OPPORTUNITY_CAVEAT),
+            },
+            last_tariff_year=LAST_TRAINS_YEAR,
+            tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
         )
 
     @app.get("/products", response_model=list[ProductMatch])
@@ -224,6 +255,12 @@ def create_app(
         return Explanation(
             **_metadata(artefacts),
             **values,
+            potential_range_text=potential_range_text(
+                values["potential_range_low_usd"],
+                values["potential_range_high_usd"],
+                values["actual_exports_usd"],
+                uncertain=values["uncertain_opportunity"],
+            ),
             product=product,
             market=market,
             fold=explanation.fold,
@@ -303,6 +340,7 @@ def _metadata(artefacts: store.Artefacts) -> dict:
         "artefact_version": artefacts.version,
         "baseline_year": artefacts.baseline_year,
         "gap_years": list(artefacts.gap_years),
+        "gap_period_label": gap_period_label(artefacts.gap_years),
     }
 
 

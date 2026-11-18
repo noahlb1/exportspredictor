@@ -29,6 +29,12 @@ def gap_period(baseline_year: int) -> list[int]:
     return [years[0], years[-1]]
 
 
+def label(gap_years: list[int] | tuple[int, int]) -> str:
+    """How a Gap Period mean is labelled, e.g. "2022–2024 average", from the first and last year."""
+    first, last = gap_years
+    return f"{first}–{last} average"
+
+
 def export_gaps(yearly: pl.DataFrame) -> pl.DataFrame:
     """The Gap Period means of each pair's yearly Export Potential, Actual Exports and Export Gap.
 

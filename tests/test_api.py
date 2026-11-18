@@ -31,7 +31,25 @@ def test_health_reports_version_format_baseline_year_and_gap_period_once_loaded(
         "artefact_format": 2,
         "baseline_year": 2024,
         "gap_years": [2022, 2024],
+        "gap_period_label": "2022–2024 average",
     }
+
+
+def test_labels_serve_the_wording_and_options_the_app_shows(client):
+    body = client.get("/labels").json()
+
+    assert body["usd_unit"] == "USD, nominal"
+    assert "nominal US dollars" in body["usd_caption"]
+    assert body["opportunity_types"] == ["Expand", "New Market", "New Product"]
+    assert {field: caveat["badge"] for field, caveat in body["caveats"].items()} == {
+        "flagged_product": "Flagged Product",
+        "reexport_hub": "Re-export Hub",
+        "uncertain_opportunity": "Uncertain Opportunity",
+    }
+    assert all(caveat["text"].startswith(caveat["badge"]) for caveat in body["caveats"].values())
+    # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
+    assert body["last_tariff_year"] == 2021
+    assert "carried forward from 2021" in body["tariff_carried_forward"]
 
 
 def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
@@ -374,6 +392,8 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",
+        "potential_range_text",
+        "gap_period_label",
         "tariff_caveat",
         "factors",
         "history",
@@ -382,6 +402,8 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
     assert body["market"] == {"iso3": "JPN", "name": "Japan", "region": "East Asia & Pacific"}
     assert set(body["factors"][0]) == {"label", "value_text", "contribution", "multiplier", "direction"}
     assert [point["year"] for point in body["history"]] == sorted(point["year"] for point in body["history"])
+    assert body["potential_range_text"].startswith("**Potential Range ")
+    assert body["gap_period_label"] == "2022–2024 average"
 
 
 def test_explain_describes_relatedness_and_reexports_in_plain_english(client):
@@ -580,7 +602,7 @@ def test_leaderboard_ranks_every_uk_pair_by_export_gap_with_a_summary(client, fi
         fixture_artefacts.baseline.select("hs6", "iso3").iter_rows()
     )
     assert body["rank_by"] == "gap"
-    assert body["gap_years"] == [2022, 2024]
+    assert body["gap_years"] == [2022, 2024] and body["gap_period_label"] == "2022–2024 average"
     assert body["summary"]["pairs"] == 20
     assert body["summary"]["positive_export_gap_usd"] == pytest.approx(sum(gap for gap in gaps if gap > 0))
     assert {"hs6", "description", "sector", "iso3", "market", "region", "opportunity_type"} <= set(rows[0])

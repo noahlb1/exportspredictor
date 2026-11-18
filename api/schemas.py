@@ -21,6 +21,7 @@ class Health(BaseModel):
     artefact_format: int | None = None  # the artefact layout the API reads (2 for v2)
     baseline_year: int | None = None
     gap_years: list[int] | None = None  # first and last year the Export Gaps average over
+    gap_period_label: str | None = None  # how a Gap Period mean is labelled, e.g. "2022–2024 average"
     reason: str | None = None  # why the artefacts are not loaded, while not ready
 
 
@@ -39,6 +40,22 @@ class ProductMatch(ProductOut):
 
 class ExcludedProductOut(ProductOut):
     reason: str  # why it is left out of training, scoring and rankings
+
+
+class Caveat(BaseModel):
+    badge: str  # the glossary term shown on a row, e.g. "Flagged Product"
+    text: str  # what it means for the Advisor
+
+
+class Labels(BaseModel):
+    """Wording and options the app shows, each defined once in the package."""
+
+    usd_caption: str  # every value's unit, said once per page
+    usd_unit: str  # the unit in column headings, e.g. "Export Gap (USD, nominal)"
+    opportunity_types: list[str]  # Expand, New Market, New Product (GLOSSARY.md)
+    caveats: dict[str, Caveat]  # by the boolean row field that sets each (ADR 0005, 0007)
+    last_tariff_year: int  # tariff data end here; later years carry it forward, and Scenarios restore its MFN rate
+    tariff_carried_forward: str  # the caveat of a carried-forward Applied Tariff (ADR 0006)
 
 
 class MarketOut(BaseModel):
@@ -153,6 +170,7 @@ class _Ranking(BaseModel):
     artefact_version: str
     baseline_year: int
     gap_years: list[int]  # first and last year of the Gap Period the values average over
+    gap_period_label: str  # e.g. "2022–2024 average", for headings
     rank_by: RankBy
 
 
@@ -163,7 +181,7 @@ class Leaderboard(_Ranking):
 
 class BlockedSummary(LeaderboardSummary):
     blocked_opportunities: int  # the filtered pairs that clear the default Blocked Opportunity thresholds
-    blocked_opportunity_value_usd: float  # the sum of their Blocked Opportunity values (2024 Scenario Effects)
+    blocked_opportunity_value_usd: float  # the sum of their Blocked Opportunity values (Baseline-year Scenario Effects)
 
 
 class BlockedOpportunities(Leaderboard):
@@ -434,6 +452,7 @@ class ScenarioResponse(BaseModel):
     artefact_version: str
     baseline_year: int
     gap_years: list[int]
+    gap_period_label: str
     scenario: ScenarioIn
     thresholds: Thresholds
     market: str | None  # the drill-down Market `top_pairs` is limited to, if any
@@ -470,6 +489,7 @@ class Explanation(BaseModel):
     artefact_version: str
     baseline_year: int
     gap_years: list[int]
+    gap_period_label: str  # e.g. "2022–2024 average"
     product: ProductOut
     market: MarketOut
     fold: int  # the fold model that held the pair out, scored its Baseline and explains it
@@ -486,6 +506,7 @@ class Explanation(BaseModel):
     potential_range_low_usd: float  # the Potential Range around the Gap Period mean (ADR 0007)
     potential_range_high_usd: float
     uncertain_opportunity: bool  # an Uncertain Opportunity
+    potential_range_text: str  # the Potential Range in plain words, for the pair's detail view
     tariff_caveat: str | None  # set when the Baseline year's Applied Tariff is carried forward (ADR 0006)
     factors: list[FactorOut]  # largest absolute contribution first
     # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
