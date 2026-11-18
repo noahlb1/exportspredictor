@@ -202,6 +202,9 @@ def sample_non_uk(table: pl.DataFrame, *, uk: str, rate: float, seed: int = 0) -
     )
 
 
+BASE_MARGIN = "base_margin"  # a prepared chunk's per-row starting point on the log scale, if it has one
+
+
 class _ChunkIter(xgb.DataIter):
     """Feeds one prepared chunk at a time to XGBoost.
 
@@ -227,11 +230,16 @@ class _ChunkIter(xgb.DataIter):
             table = self._prepare(read_chunk(self._chunks[self._i]))
             self._i += 1
             if table.height:
+                # A table with a `base_margin` column trains from that starting point (log scale).
+                margin = {} if BASE_MARGIN not in table.columns else {
+                    "base_margin": self.device.array(table[BASE_MARGIN].to_numpy())
+                }
                 input_data(
                     data=self.device.array(table.select(self._features).to_numpy()),
                     label=self.device.array(table["value_usd"].to_numpy()),
                     weight=self.device.array(table["weight"].to_numpy()),
                     feature_names=self._features,
+                    **margin,
                 )
                 return True
         return False
