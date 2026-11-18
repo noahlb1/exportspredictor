@@ -1,16 +1,18 @@
 """Lift and Event Backtests: Opportunities and Scenario Effects checked against what actually happened.
 
 **Lift** asks whether large Export Gaps point at Flows that later grow. A model is trained on
-the early years (2012–2017) with 20% of Exporters held out entirely, so their Flows are as
-unseen as the UK's are to its fold models (ADR 0001). Their Export Gaps in the last training
-year (2017) are ranked, and Lift is how many times more often the top tenth of pairs by
+the early years (2012–2017) without v1's held-out Exporters (its frozen list, restricted to
+v2's Exporter scope), so their Flows are as unseen as the UK's are to its fold models (ADR
+0001), and v1 and v2 are scored on the same countries. Their pairs are ranked by Export Gap
+over a Gap Period (2015–2017: the mean of the yearly gaps, as the Baseline's Export Gap is
+the mean over 2022–2024), and Lift is how many times more often the top tenth of pairs by
 Export Gap **grew materially** by the outcome year (2023) than pairs picked at random:
 
     Lift = P(grew | top decile by Export Gap) / P(grew | any pair)
 
-A pair grows materially when its Flow rises by at least half and by at least $100,000, so a
-pair that appears from nothing counts once it reaches $100,000. Sampled zero cells count by
-their weight. The 95% confidence interval comes from a bootstrap that resamples whole
+A pair grows materially when its outcome-year Flow is at least half and at least $100,000
+above its Gap Period mean Actual Exports, so a pair that appears from nothing counts once it
+reaches $100,000. Sampled zero cells count by their weight. The 95% confidence interval comes from a bootstrap that resamples whole
 Exporters, because one Exporter's pairs rise and fall together. Large gaps tend to belong to
 large pairs, which grow by $100,000 more easily, so a **size-matched** Lift compares the top
 decile with pairs of similar Export Potential instead of with all pairs. Lift is a tendency
@@ -19,9 +21,10 @@ over many pairs, not a promise about any one Opportunity.
 **Event Backtests** check Scenario Effects against a real Trade Agreement. The primary one
 is the EU–Japan Economic Partnership Agreement (in force 1 February 2019): a model trained
 on 2012–2018 only, a period before the agreement, predicts the post-period Flows with the
-agreement on and off. The model's Scenario Effect is compared with an observed
-difference-in-differences: the change in EU exports to Japan from the pre-period
-(2016–2018) to each post year, relative to the change in EU exports to similar Markets
+agreement on and off: on sets the Trade Agreement flag and zeroes the Applied Tariff,
+off clears the flag and restores the Importer's MFN rate (ADR 0006). The model's
+Scenario Effect is compared with an observed difference-in-differences: the change in EU
+exports to Japan from the pre-period (2016–2018) to each post year, relative to the change in EU exports to similar Markets
 with no Trade Agreement with the EU (the control group). Japan's exports to the EU are
 checked the same way. COVID hit 2020, and differently by Market, so the 2020 and 2021
 comparisons are noisier. The UK–Australia and UK–New Zealand agreements (May 2023) are a
@@ -48,7 +51,8 @@ import numpy as np
 import polars as pl
 import xgboost as xgb
 
-from exportspredictor.features import FEATURES, FeatureTransform
+from exportspredictor.features import FEATURES, TARIFF_FEATURES, FeatureTransform
+from exportspredictor.scenarios import AGREEMENT_TARIFF
 from exportspredictor.training import (
     Chunk,
     model_params,
@@ -57,6 +61,7 @@ from exportspredictor.training import (
     scan_chunks,
     training_matrix,
 )
+from exportspredictor.wording import years_text
 
 MODEL_FILE = "backtest_model.json"
 HELD_OUT_SHARE = 0.2
@@ -375,7 +380,7 @@ class FoldPredictor:
     uk: str
 
     @property
-    def training_years(self) -> list[int]:
+    def trainingyears_text(self) -> list[int]:
         return list(self.test_models.training_years)
 
     def predict(self, rows: pl.DataFrame) -> np.ndarray:
@@ -418,7 +423,7 @@ def train_backtest_model(
 
     transform = FeatureTransform.fit(scan_chunks(chunks).filter(kept), years)
     prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed, keep=keep)
-    matrix = training_matrix(chunks, prepare)
+    matrix = training_matrix(chunks, prepare, device=device)
     model = xgb.train(model_params(params, device=device, seed=seed), matrix, num_boost_round=rounds)
     del matrix
     model.set_param({"device": "cpu"})
@@ -437,12 +442,108 @@ def _rows(chunk: Chunk, condition: pl.Expr) -> pl.DataFrame:
 
 @dataclass(frozen=True)
 class LiftSettings:
+    """When the Lift model trains, which years form its Gap Period, and when growth is measured.
+
+    The Lift model may not train on a year after the Gap Period, nor on the outcome year:
+    the Gap Period must end before the outcome year and every training year must fall
+    on or before the Gap Period's last year (else LeakageError).
+    """
+
     training_years: tuple[int, ...]
-    gap_year: int
+    gap_years: tuple[int, ...]
     outcome_year: int
-    held_out_share: float = HELD_OUT_SHARE
     min_growth_share: float = MIN_GROWTH_SHARE
     min_growth_usd: float = MIN_GROWTH_USD
+
+    def __post_init__(self) -> None:
+        if not self.gap_years or not self.training_years:
+            raise ValueError("Lift needs training years and a Gap Period")
+        if max(self.gap_years) >= self.outcome_year:
+            raise LeakageError(f"The Gap Period {list(self.gap_years)} must end before {self.outcome_year}")
+        if max(self.training_years) > max(self.gap_years):
+            raise LeakageError(
+                f"The Lift model would train on {list(self.training_years)}, after the Gap Period {list(self.gap_years)}"
+            )
+
+    @property
+    def before(self) -> int:
+        """The first year the Lift model may not train on."""
+        return max(self.gap_years) + 1
+
+
+def lift_exporters(v1_held_out: Iterable[str], *, scope: Iterable[str], uk: str) -> list[str]:
+    """The Lift model's held-out Exporters: v1's frozen list, restricted to v2's Exporter scope.
+
+    Both models are then scored on the same Exporters. Raises ValueError if the UK is in the
+    list (it can never be held out) or if no listed Exporter is in scope.
+    """
+    listed = {str(code) for code in v1_held_out}
+    if uk in listed:
+        raise ValueError(f"{uk} cannot be a held-out Exporter")
+    held = sorted(listed & {str(code) for code in scope})
+    if not held:
+        raise ValueError("None of v1's held-out Exporters is in v2's Exporter scope")
+    return held
+
+
+_PAIR = ["exporter", "importer", "hs6"]
+
+
+def gap_period_pairs(yearly: pl.DataFrame, later: pl.DataFrame, settings: LiftSettings) -> pl.DataFrame:
+    """Each pair's Gap Period Export Gap and whether it grew materially by the outcome year.
+
+    `yearly` holds training rows of the Gap Period years (exporter, importer, hs6, year,
+    value_usd, weight, export_potential_usd); `later` holds the outcome year's positive Flows
+    (exporter, importer, hs6, value_usd). The pairs, and their weights, are the rows of the
+    Gap Period's last year: positive Flows and sampled Zero Cells, so weighted counts stay
+    unbiased. A pair's mean Actual Exports is over every Gap Period year, a missing row
+    counting as 0 (every positive Flow is a row). Its Export Potential is the mean over the
+    years it has a row (Zero Cells are sampled each year apart), so its Export Gap is the mean
+    of its yearly gaps whenever it has a row in every year. It grew materially when its
+    outcome-year Flow rose from the mean Actual Exports by at least `min_growth_share` and
+    `min_growth_usd`. The same rule scores v1's frozen Lift rows.
+    """
+    years = list(settings.gap_years)
+    rows = yearly.with_columns(pl.col(_PAIR).cast(pl.String)).filter(pl.col("year").is_in(years))
+    anchor = rows.filter(pl.col("year") == max(years)).select(*_PAIR, "weight")
+    means = rows.group_by(_PAIR).agg(
+        actual_exports_usd=pl.col("value_usd").cast(pl.Float64).sum() / len(years),
+        export_potential_usd=pl.col("export_potential_usd").cast(pl.Float64).mean(),
+    )
+    outcome = later.select(pl.col(_PAIR).cast(pl.String), later_usd=pl.col("value_usd").cast(pl.Float64))
+    return (
+        anchor.join(means, on=_PAIR, how="left")
+        .join(outcome, on=_PAIR, how="left")
+        .with_columns(pl.col("later_usd").fill_null(0.0))
+        .with_columns(
+            export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"),
+            grew=grows_materially(
+                "actual_exports_usd", "later_usd", min_share=settings.min_growth_share, min_usd=settings.min_growth_usd
+            ),
+        )
+    )
+
+
+def lift_rows(training: Mapping[int, Chunk], settings: LiftSettings, model: BacktestModel) -> pl.DataFrame:
+    """The held-out Exporters' rows of every Gap Period year, with the Lift model's Export Potential."""
+    _check_lift_model(model, settings)
+    is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
+    frames = []
+    for year in settings.gap_years:
+        rows = _rows(training[year], is_held)
+        frames.append(
+            rows.select(pl.col(_PAIR).cast(pl.String), pl.col("year").cast(pl.Int16), "value_usd", "weight").with_columns(
+                export_potential_usd=pl.Series(model.predict(rows), dtype=pl.Float64)
+            )
+        )
+    return pl.concat(frames, how="vertical_relaxed")
+
+
+def _check_lift_model(model: BacktestModel, settings: LiftSettings) -> None:
+    if max(model.training_years) > max(settings.gap_years):
+        raise LeakageError(f"The Lift model trained on {model.training_years}, after the Gap Period")
+    if not model.held_out_exporters:
+        raise ValueError("The Lift model holds out no Exporters")
 
 
 def lift_backtest(
@@ -453,37 +554,16 @@ def lift_backtest(
     resamples: int = RESAMPLES,
     seed: int = 0,
 ) -> dict:
-    """Lift of the held-out Exporters' top-decile Export Gaps in the gap year, by the outcome year."""
-    if max(model.training_years) >= settings.outcome_year:
-        raise LeakageError("The Lift model trained on its outcome year")
-    held = model.held_out_exporters
-    if not held:
-        raise ValueError("The Lift model holds out no Exporters")
-    is_held = pl.col("exporter").cast(pl.String).is_in(held)
-    keys = ["exporter", "importer", "hs6"]
-    gap_rows = _rows(training[settings.gap_year], is_held)
-    later = _rows(training[settings.outcome_year], is_held & (pl.col("value_usd") > 0)).select(
-        pl.col(keys).cast(pl.String), later_usd="value_usd"
-    )
-    pairs = (
-        gap_rows.select(*keys, "value_usd", "weight")
-        .with_columns(export_potential_usd=pl.Series(model.predict(gap_rows), dtype=pl.Float64))
-        .with_columns(pl.col(keys).cast(pl.String))
-        .join(later, on=keys, how="left")
-        .with_columns(pl.col("later_usd").fill_null(0.0))
-        .with_columns(
-            export_gap_usd=pl.col("export_potential_usd") - pl.col("value_usd"),
-            grew=grows_materially(
-                "value_usd", "later_usd", min_share=settings.min_growth_share, min_usd=settings.min_growth_usd
-            ),
-        )
-    )
-    result = lift(pairs, resamples=resamples, seed=seed)
+    """Raw and size-matched Lift of the held-out Exporters' top-decile Gap Period Export Gaps, by the outcome year."""
+    yearly = lift_rows(training, settings, model)
+    is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
+    later = _rows(training[settings.outcome_year], is_held & (pl.col("value_usd") > 0)).select(*_PAIR, "value_usd")
+    result = lift(gap_period_pairs(yearly, later, settings), resamples=resamples, seed=seed)
     result.update(
-        held_out_share=settings.held_out_share,
-        held_out_exporters=held,
+        held_out_exporters=model.held_out_exporters,
+        held_out_from="v1",
         training_years=model.training_years,
-        gap_year=settings.gap_year,
+        gap_years=list(settings.gap_years),
         outcome_year=settings.outcome_year,
         min_growth_share=settings.min_growth_share,
         min_growth_usd=settings.min_growth_usd,
@@ -516,13 +596,16 @@ def lift_text(result: dict) -> str:
         size = f" They grew {verdict} (ratio {matched:.2f}{m_interval}). {meaning}"
     return (
         f"For countries the model never trained on, the tenth of Product–Market pairs with the largest Export Gaps "
-        f"in {result['gap_year']} {growth} by {result['outcome_year']} {lift_value:.1f} times as often as pairs "
+        f"averaged over {years_text(result['gap_years'])} {growth} from their {years_text(result['gap_years'])} mean by "
+        f"{result['outcome_year']} {lift_value:.1f} times as often as pairs "
         f"picked at random{interval}: {result['top_rate']:.0%} of them against {result['base_rate']:.0%}.{size} "
         f"This is a tendency across many pairs, not a promise that any one Opportunity will grow."
     )
 
 
 # --- Event Backtests ----------------------------------------------------------------------------
+
+(TARIFF,) = TARIFF_FEATURES
 
 
 @dataclass(frozen=True)
@@ -584,9 +667,8 @@ def event_backtest(
         if not controls:
             raise ValueError(f"No control Markets for {d.label}")
         post = treated.filter(pl.col("year").is_in(list(event.post_years)))
-        flag = post.schema["trade_agreement"]
-        on = model.predict(post.with_columns(trade_agreement=pl.lit(1, flag)))
-        off = model.predict(post.with_columns(trade_agreement=pl.lit(0, flag)))
+        on_rows, off_rows = agreement_states(post)
+        on, off = model.predict(on_rows), model.predict(off_rows)
         predicted = post.select("hs6", "year", "weight").with_columns(
             on_usd=pl.Series(on, dtype=pl.Float64), off_usd=pl.Series(off, dtype=pl.Float64)
         )
@@ -614,10 +696,34 @@ def event_backtest(
         "post_years": list(event.post_years),
         "control_rule": _control_rule(event, high_income is not None),
         "caveat": event.caveat,
+        "states": AGREEMENT_STATES,
         "directions": directions,
     }
     report["text"] = event_text(report)
     return report
+
+
+AGREEMENT_STATES = (
+    "With the agreement on, the Trade Agreement flag is set and a known Applied Tariff is 0 (an unknown one stays unknown); with it off, the flag is "
+    "cleared and the Importer's MFN tariff is restored (the pair's own tariff where no MFN rate is known). These are "
+    "the states a Trade Agreement Scenario compares (ADR 0006)."
+)
+
+
+def agreement_states(rows: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """The rows with the Trade Agreement on (a known Applied Tariff 0) and off (the Importer's MFN rate restored).
+
+    Only policy columns change: `trade_agreement` and `log_applied_tariff`, as a Trade
+    Agreement Scenario changes them (ADR 0006). `mfn_tariff` is in percent; where it is
+    missing the off state keeps the row's own tariff, and an unknown tariff stays unknown in the on state.
+    """
+    flag = rows.schema["trade_agreement"]
+    tariff = pl.col(TARIFF)
+    dtype = rows.schema[TARIFF]
+    mfn = (pl.col("mfn_tariff").cast(pl.Float64) / 100).log1p().cast(dtype)
+    on = rows.with_columns(trade_agreement=pl.lit(1, flag), **{TARIFF: AGREEMENT_TARIFF.cast(dtype)})
+    off = rows.with_columns(trade_agreement=pl.lit(0, flag), **{TARIFF: mfn.fill_null(tariff)})
+    return on, off
 
 
 def _check_event(treated: pl.DataFrame, event: Event) -> None:
@@ -634,14 +740,10 @@ def _control_rule(event: Event, high_income: bool) -> str:
     income = "high-income " if high_income else ""
     return (
         f"The {event.n_controls} largest {income}Markets by imports from the same Exporters in "
-        f"{_years(event.pre_years)} that had no Trade Agreement with any of them in any year from "
+        f"{years_text(event.pre_years)} that had no Trade Agreement with any of them in any year from "
         f"{event.pre_years[0]} to {event.post_years[-1]}"
         + (f", leaving out {', '.join(event.excluded_controls)}." if event.excluded_controls else ".")
     )
-
-
-def _years(years: Sequence[int]) -> str:
-    return str(years[0]) if len(years) == 1 else f"{years[0]}–{years[-1]}"
 
 
 def _pct(value: float | None) -> str:
@@ -665,13 +767,13 @@ def event_text(report: dict) -> str:
         else:
             verdict = " The model's effect is within the observed interval."
         parts.append(
-            f"For {d['label']} in {_years(report['post_years'])}, the model associated the agreement with "
+            f"For {d['label']} in {years_text(report['post_years'])}, the model associated the agreement with "
             f"{_pct(predicted)} in Export Potential; the observed difference-in-differences against "
             f"{len(d['controls'])} similar Markets without an agreement was {_pct(pooled['observed'])}{interval}.{verdict}"
         )
     return (
         f"{report['title']} (in force {report['in_force']}), with a model trained only on "
-        f"{_years(report['training_years'])}: " + " ".join(parts)
+        f"{years_text(report['training_years'])}: " + " ".join(parts)
     )
 
 
@@ -705,15 +807,19 @@ def run(
     high_income: Iterable[str] | None = None,
     test_models=None,
     cache: Path | None = None,
+    lift_held_out: Sequence[str],
 ) -> dict:
     """Train (or read from `cache`) the backtest models; return the report's `lift` and `event_backtest` keys.
 
     `training` maps each year to its feature table (training rows) and must cover every
-    year the plan reads. Models are cached under `cache` by their settings.
+    year the plan reads. `lift_held_out` are the Exporters the Lift model never sees:
+    v1's frozen list within v2's scope (`lift_exporters`). Models are cached under `cache`
+    by their settings.
     """
     started = time.perf_counter()
-    exporters = _rows(training[plan.lift.gap_year], pl.lit(True)).select(pl.col("exporter").cast(pl.String).unique())
-    held = held_out_exporters(exporters["exporter"], share=plan.lift.held_out_share, seed=seed)
+    held = sorted(lift_held_out)
+    if not held or uk in held:
+        raise ValueError(f"The Lift model needs held-out Exporters other than {uk}, got {held}")
     spec = {"params": params, "rounds": rounds, "non_uk_rate": non_uk_rate, "seed": seed, "features": FEATURES}
 
     def model(name: str, years: Sequence[int], before: int, held_out: Sequence[str] = ()) -> BacktestModel:
@@ -732,7 +838,7 @@ def run(
             trained.save(folder)
         return trained
 
-    lift_model = model("lift", plan.lift.training_years, plan.lift.outcome_year, held)
+    lift_model = model("lift", plan.lift.training_years, plan.lift.before, held)
     lift_result = lift_backtest(training, plan.lift, lift_model, resamples=plan.resamples, seed=seed)
     income = sorted(high_income) if plan.high_income_controls and high_income is not None else None
     event_model = model(plan.event.name, plan.event.training_years, plan.event.event_year)
@@ -806,7 +912,7 @@ UK_AUSTRALIA_NZ = Event(
 )
 
 REAL_PLAN = Plan(
-    lift=LiftSettings(training_years=tuple(range(2012, 2018)), gap_year=2017, outcome_year=2023),
+    lift=LiftSettings(training_years=tuple(range(2012, 2018)), gap_years=(2015, 2016, 2017), outcome_year=2023),
     event=EU_JAPAN,
     secondary=UK_AUSTRALIA_NZ,
 )
@@ -829,15 +935,19 @@ def add_to_latest(
     plan: Plan = REAL_PLAN,
     device: str = "cuda",
     version: str | None = None,
+    v1_frozen: Path | None = None,
 ) -> Path:
     """Run the backtests for the newest evaluated artefact and save it again, with them, as a new version.
+
+    The Lift model holds out v1's frozen held-out Exporters within the artefact's scope, read
+    from `v1_frozen` (default: the real v1 artefact's frozen tables under `artefacts_root`).
 
     The backtest models use the artefact's tuned parameters, round count, non-UK sample and
     seed, and are read from the cache when already trained; the secondary Event Backtest uses
     the cached test-year models of `evaluation`. Everything else is copied file for file.
     """
     from exportspredictor import artefacts as store
-    from exportspredictor import baci, evaluation
+    from exportspredictor import baci, evaluation, freeze
     from exportspredictor.features import features_dir, load_sources
     from exportspredictor.paths import artefacts_dir, data_dir
 
@@ -862,6 +972,9 @@ def add_to_latest(
         high_income=load_sources(root)[0].high_income,
         test_models=evaluation.real_test_models(bundle, root, device=device) if plan.secondary else None,
         cache=cache_dir(root),
+        lift_held_out=lift_exporters(
+            freeze.lift_held_out_exporters(v1_frozen or freeze.v1_folder(artefacts_root)), scope=metadata["exporter_scope"], uk=baci.UK
+        ),
     )
     report = {**bundle.evaluation, **result}
     new = {**metadata, "version": version or store.new_version(), "copied_from": bundle.version}

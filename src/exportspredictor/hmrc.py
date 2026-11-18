@@ -29,6 +29,7 @@ from pathlib import Path
 
 import polars as pl
 
+from exportspredictor import currency
 from exportspredictor.downloads import download as download_file
 from exportspredictor.downloads import fetch, write_parquet
 from exportspredictor.paths import data_dir
@@ -151,13 +152,19 @@ def _largest_first(table: pl.DataFrame, top: int) -> list[dict]:
     return table.sort(pl.col("difference_usd").abs(), descending=True).head(top).to_dicts()
 
 
-def crosscheck(ots: pl.DataFrame, baci_uk: pl.DataFrame, *, usd_per_gbp: float, year: int = YEAR, top: int = 10) -> dict:
+def crosscheck(
+    ots: pl.DataFrame, baci_uk: pl.DataFrame, *, usd_per_gbp: float | None = None, year: int = YEAR, top: int = 10
+) -> dict:
     """Compare HMRC OTS (from `allocate`) with BACI's UK Flows (hs6, iso3, value_usd) of the same year.
 
     Positive differences mean HMRC records more than BACI. Returns totals, the value HMRC
     leaves without a Product or a Market, the largest differences by Sector (HS2) and by
     Market, the agreement of the pairs both sources record, and a plain-English summary.
+    HMRC's £ are converted at `year`'s own Bank of England annual average unless
+    `usd_per_gbp` is given.
     """
+    if usd_per_gbp is None:
+        usd_per_gbp = currency.USD_PER_GBP[year]
     ots = ots.with_columns(ots_usd=pl.col("value_gbp") * usd_per_gbp)
     ots_usd = float(ots["ots_usd"].sum())
     baci_usd = float(baci_uk["value_usd"].sum())

@@ -19,6 +19,8 @@ def client():
         bundle = store.load_latest(artefacts_dir())
     except store.ArtefactsNotFound:
         pytest.skip("No real artefacts under EXPORTSPREDICTOR_ARTEFACTS_DIR")
+    except store.UnreadableArtefacts as error:
+        pytest.skip(f"The newest real artefacts are not artefact format {store.ARTEFACT_FORMAT}: {error}")
     if bundle.metadata.get("source", "fixture") == "fixture":
         pytest.skip("The artefacts are fixture artefacts")
     with TestClient(create_app(artefacts_dir())) as client:
@@ -41,3 +43,14 @@ def test_a_bloc_scenario_returns_within_a_few_seconds_on_cpu(client):
     assert response.status_code == 200
     assert sum(market["pairs"] for market in response.json()["markets"]) > 100_000
     assert seconds < 5
+
+
+def test_no_pair_has_a_negative_blocked_opportunity_value_and_the_summary_totals_blocked_ones(client):
+    # Adding a Trade Agreement never lowers Export Potential: an unknown tariff stays unknown (ADR 0006).
+    values = client.app.state.artefacts.baseline["blocked_opportunity_value_usd"]
+    summary = client.get("/opportunities/blocked", params={"limit": 1}).json()["summary"]
+
+    assert values.min() >= -1e-3  # float noise only
+    assert 0 < summary["blocked_opportunities"] < summary["pairs"]
+    # The total is over the Blocked Opportunities only, well under the sum over every pair.
+    assert 0 < summary["blocked_opportunity_value_usd"] < values.sum()

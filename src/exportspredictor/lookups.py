@@ -33,13 +33,28 @@ PRODUCT_ALIASES: dict[str, tuple[str, ...]] = {
 _DEFAULT_LIMIT = 20
 
 
-def search_products(products: pl.DataFrame, query: str, limit: int = _DEFAULT_LIMIT) -> pl.DataFrame:
+def search_products(
+    products: pl.DataFrame, query: str, limit: int = _DEFAULT_LIMIT, *, excluded: pl.DataFrame | None = None
+) -> pl.DataFrame:
     """Products matching `query`, best first. No match (or a blank query) gives an empty frame.
 
     - Digits match HS codes by prefix: "851712" finds that Product, "22" lists its Sector.
     - Words match the description when every word starts a word in it (case-insensitive),
       plus any Products named by an everyday alias such as "smartphone".
+
+    Given the Excluded Products table (`excluded`: hs6, reason), every match also carries
+    `excluded` and `exclusion_reason`, so an Excluded Product is found and marked, not hidden.
     """
+    found = _search(products, query, limit)
+    if excluded is None:
+        return found
+    reasons = excluded.select("hs6", exclusion_reason="reason")
+    return found.join(reasons, on="hs6", how="left", maintain_order="left").with_columns(
+        excluded=pl.col("exclusion_reason").is_not_null()
+    )
+
+
+def _search(products: pl.DataFrame, query: str, limit: int) -> pl.DataFrame:
     query = query.strip().lower()
     if not query:
         return products.clear()

@@ -4,7 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, fetch
+from app.format import number_text, years_text
+from app.ui import banner, fetch, labels
 
 SCOPES = {
     "uk_out_of_fold": "UK Product–Market pairs (each scored by the fold model that never saw it)",
@@ -60,20 +61,48 @@ def _interval(ci: list) -> str:
     return "n/a" if low is None else f"{_pct(low)} to {_pct(high)}"
 
 
-def _years(years: list[int]) -> str:
-    return str(years[0]) if len(years) == 1 else f"{years[0]}–{years[-1]}"
+SIZE_EXPLANATION = (
+    "Raw Lift compares the pairs with the largest Export Gaps with all pairs, so it mostly reflects pair size: "
+    "large gaps sit on large pairs, which grow by ${usd:,.0f} more easily. Size-matched Lift compares them with "
+    "pairs of similar Export Potential instead, so it shows what the Export Gap adds beyond size. Above 1, large "
+    "gaps tended to grow more often than pairs of their size; below 1, less often. Both describe a tendency across "
+    "many pairs, not a forecast for any one Opportunity."
+)
+
+
+def _lift_figures(lift: dict) -> pd.DataFrame:
+    matched = lift["size_matched"]
+    return pd.DataFrame(
+        [
+            {
+                "Measure": "Raw Lift",
+                "Lift": lift["lift"],
+                "95% interval": f"{number_text(lift['ci'][0], '.1f')} to {number_text(lift['ci'][1], '.1f')}",
+                "Compared with": "all pairs",
+            },
+            {
+                "Measure": "Size-matched Lift",
+                "Lift": matched["lift"],
+                "95% interval": f"{number_text(matched['ci'][0], '.2f')} to {number_text(matched['ci'][1], '.2f')}",
+                "Compared with": "pairs of similar Export Potential",
+            },
+        ]
+    )
 
 
 def _show_lift(lift: dict) -> None:
     st.subheader("Do large Export Gaps point at growth? (Lift)")
     st.markdown(lift["text"])
-    held = len(lift["held_out_exporters"])
+    st.dataframe(_lift_figures(lift), hide_index=True)
+    st.markdown(SIZE_EXPLANATION.format(usd=lift["min_growth_usd"]))
+    gap = years_text(lift["gap_years"])
     st.caption(
-        f"Lift is measured on {held} Exporters ({lift['held_out_share']:.0%}, chosen at random) that a model trained "
-        f"on {_years(lift['training_years'])} never saw. Each of their Product–Market pairs is ranked by its "
-        f"{lift['gap_year']} Export Gap, and a pair counts as grown when its Flow rose by at least "
-        f"{lift['min_growth_share']:.0%} and ${lift['min_growth_usd']:,.0f} by {lift['outcome_year']}. The interval "
-        f"comes from resampling whole Exporters. It describes a tendency across many pairs, not a forecast."
+        f"Lift is measured on {len(lift['held_out_exporters'])} Exporters that a model trained on "
+        f"{years_text(lift['training_years'])} never saw: the Exporters v1 held out, within v2's Exporter scope, so both "
+        f"models are scored on the same countries. Each of their Product–Market pairs is ranked by its Export Gap "
+        f"averaged over {gap}, and a pair counts as grown when its {lift['outcome_year']} Flow was at least "
+        f"{lift['min_growth_share']:.0%} and ${lift['min_growth_usd']:,.0f} above its {gap} mean Actual Exports. "
+        f"The intervals come from resampling whole Exporters."
     )
     deciles = pd.DataFrame(
         {
@@ -85,7 +114,7 @@ def _show_lift(lift: dict) -> None:
 
 
 def _effects_table(direction: dict, post_years: list[int]) -> pd.DataFrame:
-    pooled = [{**direction["pooled"], "year": _years(post_years)}] if len(post_years) > 1 else []
+    pooled = [{**direction["pooled"], "year": years_text(post_years)}] if len(post_years) > 1 else []
     rows = [*direction["by_year"], *pooled]
     return pd.DataFrame(
         [
@@ -100,6 +129,45 @@ def _effects_table(direction: dict, post_years: list[int]) -> pd.DataFrame:
     )
 
 
+def _tariff_table(rows: list[dict], last_tariff_year: int) -> pd.DataFrame:
+    groups = {"observed": "Observed", "imputed": f"Carried forward from {last_tariff_year}"}
+    table = _breakdown_table(rows, "Applied Tariff")
+    table["Applied Tariff"] = [groups[row["group"]] for row in rows]
+    return table
+
+
+def _show_tariff_split(report: dict) -> None:
+    st.subheader("Observed against carried-forward tariffs")
+    st.markdown(report["tariff_split_text"])
+    year = labels()["last_tariff_year"]
+    for scope, label in SCOPES.items():
+        split = report["accuracy"][scope].get("by_tariff")
+        if split:
+            st.markdown(f"**{label}**")
+            st.dataframe(_tariff_table(split, year), hide_index=True)
+    st.caption(
+        f"Tariff data end in {year}, so later years reuse each pair's {year} Applied Tariff, or 0 where a Trade "
+        f"Agreement entered force after {year}. Splitting the test rows this way shows what carrying {year} forward costs."
+    )
+
+
+def _show_potential_range(coverage: dict) -> None:
+    st.subheader("How often Actual Exports fall inside the Potential Range")
+    st.markdown(coverage["text"])
+    by_exporter = pd.DataFrame(
+        [
+            {"Exporter": row["exporter"], "Coverage": row["coverage"], "Rows": row["rows"]}
+            for row in coverage["by_exporter"]
+        ]
+    )
+    st.dataframe(by_exporter, hide_index=True)
+    st.caption(
+        f"The Potential Range is calibrated on other Exporters' rows, never the UK's, and checked here on a held-out "
+        f"half of them, per Exporter. Coverage near {coverage['target']:.0%} for every Exporter supports the "
+        f"assumption that UK pairs vary as other Exporters' pairs do; it does not prove it."
+    )
+
+
 def _show_event_backtest(backtest: dict, names: dict[str, str]) -> None:
     st.subheader("Scenario Effects against a real Trade Agreement (Event Backtest)")
     for event in backtest["events"]:
@@ -111,10 +179,10 @@ def _show_event_backtest(backtest: dict, names: dict[str, str]) -> None:
             st.markdown(f"*{direction['label']}*. Control Markets: {controls}.")
             st.dataframe(_effects_table(direction, event["post_years"]), hide_index=True)
         st.caption(
-            f"The model was trained on {_years(event['training_years'])} only, before the agreement. \"Predicted\" "
+            f"The model was trained on {years_text(event['training_years'])} only, before the agreement. \"Predicted\" "
             f"is its Scenario Effect: Export Potential with the agreement on against off. \"Observed\" is the change "
-            f"from {_years(event['pre_years'])} relative to the change in the control Markets. "
-            f"{event['control_rule']} {event['caveat']}"
+            f"from {years_text(event['pre_years'])} relative to the change in the control Markets. "
+            f"{event.get('states', '')} {event['control_rule']} {event['caveat']}"
         )
 
 
@@ -145,7 +213,7 @@ if banner() is not None:
         (st.success if headline["beats_naive"] else st.warning)(headline["text"])
         st.caption(
             f"Measured on {test_year}, a year the model never saw: the models were trained on "
-            f"{training_years[0]}–{training_years[-1]} with settings tuned on {report['validation_year']}, so "
+            f"{years_text(training_years)} with settings tuned on {report['validation_year']}, so "
             f"neither tuning nor training ever read {test_year}. They were trained on every UK row and {sample}, "
             f"as the Baseline models are. The naive baseline is {report['naive_baseline'][0].lower()}"
             f"{report['naive_baseline'][1:]}"
@@ -176,8 +244,14 @@ if banner() is not None:
             st.dataframe(_breakdown_table(accuracy["by_region"], "Region"), hide_index=True)
         st.caption("Sorted weakest first, by the model's rank correlation within each Product.")
 
+        if report.get("tariff_split_text"):
+            _show_tariff_split(report)
+
         st.subheader("Stability of the rankings")
         st.markdown(report["stability"]["text"])
+
+        if report.get("potential_range"):
+            _show_potential_range(report["potential_range"])
 
         if report.get("lift"):
             _show_lift(report["lift"])

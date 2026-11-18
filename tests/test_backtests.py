@@ -81,6 +81,93 @@ def test_grows_materially_needs_both_the_share_and_the_dollar_threshold():
     assert grew.to_list() == [True, True, False, True]
 
 
+# --- Gap-Period Lift -----------------------------------------------------------------------
+
+GAP_YEARS = (2015, 2016, 2017)
+GAP_SETTINGS = backtests.LiftSettings(training_years=tuple(range(2012, 2018)), gap_years=GAP_YEARS, outcome_year=2023)
+
+
+def _yearly(rows):
+    return pl.DataFrame(
+        rows, schema=["exporter", "importer", "hs6", "year", "value_usd", "weight", "export_potential_usd"], orient="row"
+    )
+
+
+def _later(rows):
+    return pl.DataFrame(rows, schema=["exporter", "importer", "hs6", "value_usd"], orient="row")
+
+
+def test_the_export_gap_is_the_mean_of_the_three_yearly_gaps():
+    yearly = _yearly(
+        [
+            ("A", "J", "1", 2015, 100.0, 1.0, 400.0),  # yearly gaps 300, 500, 700: mean 500
+            ("A", "J", "1", 2016, 200.0, 1.0, 700.0),
+            ("A", "J", "1", 2017, 300.0, 1.0, 1000.0),
+        ]
+    )
+
+    pairs = backtests.gap_period_pairs(yearly, _later([]), GAP_SETTINGS)
+
+    assert pairs["export_gap_usd"].to_list() == [500.0]
+    assert pairs["export_potential_usd"].to_list() == [700.0]
+    assert pairs["actual_exports_usd"].to_list() == [200.0]
+
+
+def test_growth_is_measured_from_the_three_year_mean_of_actual_exports():
+    # Mean Actual Exports 2015–2017 = 200,000. B rose to 320,000 (+60%, +$120,000): grew.
+    # C's 2017 value alone (300,000) would make 320,000 too small a rise; D rose by +50% but only $50,000.
+    yearly = _yearly(
+        [
+            *[("A", "J", hs6, y, v, 1.0, 1.0) for hs6 in ("B", "C") for y, v in zip(GAP_YEARS, (100e3, 200e3, 300e3))],
+            *[("A", "J", "D", y, 100e3, 1.0, 1.0) for y in GAP_YEARS],
+        ]
+    )
+    later = _later([("A", "J", "B", 320e3), ("A", "J", "C", 290e3), ("A", "J", "D", 150e3)])
+
+    pairs = backtests.gap_period_pairs(yearly, later, GAP_SETTINGS).sort("hs6")
+
+    assert pairs["grew"].to_list() == [True, False, False]
+
+
+def test_the_gap_period_pairs_are_the_last_gap_years_rows_with_their_weights():
+    # A sampled Zero Cell of 2017 (weight 20) with no 2015 or 2016 row: those years' Flows were 0,
+    # and its Export Potential is the mean of the years it has. A pair seen only in 2015 is not a 2017 pair.
+    yearly = _yearly(
+        [
+            ("A", "J", "Z", 2017, 0.0, 20.0, 90.0),
+            ("A", "J", "P", 2016, 60.0, 1.0, 80.0),
+            ("A", "J", "P", 2017, 0.0, 20.0, 100.0),
+            ("A", "J", "Q", 2015, 50.0, 1.0, 10.0),
+        ]
+    )
+
+    pairs = backtests.gap_period_pairs(yearly, _later([]), GAP_SETTINGS).sort("hs6")
+
+    assert pairs["hs6"].to_list() == ["P", "Z"]
+    assert pairs["weight"].to_list() == [20.0, 20.0]
+    assert pairs["actual_exports_usd"].to_list() == [20.0, 0.0]
+    assert pairs["export_gap_usd"].to_list() == [70.0, 90.0]
+
+
+def test_lift_settings_refuse_a_training_year_after_the_gap_period():
+    with pytest.raises(backtests.LeakageError):
+        backtests.LiftSettings(training_years=tuple(range(2012, 2019)), gap_years=GAP_YEARS, outcome_year=2023)
+    with pytest.raises(backtests.LeakageError):
+        backtests.LiftSettings(training_years=(2015, 2016, 2017), gap_years=GAP_YEARS, outcome_year=2017)
+
+
+def test_the_held_out_exporters_are_the_frozen_v1_list_within_scope():
+    v1 = ["AUS", "GIB", "NIU", "QAT", "SVK"]
+
+    held = backtests.lift_exporters(v1, scope=["AUS", "DEU", "GBR", "QAT", "SVK", "USA"], uk="GBR")
+
+    assert held == ["AUS", "QAT", "SVK"]
+    with pytest.raises(ValueError, match="scope"):
+        backtests.lift_exporters(["GIB"], scope=["GBR", "DEU"], uk="GBR")
+    with pytest.raises(ValueError, match="GBR"):
+        backtests.lift_exporters(["GBR", "AUS"], scope=["GBR", "AUS"], uk="GBR")
+
+
 def test_held_out_exporters_are_a_deterministic_fifth():
     exporters = [f"C{i:02d}" for i in range(50)]
 
@@ -194,6 +281,50 @@ def test_no_event_backtest_model_sees_data_from_after_its_event(fixture_world):
     assert report["directions"][0]["by_year"] != distorted_report["directions"][0]["by_year"]
 
 
+def test_the_on_and_off_rows_differ_only_in_policy_columns_the_tariff_included(fixture_world):
+    from exportspredictor import features, policy
+    from exportspredictor.training import read_chunk
+
+    chunks = pipeline.fixture_training(fixture_world)
+    post = read_chunk(chunks[2023]).filter(
+        pl.col("exporter").cast(pl.String) == UK, pl.col("importer").cast(pl.String) == "JPN"
+    )
+    # Pretend the pair pays its MFN rate, so the "on" state visibly changes the tariff.
+    post = post.with_columns(log_applied_tariff=(pl.col("mfn_tariff") / 100).log1p().cast(pl.Float32))
+
+    on, off = backtests.agreement_states(post)
+
+    assert on.columns == off.columns == post.columns and on.height == off.height == post.height
+    fixed = [c for c in post.columns if c not in features.POLICY_FEATURES]
+    assert on.select(fixed).equals(post.select(fixed)) and off.select(fixed).equals(post.select(fixed))
+    assert on["trade_agreement"].to_list() == [1] * post.height
+    assert off["trade_agreement"].to_list() == [0] * post.height
+    assert on["log_applied_tariff"].to_list() == [0.0] * post.height  # zeroed under the agreement
+    mfn = post.select((pl.col("mfn_tariff") / 100).log1p().cast(pl.Float32))["mfn_tariff"]
+    assert off["log_applied_tariff"].to_list() == mfn.to_list()  # MFN restored without it
+    for flag in policy.POLICY_FEATURES:
+        if flag != "trade_agreement":
+            assert on[flag].equals(post[flag]) and off[flag].equals(post[flag])
+
+
+def test_the_off_state_keeps_the_tariff_where_no_mfn_rate_is_known():
+    rows = pl.DataFrame(
+        {"trade_agreement": [1, 1], "log_applied_tariff": [0.1, None], "mfn_tariff": [None, 12.0]},
+        schema_overrides={"trade_agreement": pl.Int8, "log_applied_tariff": pl.Float32},
+    )
+
+    on, off = backtests.agreement_states(rows)
+
+    assert on["log_applied_tariff"].to_list() == [0.0, None]  # an unknown tariff stays unknown (ADR 0006)
+    assert off["log_applied_tariff"].to_list() == pytest.approx([0.1, 0.11332869])
+    assert on.schema == off.schema == rows.schema
+
+
+def test_the_event_backtest_says_how_the_tariff_moves_with_the_agreement(report):
+    for event in report["event_backtest"]["events"]:
+        assert "tariff" in event["states"] and "MFN" in event["states"]
+
+
 def test_a_backtest_model_refuses_years_from_its_event_onwards(fixture_world):
     chunks = pipeline.fixture_training(fixture_world)
 
@@ -216,11 +347,11 @@ def test_an_event_backtest_refuses_a_model_trained_after_the_event(fixture_world
 def test_the_lift_model_never_trains_on_the_held_out_exporters(fixture_world):
     chunks = pipeline.fixture_training(fixture_world)
     settings = PLAN.lift
-    held = backtests.held_out_exporters(fixture_world.flows["exporter"].unique(), share=settings.held_out_share)
+    held = backtests.lift_exporters(pipeline.FIXTURE_V1_LIFT_EXPORTERS, scope=["DEU", "FRA", UK, "USA"], uk=UK)
 
     def train(chunks):
         return backtests.train_backtest_model(
-            chunks, name="lift", training_years=settings.training_years, before=settings.outcome_year,
+            chunks, name="lift", training_years=settings.training_years, before=settings.before,
             uk=UK, params={"max_depth": 2}, rounds=20, device="cpu", held_out=held,
         )
 
@@ -234,6 +365,56 @@ def test_the_lift_model_never_trains_on_the_held_out_exporters(fixture_world):
 
     assert model.held_out_exporters == held
     assert bytes(model.model.save_raw()) == bytes(train(shifted).model.save_raw())
+
+
+def test_the_lift_model_sees_no_held_out_exporter_and_no_year_after_the_gap_period(fixture_world):
+    chunks = pipeline.fixture_training(fixture_world, baseline_year=2025)  # 2021–2024
+    settings = backtests.LiftSettings(training_years=(2021, 2022), gap_years=(2021, 2022), outcome_year=2024)
+    held = ["FRA"]
+    poisoned = (pl.col("exporter").cast(pl.String).is_in(held)) | (pl.col("year") > max(settings.gap_years))
+    distorted = {
+        year: chunk.with_columns(value_usd=pl.when(poisoned).then(pl.col("value_usd") * 1000).otherwise("value_usd"))
+        for year, chunk in chunks.items()
+    }
+
+    def train(chunks, years=settings.training_years):
+        return backtests.train_backtest_model(
+            chunks, name="lift", training_years=years, before=settings.before,
+            uk=UK, params={"max_depth": 2}, rounds=20, device="cpu", held_out=held,
+        )
+
+    assert bytes(train(chunks).model.save_raw()) == bytes(train(distorted).model.save_raw())
+    with pytest.raises(backtests.LeakageError):
+        train(chunks, years=(2021, 2022, 2023))
+    late = backtests.train_backtest_model(
+        chunks, name="lift", training_years=(2021, 2022, 2023), before=2024, uk=UK, params={}, rounds=5, device="cpu",
+        held_out=held,
+    )
+    with pytest.raises(backtests.LeakageError):
+        backtests.lift_backtest(chunks, settings, late, resamples=10)
+
+
+def test_on_the_fixture_each_pairs_export_gap_is_the_mean_of_its_three_yearly_gaps(fixture_world):
+    chunks = pipeline.fixture_training(fixture_world, baseline_year=2025)  # 2021–2024
+    settings = backtests.LiftSettings(training_years=(2021, 2022, 2023), gap_years=(2021, 2022, 2023), outcome_year=2024)
+    model = backtests.train_backtest_model(
+        chunks, name="lift", training_years=settings.training_years, before=settings.before,
+        uk=UK, params={"max_depth": 2}, rounds=20, device="cpu", held_out=["FRA"],
+    )
+
+    yearly = backtests.lift_rows(chunks, settings, model)
+    pairs = backtests.gap_period_pairs(yearly, pl.DataFrame(schema=yearly.select("exporter", "importer", "hs6", "value_usd").schema), settings)
+
+    keys = ["exporter", "importer", "hs6"]
+    full = yearly.group_by(keys).agg(n=pl.len(), gap=(pl.col("export_potential_usd") - pl.col("value_usd")).mean(),
+                                     actual=pl.col("value_usd").mean()).filter(pl.col("n") == 3)
+    assert set(yearly["year"]) == {2021, 2022, 2023} and full.height > 0
+    checked = full.join(pairs, on=keys)
+    assert checked.height == full.height
+    assert checked["export_gap_usd"].to_numpy() == pytest.approx(checked["gap"].to_numpy())
+    assert checked["actual_exports_usd"].to_numpy() == pytest.approx(checked["actual"].to_numpy())
+    result = backtests.lift_backtest(chunks, settings, model, resamples=20)
+    assert result["gap_years"] == [2021, 2022, 2023] and result["held_out_exporters"] == ["FRA"]
 
 
 # --- The backtests in the evaluation report -------------------------------------------------------
@@ -252,7 +433,23 @@ def test_lift_is_reported_with_a_confidence_interval_as_a_tendency(report):
     assert lift["ci_level"] == 0.95
     assert "tendency" in lift["text"] and "not a promise" in lift["text"]
     assert lift["training_years"] == [2021, 2022] and lift["outcome_year"] == 2023
-    assert len(lift["held_out_exporters"]) == 1
+    assert lift["gap_years"] == [2021, 2022]
+
+
+def test_the_lift_report_holds_out_the_frozen_v1_list_within_scope(report, fixture_artefacts):
+    lift = report["lift"]
+    scope = fixture_artefacts.metadata["exporter_scope"]
+
+    assert lift["held_out_exporters"] == ["FRA"]  # the fixture's synthetic v1 list is FRA and MEX; MEX is out of scope
+    assert "MEX" not in scope and "FRA" in scope
+    assert lift["held_out_from"] == "v1"
+
+
+def test_lift_reports_raw_and_size_matched_lift_each_with_an_interval(report):
+    lift = report["lift"]
+
+    assert lift["lift"] is not None and len(lift["ci"]) == 2
+    assert set(lift["size_matched"]) >= {"lift", "ci"} and len(lift["size_matched"]["ci"]) == 2
 
 
 def test_the_event_backtest_reports_predicted_and_observed_effects_and_its_control_group(report):
@@ -260,7 +457,7 @@ def test_the_event_backtest_reports_predicted_and_observed_effects_and_its_contr
     direction = event["directions"][0]
 
     assert event["role"] == "primary"
-    assert direction["controls"] == ["IND"]  # Canada already has a UK agreement
+    assert direction["controls"] == ["IND", "HKG"]  # Canada already has a UK agreement
     assert event["control_rule"]
     for year in direction["by_year"]:
         assert year["predicted"] is not None and year["observed"] is not None
@@ -278,7 +475,8 @@ def test_the_real_plan_trains_before_each_event_and_reads_the_years_the_ticket_n
     plan = backtests.REAL_PLAN
 
     assert plan.lift.training_years == tuple(range(2012, 2018))
-    assert (plan.lift.gap_year, plan.lift.outcome_year, plan.lift.held_out_share) == (2017, 2023, 0.2)
+    assert (plan.lift.gap_years, plan.lift.outcome_year) == ((2015, 2016, 2017), 2023)
+    assert (plan.lift.min_growth_share, plan.lift.min_growth_usd) == (0.5, 100_000)
     assert plan.event.training_years == tuple(range(2012, 2019)) and plan.event.event_year == 2019
     assert plan.event.post_years == (2019, 2020, 2021)
     assert "COVID" in plan.event.caveat
@@ -300,7 +498,7 @@ def test_event_text_says_when_the_model_overstates_the_observed_effect():
 
 def test_lift_text_says_when_large_gaps_do_no_better_than_pairs_of_similar_size():
     result = {
-        "lift": 6.6, "ci": [4.8, 10.4], "top_rate": 0.045, "base_rate": 0.007, "gap_year": 2017, "outcome_year": 2023,
+        "lift": 6.6, "ci": [4.8, 10.4], "top_rate": 0.045, "base_rate": 0.007, "gap_years": [2015, 2016, 2017], "outcome_year": 2023,
         "min_growth_share": 0.5, "min_growth_usd": 1e5,
         "size_matched": {"lift": 0.83, "ci": [0.80, 0.87], "expected_rate": 0.054},
     }

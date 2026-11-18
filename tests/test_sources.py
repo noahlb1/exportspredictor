@@ -8,7 +8,8 @@ from exportspredictor import governance, sources
 from exportspredictor.pipeline import refresh
 
 NAMES = ["BACI", "WTO RTA-IS", "World Bank WDI", "IMF World Economic Outlook", "CEPII Gravity",
-         "Bank of England USD/GBP rate", "HMRC Overseas Trade Statistics"]
+         "Bank of England USD/GBP rate", "HMRC Overseas Trade Statistics", "UNCTAD TRAINS",
+         "UNSD HS correlation tables"]
 
 
 def _raw_tree(root):
@@ -24,6 +25,10 @@ def _raw_tree(root):
         "wto/AllRTAs.xlsx": b"",
         "hmrc/bdsexp_23archive.zip": b"",
         "hmrc/HS2022toHS2012ConversionAndCorrelationTables.xlsx": b"",
+        "trains/availability.xml": b"",
+        "trains/manifest.json": json.dumps({"reporter_years": 1, "pulled": "2026-11-15"}).encode(),
+        "unsd/HS2017toHS2012ConversionAndCorrelationTables.xlsx": b"",
+        "unsd/HS2012toHS2007CorrelationAndConversionTables.xls": b"",
     }
     stamp = datetime(2026, 11, 16, 12, tzinfo=UTC).timestamp()
     for name, content in files.items():
@@ -43,7 +48,9 @@ def test_every_source_has_a_version_or_a_download_date(tmp_path):
     assert found["World Bank WDI"]["version"] == "last updated 2026-11-11"
     assert found["Bank of England USD/GBP rate"]["version"] == "series XUAAUSS"
     assert found["Bank of England USD/GBP rate"]["downloaded"] == "2026-11-17"
-    for name in ("WTO RTA-IS", "IMF World Economic Outlook", "HMRC Overseas Trade Statistics", "BACI"):
+    assert found["UNCTAD TRAINS"]["downloaded"] == "2026-11-15"  # the pull date the manifest records
+    for name in ("WTO RTA-IS", "IMF World Economic Outlook", "HMRC Overseas Trade Statistics", "BACI",
+                 "UNSD HS correlation tables"):
         assert found[name]["downloaded"] == "2026-11-16", name
 
 
@@ -51,6 +58,7 @@ def test_a_missing_download_is_recorded_as_missing(tmp_path):
     found = {row["source"]: row for row in sources.source_versions(tmp_path)}
 
     assert found["WTO RTA-IS"]["downloaded"] is None
+    assert found["UNCTAD TRAINS"]["downloaded"] is None
     assert found["BACI"]["version"] == "HS12 V202601"  # the version the code reads
 
 

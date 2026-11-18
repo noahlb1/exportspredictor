@@ -76,6 +76,10 @@ _Avoid_: lead, prospect
 Export Gap divided by Export Potential: the share of an Opportunity's Export Potential the UK does not yet realise. Every pair with no Actual Exports scores 100%, so it ranks only among pairs above a minimum Export Potential, with ties broken by Export Gap.
 _Avoid_: percentage gap, headroom ratio
 
+**Leaderboard**:
+Every UK Product–Market pair ranked by Export Gap (or Relative Export Gap), with the Advisor's filters and a summary of the filtered pairs. It is the app's home page; Blocked Opportunities are ranked on a page of their own.
+_Avoid_: top list, dashboard, league table
+
 **Opportunity Type**:
 How far the UK already trades an Opportunity: **Expand** (the UK already exports the Product to this Market), **New Market** (the UK exports the Product, but not to this Market) or **New Product** (the UK exports the Product to no Market).
 _Avoid_: entry mode, opportunity status
@@ -93,7 +97,7 @@ A UK Product–Market pair whose Export Potential rises materially in a Scenario
 _Avoid_: hidden opportunity, latent demand
 
 **Blocked Opportunity value**:
-The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). Rankings can be ordered by it instead of by Export Gap.
+The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). The Blocked Opportunities page ranks every UK pair by it, apart from the Leaderboard.
 _Avoid_: blocked gap, unlock value
 
 **Barrier**:

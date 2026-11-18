@@ -25,6 +25,9 @@ Two scopes are evaluated:
   by the fold model that held it out (ADR 0001).
 
 Each is broken down by Sector (HS2 chapter) and by the Importer's region, weakest first.
+Excluded Products are never measured (ADR 0005), and each scope is also split by
+`tariff_imputed` into rows with an observed Applied Tariff and rows carrying 2021 forward
+(ADR 0006). TRAINS ends in 2021, so on the 2023 test year every row is imputed.
 
 The **stability** check compares the Baseline's rankings with the same models' rankings of
 the test year's UK grid: how much the rankings move from one year of data to the next.
@@ -39,7 +42,7 @@ import json
 import math
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -48,10 +51,15 @@ import xgboost as xgb
 
 from exportspredictor import artefacts as store
 from exportspredictor import baci
+from exportspredictor.currency import format_usd
+from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import FEATURES, FeatureTransform, features_dir
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
+from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.paths import artefacts_dir, data_dir
+from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
+from exportspredictor.wording import number_text, rate_text
 
 TWEEDIE_POWER = 1.5
 # Predictions are floored at $1 before the deviance, so that a zero naive prediction of a
@@ -72,6 +80,11 @@ HEADLINE_SCOPE = "uk_out_of_fold"
 # A headline win smaller than this is reported as "only slightly better".
 NARROW_MARGIN = 0.05
 _PREDICTORS = {"model": "export_potential_usd", "naive": "naive_usd"}
+# The two sides of the test-metric split by `tariff_imputed` (ADR 0006), in display order.
+TARIFF_GROUPS = ("observed", "imputed")
+# Evaluation results kept in the artefact (and the model card) but never served by the API:
+# the pre-registered v1/v2 comparison (`comparison`, spec #39).
+NOT_SERVED = frozenset({"v1_comparison"})
 
 LIMITATIONS = [
     {
@@ -79,10 +92,36 @@ LIMITATIONS = [
         "text": "The model covers goods trade only. Services, about half of UK exports, are not in the data.",
     },
     {
-        "title": "No tariffs",
-        "text": "Tariffs are not a model input in this version. The only Barrier the model sees is the "
-        "absence of a Trade Agreement or Trading Bloc membership, so it cannot say how a tariff change would "
-        "shift Export Potential.",
+        "title": "Tariffs carried forward from 2021",
+        "text": "Applied Tariffs come from UNCTAD TRAINS, which ends in 2021. 2022–2024, the test year and the "
+        "whole Gap Period included, reuse each pair's 2021 rate, or 0 where a Trade Agreement entered force after "
+        "2021 (which overstates liberalisation while its tariff cuts phase in). Tariff changes since 2021 are "
+        "invisible, and every test-year row is scored on a carried-forward tariff.",
+    },
+    {
+        "title": "Excluded Products",
+        "text": "Crude and refined oil, gas, coal and electricity, bullion and coins, precious-metal scrap, antiques "
+        "and radioactive elements are Excluded Products: their trade follows pipelines, bullion markets or licences "
+        "the model cannot see. They are never scored or ranked, and every metric here leaves them out.",
+    },
+    {
+        "title": "Trained on the top 100 Exporters",
+        "text": "The model trains on Flows from the top 100 economies by mean GDP over 2012–2023, the UK always "
+        "included, into every Market; other Exporters' rows are sampled to fit the GPU. Smaller Exporters still "
+        "count in every total the features use, but the model never learns from their own Flows.",
+    },
+    {
+        "title": "Values are nominal US dollars",
+        "text": "Every value is in nominal US dollars, as BACI reports it, with no adjustment for inflation or "
+        "exchange rates. A change between years mixes real trade growth with price and currency movements.",
+    },
+    {
+        "title": "What the Potential Range assumes",
+        "text": "The Potential Range is calibrated on other Exporters' 2024 Flows, never the UK's, so it assumes UK "
+        "pairs vary around their Export Potential as comparable pairs of other top-100 Exporters do "
+        "(exchangeability). That is assumed, not guaranteed: the coverage check above shows how well it held on "
+        "held-out rows. It describes how much comparable pairs vary, not a confidence interval for Export "
+        "Potential, and Scenario Effects get no range.",
     },
     {
         "title": "Associations, not causes",
@@ -115,20 +154,91 @@ LIMITATIONS = [
 ]
 
 
+def known_limitations(artefacts: store.Artefacts) -> list[dict]:
+    """Every known limitation of an artefact version that can be read from it: its results, its
+    Potential Range bands and the fixed `LIMITATIONS`. The API serves these; the model card adds
+    the gravity benchmark, which no artefact holds.
+    """
+    report = artefacts.evaluation or {}
+    return [
+        *result_limitations(artefacts.metadata, report),
+        *range_limitations(artefacts.potential_range_bands),
+        *LIMITATIONS,
+    ]
+
+
+def result_limitations(metadata: dict, report: dict) -> list[dict]:
+    """The limitations an artefact's own results show: its headline, Lift, Event Backtest and sampling."""
+    limits = []
+    headline = report.get("headline")
+    if headline and headline.get("beats_naive") is False:
+        limits.append({"title": "Does not beat a naive ranking for UK pairs",
+                       "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
+                       f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share "
+                       f"times each Market's imports: on the headline measure it does not beat that naive rule. Its "
+                       f"value is in the size of Export Potential (a much lower deviance), not in the order of Markets."})
+    elif headline:
+        limits.append({"title": "Only slightly better than a naive ranking for UK pairs",
+                       "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
+                       f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share times "
+                       f"each Market's imports. Its value is mostly in the size of Export Potential, not its order."})
+    lift = report.get("lift")
+    if lift:
+        limits.append({"title": "Large Export Gaps mostly mark large pairs",
+                       "text": f"Lift is {number_text(lift['lift'], '.1f')}, but against pairs of similar Export Potential it is "
+                       f"{number_text(lift['size_matched']['lift'], '.2f')}: an Opportunity is worth a look, not more likely to grow "
+                       f"than its peers of the same size."})
+    events = report.get("event_backtest", {}).get("events", [])
+    if events:
+        pooled = events[0]["directions"][0]["pooled"]
+        limits.append({"title": "Scenario Effects are larger than observed changes",
+                       "text": f"For {events[0]['title'][0].lower() + events[0]['title'][1:]}, the model associated the agreement with "
+                       f"{number_text(pooled['predicted'], '+.0%')}, against an observed {number_text(pooled['observed'], '+.0%')}. Read Scenario "
+                       f"Effects as an upper-end association."})
+    rate = metadata.get("non_uk_sampling_rate")
+    if rate is not None:
+        limits.append({"title": "Trained on a sample of other Exporters' Flows",
+                       "text": f"The models train on every UK row but a reweighted {rate_text(rate)} sample of other "
+                       f"Exporters' rows (and {rate_text(metadata.get('zero_sampling_rate'))} of their Zero Cells), to fit "
+                       f"the GPU's memory. Unbiased, but noisier than training on all rows."})
+    return limits
+
+
+def range_limitations(bands: pl.DataFrame) -> list[dict]:
+    """The Potential Range's offsets are dollars per band, so the top band gives every large pair one width."""
+    if bands.is_empty():
+        return []
+    top = bands.sort("min_export_potential_usd").row(-1, named=True)
+    width = top["high_offset_usd"] - top["low_offset_usd"]
+    return [{
+        "title": "The Potential Range is a fixed width in dollars",
+        "text": f"Its offsets are fixed amounts of dollars within each band of Export Potential (ADR 0007), so every "
+        f"pair in the top band, from {format_usd(top['min_export_potential_usd'])} of Export Potential upwards, gets "
+        f"the same range, {format_usd(width)} wide, whatever its size. For a large pair that range is a sliver, and "
+        f"it is an Uncertain Opportunity only when its Export Gap is under the band's lower offset, "
+        f"{format_usd(-top['low_offset_usd'])}. Read the badge on large pairs as \"a small gap for its size\", "
+        f"not as a measure of how sure the model is. A relative (log-scale) range is a candidate for a later version.",
+    }]
+
+
 # --- Metrics ---------------------------------------------------------------------------
 
 
-def tweedie_deviance(prediction: str, *, power: float = TWEEDIE_POWER) -> pl.Expr:
-    """Weighted mean Tweedie unit deviance of `prediction` against `value_usd` (1 < power < 2)."""
+def tweedie_unit_deviance(prediction: str, *, power: float = TWEEDIE_POWER) -> pl.Expr:
+    """Each row's Tweedie unit deviance of `prediction` against `value_usd` (1 < power < 2)."""
     y = pl.col("value_usd").cast(pl.Float64)
     mu = pl.col(prediction).cast(pl.Float64).clip(lower_bound=MIN_PREDICTION_USD)
-    unit = 2 * (
+    return 2 * (
         y.pow(2 - power) / ((1 - power) * (2 - power))
         - y * mu.pow(1 - power) / (1 - power)
         + mu.pow(2 - power) / (2 - power)
     )
+
+
+def tweedie_deviance(prediction: str, *, power: float = TWEEDIE_POWER) -> pl.Expr:
+    """Weighted mean Tweedie unit deviance of `prediction` against `value_usd` (1 < power < 2)."""
     weight = pl.col("weight").cast(pl.Float64)
-    return (unit * weight).sum() / weight.sum()
+    return (tweedie_unit_deviance(prediction, power=power) * weight).sum() / weight.sum()
 
 
 def _rmse_log(prediction: str) -> pl.Expr:
@@ -179,7 +289,13 @@ def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
     `income_level` (the bias review's stand-in for reporting quality; `by_income` is
     added only when it is there). Breakdowns are sorted weakest first (lowest
     within-Product rank correlation of the model).
+
+    Excluded Products are never measured (ADR 0005). When `scored` carries
+    `tariff_imputed`, `by_tariff` splits the rows into observed tariffs and imputed ones
+    (carried forward from 2021, ADR 0006): always both, in `TARIFF_GROUPS` order, an empty
+    side with zero rows.
     """
+    scored = drop_excluded(scored)
     has_income = "income_level" in markets.columns
     regions = markets.select(
         *(["income_level"] if has_income else []), _i=pl.col("iso3").cast(pl.String), region=pl.col("region")
@@ -201,7 +317,39 @@ def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
             name: [_clean(row) for row in _weakest_first(_metrics(frame, column)).iter_rows(named=True)]
             for name, column in groups.items()
         },
+        **({"by_tariff": _tariff_split(frame)} if "tariff_imputed" in frame.columns else {}),
     }
+
+
+def _tariff_split(frame: pl.DataFrame) -> list[dict]:
+    labelled = frame.with_columns(
+        _tariff=pl.when(pl.col("tariff_imputed")).then(pl.lit("imputed")).otherwise(pl.lit("observed"))
+    )
+    found = {row["group"]: row for row in _metrics(labelled, "_tariff").iter_rows(named=True)}
+    return [_clean(found.get(group) or _empty_group(group)) for group in TARIFF_GROUPS]
+
+
+def _empty_group(group: str) -> dict:
+    counts = {"rows": 0, "non_zero_flows": 0, "products": 0, "ranked_products": 0, "actual_usd": 0.0}
+    return {"group": group, **counts, **{f"{name}_{metric}": None for name in _PREDICTORS for metric in METRICS}}
+
+
+def tariff_split_text(accuracy_by_scope: Mapping[str, dict], test_year: int) -> str:
+    """How the UK pairs of the test year split between observed and imputed Applied Tariffs, in plain words."""
+    split = {row["group"]: row for row in accuracy_by_scope[HEADLINE_SCOPE].get("by_tariff", [])}
+    if not split:
+        return "The test rows carry no tariff mark, so they are not split by imputed and observed tariffs."
+    observed, imputed = split["observed"]["rows"], split["imputed"]["rows"]
+    if observed == 0:
+        return (
+            f"Every {test_year} UK pair uses an Applied Tariff carried forward from {LAST_TRAINS_YEAR}, because tariff "
+            f"data end in {LAST_TRAINS_YEAR}, so no test row has an observed tariff to compare with: all the accuracy "
+            f"above is measured on carried-forward tariffs."
+        )
+    return (
+        f"Of the {observed + imputed:,} UK pairs in {test_year}, {imputed:,} use an Applied Tariff carried forward "
+        f"from {LAST_TRAINS_YEAR} and {observed:,} an observed one. The table compares the model's accuracy on each."
+    )
 
 
 def _metrics(frame: pl.DataFrame, group: str) -> pl.DataFrame:
@@ -322,12 +470,13 @@ def _mean_finite(values: pl.Series) -> float | None:
 
 @dataclass(frozen=True)
 class TestModels:
-    """Fold models refitted on every year before the test year, and their feature transform."""
+    """Fold models refitted on every year before the test year, their feature transform and inputs."""
 
     test_year: int
     training_years: list[int]
     models: list[xgb.Booster]
     transform: FeatureTransform
+    features: list[str] = field(default_factory=lambda: list(FEATURES))  # the models' inputs, in order
 
     def save(self, folder: Path) -> Path:
         folder = Path(folder)
@@ -339,6 +488,7 @@ class TestModels:
             "training_years": self.training_years,
             "n_folds": len(self.models),
             "transform": self.transform.to_dict(),
+            "features": list(self.features),
         }
         # Written last: its presence marks the folder as complete.
         (folder / TEST_MODELS_FILE).write_text(json.dumps(info, indent=2), encoding="utf-8")
@@ -353,7 +503,13 @@ class TestModels:
             model = xgb.Booster()
             model.load_model(folder / f"fold_{k}.ubj")
             models.append(model)
-        return cls(info["test_year"], info["training_years"], models, FeatureTransform.from_dict(info["transform"]))
+        return cls(
+            info["test_year"],
+            info["training_years"],
+            models,
+            FeatureTransform.from_dict(info["transform"]),
+            info.get("features", list(FEATURES)),  # folders saved before the ladder hold FEATURES
+        )
 
 
 def train_test_models(
@@ -367,8 +523,12 @@ def train_test_models(
     device: str = "cuda",
     non_uk_rate: float = 1.0,
     seed: int = 0,
+    features: Sequence[str] = FEATURES,
 ) -> TestModels:
-    """Fit the fold models on every year before `test_year`; the test year itself is never read."""
+    """Fit the fold models on every year before `test_year`; the test year itself is never read.
+
+    `features` are the models' inputs (default: v2's; a gain-ladder rung uses v1's).
+    """
     years = [y for y in sorted(training) if y < test_year]
     if not years:
         raise ValueError(f"No training years before the test year {test_year}")
@@ -376,19 +536,31 @@ def train_test_models(
     transform = FeatureTransform.fit(scan_chunks(chunks), years)
     models = train_fold_models(
         chunks, uk=uk, params=params, rounds=rounds, n_folds=n_folds, device=device, seed=seed,
-        transform=transform, non_uk_rate=non_uk_rate,
+        transform=transform, non_uk_rate=non_uk_rate, features=features,
     )
-    return TestModels(test_year=test_year, training_years=years, models=models, transform=transform)
+    return TestModels(
+        test_year=test_year, training_years=years, models=models, transform=transform, features=list(features)
+    )
 
 
-def score_rows(table: pl.DataFrame, models: Sequence[xgb.Booster], transform: FeatureTransform, uk: str) -> pl.DataFrame:
-    """Add `export_potential_usd`: UK rows out-of-fold, other rows by the mean of the fold models."""
-    features = transform.apply(table)
+def score_rows(
+    table: pl.DataFrame,
+    models: Sequence[xgb.Booster],
+    transform: FeatureTransform,
+    uk: str,
+    *,
+    features: Sequence[str] = FEATURES,
+) -> pl.DataFrame:
+    """Add `export_potential_usd`: UK rows out-of-fold, other rows by the mean of the fold models.
+
+    `features` are the models' inputs, in order.
+    """
+    transformed = transform.apply(table)
     is_uk = pl.col("exporter").cast(pl.String) == uk
-    uk_rows = score_out_of_fold(features, list(models), uk=uk).drop("fold")
-    others = features.filter(~is_uk)
+    uk_rows = score_out_of_fold(transformed, list(models), uk=uk, inputs=features).drop("fold")
+    others = transformed.filter(~is_uk)
     if others.height:
-        data = others.select(FEATURES).to_numpy().astype(np.float32)
+        data = others.select(features).to_numpy().astype(np.float32)
         mean = np.mean([model.inplace_predict(data) for model in models], axis=0)
         others = others.with_columns(export_potential_usd=pl.Series(mean, dtype=pl.Float64))
     else:
@@ -420,9 +592,9 @@ def evaluate(
     """The evaluation report for the test year.
 
     `test_rows` are the test year's training rows (every non-zero Flow plus sampled zeros),
-    `test_grid` its full UK grid, both with features untransformed. `baseline` is the
-    Baseline table and `baseline_models` / `baseline_transform` the models that scored it,
-    used for the stability check. `settings` (validation year, params, sampling rates, ...)
+    `test_grid` its full UK grid, both with features untransformed. `baseline` holds the
+    Baseline year's UK scores (`gap_period.baseline_year_scores`) and `baseline_models` /
+    `baseline_transform` the models that scored them, used for the stability check. `settings` (validation year, params, sampling rates, ...)
     is recorded in the report.
     """
     year = test_models.test_year
@@ -456,6 +628,7 @@ def evaluate(
         "of that Product, each leaving the Flow itself out.",
         "accuracy": accuracy_by_scope,
         "headline": headline(accuracy_by_scope[HEADLINE_SCOPE]["overall"], year),
+        "tariff_split_text": tariff_split_text(accuracy_by_scope, year),
         "stability": stable,
     }
 
@@ -536,7 +709,7 @@ def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) 
         pl.read_parquet(folder / f"training_{year}.parquet"),
         pl.read_parquet(folder / f"uk_grid_{year}.parquet"),
         test_models=test_models,
-        baseline=artefacts.baseline,
+        baseline=baseline_year_scores(artefacts.history, artefacts.baseline_year),
         baseline_models=artefacts.fold_models,
         baseline_transform=FeatureTransform.from_dict(artefacts.metadata["feature_transform"]),
         markets=markets_with_income(artefacts.markets, root),

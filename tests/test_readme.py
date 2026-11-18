@@ -35,3 +35,34 @@ def test_readme_documents_the_one_command_run_and_the_rebuild_script():
     assert "podman compose up" in text
     assert "scripts/rebuild.py" in text
     assert "uv sync" in text
+
+
+def test_checklist_checks_values_are_in_usd_with_no_pounds():
+    checklist = _checklist()
+    assert "Values are nominal US dollars, as reported by BACI" in checklist
+    assert "£" not in checklist
+
+
+def _rebuild_section() -> str:
+    text = README.read_text(encoding="utf-8")
+    return text.split("## Rebuild the data and artefacts", 1)[1].split("\n## ", 1)[0]
+
+
+def test_rebuild_table_names_every_step_of_the_rebuild_script():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("rebuild", REPO / "scripts" / "rebuild.py")
+    rebuild = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rebuild)
+    section = _rebuild_section()
+
+    missing = [step.name for step in rebuild.STEPS if step.name not in section]
+    assert not missing, f"Add these rebuild steps to the README's rebuild table: {missing}"
+
+
+def test_rebuild_section_says_the_pipeline_trains_and_the_notebook_only_reads():
+    section = _rebuild_section()
+
+    assert "python -m exportspredictor.pipeline" in section
+    assert "the notebook, which trains" not in section
+    assert "reads the newest artefact" in section

@@ -15,7 +15,7 @@ Gotchas of this machine that the code and config don't reveal. Add one when a ru
 - **Create them by hand**: `git worktree add C:\CodingProjectsC\ep-wt\<ticket> -b <branch> <base>`. Agent worktree isolation refuses this repo because the session path is `c:\` and git reports `C:\`.
 - **Run everything through `scripts/wt.ps1`** (`& <worktree>\scripts\wt.ps1 pytest -q`). It uses the main checkout's `.venv`, so a worktree builds none, and removing it is quick.
 - **Merging into the integration branch**: after each merge, run `scripts/wt.ps1 ruff check .` and `scripts/wt.ps1 pytest -q` in the merged checkout, and get them green before the next merge. A file that exists on disk but is gitignored passes in a worktree and fails everywhere else, so check `git status --ignored` for test data.
-- **Pushes are gated** by `.githooks/pre-push` (ruff, then the full suite, about 90 s). It needs `git config core.hooksPath .githooks` once per clone.
+- **Pushes are gated** by `.githooks/pre-push` (ruff, then the full suite, about 4 minutes). It needs `git config core.hooksPath .githooks` once per clone.
 - **Adding a dependency**: `uv add --no-sync <pkg>` in the worktree updates `pyproject.toml` and `uv.lock`; then install it into the shared env with `uv pip install --python C:\CodingProjectsC\exportspredictor\.venv <pkg>`.
 
 ## Shared data and artefacts
@@ -27,5 +27,6 @@ Gotchas of this machine that the code and config don't reveal. Add one when a ru
 ## Long GPU runs
 
 - **One GPU, one run.** Before training, check `nvidia-smi`; wait if another run holds the GPU.
-- **Background it.** A foreground command times out at 10 minutes. Start training with Bash `run_in_background`, logging to a file, then wait with a second background command that loops until the PID exits (`until ! tasklist //FI "PID eq <pid>" | grep -q <pid>; do sleep 30; done`). You are re-invoked when it ends.
+- **Background it.** A foreground command times out at 10 minutes. Start training with Bash `run_in_background`, logging to a file, then wait with a second background command that loops until the PID exits, under a deadline: `timeout 4h bash -c 'until ! tasklist //FI "PID eq <pid>" | grep -q <pid>; do sleep 30; done'`. You are re-invoked when it ends. Give every wait loop and `tail -f` watcher a `timeout`: a loop waiting for a log line that never comes otherwise polls forever.
+- **Stop what you start.** Before reporting, stop every background command you started (wait loops, `tail -f`, Monitor watchers) and check none is left: `powershell -Command "Get-CimInstance Win32_Process | ? { $_.Name -match '^(bash|tail)\.exe$' } | select ProcessId,CreationDate,CommandLine"`. A finished subagent's watcher outlives it and keeps running.
 - **Report after the results exist.** A subagent that must stop earlier reports the PID, the log path and the remaining steps, so the orchestrator can resume it.

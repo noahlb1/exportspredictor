@@ -132,7 +132,10 @@ def test_the_test_year_is_untouched_during_tuning(fixture_world, fixture_artefac
     rebuilt = build_artefacts(distorted, version="distorted-test-year")
 
     def search(artefacts):
-        return [{k: row[k] for k in ("config", "rounds", "valid_metric")} for row in artefacts.metadata["tuning"]]
+        return [
+            {k: row[k] for k in ("params", "rounds", "validation_deviance")}
+            for row in artefacts.metadata["search"]["trials"]
+        ]
 
     assert search(rebuilt) == search(fixture_artefacts)
     # ...while the test-year evaluation does see the change.
@@ -152,13 +155,13 @@ def test_every_metric_is_reported_for_the_model_and_the_naive_baseline(report, s
 
 
 def test_uk_out_of_fold_covers_the_full_test_year_grid(report):
-    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 3
+    assert report["accuracy"]["uk_out_of_fold"]["overall"]["rows"] == 5 * 4
 
 
 def test_breakdowns_cover_every_sector_and_region(report):
     accuracy = report["accuracy"]["uk_out_of_fold"]
 
-    assert {row["group"] for row in accuracy["by_sector"]} == {"03", "22", "30", "85", "87"}
+    assert {row["group"] for row in accuracy["by_sector"]} == {"22", "30", "71", "85", "87"}
     assert {row["group"] for row in accuracy["by_region"]} == {"East Asia & Pacific", "North America", "South Asia"}
     for row in accuracy["by_sector"] + accuracy["by_region"]:
         assert set(row) >= {"group", "rows", *(f"model_{m}" for m in evaluation.METRICS)}
@@ -186,7 +189,7 @@ def test_stability_compares_the_baseline_with_the_test_year(report):
     stability = report["stability"]
 
     assert stability["years"] == [2023, 2024]
-    assert stability["pairs"] == 15
+    assert stability["pairs"] == 20
     assert -1 <= stability["spearman_potential"] <= 1
     assert 0 <= stability["top_overlap"] <= 1
     assert stability["text"]
@@ -218,3 +221,84 @@ def test_accuracy_adds_an_income_level_breakdown_when_markets_carry_it():
 
     assert {row["group"]: row["rows"] for row in result["by_income"]} == {"High income": 3, "Lower middle income": 3}
     assert "by_income" not in evaluation.accuracy(scored, markets.drop("income_level"))
+
+
+# --- v2: Excluded Products and the imputed/observed tariff split (ADR 0005, ADR 0006) -------
+
+
+def _scored(**extra) -> pl.DataFrame:
+    # Two Products the UK ships to three Markets, plus crude oil (270900), an Excluded Product.
+    return pl.DataFrame(
+        {
+            "exporter": ["GBR"] * 9,
+            "importer": ["JPN", "CAN", "IND"] * 3,
+            "hs6": ["220830"] * 3 + ["870323"] * 3 + ["270900"] * 3,
+            "value_usd": [10.0, 20.0, 30.0, 30.0, 20.0, 10.0, 500.0, 900.0, 100.0],
+            "weight": [1.0] * 9,
+            "export_potential_usd": [11.0, 19.0, 31.0, 29.0, 21.0, 9.0, 1.0, 2.0, 3.0],
+            "naive_usd": [10.0] * 9,
+            **extra,
+        }
+    )
+
+
+MARKETS = pl.DataFrame(
+    {"iso3": ["JPN", "CAN", "IND"], "region": ["East Asia & Pacific", "North America", "South Asia"]}
+)
+
+
+def test_no_metric_row_includes_an_excluded_product():
+    result = evaluation.accuracy(_scored(), MARKETS)
+
+    assert result["overall"]["rows"] == 6
+    assert result["overall"]["products"] == 2
+    assert {row["group"] for row in result["by_sector"]} == {"22", "87"}
+    assert sum(row["rows"] for row in result["by_region"]) == 6
+
+
+def test_the_imputed_observed_split_partitions_the_test_rows():
+    imputed = [True, False, True, True, False, True, True, True, False]
+
+    result = evaluation.accuracy(_scored(tariff_imputed=imputed), MARKETS)
+
+    split = {row["group"]: row for row in result["by_tariff"]}
+    assert list(split) == ["observed", "imputed"]
+    assert split["imputed"]["rows"] == 4 and split["observed"]["rows"] == 2  # Excluded rows left out
+    assert split["imputed"]["rows"] + split["observed"]["rows"] == result["overall"]["rows"]
+    for metric in evaluation.METRICS:
+        assert f"model_{metric}" in split["observed"]
+
+
+def test_the_split_reports_an_empty_side_with_no_rows_rather_than_dropping_it():
+    # TRAINS ends in 2021, so every 2023 test row carries its tariff forward: nothing is observed.
+    result = evaluation.accuracy(_scored(tariff_imputed=[True] * 9), MARKETS)
+
+    split = {row["group"]: row for row in result["by_tariff"]}
+    assert split["observed"]["rows"] == 0
+    assert split["observed"]["model_spearman_within_product"] is None
+    assert split["imputed"]["rows"] == result["overall"]["rows"]
+
+
+def test_the_split_is_left_out_when_rows_carry_no_tariff_mark():
+    assert "by_tariff" not in evaluation.accuracy(_scored(), MARKETS)
+
+
+@pytest.mark.parametrize("scope", ["all_exporters", "uk_out_of_fold"])
+def test_the_fixture_report_splits_every_test_row_by_tariff_imputed(report, scope):
+    accuracy = report["accuracy"][scope]
+
+    assert sum(row["rows"] for row in accuracy["by_tariff"]) == accuracy["overall"]["rows"]
+    # The fixture's test year, 2023, is after TRAINS' last year: every row is imputed.
+    assert {row["group"]: row["rows"] for row in accuracy["by_tariff"]}["observed"] == 0
+    assert "carried forward from 2021" in report["tariff_split_text"]
+
+
+def test_limitations_drop_no_tariffs_and_cover_v2s_caveats():
+    titles = [item["title"] for item in evaluation.LIMITATIONS]
+    text = " ".join(f"{item['title']} {item['text']}" for item in evaluation.LIMITATIONS).lower()
+
+    assert "No tariffs" not in titles
+    assert "not a model input in this version" not in text
+    for topic in ["carried forward from 2021", "excluded products", "top 100", "nominal us dollars",
+                  "potential range", "exchangeab"]:
+        assert topic in text, topic

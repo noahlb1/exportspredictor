@@ -27,6 +27,16 @@ def test_round_trip_keeps_tables_metadata_and_predictions(fixture_artefacts, tmp
         assert after.predict(probe) == pytest.approx(before.predict(probe))
 
 
+def test_an_older_folder_is_read_under_the_glossary_column_names(fixture_artefacts, tmp_path):
+    # The first real format-2 folders named these columns blocked_effect_usd and uncertain.
+    older = fixture_artefacts.baseline.rename(
+        {"blocked_opportunity_value_usd": "blocked_effect_usd", "uncertain_opportunity": "uncertain"}
+    )
+    store.save(replace(fixture_artefacts, baseline=older), tmp_path)
+
+    assert_frame_equal(store.load_latest(tmp_path).baseline, fixture_artefacts.baseline)
+
+
 def test_load_latest_picks_the_newest_version(fixture_artefacts, tmp_path):
     for version in ["20260101T000000Z", "20260301T000000Z", "20260201T000000Z"]:
         store.save(replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "version": version}), tmp_path)
@@ -68,10 +78,32 @@ def test_a_folder_without_an_evaluation_still_loads(fixture_artefacts, tmp_path)
     assert store.load(folder).evaluation is None
 
 
-def test_folders_saved_before_the_gbp_rate_use_the_baseline_years_rate(fixture_artefacts):
-    metadata = {k: v for k, v in fixture_artefacts.metadata.items() if k != "gbp_rate"}
+def test_fixture_artefacts_are_saved_as_format_2(fixture_artefacts, tmp_path):
+    folder = store.save(fixture_artefacts, tmp_path)
 
-    older = replace(fixture_artefacts, metadata=metadata)
+    assert json.loads((folder / "metadata.json").read_text())["artefact_format"] == 2
 
-    assert older.gbp_rate["usd_per_gbp"] == 1.2783
-    assert older.gbp_rate["year"] == 2024
+
+@pytest.mark.parametrize(("artefact_format", "named"), [(1, "format 1"), (None, "no artefact_format")])
+def test_load_refuses_folders_of_another_format(fixture_artefacts, tmp_path, artefact_format, named):
+    metadata = {k: v for k, v in fixture_artefacts.metadata.items() if k != "artefact_format"}
+    if artefact_format is not None:
+        metadata["artefact_format"] = artefact_format
+    folder = store.save(replace(fixture_artefacts, metadata=metadata), tmp_path)
+
+    with pytest.raises(store.UnreadableArtefacts, match=named):
+        store.load(folder)
+
+
+def test_load_refuses_a_format_2_folder_missing_a_table(fixture_artefacts, tmp_path):
+    folder = store.save(fixture_artefacts, tmp_path)
+    (folder / "history.parquet").unlink()
+
+    with pytest.raises(store.UnreadableArtefacts, match="history"):
+        store.load(folder)
+
+
+def test_excluded_products_round_trip(fixture_artefacts, tmp_path):
+    loaded = store.load(store.save(fixture_artefacts, tmp_path))
+
+    assert loaded.excluded_products.equals(fixture_artefacts.excluded_products)

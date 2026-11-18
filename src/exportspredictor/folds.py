@@ -7,7 +7,8 @@ records the fold it held out (`held_out_fold` attribute), and scoring returns ea
 `fold`, so Scenarios and explanations can use the same model as the Baseline.
 
 Training data comes in chunks (one feature table per year, see `training`), so the real
-~165 M rows never sit in memory at once.
+rows never sit in host memory at once. UK rows, Zero Cells included, are never sampled
+(ADR 0004), so fold model k trains on every UK pair outside fold k, zeros and all.
 """
 
 import hashlib
@@ -29,20 +30,27 @@ from exportspredictor.training import (
 N_FOLDS = 5
 
 
-def assign_folds(pairs: pl.DataFrame, n_folds: int = N_FOLDS) -> pl.DataFrame:
-    """Add a `fold` column to rows keyed by `hs6` and `iso3`. Deterministic across runs.
+UK_PAIR_KEYS = ("hs6", "iso3")
+# Other Exporters' rows (the Potential Range's calibration rows, ADR 0007) are hashed with
+# their Exporter too, so one Product–Market pair's Exporters spread over the folds.
+EXPORTER_PAIR_KEYS = ("exporter", "hs6", "iso3")
 
-    The fold depends only on the pair's codes (SHA-256), never on the year or on row order.
+
+def assign_folds(pairs: pl.DataFrame, n_folds: int = N_FOLDS, keys: Sequence[str] = UK_PAIR_KEYS) -> pl.DataFrame:
+    """Add a `fold` column to rows keyed by `keys` (UK pairs: `hs6` and `iso3`). Deterministic across runs.
+
+    The fold depends only on the key codes (SHA-256 of "a|b|..."), never on the year or on row order.
     """
 
-    def fold_of(hs6: str, iso3: str) -> int:
-        digest = hashlib.sha256(f"{hs6}|{iso3}".encode()).digest()
+    def fold_of(codes: tuple) -> int:
+        digest = hashlib.sha256("|".join(str(code) for code in codes).encode()).digest()
         return int.from_bytes(digest[:8], "big") % n_folds
 
-    unique = pairs.select("hs6", "iso3").unique()
-    folds = [fold_of(str(hs6), str(iso3)) for hs6, iso3 in unique.iter_rows()]
+    keys = list(keys)
+    unique = pairs.select(keys).unique()
+    folds = [fold_of(codes) for codes in unique.iter_rows()]
     lookup = unique.with_columns(fold=pl.Series(folds, dtype=pl.Int8))
-    return pairs.join(lookup, on=["hs6", "iso3"], how="left", maintain_order="left")
+    return pairs.join(lookup, on=keys, how="left", maintain_order="left")
 
 
 def train_fold_models(
@@ -56,20 +64,24 @@ def train_fold_models(
     seed: int = 0,
     transform: FeatureTransform | None = None,
     non_uk_rate: float = 1.0,
+    features: Sequence[str] = FEATURES,
 ) -> list[xgb.Booster]:
     """Train one model per fold on all non-UK rows plus the UK pairs outside that fold.
 
     `chunks` are feature tables (or Parquet paths), read one at a time. A `weight` column
     weights each row (sampled zero cells carry 1/rate). `non_uk_rate` < 1 trains on a
     reweighted hash sample of non-UK rows; UK rows are always kept in full. The returned
-    models are set to predict on CPU, as the API does.
+    models are set to predict on CPU, as the API does. `features` are the model inputs, in
+    order (a rung of the v1/v2 gain ladder trains on v1's).
     """
     models = []
     for k in range(n_folds):
         keep = outside_fold(uk, n_folds, k)
         prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed, keep=keep)
-        matrix = training_matrix(chunks, prepare)
-        model = xgb.train(model_params(params, device=device, seed=seed), matrix, num_boost_round=rounds)
+        matrix = training_matrix(chunks, prepare, device=device, features=features)
+        model = xgb.train(
+            model_params(params, device=device, seed=seed, features=features), matrix, num_boost_round=rounds
+        )
         del matrix
         model.set_param({"device": "cpu"})
         model.set_attr(held_out_fold=str(k))
@@ -77,9 +89,19 @@ def train_fold_models(
     return models
 
 
-def score_out_of_fold(features: pl.DataFrame, models: list[xgb.Booster], uk: str) -> pl.DataFrame:
-    """UK rows with their pair's `fold` and `export_potential_usd` from the model that held it out."""
+def score_out_of_fold(
+    features: pl.DataFrame, models: list[xgb.Booster], uk: str, *, inputs: Sequence[str] = FEATURES
+) -> pl.DataFrame:
+    """UK rows with their pair's `fold` and `export_potential_usd` from the model that held it out.
+
+    `inputs` are the models' features, in order.
+    """
     rows = _with_fold(features.filter(pl.col("exporter").cast(pl.String) == uk), len(models))
+    return rows.with_columns(export_potential_usd=score_by_fold(rows, models, features=inputs))
+
+
+def score_by_fold(rows: pl.DataFrame, models: list[xgb.Booster], *, features: Sequence[str] = FEATURES) -> pl.Series:
+    """Each row's prediction from the fold model named by its `fold` column (rows hold `features`)."""
     fold = rows["fold"].to_numpy()
     potential = np.empty(rows.height)
     for k, model in enumerate(models):
@@ -87,9 +109,9 @@ def score_out_of_fold(features: pl.DataFrame, models: list[xgb.Booster], uk: str
             raise ValueError(f"Model {k} held out fold {model.attr('held_out_fold')}, not {k}")
         mask = fold == k
         if mask.any():
-            data = rows.filter(pl.Series(mask)).select(FEATURES).to_numpy().astype(np.float32)
+            data = rows.filter(pl.Series(mask)).select(features).to_numpy().astype(np.float32)
             potential[mask] = model.inplace_predict(data)
-    return rows.with_columns(export_potential_usd=pl.Series(potential))
+    return pl.Series("export_potential_usd", potential)
 
 
 def _with_fold(rows: pl.DataFrame, n_folds: int) -> pl.DataFrame:

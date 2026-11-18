@@ -7,39 +7,51 @@ Rows are keyed by Exporter, Importer, Product (`hs6`) and year, and carry the Fl
   cells (weight 1/rate);
 - `uk_grid`: every Product × Market for the UK, for scoring.
 
-`build_features` adds the model inputs (`FEATURES`) from the same year's Flows and the
-gravity and policy tables (`Sources`). Leakage rules are built in:
+`build_features` adds the model inputs (`FEATURES`) from the same year's Flows (and, for
+Market import growth, those of GROWTH_YEARS earlier) and the gravity, policy and proximity
+tables (`Sources`). Leakage rules are built in:
 
 - **Leave-one-out supply** (ADR 0001): the Exporter's exports of the Product leave out the
   row's own Importer, so a UK row never sees its target Market.
 - **Leave-one-out demand**: the Importer's imports of the Product leave out the row's own
-  Exporter.
+  Exporter, and so do Market import growth and the re-export ratio built from them.
+- **Relatedness leaves out the Market**: the Exporter's RCA in neighbouring Products is
+  computed without any Flow into the row's Importer, so a UK row never sees its Market.
 - **No pair trade in other Products**: no feature uses the Exporter–Importer pair's trade in
   other Products (such as total bilateral trade). It would absorb the policy effect, so a
   Scenario that flips only policy columns would understate the Scenario Effect.
 - **Training years only**: `FeatureTransform` (clip ranges and the Sector encoder) is
-  fitted on training years, so test-year data cannot reach it.
+  fitted on training years, so test-year data cannot reach it. Proximity is fitted on
+  PROXIMITY_YEARS, before the validation year.
 
 `build()` (also `uv run python -m exportspredictor.features`) runs this on real data, one
 year at a time so that peak memory stays far below 32 GB, and writes under the data root:
 
     derived/features_<BACI version>/training_<year>.parquet   training rows with features
-    derived/features_<BACI version>/uk_grid_<year>.parquet    the full UK grid with features
-    derived/features_<BACI version>/features.json             rate, seed, years, feature list
+    derived/features_<BACI version>/uk_grid_<year>.parquet    the full UK grid with features (Gap Period
+                                                              years: the union of their grids)
+    derived/features_<BACI version>/proximity.parquet         Product proximity (Relatedness)
+    derived/features_<BACI version>/features.json             scope, rates, seed, years, feature list
 
 Every table is keyed by standard ISO3 codes (BACI's `S19` becomes `TWN`), as the gravity
 and policy tables are.
 """
 
 import json
-from dataclasses import dataclass
+from collections.abc import Collection, Iterable
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 
-from exportspredictor import baci, policy
+from exportspredictor import baci, policy, scope
 from exportspredictor.downloads import write_parquet
+from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
+from exportspredictor.gap_period import gap_period, gap_years
 from exportspredictor.paths import data_dir
+from exportspredictor.tariffs import Tariffs, applied_tariffs
+from exportspredictor.tariffs import load as load_tariffs
 
 KEYS = ["exporter", "importer", "hs6", "year"]
 
@@ -61,12 +73,36 @@ SUPPLY_FEATURES = ["log_supply_loo", "rca_loo"]
 # those imports that come from high-income Exporters.
 DEMAND_FEATURES = ["log_demand_loo", "high_income_share_loo"]
 PRODUCT_FEATURES = ["sector"]  # HS2 chapter, as a number
-POLICY_FEATURES = list(policy.POLICY_FEATURES)
-FEATURES = [*GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES, *PRODUCT_FEATURES, *POLICY_FEATURES]
-# +1 on every policy feature: a Trade Agreement never lowers Export Potential (ADR 0002).
-MONOTONE_CONSTRAINTS = {name: 1 for name in POLICY_FEATURES}
+# Relatedness: how close the Product is to the Products the Exporter already exports
+# competitively (RCA > 1, leaving out the row's Importer), weighted by proximity.
+RELATEDNESS_FEATURES = ["relatedness"]
+# Market import growth over GROWTH_YEARS, and the Market's exports of the Product over its
+# imports of it (log-capped), both leaving out the row's own Exporter.
+MARKET_TREND_FEATURES = ["market_import_growth", "reexport_ratio"]
+# The Applied Tariff as ln(1 + t), with t the rate as a fraction (ADR 0006).
+TARIFF_FEATURES = ["log_applied_tariff"]
+POLICY_FEATURES = [*policy.POLICY_FEATURES, *TARIFF_FEATURES]
+# Every feature `build_features` computes, in model column order.
+ALL_FEATURES = [
+    *GRAVITY_FEATURES,
+    *SUPPLY_FEATURES,
+    *DEMAND_FEATURES,
+    *PRODUCT_FEATURES,
+    *RELATEDNESS_FEATURES,
+    *MARKET_TREND_FEATURES,
+    *POLICY_FEATURES,
+]
+# Features the ablation (`experiments`, ticket #53) found to hurt: on 2022, the model without
+# Market import growth had lower deviance and a higher UK within-Product Spearman. It is still
+# computed and stored beside the features, but it is not a model input.
+ABLATED_FEATURES = ["market_import_growth"]
+# The model inputs, in column order.
+FEATURES = [f for f in ALL_FEATURES if f not in ABLATED_FEATURES]
+# +1 on every agreement and bloc flag: a Trade Agreement never lowers Export Potential. -1 on
+# the Applied Tariff: raising it never raises Export Potential (ADR 0002, ADR 0006).
+MONOTONE_CONSTRAINTS = {**{name: 1 for name in policy.POLICY_FEATURES}, **{name: -1 for name in TARIFF_FEATURES}}
 # Continuous features clipped to their training-year range at serving time.
-CLIPPED_FEATURES = [
+CLIPPED_FEATURES = [f for f in [
     "log_gdp_o",
     "log_gdp_d",
     "log_population_o",
@@ -74,11 +110,28 @@ CLIPPED_FEATURES = [
     "log_distance",
     *SUPPLY_FEATURES,
     *DEMAND_FEATURES,
-]
-# Share of relevant zero cells kept for training on real data. About 95 M relevant zeros a
-# year on BACI, so 2% keeps about 1.9 M a year, roughly one for every six non-zero Flows.
-ZERO_SAMPLING_RATE = 0.02
+    *RELATEDNESS_FEATURES,
+    *MARKET_TREND_FEATURES,
+    *TARIFF_FEATURES,
+] if f in FEATURES]
+# Row metadata carried beside the features, never a model input: `tariff_imputed` marks a
+# tariff carried forward from 2021 (ADR 0006), and `mfn_tariff` (percent) is the Importer's
+# MFN rate, which a Scenario restores when it removes a Trade Agreement.
+TARIFF_METADATA = ["tariff_imputed", "mfn_tariff"]
+# Share of other Exporters' Zero Cells kept for training on real data (ADR 0004). UK Zero Cells
+# are always kept. Settled by the learning curve (`experiments`, ticket #53): on 2022 at a
+# non-UK rate of 0.65, 5% gave the lowest deviance (412.1 against 413.6 at 2% and 413.8 at
+# 10%) with UK Spearman within 0.003 of 2%, and leaves a higher non-UK rate than 10% does.
+ZERO_SAMPLING_RATE = 0.05
 _FLOAT_FEATURES = [*GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES]
+# Market import growth compares the year with this many years earlier.
+GROWTH_YEARS = 3
+# The re-export ratio is ln(1 + min(exports / imports, cap)): beyond 10x its imports a
+# Market is a producer of the Product, and how much more says nothing extra.
+REEXPORT_RATIO_CAP = 10.0
+# Proximity is fitted on the years before the validation year (2022), so it never sees
+# validation, test or Baseline data.
+PROXIMITY_YEARS = list(range(2012, 2022))
 
 
 @dataclass(frozen=True)
@@ -90,48 +143,116 @@ class Sources:
     country_year: pl.DataFrame  # iso3, year, gdp_usd, population
     pairs: pl.DataFrame  # iso3_o, iso3_d, distance_km, contiguous, common_language, ...
     high_income: frozenset[str]  # ISO3 codes of high-income countries
+    # hs6, hs6_neighbour, proximity (from `fit_proximity`); without it Relatedness is missing
+    proximity: pl.DataFrame | None = None
+    # The Applied Tariff panel (`tariffs.load`); without it the Applied Tariff is missing
+    tariffs: Tariffs | None = None
 
 
-def training_rows(flows: pl.DataFrame | pl.LazyFrame, *, rate: float, seed: int = 0) -> pl.DataFrame:
-    """Every non-zero Flow (weight 1) plus a random sample of relevant zero cells (weight 1/rate).
+def training_rows(
+    flows: pl.DataFrame | pl.LazyFrame,
+    *,
+    rate: float,
+    seed: int = 0,
+    uk: str = baci.UK,
+    exporters: Collection[str] | None = None,
+) -> pl.DataFrame:
+    """Every non-zero Flow (weight 1), every UK Zero Cell (weight 1) and a random sample of
+    other Exporters' Zero Cells (weight 1/rate), leaving out Excluded Products.
 
-    A relevant zero cell is an Exporter–Importer–Product–year where the Exporter exports the
+    A Zero Cell is an Exporter–Importer–Product–year where the Exporter exports the
     Product to someone and the Importer imports it from someone that year, but not from
     each other. The full grid of cells is never built: most cells are irrelevant, and
-    the relevant ones are about 95 M a year on BACI. Each relevant cell is kept with
+    the relevant ones are about 95 M a year on BACI. Each non-UK Zero Cell is kept with
     probability `rate`, decided by a hash of its keys and `seed`. So the sample is
     deterministic, a cell's fate never depends on other data, and the weights make
-    weighted totals unbiased (Horvitz–Thompson).
+    weighted totals unbiased (Horvitz–Thompson). UK Zero Cells are never sampled (ADR 0004).
+
+    `exporters` is the training scope (`scope.exporter_scope`): rows of other Exporters
+    are dropped, the UK's never. Every Importer is kept, and `flows` is not filtered, so
+    features built from it still count out-of-scope Exporters' Flows.
     """
     if not 0 < rate <= 1:
         raise ValueError(f"rate must be in (0, 1], got {rate}")
-    active = flows.lazy().filter(pl.col("value_usd") > 0).select(*KEYS, "value_usd")
+    flows = flows.lazy()
+    active = flows.filter(pl.col("value_usd") > 0).select(*KEYS, "value_usd").pipe(drop_excluded)
+    is_uk = pl.col("exporter").cast(pl.String) == uk
+    if exporters is not None:
+        active = active.filter(is_uk | pl.col("exporter").cast(pl.String).is_in(sorted(set(exporters))))
     cells = (
         active.select("exporter", "hs6", "year")
         .unique()
-        .join(active.select("importer", "hs6", "year").unique(), on=["hs6", "year"])
+        .join(
+            flows.filter(pl.col("value_usd") > 0).pipe(drop_excluded).select("importer", "hs6", "year").unique(),
+            on=["hs6", "year"],
+        )
         .filter(pl.col("exporter").cast(pl.String) != pl.col("importer").cast(pl.String))
     )
     if rate < 1:
-        threshold = int(rate * 2**64)
-        cells = cells.filter(pl.struct(KEYS).hash(seed) < pl.lit(threshold, pl.UInt64))
-    zeros = cells.join(active, on=KEYS, how="anti").with_columns(value_usd=pl.lit(0.0), weight=pl.lit(1.0 / rate))
+        cells = cells.filter(is_uk | _zero_cell_kept(rate, seed))
+    zeros = cells.join(active, on=KEYS, how="anti").with_columns(
+        value_usd=pl.lit(0.0), weight=pl.when(is_uk).then(1.0).otherwise(1.0 / rate)
+    )
     rows = pl.concat([active.with_columns(weight=pl.lit(1.0)), zeros.select(*KEYS, "value_usd", "weight")])
     return rows.collect(engine="streaming")
 
 
-def uk_grid(flows: pl.DataFrame, uk: str) -> pl.DataFrame:
+def _zero_cell_kept(rate: float, seed: int) -> pl.Expr:
+    """Whether a Zero Cell is in the sample at `rate`: a hash of its keys and `seed` below rate × 2^64.
+
+    A cell kept at one rate is kept at every higher rate, so samples at different rates nest.
+    """
+    return pl.struct(KEYS).hash(seed) < pl.lit(int(rate * 2**64), pl.UInt64)
+
+
+def subsample_zeros(
+    rows: pl.DataFrame, *, built_rate: float, rate: float, seed: int = 0, uk: str = baci.UK
+) -> pl.DataFrame:
+    """Training rows built at zero rate `built_rate`, cut to the rows `training_rows` would keep at `rate`.
+
+    Flows and UK Zero Cells are kept. Other Exporters' Zero Cells are kept by the same hash
+    rule as `training_rows` (same `seed`), and reweighted to 1/`rate`. Samples nest, so this
+    gives exactly the rows a build at `rate` would have written, without rebuilding the
+    features: the learning curve uses it to vary the zero rate below the built one.
+    """
+    if not 0 < rate <= built_rate:
+        raise ValueError(f"The zero rate must be in (0, {built_rate}], the rate the rows were built at; got {rate}")
+    if rate == built_rate:
+        return rows
+    other_zero = (pl.col("value_usd") == 0) & (pl.col("exporter").cast(pl.String) != uk)
+    return rows.filter(~other_zero | _zero_cell_kept(rate, seed)).with_columns(
+        weight=pl.when(other_zero).then(pl.lit(1.0 / rate)).otherwise(pl.col("weight"))
+    )
+
+
+def uk_grid(flows: pl.DataFrame, uk: str, *, pairs: pl.DataFrame | None = None) -> pl.DataFrame:
     """Every Product × Market for the UK in each year of `flows`, with Actual Exports (0 if none).
 
-    Products are those traded in that year and Markets every Importer in that year except
-    the UK itself. Weight is 1: the grid is scored in full, never sampled.
+    Products are those traded in that year, except Excluded Products, and Markets every
+    Importer in that year except the UK itself. Weight is 1: the grid is scored in full,
+    never sampled.
+
+    `pairs` (hs6, importer), when given, replaces each year's Products × Markets: the Gap
+    Period scores the union of its years' grids (`grid_pairs`) in every one of its years.
     """
     active = flows.filter(pl.col("value_usd") > 0)
-    products = active.select("hs6", "year").unique()
-    markets = active.filter(pl.col("importer") != uk).select("importer", "year").unique()
+    if pairs is None:
+        products = active.select("hs6", "year").unique().pipe(drop_excluded)
+        markets = active.filter(pl.col("importer") != uk).select("importer", "year").unique()
+        keys = products.join(markets, on="year")
+    else:
+        wanted = pairs.select(
+            pl.col("hs6").cast(flows.schema["hs6"]), pl.col("importer").cast(flows.schema["importer"])
+        )
+        keys = (
+            wanted.unique()
+            .pipe(drop_excluded)
+            .filter(pl.col("importer") != uk)
+            .join(flows.select("year").unique(), how="cross")
+        )
     uk_flows = active.filter(pl.col("exporter") == uk).select("importer", "hs6", "year", "value_usd")
     return (
-        products.join(markets, on="year")
+        keys
         .with_columns(exporter=pl.lit(uk).cast(flows.schema["exporter"]))
         .join(uk_flows, on=["importer", "hs6", "year"], how="left")
         .with_columns(pl.col("value_usd").fill_null(0.0), weight=pl.lit(1.0))
@@ -140,12 +261,25 @@ def uk_grid(flows: pl.DataFrame, uk: str) -> pl.DataFrame:
     )
 
 
+def grid_pairs(grids: Iterable[pl.DataFrame | pl.LazyFrame]) -> pl.DataFrame:
+    """The union of the UK Product–Market pairs (hs6, importer) of several years' grids."""
+    return (
+        pl.concat([grid.lazy().select("hs6", "importer") for grid in grids])
+        .unique()
+        .sort("hs6", "importer")
+        .collect()
+    )
+
+
 def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) -> pl.DataFrame:
-    """Return KEYS, FEATURES, `value_usd` and `weight` for each row.
+    """Return KEYS, ALL_FEATURES (FEATURES and the ablated ones), `value_usd` and `weight` for each row.
 
     `rows` are keyed by KEYS with the row's own Flow `value_usd` (0 for a zero cell);
     `flows` holds every Flow of the same years, from which the supply and demand
     aggregates are computed. Each row's own Flow is subtracted from them (leave-one-out).
+    `flows` keeps Excluded Products, so every total counts them (ADR 0005). Market import
+    growth also reads the Flows of GROWTH_YEARS earlier: it is missing when `flows` holds
+    none for that year. Relatedness needs `sources.proximity`.
     """
     if "weight" not in rows.columns:
         rows = rows.with_columns(weight=pl.lit(1.0))
@@ -163,6 +297,15 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
     )
 
     own = pl.col("value_usd")
+    year_type = rows.schema["year"]
+    earlier = (pl.col("year") + GROWTH_YEARS).cast(year_type)
+    demand_then = demand.select("importer", "hs6", year=earlier, demand_then=pl.col("demand"))
+    own_then = active.select("exporter", "importer", "hs6", year=earlier, own_then=value)
+    market_exports = supply.select(
+        _d=pl.col("exporter").cast(pl.String), hs6="hs6", year="year", market_exports=pl.col("supply")
+    )
+    flow_years = active["year"].unique().to_list()
+
     own_high_income = pl.when(pl.col("exporter").cast(pl.String).is_in(high_income)).then(own).otherwise(0.0)
     supply_loo = (pl.col("supply") - own).clip(lower_bound=0.0)
     demand_loo = (pl.col("demand") - own).clip(lower_bound=0.0)
@@ -171,6 +314,11 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
     # of a country-year total, the same for every Market, so they say nothing about the pair.
     product_share = supply_loo / (pl.col("exporter_total") - own)
     world_share = (pl.col("world_product") - own) / (pl.col("world") - own)
+    # The Importer's imports of the Product from everyone but the row's Exporter, now and
+    # GROWTH_YEARS earlier; and its own exports of the Product against those imports.
+    demand_then_loo = (pl.col("demand_then") - pl.col("own_then")).clip(lower_bound=0.0)
+    has_earlier_year = (pl.col("year") - GROWTH_YEARS).is_in(flow_years)
+    reexport = (pl.col("market_exports") / demand_loo).clip(upper_bound=REEXPORT_RATIO_CAP)
 
     table = (
         rows.join(supply, on=["exporter", "hs6", "year"], how="left")
@@ -178,9 +326,17 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
         .join(world_product, on=["hs6", "year"], how="left")
         .join(world, on="year", how="left")
         .join(demand, on=["importer", "hs6", "year"], how="left")
+        .join(demand_then, on=["importer", "hs6", "year"], how="left")
+        .join(own_then, on=["exporter", "importer", "hs6", "year"], how="left")
         .with_columns(
-            pl.col("supply", "exporter_total", "world_product", "world", "demand", "demand_high_income").fill_null(0.0)
+            pl.col(
+                "supply", "exporter_total", "world_product", "world", "demand", "demand_high_income", "demand_then",
+                "own_then",
+            ).fill_null(0.0),
+            _d=pl.col("importer").cast(pl.String),
         )
+        .join(market_exports, on=["_d", "hs6", "year"], how="left")
+        .with_columns(pl.col("market_exports").fill_null(0.0))
         .with_columns(
             log_supply_loo=supply_loo.log1p(),
             rca_loo=pl.when((world_share > 0) & (pl.col("exporter_total") > own)).then(product_share / world_share),
@@ -189,18 +345,27 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
                 ((pl.col("demand_high_income") - own_high_income) / demand_loo).clip(0.0, 1.0)
             ),
             sector=pl.col("hs6").cast(pl.String).str.slice(0, 2).cast(pl.Int8),
+            market_import_growth=pl.when(has_earlier_year).then(demand_loo.log1p() - demand_then_loo.log1p()),
+            reexport_ratio=pl.when(demand_loo > 0)
+            .then(reexport.log1p())
+            .when(pl.col("market_exports") > 0)
+            .then(pl.lit(REEXPORT_RATIO_CAP).log1p()),
             _o=pl.col("exporter").cast(pl.String),
-            _d=pl.col("importer").cast(pl.String),
         )
     )
     return (
         table.pipe(_attach_gravity, sources)
         .pipe(_attach_policy, sources)
+        .pipe(_attach_relatedness, active, sources.proximity)
+        .pipe(_attach_tariffs, sources)
         .select(
             *KEYS,
             *(pl.col(f).cast(pl.Float32) for f in _FLOAT_FEATURES),
             *PRODUCT_FEATURES,
-            *POLICY_FEATURES,
+            *(pl.col(f).cast(pl.Float32) for f in [*RELATEDNESS_FEATURES, *MARKET_TREND_FEATURES]),
+            *policy.POLICY_FEATURES,
+            *(pl.col(f).cast(pl.Float32) for f in TARIFF_FEATURES),
+            *TARIFF_METADATA,
             "value_usd",
             "weight",
         )
@@ -279,6 +444,173 @@ def _attach_policy(table: pl.DataFrame, sources: Sources) -> pl.DataFrame:
     return table.join(flags.rename({"exporter": "_o", "importer": "_d"}), on=["_o", "_d", "year"], how="left")
 
 
+def _attach_tariffs(table: pl.DataFrame, sources: Sources) -> pl.DataFrame:
+    """Add `log_applied_tariff` = ln(1 + t/100) and TARIFF_METADATA (`tariffs.applied_tariffs`).
+
+    The same function serves training rows and the UK grid. The panel is first cut to the
+    schedules these rows' years read, so a year's rows never join the whole panel.
+    """
+    if sources.tariffs is None:
+        return table.with_columns(
+            log_applied_tariff=pl.lit(None, pl.Float64),
+            tariff_imputed=pl.lit(None, pl.Boolean),
+            mfn_tariff=pl.lit(None, pl.Float64),
+        )
+    panel = sources.tariffs
+    years = table["year"].unique().cast(pl.Int64).to_list()
+    schedules = panel.schedules.filter(pl.col("year").cast(pl.Int64).is_in(years))
+    used = schedules.select("schedule", "source_year").unique()
+    cut = Tariffs(
+        schedules=schedules,
+        mfn=panel.mfn.join(used, on=["schedule", "source_year"], how="semi"),
+        preferences=panel.preferences.join(used, on=["schedule", "source_year"], how="semi"),
+    )
+    keys = table.with_row_index("_row").select(
+        "_row", "year", exporter="_o", importer="_d", hs6=pl.col("hs6").cast(pl.String)
+    )
+    applied = applied_tariffs(keys, cut, sources.agreements).select(
+        "_row",
+        "tariff_imputed",
+        "mfn_tariff",
+        log_applied_tariff=(pl.col("applied_tariff") / 100).log1p(),
+    )
+    return table.with_row_index("_row").join(applied, on="_row", how="left").drop("_row")
+
+
+# --- Relatedness ---------------------------------------------------------------------------
+
+
+def fit_proximity(flows: pl.DataFrame | pl.LazyFrame, years: list[int]) -> pl.DataFrame:
+    """Proximity between Products, fitted on the Flows of `years` only.
+
+    An Exporter is competitive in a Product in a year when its RCA is above 1. The
+    proximity of Products p and q is the number of Exporter-years competitive in both,
+    divided by the larger of the counts competitive in each: the lower of the two
+    conditional probabilities (Hidalgo et al., 2007). Pooling the years keeps it stable.
+    Returns hs6, hs6_neighbour, proximity for every pair with proximity above 0 (p != q,
+    both directions), with `hs6` as a string.
+    """
+    value = pl.col("value_usd")
+    active = (
+        flows.lazy()
+        .filter(pl.col("year").is_in(list(years)) & (value > 0))
+        .select(pl.col("exporter").cast(pl.String), pl.col("hs6").cast(pl.String), "year", "value_usd")
+    )
+    supply = active.group_by("exporter", "hs6", "year").agg(supply=value.sum())
+    competitive = (
+        supply.join(
+            supply.group_by("exporter", "year").agg(exporter_total=pl.col("supply").sum()), on=["exporter", "year"]
+        )
+        .join(supply.group_by("hs6", "year").agg(world_product=pl.col("supply").sum()), on=["hs6", "year"])
+        .join(supply.group_by("year").agg(world=pl.col("supply").sum()), on="year")
+        .filter(pl.col("supply") / pl.col("exporter_total") > pl.col("world_product") / pl.col("world"))
+        .select("exporter", "year", "hs6")
+        .collect(engine="streaming")
+    )
+    schema = {"hs6": pl.String, "hs6_neighbour": pl.String, "proximity": pl.Float32}
+    if competitive.is_empty():
+        return pl.DataFrame(schema=schema)
+    products = competitive["hs6"].unique().sort()
+    columns = competitive["hs6"].replace_strict(products, pl.Series(range(len(products)), dtype=pl.UInt32))
+    rows = competitive.select(pl.struct("exporter", "year").rank("dense") - 1).to_series()
+    present = np.zeros((rows.max() + 1, len(products)), dtype=np.float32)
+    present[rows.to_numpy(), columns.to_numpy()] = 1.0
+    together = present.T @ present
+    counts = np.diag(together).copy()
+    proximity = together / np.maximum.outer(counts, counts)
+    np.fill_diagonal(proximity, 0.0)
+    left, right = np.nonzero(proximity)
+    names = products.to_numpy()
+    return pl.DataFrame(
+        {"hs6": names[left], "hs6_neighbour": names[right], "proximity": proximity[left, right]}, schema=schema
+    )
+
+
+def _attach_relatedness(table: pl.DataFrame, active: pl.DataFrame, proximity: pl.DataFrame | None) -> pl.DataFrame:
+    """Add `relatedness`: the proximity-weighted share of the Product's neighbours in which
+    the Exporter has RCA > 1.
+
+    RCA leaves out every Flow into the row's Importer, from the Exporter's totals and the
+    world's alike (ADR 0001), so the target Market's own Flows cannot reach it. A Product
+    is not its own neighbour. Missing for a Product without neighbours.
+    """
+    if proximity is None or proximity.is_empty():
+        return table.with_columns(relatedness=pl.lit(None, pl.Float64))
+    products = pl.concat([proximity["hs6"], proximity["hs6_neighbour"]]).unique().sort()
+    position = pl.Series(range(len(products)), dtype=pl.UInt32)
+    weights = np.zeros((len(products), len(products)), dtype=np.float32)
+    weights[
+        proximity["hs6"].replace_strict(products, position).to_numpy(),
+        proximity["hs6_neighbour"].replace_strict(products, position).to_numpy(),
+    ] = proximity["proximity"].to_numpy()
+    product_index = pl.col("hs6").cast(pl.String).replace_strict(products, position, default=None)
+    keyed = table.with_row_index("_row").select("_row", "_o", "_d", "year", _p=product_index)
+    flows = active.select(
+        "year",
+        "value_usd",
+        _o=pl.col("exporter").cast(pl.String),
+        _d=pl.col("importer").cast(pl.String),
+        _p=product_index,
+    )
+    values = pl.concat(
+        _relatedness_in_year(year_rows, flows.filter(pl.col("year") == year), weights)
+        for (year,), year_rows in keyed.partition_by("year", as_dict=True).items()
+    )
+    return table.with_row_index("_row").join(values, on="_row", how="left").drop("_row")
+
+
+def _relatedness_in_year(rows: pl.DataFrame, flows: pl.DataFrame, weights: np.ndarray) -> pl.DataFrame:
+    """`_row`, `relatedness` for rows (`_row`, `_o`, `_d`, `_p`) of one year, from that year's Flows."""
+    n_products = weights.shape[0]
+    neighbours = weights.sum(axis=1)
+    exporters = rows["_o"].unique().sort()
+    exporter_position = pl.Series(range(len(exporters)), dtype=pl.UInt32)
+    flows = flows.with_columns(_e=pl.col("_o").replace_strict(exporters, exporter_position, default=None))
+    known = flows.filter(pl.col("_p").is_not_null())
+    own = flows.filter(pl.col("_e").is_not_null())
+    own_known = own.filter(pl.col("_p").is_not_null())
+    total = pl.col("value_usd").sum()
+
+    def scatter(table: pl.DataFrame | None, *index: str) -> np.ndarray:
+        shape = tuple({"_e": len(exporters), "_p": n_products}[i] for i in index)
+        out = np.zeros(shape)
+        if table is not None:
+            out[tuple(table[i].to_numpy() for i in index)] = table["value_usd"].to_numpy()
+        return out
+
+    world = float(flows["value_usd"].sum())
+    world_product = scatter(known.group_by("_p").agg(total), "_p")
+    exporter_total = scatter(own.group_by("_e").agg(total), "_e")
+    supply = scatter(own_known.group_by("_e", "_p").agg(total), "_e", "_p")
+    market_imports = dict(flows.group_by("_d").agg(total).iter_rows())
+    market_product_imports = known.group_by("_d", "_p").agg(total).partition_by("_d", as_dict=True)
+    exports_to_market = own.group_by("_d", "_e").agg(total).partition_by("_d", as_dict=True)
+    product_exports_to_market = own_known.group_by("_d", "_e", "_p").agg(total).partition_by("_d", as_dict=True)
+
+    parts = []
+    for (market,), market_rows in rows.partition_by("_d", as_dict=True).items():
+        key = (market,)
+        # Every share leaves out all Flows into this Market.
+        with np.errstate(invalid="ignore", divide="ignore"):
+            exporter_share = (supply - scatter(product_exports_to_market.get(key), "_e", "_p")) / (
+                exporter_total - scatter(exports_to_market.get(key), "_e")
+            )[:, None]
+            world_share = (world_product - scatter(market_product_imports.get(key), "_p")) / (
+                world - market_imports.get(market, 0.0)
+            )
+            competitive = np.nan_to_num(exporter_share, nan=0.0) > world_share
+            density = (competitive.astype(np.float32) @ weights) / neighbours
+        known_rows = market_rows.filter(pl.col("_p").is_not_null())
+        exporter_rows = known_rows["_o"].replace_strict(exporters, exporter_position).to_numpy()
+        parts.append(
+            pl.DataFrame(
+                {"_row": known_rows["_row"], "relatedness": density[exporter_rows, known_rows["_p"].to_numpy()]},
+                schema={"_row": pl.UInt32, "relatedness": pl.Float64},
+            )
+        )
+    return pl.concat(parts).fill_nan(None)
+
+
 # --- Real-data build ----------------------------------------------------------------------
 
 YEARS = list(range(2012, 2025))
@@ -304,6 +636,7 @@ def load_sources(root: Path | None = None) -> tuple[Sources, dict[str, str]]:
         country_year=pl.read_parquet(derived / "country_year.parquet"),
         pairs=pl.read_parquet(derived / "gravity_pairs.parquet"),
         high_income=frozenset(to_iso3.get(code, code) for code in high_income),
+        tariffs=load_tariffs(root),
     )
     return sources, to_iso3
 
@@ -328,33 +661,56 @@ def build(
     rate: float = ZERO_SAMPLING_RATE,
     seed: int = 0,
     uk: str = baci.UK,
+    scope_size: int = scope.TOP_EXPORTERS,
+    proximity_years: list[int] = PROXIMITY_YEARS,
+    baseline_year: int = YEARS[-1],
 ) -> Path:
     """Write the training rows and the UK grid, with features, for each year; return the folder.
 
-    Each year is built from that year's Flows alone, so a year's file never depends on
-    another year's data. Transforms are not applied here: they are fitted on the training
-    years when the model is trained (`FeatureTransform`).
+    Each year is built from that year's Flows and, for Market import growth, those of
+    GROWTH_YEARS earlier, so no year's file reads a later year's Flows. Proximity is fitted
+    once on `proximity_years` (those on disk), all before the validation year, and saved as
+    `proximity.parquet`. Transforms are not applied here: they are fitted on the training
+    years when the model is trained (`FeatureTransform`). The grids of the Gap Period ending
+    with `baseline_year` all hold the union of those years' pairs, so every pair is scored
+    in every Gap Period year (`gap_period`).
     """
     sources, to_iso3 = load_sources(root)
+    exporters = scope.exporter_scope(sources.country_year, uk=uk, n=scope_size)
     out = features_dir(root)
     out.mkdir(parents=True, exist_ok=True)
+    fitted_on = [y for y in proximity_years if (baci.flows_dir(root) / f"flows_{y}.parquet").exists()]
+    if not fitted_on:
+        raise ValueError(f"No BACI Flows on disk for the proximity years {proximity_years}")
+    proximity = fit_proximity(baci.scan_flows(root), fitted_on)
+    write_parquet(proximity, out / "proximity.parquet", compression="zstd")
+    sources = replace(sources, proximity=proximity)
+    gap = [y for y in gap_years(baseline_year) if y in years]
+    pairs = grid_pairs(uk_grid(load_year_flows(y, to_iso3, root), uk) for y in gap) if gap else None
     for year in years:
         flows = load_year_flows(year, to_iso3, root)
+        with_earlier = pl.concat([flows, load_year_flows(year - GROWTH_YEARS, to_iso3, root)])
         write_parquet(
-            build_features(training_rows(flows, rate=rate, seed=seed), flows, sources),
+            build_features(
+                training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters), with_earlier, sources
+            ),
             out / f"training_{year}.parquet",
             compression="zstd",
         )
-        write_parquet(
-            build_features(uk_grid(flows, uk), flows, sources), out / f"uk_grid_{year}.parquet", compression="zstd"
-        )
-        del flows
+        grid = uk_grid(flows, uk, pairs=pairs if year in gap else None)
+        write_parquet(build_features(grid, with_earlier, sources), out / f"uk_grid_{year}.parquet", compression="zstd")
+        del flows, with_earlier, grid
     settings = {
         "baci_version": baci.BACI_VERSION,
         "years": list(years),
+        "exporter_scope": exporters,
         "zero_sampling_rate": rate,
+        "uk_zero_sampling_rate": 1.0,
         "zero_sampling_seed": seed,
         "features": FEATURES,
+        "excluded_products": [exclusion.codes for exclusion in EXCLUSIONS],
+        "proximity_years": fitted_on,
+        "gap_years": gap_period(baseline_year),
     }
     (out / SETTINGS_FILE).write_text(json.dumps(settings, indent=2), encoding="utf-8")
     return out

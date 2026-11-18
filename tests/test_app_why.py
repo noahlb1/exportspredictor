@@ -1,5 +1,6 @@
 """The Streamlit Why? page and its links from rankings, run with AppTest against a live local API."""
 
+import re
 import socket
 import threading
 import time
@@ -14,7 +15,7 @@ from streamlit.testing.v1 import AppTest
 from api.main import create_app
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
-WHY = APP_DIR / "pages" / "4_Why.py"
+WHY = APP_DIR / "pages" / "5_Why.py"
 PRODUCT_TO_MARKETS = APP_DIR / "pages" / "1_Product_to_Markets.py"
 
 
@@ -70,7 +71,27 @@ def test_why_page_shows_actual_exports_history_for_every_recent_year(monkeypatch
     history = page.dataframe[1].value
     assert list(history["Year"]) == sorted(history["Year"])
     assert max(history["Year"]) == 2024
-    assert "Actual Exports (£)" in history.columns
+    assert "Actual Exports (USD, nominal)" in history.columns
+
+
+def test_why_page_shows_each_gap_period_years_export_potential_and_gap(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+    body = httpx.get(f"{api_url}/explain/220830/JPN").json()
+
+    history = page.dataframe[1].value
+    assert list(history.columns) == [
+        "Year",
+        "Export Potential (USD, nominal)",
+        "Actual Exports (USD, nominal)",
+        "Export Gap (USD, nominal)",
+        "Applied Tariff",
+    ]
+    gap_years = history[history["Year"] >= 2022]
+    assert list(gap_years["Year"]) == [2022, 2023, 2024]
+    assert gap_years["Export Gap (USD, nominal)"].mean() == pytest.approx(body["export_gap_usd"])
+    assert history[history["Year"] < 2022]["Export Gap (USD, nominal)"].isna().all()
+    text = " ".join(m.value for m in page.markdown) + " ".join(c.value for c in page.caption)
+    assert "2022–2024 average" in text
 
 
 def test_why_page_phrases_results_as_associations(monkeypatch, api_url):
@@ -126,13 +147,57 @@ def test_market_to_products_rows_link_to_why(monkeypatch, api_url):
     assert links["220830"] == {"hs6": ["220830"], "iso3": ["JPN"]}
 
 
-def test_why_page_shows_pounds_by_default_and_dollars_on_request(monkeypatch, api_url):
+def test_why_page_writes_values_in_dollars(monkeypatch, api_url):
     page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
 
-    assert any("Export Potential **£" in m.value for m in page.markdown)
-    assert any("£1 = $1.2783" in c.value for c in page.caption)
+    assert any(re.search(r"Export Potential \*\*\$[0-9,.]+(bn|m|k)?\*\*", m.value) for m in page.markdown)
+    assert "Actual Exports (USD, nominal)" in page.dataframe[1].value.columns
 
-    page.radio(key="currency").set_value("USD").run()
 
-    assert any("Export Potential **US$" in m.value for m in page.markdown)
-    assert "Actual Exports (USD)" in page.dataframe[1].value.columns
+def test_why_page_shows_the_caveats_of_a_flagged_product_in_a_re_export_hub(monkeypatch, api_url):
+    flagged = _why(monkeypatch, api_url, hs6="711319", iso3="HKG")
+    plain = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    assert not flagged.exception
+    caveats = " ".join(w.value for w in flagged.warning)
+    assert "Flagged Product" in caveats and "Re-export Hub" in caveats
+    assert not any("Flagged Product" in w.value or "Re-export Hub" in w.value for w in plain.warning)
+
+
+def test_why_page_shows_the_pairs_opportunity_type(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="220830", iso3="JPN")
+
+    assert any("Opportunity Type: **Expand**" in element.value for element in page.markdown)
+
+
+def _pairs_by_uncertainty(api_url: str) -> tuple[dict, dict]:
+    rows = httpx.get(f"{api_url}/opportunities/top").json()["opportunities"]
+    return next(r for r in rows if r["uncertain_opportunity"]), next(r for r in rows if not r["uncertain_opportunity"])
+
+
+def test_why_page_shows_the_potential_range_bar_in_plain_words(monkeypatch, api_url):
+    uncertain, certain = _pairs_by_uncertainty(api_url)
+    page = _why(monkeypatch, api_url, hs6=uncertain["hs6"], iso3=uncertain["iso3"])
+
+    assert not page.exception
+    assert len(page.get("vega_lite_chart")) == 1
+    words = " ".join(m.value for m in page.markdown)
+    assert "Potential Range" in words and "comparable pairs" in words
+    assert "confidence" not in words.lower()
+    assert any("Uncertain Opportunity" in w.value for w in page.warning)
+
+    other = _why(monkeypatch, api_url, hs6=certain["hs6"], iso3=certain["iso3"])
+    assert len(other.get("vega_lite_chart")) == 1
+    assert not any("Uncertain Opportunity" in w.value for w in other.warning)
+
+
+def test_why_page_says_when_the_applied_tariff_is_carried_forward_from_2021(monkeypatch, api_url):
+    page = _why(monkeypatch, api_url, hs6="300490", iso3="IND")
+
+    assert not page.exception
+    assert any("carried forward from 2021" in w.value for w in page.warning)
+    factors = page.dataframe[0].value
+    assert "The tariff India charges on this Product from the UK" in list(factors["Factor"])
+    history = page.dataframe[1].value.set_index("Year")["Applied Tariff"]
+    assert history[2021] == "From tariff data"
+    assert set(history[[2022, 2023, 2024]]) == {"Carried forward from 2021"}

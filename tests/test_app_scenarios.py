@@ -12,7 +12,7 @@ from streamlit.testing.v1 import AppTest
 from app import client
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
-SCENARIOS = APP_DIR / "pages" / "3_Scenarios.py"
+SCENARIOS = APP_DIR / "pages" / "4_Scenarios.py"
 PRODUCT_TO_MARKETS = APP_DIR / "pages" / "1_Product_to_Markets.py"
 
 
@@ -56,7 +56,7 @@ def test_a_custom_scenario_shows_blocked_opportunities_and_a_drill_down(monkeypa
     page.selectbox(key="drill_market").set_value("IND").run()
     pairs = page.dataframe[-1].value
     assert len(pairs) == 5 and set(pairs["Market"]) == {"India"}
-    effects = list(pairs["Scenario Effect (£)"])
+    effects = list(pairs["Scenario Effect (USD, nominal)"])
     assert effects == sorted(effects, reverse=True)
 
 
@@ -72,41 +72,12 @@ def test_a_scenario_that_changes_nothing_says_so(monkeypatch, api_url):
     assert not page.dataframe
 
 
-def test_product_to_markets_can_rank_by_blocked_opportunity_value(monkeypatch, api_url):
-    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(PRODUCT_TO_MARKETS), default_timeout=30)
-    page.run()
-    page.text_input(key="product_query").input("220830").run()
-
-    page.radio(key="rank_by").set_value("blocked").run()
-
-    assert not page.exception
-    table = page.dataframe[0].value
-    assert next(iter(table["Market"])) == "India"
-    values = list(table["Blocked Opportunity value (£)"])
-    assert values == sorted(values, reverse=True)
-
-
 def test_the_scenarios_page_states_the_event_backtest_result(monkeypatch, api_url, fixture_artefacts):
     page = _scenarios_page(monkeypatch, api_url)
 
     assert not page.exception
     text = " ".join(element.value for element in [*page.markdown, *page.caption, *page.info])
     assert fixture_artefacts.evaluation["event_backtest"]["text"] in text
-
-
-def test_scenario_values_are_in_pounds_by_default_with_the_rate_stated(monkeypatch, api_url):
-    page = _scenarios_page(monkeypatch, api_url)
-    page.selectbox(key="preset").set_value("cptpp").run()
-    page.button(key="run").click().run()
-
-    assert "Scenario Effect (£)" in page.dataframe[0].value.columns
-    assert any("£1 = $1.2783" in c.value and "2024" in c.value for c in page.caption)
-    assert any("£" in element.value for element in page.markdown)  # the summary sentence
-
-    page.radio(key="currency").set_value("USD").run()
-
-    assert "Scenario Effect (USD)" in page.dataframe[0].value.columns
 
 
 def test_the_drill_down_asks_the_api_for_the_chosen_markets_own_top_pairs(monkeypatch, api_url):
@@ -135,3 +106,33 @@ def test_threshold_inputs_default_to_the_apis_thresholds(monkeypatch, api_url):
 
     assert page.number_input(key="min_share").value == defaults["min_effect_share"] * 100
     assert page.number_input(key="min_usd").value == defaults["min_effect_usd"] / 1e6
+
+
+def test_the_tariff_mode_runs_and_says_when_the_effect_flattens_beyond_the_training_range(monkeypatch, api_url):
+    page = _scenarios_page(monkeypatch, api_url)
+
+    page.radio(key="kind").set_value("Tariff change").run()
+    page.multiselect(key="tariff_markets").set_value(["JPN"]).run()
+    page.number_input(key="tariff_rate").set_value(1000.0).run()
+    page.button(key="run").click().run()
+
+    assert not page.exception
+    assert "associates" in " ".join(element.value for element in page.markdown)
+    clip = [element.value for element in page.warning if "training range" in element.value]
+    assert clip and "flattens" in clip[0] and "5" in clip[0]
+    pairs = page.dataframe[-1].value
+    assert set(pairs["Market"]) == {"Japan"}
+
+
+def test_a_tariff_within_the_training_range_shows_no_clip_message(monkeypatch, api_url):
+    page = _scenarios_page(monkeypatch, api_url)
+
+    page.radio(key="kind").set_value("Tariff change").run()
+    page.multiselect(key="tariff_markets").set_value(["JPN"]).run()
+    page.multiselect(key="tariff_sectors").set_value(["22"]).run()
+    page.number_input(key="tariff_rate").set_value(20.0).run()
+    page.button(key="run").click().run()
+
+    assert not page.exception
+    assert not [element.value for element in page.warning if "training range" in element.value]
+    assert set(page.dataframe[0].value["Market"]) == {"Japan"}

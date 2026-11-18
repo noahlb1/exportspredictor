@@ -1,4 +1,4 @@
-"""Scenarios: re-predict UK Export Potential under a Trading Bloc preset or custom Trade Agreements."""
+"""Scenarios: re-predict UK Export Potential under a Trading Bloc preset, custom Trade Agreements or a tariff change."""
 
 import json
 
@@ -6,24 +6,31 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, currency_choice, fetch, rate_caption, run_scenario
+from app.format import format_change
+from app.ui import SECTORS, banner, fetch, labels, run_scenario, usd_unit
 
 st.title("Scenarios")
 
 PRESET = "Trading Bloc preset"
 CUSTOM = "Custom Trade Agreements"
+TARIFF = "Tariff change"
 PAIR_NAMES = {"hs6": "HS6", "description": "Product", "market": "Market"}
 DRILL_DOWN_ROWS = 50
 
 
-def value_columns(suffix: str, unit: str) -> dict[str, str]:
-    """Baseline, Scenario and effect columns in the chosen currency, and the effect share."""
+def value_columns(unit: str) -> dict[str, str]:
     return {
-        f"baseline_potential_{suffix}": f"Baseline Export Potential ({unit})",
-        f"scenario_potential_{suffix}": f"Scenario Export Potential ({unit})",
-        f"effect_{suffix}": f"Scenario Effect ({unit})",
+        "baseline_potential_usd": f"Baseline Export Potential ({unit})",
+        "scenario_potential_usd": f"Scenario Export Potential ({unit})",
+        "effect_usd": f"Scenario Effect ({unit})",
         "effect_share": "Scenario Effect (share of Baseline)",
     }
+
+
+TARIFF_COLUMNS = {
+    "baseline_tariff_pct": "Applied Tariff, Baseline (%)",
+    "scenario_tariff_pct": "Applied Tariff, Scenario (%)",
+}
 
 
 def table(rows: list[dict], columns: dict[str, str]) -> pd.DataFrame:
@@ -48,7 +55,7 @@ if banner() is not None:
     preset_info = {preset["name"]: preset for preset in presets}
     market_names = {market["iso3"]: market["name"] for market in markets}
 
-    kind = st.radio("Scenario", [PRESET, CUSTOM], key="kind", horizontal=True)
+    kind = st.radio("Scenario", [PRESET, CUSTOM, TARIFF], key="kind", horizontal=True)
     if kind == PRESET:
         preset = st.selectbox(
             "Trading Bloc preset",
@@ -58,6 +65,20 @@ if banner() is not None:
         )
         st.caption(preset_info[preset]["description"])
         body = {"preset": preset}
+    elif kind == TARIFF:
+        st.caption(
+            "Set the tariff chosen Markets charge on UK goods, in every Sector or only in chosen ones. "
+            "Adding or removing a Trade Agreement changes the tariff too: adding one removes it, and removing one "
+            f"restores the Market's {labels()['last_tariff_year']} MFN rate."
+        )
+        tariff_markets = st.multiselect(
+            "Markets that charge the tariff", list(market_names), format_func=market_names.get, key="tariff_markets"
+        )
+        rate = st.number_input("Applied Tariff, %", min_value=0.0, value=10.0, step=1.0, key="tariff_rate")
+        sectors = st.multiselect(
+            "Sectors (HS2 chapters); leave empty for every Sector", SECTORS, key="tariff_sectors"
+        )
+        body = {"tariff": {"markets": tariff_markets, "rate_pct": rate, "sectors": sectors or None}}
     else:
         add = st.multiselect(
             "Add a Trade Agreement with", list(market_names), format_func=market_names.get, key="add"
@@ -100,18 +121,23 @@ if banner() is not None:
                 st.warning(result["summary"])
             else:
                 st.markdown(result["summary"])
+                if result["clipped_pairs"]:
+                    st.warning(
+                        f"{result['clipped_pairs']:,} pairs were given a tariff beyond the training range, the "
+                        "tariffs the model has seen. It is held at the edge of that range, so the Scenario Effect "
+                        "flattens beyond it: the model associates no further change with a higher tariff."
+                    )
                 st.caption(
                     "Scenario Effects are associations the model has learned from past trade, not causal "
                     "forecasts: the model associates these policy conditions with this change in Export "
                     f"Potential, holding everything else at the {result['baseline_year']} Baseline."
                 )
-                suffix, unit = currency_choice()
-                st.caption(rate_caption(result["gbp_rate"]))
-                pair_columns = {**PAIR_NAMES, **value_columns(suffix, unit)}
-                total_columns = {**value_columns(suffix, unit), "pairs": "Product–Market pairs changed"}
+                unit = usd_unit()
+                pair_columns = {**PAIR_NAMES, **value_columns(unit), **TARIFF_COLUMNS}
+                total_columns = {**value_columns(unit), "pairs": "Product–Market pairs changed"}
                 total = result["total"]
                 a, b, c = st.columns(3)
-                a.metric(f"Scenario Effect ({unit})", f"{total[f'effect_{suffix}']:,.0f}")
+                a.metric(f"Scenario Effect ({unit})", format_change(total["effect_usd"]))
                 b.metric("Share of Baseline", f"{total['effect_share']:+.1%}")
                 c.metric("Blocked Opportunities", f"{result['blocked_count']:,}")
 

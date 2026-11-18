@@ -8,19 +8,20 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.ui import banner, currency_choice, fetch, product_picker, rate_caption
+from app.format import format_usd, years_text
+from app.ui import (
+    banner,
+    fetch,
+    labels,
+    potential_range_bar,
+    product_picker,
+    show_caveats,
+    usd_unit,
+)
 
 TOP_FACTORS = 8
 
 st.title("Why?")
-
-
-def _money(amount: float, unit: str) -> str:
-    symbol = "£" if unit == "£" else "US$"
-    for size, word in ((1e9, "billion"), (1e6, "million")):
-        if abs(amount) >= size:
-            return f"{symbol}{amount / size:,.1f} {word}"
-    return f"{symbol}{amount:,.0f}"
 
 
 def _pair() -> tuple[str | None, str | None]:
@@ -50,14 +51,21 @@ if banner() is not None:
         else:
             product, market = body["product"], body["market"]
             st.subheader(f"{product['hs6']} – {product['description']} → {market['name']}")
-            suffix, unit = currency_choice()
+            show_caveats(body)
+            if body["tariff_caveat"]:
+                st.warning(body["tariff_caveat"])
+            averaged = body["gap_period_label"]
             st.markdown(
-                f"Baseline year {body['baseline_year']}: "
-                f"Export Potential **{_money(body[f'export_potential_{suffix}'], unit)}**, "
-                f"Actual Exports **{_money(body[f'actual_exports_{suffix}'], unit)}**, "
-                f"Export Gap **{_money(body[f'export_gap_{suffix}'], unit)}**."
+                f"{averaged[0].upper()}{averaged[1:]}: "
+                f"Export Potential **{format_usd(body['export_potential_usd'])}**, "
+                f"Actual Exports **{format_usd(body['actual_exports_usd'])}**, "
+                f"Export Gap **{format_usd(body['export_gap_usd'])}**. "
+                f"Opportunity Type: **{body['opportunity_type']}**. "
+                f"Baseline year {body['baseline_year']} Export Potential, which the factors below explain: "
+                f"**{format_usd(body['baseline_export_potential_usd'])}**."
             )
-            st.caption(rate_caption(body["gbp_rate"]))
+            potential_range_bar(body)
+            st.markdown(body["potential_range_text"])
             st.markdown(
                 "Each factor below is something the model associates with higher or lower UK exports "
                 "of this Product to this Market. These are associations the model has learned, not causes: "
@@ -93,12 +101,34 @@ if banner() is not None:
                 f"Computed with SHAP from fold model {body['fold']}, the same model that scored this pair's Baseline."
             )
 
-            st.subheader("UK Actual Exports, recent years")
+            st.subheader("Year by year")
             baseline_year = body["baseline_year"]
-            exports = {point["year"]: point[f"actual_exports_{suffix}"] for point in body["history"]}
-            years = range(baseline_year - 5, baseline_year + 1)
+            points = {point["year"]: point for point in body["history"]}
+            years = list(range(baseline_year - 5, baseline_year + 1))
+            empty = {
+                "actual_exports_usd": 0.0, "export_potential_usd": None, "export_gap_usd": None, "tariff_imputed": None
+            }
+            yearly = [points.get(year, empty) for year in years]
+            unit = usd_unit()
+            # Each year's Applied Tariff mark (ADR 0006); blank for a year with no row.
+            tariff_marks = {True: f"Carried forward from {labels()['last_tariff_year']}", False: "From tariff data"}
             st.dataframe(
-                pd.DataFrame({"Year": list(years), f"Actual Exports ({unit})": [exports.get(y, 0.0) for y in years]}),
+                pd.DataFrame(
+                    {
+                        "Year": years,
+                        f"Export Potential ({unit})": [p["export_potential_usd"] for p in yearly],
+                        f"Actual Exports ({unit})": [p["actual_exports_usd"] for p in yearly],
+                        f"Export Gap ({unit})": [p["export_gap_usd"] for p in yearly],
+                    },
+                    dtype=float,
+                ).astype({"Year": int}).assign(
+                    **{"Applied Tariff": [tariff_marks.get(p["tariff_imputed"], "") for p in yearly]}
+                ),
                 hide_index=True,
             )
-            st.caption(f"{baseline_year} figures are provisional. A year with no recorded UK exports shows 0.")
+            span = years_text(body["gap_years"])
+            st.caption(
+                f"The Export Gap above is the {averaged} of the yearly Export Gaps of {span}, the Gap Period; "
+                "each year's Export Potential is scored from that year's conditions. Earlier years show UK Actual "
+                f"Exports only. {baseline_year} figures are provisional. A year with no recorded UK exports shows 0."
+            )

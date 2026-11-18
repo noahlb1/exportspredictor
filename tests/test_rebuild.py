@@ -58,3 +58,18 @@ def test_the_notebook_step_runs_on_real_data():
     rebuild = _load_script()
 
     assert rebuild.STEPS[-1].env == {"EXPORTSPREDICTOR_FIXTURE_MODE": "0"}
+
+
+def test_the_real_build_trains_once_before_the_notebook_reads_it():
+    # The notebook reads the saved artefact on real data (#58), so the pipeline runs as its own step,
+    # after the ablation, the learning curve and the search it reads.
+    rebuild = _load_script()
+    modules = [step.command[2] for step in rebuild.STEPS if step.command[1:2] == ["-m"]]
+
+    order = ["exportspredictor.features", "exportspredictor.experiments", "exportspredictor.search",
+             "exportspredictor.pipeline", "jupyter"]
+    assert all(module in modules for module in order)
+    assert [module for module in modules if module in order] == sorted(
+        (m for m in modules if m in order), key=order.index
+    )
+    assert modules.index("exportspredictor.pipeline") == len(modules) - 2

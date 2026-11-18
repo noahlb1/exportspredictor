@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 from exportspredictor import artefacts as store
 from exportspredictor.evaluation import LIMITATIONS
 
-PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "5_Model_Evaluation.py"
+PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "6_Model_Evaluation.py"
 
 
 def _run(monkeypatch, url: str) -> AppTest:
@@ -55,6 +55,41 @@ def test_page_lists_every_known_limitation(page):
 
     for limitation in LIMITATIONS:
         assert limitation["title"] in text
+    # and those the artefact shows, the Potential Range's fixed dollar width included (spec story 44)
+    assert "The Potential Range is a fixed width in dollars" in text
+
+
+def test_page_shows_the_imputed_observed_tariff_split(page, fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    tables = [element.value for element in page.dataframe]
+    split = next(t for t in tables if "Applied Tariff" in t.columns)
+
+    assert list(split["Applied Tariff"]) == ["Observed", "Carried forward from 2021"]
+    imputed = report["accuracy"]["uk_out_of_fold"]["by_tariff"][1]["rows"]
+    assert list(split["Rows"]) == [0, imputed]
+    assert report["tariff_split_text"] in _text(page)
+
+
+def test_page_shows_the_potential_range_coverage(page, fixture_artefacts):
+    coverage = fixture_artefacts.evaluation["potential_range"]
+    tables = [element.value for element in page.dataframe]
+
+    assert "Potential Range" in _text(page)
+    assert f"{coverage['coverage']:.0%}" in _text(page) and f"{coverage['target']:.0%}" in _text(page)
+    assert any("Coverage" in t.columns and "Exporter" in t.columns for t in tables)
+
+
+def test_page_drops_no_tariffs_and_lists_v2s_limitations(page):
+    text = _text(page)
+
+    assert "No tariffs" not in text
+    for title in ["Tariffs carried forward from 2021", "Excluded Products", "Trained on the top 100 Exporters",
+                  "Values are nominal US dollars", "What the Potential Range assumes"]:
+        assert title in text, title
+
+
+def test_page_says_how_the_event_backtest_sets_the_tariff(page, fixture_artefacts):
+    assert fixture_artefacts.evaluation["event_backtest"]["events"][0]["states"] in _text(page)
 
 
 def test_page_states_the_test_year_and_how_the_models_were_trained(page):
@@ -88,6 +123,19 @@ def test_page_shows_lift_with_its_interval_as_a_tendency(page, fixture_artefacts
 
     assert lift["text"] in _text(page)
     assert "Lift" in _text(page)
+
+
+def test_page_shows_size_matched_lift_next_to_raw_lift_and_explains_the_difference(page, fixture_artefacts):
+    lift = fixture_artefacts.evaluation["lift"]
+    tables = [element.value for element in page.dataframe]
+    figures = next(t for t in tables if "Lift" in t.columns and "95% interval" in t.columns)
+    text = _text(page)
+
+    assert list(figures["Measure"]) == ["Raw Lift", "Size-matched Lift"]
+    assert list(figures["Lift"]) == [pytest.approx(lift["lift"]), pytest.approx(lift["size_matched"]["lift"])]
+    assert "mostly reflects pair size" in text
+    assert "tendency" in text
+    assert "2021–2022" in text  # the Gap Period the Export Gaps are averaged over
 
 
 def test_page_shows_the_event_backtest_predicted_against_observed_with_its_control_group(page, fixture_artefacts):
