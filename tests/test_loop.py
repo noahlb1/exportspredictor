@@ -280,3 +280,62 @@ def test_select_on_ranking_trains_at_most_one_model_per_new_configuration_and_re
         assert row["status"] in {"kept", "dropped"}
     assert rows["v1"]["settings"]["params"]["max_depth"] == 8
     assert rows["depth 6"]["settings"]["params"] == {"max_depth": 6, "eta": 0.3}
+
+
+# --- #72: the two-part model ---------------------------------------------------------------------
+
+
+def test_the_two_part_arm_runs_through_the_loop_and_returns_a_result_row(data):
+    results = loop.Loop(data, loop.FIXTURE_LOOP).run_experiment(loop.TWO_PART_EXPERIMENT, [loop.two_part_arm()])
+
+    row = results["experiments"][loop.TWO_PART_EXPERIMENT]["arms"][0]
+    assert row["trained"] is True and row["settings"]["two_part"] is True
+    assert MEASURES <= set(row)
+    assert -1 <= row["selection_measure"] <= 1
+    assert row["status"] in {"kept", "dropped"}
+    assert row["settings"]["naive_weight"] in loop.BLEND_WEIGHTS
+    for part in ("any_flow", "size"):
+        assert row["parts"][part]["rounds"] >= 1
+
+
+def test_no_uk_pair_is_scored_by_a_part_that_trained_on_it(data, monkeypatch):
+    # Two folds: fold 0's UK pairs are scored, so neither part may see them; fold 1's train both.
+    plan = replace(loop.FIXTURE_LOOP, n_folds=2)
+    trained_on = []
+    original = loop.training_matrix
+
+    def spy(chunks, prepare=None, **kwargs):
+        if prepare is not None:
+            trained_on.append(pl.concat([prepare(features_of(c)) for c in chunks]))
+        return original(chunks, prepare, **kwargs)
+
+    def features_of(chunk):
+        return chunk if isinstance(chunk, pl.DataFrame) else pl.read_parquet(chunk)
+
+    monkeypatch.setattr(loop, "training_matrix", spy)
+    lp = loop.Loop(data, plan)
+    lp.run_arm(loop.two_part_arm(), plan.start)  # one arm, no noise floor: two folds are too few to rank
+
+    scored = set(lp.grid.select("importer", "hs6").iter_rows())
+    assert scored
+    any_flow, size = trained_on  # the binary part, then the size part
+    assert set(any_flow["value_usd"].unique()) <= {0.0, 1.0}
+    assert (size["value_usd"] > 0).all()
+    for rows in (any_flow, size):
+        uk = rows.filter(pl.col("exporter").cast(pl.String) == plan.uk)
+        assert uk.height  # the other fold's UK pairs do train
+        assert not scored & set(uk.select("importer", "hs6").iter_rows())
+
+
+def test_adding_a_trade_agreement_never_lowers_the_two_part_export_potential(data):
+    lp = loop.Loop(data, loop.FIXTURE_LOOP)
+    results = lp.run_experiment(loop.TWO_PART_EXPERIMENT, [loop.two_part_arm()])
+    settings = loop.Settings.from_dict(results["experiments"][loop.TWO_PART_EXPERIMENT]["arms"][0]["settings"])
+    agreement = lp.grid["trade_agreement"].dtype
+
+    for weight in (0.0, settings.naive_weight):  # the two-part model alone and as blended
+        scored = replace(settings, naive_weight=weight)
+        off = lp.export_potential(scored, lp.grid.with_columns(trade_agreement=pl.lit(0, agreement)))
+        on = lp.export_potential(scored, lp.grid.with_columns(trade_agreement=pl.lit(1, agreement)))
+        assert (off > 0).all()
+        assert (on >= off * (1 - 1e-6)).all()
