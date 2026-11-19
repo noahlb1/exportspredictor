@@ -49,7 +49,7 @@ COLUMN_SETS = {
     ],
     "Everything (15)": None,
 }
-SMALL_RULES = ["<0.1", "0.0", "Second decimal"]
+SMALL_RULES = ["0.0", "<0.1", "Second decimal"]
 # The split view's wide table: everything except Type, Potential Range, HS6, Sector and Region,
 # which stay one click away in the table's Show/hide columns menu.
 WIDE_COLUMNS = [
@@ -257,19 +257,19 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
         )
     st.caption(
         f"Amounts are **$ millions** ({labels()['usd_unit']}), {averaged}. "
-        "Select a row to see which factors raised or lowered its Export Potential. "
+        "Click any value in a row to see which factors raised or lowered its Export Potential. "
         "More columns: the table's toolbar, *Show/hide columns*."
     )
     event = st.dataframe(
         table, hide_index=True, height=height, column_order=columns, column_config=config,
-        on_select="rerun", selection_mode="single-row", key=key,
+        on_select="rerun", selection_mode="single-cell", key=key,
     )
     full = raw.drop(columns=["flagged_product", "reexport_hub", "uncertain_opportunity"], errors="ignore")
     st.download_button(
         "Download CSV (full dollars, every column)", full.to_csv(index=False), "leaderboard.csv", "text/csv",
         key=f"csv_{key}",
     )
-    picked = event.selection.rows
+    picked = [cell[0] for cell in event.selection.cells]  # any cell selects its row; no tick-box column
     return rows[picked[0]] if picked else None
 
 
@@ -293,6 +293,26 @@ def detail(row: dict) -> None:
         "Blocked Opportunity value": format_usd(row["blocked_opportunity_value_usd"]),
     }
     st.dataframe(pd.DataFrame({"": list(facts), " ": list(facts.values())}), hide_index=True)
+    st.caption(OPPORTUNITY_TYPE_HELP)
+
+    # The Barrier, for a pair with no UK Trade Agreement.
+    value, baseline = row["blocked_opportunity_value_usd"], body["baseline_export_potential_usd"]
+    tariff = next((f["value_text"] for f in body["factors"] if "tariff" in f["label"].lower()), None)
+    if not row["trade_agreement"]:
+        share = f" ({value / baseline:.0%} of its Baseline Export Potential)" if baseline else ""
+        barrier = (
+            f"**The Barrier:** no UK Trade Agreement is in force with {row['market']}"
+            + (f", and the Applied Tariff is {tariff}" if tariff else "")
+            + f". The model associates adding a Trade Agreement and removing the tariff with "
+            f"**{format_usd(value)}** more Export Potential{share}. "
+            f"{labels()['illustrative']['badge']}: an upper-end association, not a forecast."
+        )
+        if row["blocked_opportunity"]:
+            st.warning("**Blocked Opportunity.** " + barrier)
+        else:
+            st.info(barrier + " That is too small to count as a Blocked Opportunity (at least 20% and $1m).")
+    else:
+        st.caption(f"Not blocked: a UK Trade Agreement is in force with {row['market']}.")
 
     st.markdown("**What raised or lowered its Export Potential**")
     factors = pd.DataFrame(body["factors"][:8])
@@ -445,7 +465,7 @@ def variant_c(columns, rule) -> dict:
     if view == "Wide table":
         # The same table key as the split view, so a selected row survives the swap.
         del columns  # the wide table has its own settled set
-        row = ranking_table(body, columns=WIDE_COLUMNS, rule=rule, height=560, key="table_c")
+        row = ranking_table(body, columns=WIDE_COLUMNS, rule=rule, height=390, key="table_c")
         if row:
             with st.container(border=True):
                 detail(row)
@@ -455,8 +475,12 @@ def variant_c(columns, rule) -> dict:
         row = ranking_table(body, columns=["Product", "Market", "Export Gap"], rule=rule, height=700, key="table_c")
     with detail_side, st.container(border=True, height=780):  # longer than the page: it scrolls on its own
         if row is None:
-            st.caption("The top pair is shown until you select a row.")
-        detail(row or body["opportunities"][0])
+            st.markdown(
+                "**Why?** Click any value in a row to see what the model associates with its Export Potential, "
+                "how its exports have moved year by year, and whether a Barrier holds it back."
+            )
+        else:
+            detail(row)
     return params
 
 
