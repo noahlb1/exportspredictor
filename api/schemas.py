@@ -338,6 +338,96 @@ class Limitation(BaseModel):
     text: str
 
 
+class ModelFormOut(BaseModel):
+    form: str  # "blend" or "model alone"
+    naive_weight: float  # the Naive Baseline's weight on the log scale
+    text: str
+
+
+class ExperimentOut(BaseModel):
+    name: str
+    kept: str | None = None  # the kept Arm, None if every Arm was dropped
+    best_arm: str | None = None
+    selection_measure: float | None = None  # the best Arm's
+    change: float | None = None  # the best Arm's change on the best so far
+
+
+class ConfirmationFold(BaseModel):
+    fold: int
+    winner: float
+    v2: float
+
+
+class Confirmation(BaseModel):
+    """The five-fold confirmation of the chosen form against v2's (the model alone)."""
+
+    n_folds: int
+    winner: float
+    v2: float
+    naive: float
+    difference: float
+    win_threshold: float
+    beats_v2: bool
+    folds: list[ConfirmationFold]
+
+
+class EarlierVersion(BaseModel):
+    model_config = ConfigDict(extra="allow")  # v2's artefact version
+
+    name: str
+    uk_ranking: float | None = None
+    lift: float | None = None
+    size_matched_lift: float | None = None
+    tweedie_deviance_all_exporters: float | None = None
+    tweedie_deviance_uk: float | None = None
+
+
+class TestYearRanking(BaseModel):
+    """The test year's UK ranking beside the Naive Baseline and earlier versions' headline figures."""
+
+    test_year: int
+    rows: list[EarlierVersion]  # this version first
+    naive: list[EarlierVersion]
+    beats_naive: bool
+    text: str
+
+
+class TradedAway(BaseModel):
+    """What choosing on the ranking cost in the size of Export Potential (`model_choice.traded_away`)."""
+
+    deviance: float
+    earlier_deviance: float
+    earlier_name: str
+    size_matched_lift: float | None = None
+    earlier_size_matched_lift: float | None = None
+    text: str
+
+
+class EventBacktestNote(BaseModel):
+    """With a Blend served: the Event Backtests measured the model alone; served Scenario Effects are smaller."""
+
+    model_weight: float
+    model_effect: float | None = None
+    served_effect: float | None = None
+    text: str
+
+
+class ModelChoice(BaseModel):
+    """How the served model was chosen (ADR 0008), read from the artefact (`model_choice.how_chosen`)."""
+
+    recorded: bool  # False when the artefact records no experiment results
+    model_form: ModelFormOut
+    selection_measure: str | None = None
+    validation_year: int | None = None
+    noise_floor_sd: float | None = None
+    win_threshold: float | None = None
+    experiments: list[ExperimentOut]
+    confirmation: Confirmation | None = None
+    text: str
+    test_year: TestYearRanking | None = None
+    traded_away: TradedAway | None = None
+
+
 class Evaluation(BaseModel):
     """The evaluation artefact. Later checks (Lift, the Event Backtest) add their own fields."""
 
@@ -360,6 +450,8 @@ class Evaluation(BaseModel):
     stability: Stability
     lift: Lift | None = None
     event_backtest: EventBacktest | None = None
+    model_choice: ModelChoice
+    event_backtest_note: EventBacktestNote | None = None
     not_run: list[NotRun] = []  # the opt-in parts skipped by the run that built this version
     limitations: list[Limitation]
 

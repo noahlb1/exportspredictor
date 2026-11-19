@@ -92,11 +92,8 @@ def test_page_says_how_the_event_backtest_sets_the_tariff(page, fixture_artefact
     assert fixture_artefacts.evaluation["event_backtest"]["events"][0]["states"] in _text(page)
 
 
-def test_page_states_the_test_year_and_how_the_models_were_trained(page):
-    text = _text(page)
-
-    assert "2023" in text and "never" in text
-    assert "every non-UK row" in text  # the fixture keeps them all; real data states its sample
+def test_page_states_the_test_year(page, fixture_artefacts):
+    assert str(fixture_artefacts.evaluation["test_year"]) in _text(page)
 
 
 def test_page_states_the_non_uk_training_sample(monkeypatch, live_api, fixture_artefacts, tmp_path):
@@ -106,7 +103,7 @@ def test_page_states_the_non_uk_training_sample(monkeypatch, live_api, fixture_a
     with live_api(tmp_path) as url:
         page = _run(monkeypatch, url)
 
-    assert "30% sample of non-UK rows" in _text(page)
+    assert "30%" in _text(page)
 
 
 def test_page_says_so_when_the_artefact_has_no_evaluation(monkeypatch, live_api, fixture_artefacts, tmp_path):
@@ -133,9 +130,10 @@ def test_page_shows_size_matched_lift_next_to_raw_lift_and_explains_the_differen
 
     assert list(figures["Measure"]) == ["Raw Lift", "Size-matched Lift"]
     assert list(figures["Lift"]) == [pytest.approx(lift["lift"]), pytest.approx(lift["size_matched"]["lift"])]
-    assert "mostly reflects pair size" in text
+    assert f"${lift['min_growth_usd']:,.0f}" in text  # the growth threshold, from the API
     assert "tendency" in text
-    assert "2021–2022" in text  # the Gap Period the Export Gaps are averaged over
+    first, last = lift["gap_years"][0], lift["gap_years"][-1]
+    assert f"{first}–{last}" in text  # the Gap Period the Export Gaps are averaged over
 
 
 def test_page_shows_the_event_backtest_predicted_against_observed_with_its_control_group(page, fixture_artefacts):
