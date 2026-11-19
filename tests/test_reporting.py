@@ -154,3 +154,36 @@ def test_the_provenance_names_the_version_and_its_source(fixture_artefacts):
 
     assert fixture_artefacts.version in text
     assert "source: fixture" in text
+
+
+def test_the_round_count_of_a_version_built_by_the_loop_was_chosen_on_the_selection_measure(fixture_artefacts):
+    scaling = fixture_artefacts.metadata["round_scaling"]
+
+    table = reporting.round_count(fixture_artefacts)
+
+    served = table.row(0, named=True)
+    assert served["model"] == "served"
+    assert served["chosen_on"] == "Selection Measure"
+    assert (served["rounds_chosen"], served["rounds_trained"]) == (scaling["selected_rounds"], scaling["rounds"])
+    assert table.filter(model="next rebuild")["rounds_chosen"].to_list() == [scaling["selected_rounds"]]
+
+
+def test_a_version_trained_at_the_searchs_round_count_discloses_that_deviance_chose_it(fixture_artefacts):
+    # The served artefact's shape (20261118T185910Z): the search's 1,198 rounds, scaled to 1,453, and a
+    # five-fold confirmation whose per-fold rounds the next rebuild takes the median of.
+    record = fixture_artefacts.metadata["ranking_experiments"]
+    confirmed = {"settings": {"winner": record["best"]["settings"]}, "winner": {"rounds": [951, 1075, 1097, 1303, 1120]}}
+    metadata = {
+        **fixture_artefacts.metadata,
+        "rounds": 1453,
+        "round_scaling": {"tuned_rounds": 1198, "ratio": 1.2127, "rounds": 1453},
+        "ranking_experiments": {**record, "confirmation": confirmed},
+    }
+
+    table = reporting.round_count(replace(fixture_artefacts, metadata=metadata))
+
+    assert table.to_dicts() == [
+        {"model": "served", "chosen_on": "Tweedie deviance (the hyperparameter search)", "rounds_chosen": 1198,
+         "rounds_trained": 1453},
+        {"model": "next rebuild", "chosen_on": "Selection Measure", "rounds_chosen": 1097, "rounds_trained": None},
+    ]
