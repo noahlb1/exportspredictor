@@ -9,9 +9,15 @@ that cut across layouts: which columns show by default, and what a pair under $5
     C  Split view                       filters in the sidebar; a three-column table beside an always-open detail
     today                               the current page, for comparison
 
+Run it (PowerShell, from this worktree; the API must be up on :8000):
+
+    $env:EXPORTSPREDICTOR_PROTOTYPE = "1"; ./scripts/wt.ps1 streamlit run app/Home.py
+
 No API change: a chosen Product reads the existing by-Product ranking, and Sector names are a
 hard-coded list here. Both would move to the API in the real thing.
 """
+
+import os
 
 import pandas as pd
 import streamlit as st
@@ -391,6 +397,8 @@ def switcher() -> tuple[str, list[str] | None, str]:
 
 def render() -> bool:
     """Draw the chosen variant. False means: draw today's page instead."""
+    if not os.environ.get("EXPORTSPREDICTOR_PROTOTYPE"):  # off unless asked for, so the app tests see today's page
+        return False
     variant, columns, rule = switcher()
     if variant == "today":
         return False
