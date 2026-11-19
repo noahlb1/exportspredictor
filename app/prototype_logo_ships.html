@@ -1,0 +1,133 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway (wayfinder ticket #97): never merge. Double-click to open; left and right arrow keys flick through the marks. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Container ship marks: UK Exports Predictor</title>
+<style>
+  :root { --blue: #2a78d6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 "Segoe UI", Arial, sans-serif; background: #eceef2; color: #1f2430; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 24px; }
+  header h1 { font-size: 20px; margin: 0; flex: 1; }
+  header h1 small { font-weight: 400; color: #5b6272; font-size: 14px; margin-left: 10px; }
+  button { font: inherit; border: 1px solid #b9bfcc; background: #fff; border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+  button:hover { border-color: var(--blue); }
+  .count { color: #5b6272; min-width: 56px; text-align: center; }
+  .stage { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 0 24px; border-radius: 14px; overflow: hidden; border: 1px solid #c9cedb; }
+  .panel { padding: 28px 32px 32px; }
+  .light { background: #ffffff; color: #1f2430; }
+  .dark { background: #171614; color: #f4f5f7; }
+  .panel h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; opacity: .6; margin: 0 0 18px; }
+  .big { display: flex; gap: 28px; align-items: center; }
+  .row { display: flex; gap: 18px; align-items: center; margin-top: 24px; flex-wrap: wrap; }
+  .label { font-size: 12px; opacity: .6; width: 92px; }
+  .tile { background: var(--blue); color: #fff; border-radius: 22%; display: inline-flex; }
+  .bare { color: var(--blue); display: inline-flex; }
+  .dark .bare { color: #5b9dea; } /* the blue, lightened so a bare mark stays readable on dark */
+  svg { display: block; width: 100%; height: 100%; }
+  .wordmark { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 600; }
+  .tab { display: inline-flex; align-items: center; gap: 8px; border: 1px solid #8885; border-bottom: 0; border-radius: 9px 9px 0 0; padding: 6px 14px; font-size: 13px; }
+  .strip { display: flex; gap: 10px; padding: 18px 24px 8px; flex-wrap: wrap; }
+  .thumb { width: 64px; height: 64px; padding: 0; border: 3px solid transparent; border-radius: 16px; background: none; }
+  .thumb.on { border-color: #1f2430; }
+  .thumb .tile { width: 100%; height: 100%; }
+  .idea { padding: 4px 24px 0; color: #454b59; min-height: 26px; }
+  footer { padding: 8px 24px 24px; color: #5b6272; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span id="name"></span><small id="key"></small></h1>
+  <button id="prev" aria-label="Previous mark">←</button>
+  <span class="count" id="count"></span>
+  <button id="next" aria-label="Next mark">→</button>
+</header>
+<div class="idea" id="idea"></div>
+<div class="strip" id="strip"></div>
+<div class="stage">
+  <div class="panel light"></div>
+  <div class="panel dark"></div>
+</div>
+<footer>Blue <code>#2a78d6</code>. "Tile" is a white mark on a blue square; "bare" is the mark alone. Use ← and → or click a thumbnail. The address keeps the mark (<code>#3</code>), so a reload stays put.</footer>
+
+<script>
+// Each mark is drawn on a 64 x 64 canvas in one ink (currentColor); o=".45" parts are the same ink, fainter.
+const S = 'fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"';
+const LENS = `<circle cx="27" cy="27" r="16" ${S} stroke-width="5"/><path d="M40 40l14 14" ${S} stroke-width="7"/>`;
+const F = 'fill="currentColor"';
+const R = 'fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round"'; // filled, with softened corners
+const HULL = `<path d="M7 42h50l-7 10H13z" ${R}/>`;
+const WAVE = `<path d="M7 60q4-3 8.300 0t8.300 0 8.300 0 8.300 0 8.300 0 8.300 0" ${S} stroke-width="2.500" opacity=".5"/>`;
+const box = (x, y, w, h, o) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1.500" ${F}${o ? ` opacity="${o}"` : ""}/>`;
+const STACK = box(21, 30, 9.500, 7.500, ".55") + box(32.500, 30, 9.500, 7.500, ".55") + box(44, 30, 9.500, 7.500, ".55")
+  + box(21, 20.500, 9.500, 7.500, ".55") + box(32.500, 20.500, 9.500, 7.500);
+const BRIDGE = `<path d="M9 38V26.500a1.500 1.500 0 0 1 1.500-1.500h5a1.500 1.500 0 0 1 1.500 1.500V38z" ${F}/>`;
+const MARKS = [
+  { name: "Profile", idea: "The ship side-on: a raked bow, the bridge at the stern, a stepped stack with one container picked out.",
+    svg: `<g transform="translate(0 -3)">${HULL}${BRIDGE}${STACK}${WAVE}</g>` },
+  { name: "Profile, no waves", idea: "The same ship without the water line: fewer parts, cleaner at small sizes.",
+    svg: `<g transform="translate(0 4)">${HULL}${BRIDGE}${STACK}</g>` },
+  { name: "Rising cargo", idea: "The stack as a rising bar chart: the ship carries the potential. The tallest bar is the Opportunity.",
+    svg: `<path d="M5 41h54c-2 7-6.500 11-13 11H16C10.500 52 6.500 48 5 41z" ${R}/>`
+      + [0, 1, 2, 3, 4, 5].map((i) => `<rect x="${12 + i * 7}" y="${32 - i * 4}" width="5" height="${5.500 + i * 4}" rx="1.200" ${F}${i < 5 ? ' opacity=".55"' : ""}/>`).join("") },
+  { name: "Bow-on", idea: "The ship coming toward you: symmetrical, so it sits well in a square.",
+    svg: `<path d="M13 40h38l-5 11q-14 6-28 0z" ${R}/>`
+      + box(15.500, 28, 10, 8, ".55") + box(27, 28, 10, 8, ".55") + box(38.500, 28, 10, 8, ".55")
+      + box(15.500, 18, 10, 8, ".55") + box(27, 18, 10, 8) + box(38.500, 18, 10, 8, ".55")
+      + `<path d="M5 55q4-3 8 0M51 55q4-3 8 0" ${S} stroke-width="2.500" opacity=".5"/>` },
+  { name: "Pyramid", idea: "Three containers and one on top, on a round-bottomed hull: the plainest, most icon-like version.",
+    svg: `<path d="M7 43h50a11 11 0 0 1-11 10H18A11 11 0 0 1 7 43z" ${R}/>`
+      + box(11, 27, 12, 12, ".55") + box(26, 27, 12, 12, ".55") + box(41, 27, 12, 12, ".55") + box(26, 12, 12, 12) },
+  { name: "Line drawing", idea: "The ship in outline only, one container filled in.",
+    svg: `<path d="M6 42h52l-7 11H13z" ${S} stroke-width="4"/>`
+      + `<rect x="13.500" y="28" width="9" height="8" rx="1.500" ${S} stroke-width="3"/><rect x="27.500" y="28" width="9" height="8" rx="1.500" ${S} stroke-width="3"/><rect x="41.500" y="28" width="9" height="8" rx="1.500" ${S} stroke-width="3"/>`
+      + `<rect x="20.500" y="15" width="9" height="8" rx="1.500" ${S} stroke-width="3"/><rect x="34.500" y="15" width="9" height="8" rx="1.500" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>` },
+  { name: "On the curve of the globe", idea: "The ship riding the horizon of a globe: goods trade and the world in one mark.",
+    svg: `<g transform="translate(5.500 -1) scale(.82)">${HULL}${BRIDGE}${STACK}</g><path d="M3 60q29-15 58 0" ${S} stroke-width="4" opacity=".5"/>` },
+  { name: "With a spark", idea: "The ship with a point of light over the container picked out: an Opportunity found.",
+    svg: `<g transform="translate(0 5)">${HULL}${BRIDGE}${STACK}</g><path d="M49 6c1 4.800 2.200 6 7 7-4.800 1-6 2.200-7 7-1-4.800-2.200-6-7-7 4.800-1 6-2.200 7-7z" ${F}/>` },
+  { name: "In a ring", idea: "The ship inside a ring, like a porthole or a seal.",
+    svg: `<circle cx="32" cy="32" r="27" ${S} stroke-width="3.500" opacity=".5"/><g transform="translate(9.500 6) scale(.7)">${HULL}${BRIDGE}${STACK}${WAVE}</g>` },
+  { name: "Under the lens", idea: "The ship found by a magnifying glass: searching and goods trade together.",
+    svg: `${LENS}<g transform="translate(13.500 12) scale(.42)">${HULL}${BRIDGE}${STACK}</g>` },
+];
+
+const svg = (m) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">${m.svg}</svg>`;
+const frame = (m, cls, px) => `<span class="${cls}" style="width:${px}px;height:${px}px" title="${px}px">${svg(m)}</span>`;
+const panel = (m, title) => `
+  <h2>${title}</h2>
+  <div class="big">${frame(m, "tile", 160)}${frame(m, "bare", 160)}</div>
+  <div class="row"><span class="label">Tile, small</span>${[64, 32, 24, 16].map((px) => frame(m, "tile", px)).join("")}</div>
+  <div class="row"><span class="label">Bare, small</span>${[64, 32, 24, 16].map((px) => frame(m, "bare", px)).join("")}</div>
+  <div class="row"><span class="label">With the name</span><span class="wordmark">${frame(m, "tile", 34)}UK Exports Predictor</span></div>
+  <div class="row"><span class="label"></span><span class="wordmark">${frame(m, "bare", 34)}UK Exports Predictor</span></div>
+  <div class="row"><span class="label">Browser tab</span><span class="tab">${frame(m, "tile", 16)}UK Exports Predictor</span><span class="tab">${frame(m, "bare", 16)}UK Exports Predictor</span></div>`;
+
+let at = Math.min(Math.max((parseInt(location.hash.slice(1), 10) || 1) - 1, 0), MARKS.length - 1);
+const strip = document.getElementById("strip");
+strip.innerHTML = MARKS.map((m, i) => `<button class="thumb" data-i="${i}" title="${i + 1}. ${m.name}"><span class="tile">${svg(m)}</span></button>`).join("");
+
+function show(i) {
+  at = (i + MARKS.length) % MARKS.length;
+  const m = MARKS[at];
+  document.getElementById("name").textContent = m.name;
+  document.getElementById("key").textContent = `mark ${at + 1}`;
+  document.getElementById("idea").textContent = m.idea;
+  document.getElementById("count").textContent = `${at + 1} of ${MARKS.length}`;
+  document.querySelector(".light").innerHTML = panel(m, "Light");
+  document.querySelector(".dark").innerHTML = panel(m, "Dark");
+  strip.querySelectorAll(".thumb").forEach((t, n) => t.classList.toggle("on", n === at));
+  history.replaceState(null, "", `#${at + 1}`);
+}
+document.getElementById("prev").onclick = () => show(at - 1);
+document.getElementById("next").onclick = () => show(at + 1);
+strip.onclick = (e) => { const t = e.target.closest(".thumb"); if (t) show(+t.dataset.i); };
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowLeft") show(at - 1);
+  if (e.key === "ArrowRight") show(at + 1);
+});
+show(at);
+</script>
+</body>
+</html>
