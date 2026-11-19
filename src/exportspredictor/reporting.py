@@ -15,7 +15,7 @@ from html import escape
 
 import polars as pl
 
-from exportspredictor import model_choice, ppml
+from exportspredictor import loop, model_choice, ppml
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.evaluation import NOT_RUN
 
@@ -149,6 +149,37 @@ def confirmation(bundle: Artefacts) -> pl.DataFrame | NotRun:
     return pl.DataFrame(rows, schema={"fold": pl.String, "winner": pl.Float64, "v2": pl.Float64}).with_columns(
         difference=pl.col("winner") - pl.col("v2"), win_threshold=pl.lit(confirmed["win_threshold"], dtype=pl.Float64)
     )
+
+
+def round_count(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """How many boosting rounds the served fold models trained, and what chose them, beside the count the
+    next rebuild takes from the Selection Measure (`loop.served_configuration`).
+
+    A version whose `round_scaling` records `tuned_rounds` was trained at the hyperparameter search's
+    early-stopped count, which Tweedie deviance chose; one built from the experiment loop records
+    `selected_rounds`. Both are scaled to the fold models' rows (`rounds_trained`)."""
+    scaling = bundle.metadata.get("round_scaling")
+    record = bundle.metadata.get("ranking_experiments")
+    if not scaling or not record or not record.get("best"):
+        return NotRun("The round count")
+    from_search = "selected_rounds" not in scaling
+    rows = [
+        {
+            "model": "served",
+            "chosen_on": "Tweedie deviance (the hyperparameter search)" if from_search else "Selection Measure",
+            "rounds_chosen": scaling["tuned_rounds"] if from_search else scaling["selected_rounds"],
+            "rounds_trained": scaling["rounds"],
+        },
+        {
+            "model": "next rebuild",
+            "chosen_on": "Selection Measure",
+            "rounds_chosen": loop.served_configuration(record).rounds,
+            "rounds_trained": None,
+        },
+    ]
+    return pl.DataFrame(rows, schema={
+        "model": pl.String, "chosen_on": pl.String, "rounds_chosen": pl.Int64, "rounds_trained": pl.Int64,
+    })
 
 
 def lift_by_tenth(bundle: Artefacts) -> Chart | NotRun:
