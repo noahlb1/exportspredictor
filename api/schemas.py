@@ -189,6 +189,8 @@ class BlockedOpportunities(Leaderboard):
     rank_by: Literal[BLOCKED.name]
     order: RankOrderOut  # the order's title and (associational) description, for the page caption
     summary: BlockedSummary
+    # Blocked Opportunity values are Illustrative: the same note as the Scenario response, defined below
+    note: "ScenarioNote"
 
 
 class ProductOpportunities(_Ranking):
@@ -654,3 +656,6 @@ class Explanation(BaseModel):
     # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
     # years with UK Actual Exports only
     history: list[HistoryOut]
+
+
+BlockedOpportunities.model_rebuild()  # resolves `note`, whose ScenarioNote is defined after it

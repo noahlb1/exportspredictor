@@ -22,7 +22,8 @@ _VALUES = {
     "export_gap": "Export Gap",
     "blocked_opportunity_value": "Blocked Opportunity value",
 }
-# The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's.
+# The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's, and its
+# heading says it is illustrative instead.
 _GAP_PERIOD_MEANS = ("export_potential", "actual_exports", "export_gap")
 ROWS_SHOWN = 500  # the top of a Leaderboard-style ranking sent to the page; its summary covers every filtered pair
 # The row fields that name each row of the Leaderboard and the Blocked Opportunities page, and their headings.
@@ -269,7 +270,8 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     """The ranking table in nominal USD, with caveat badges, a Why? link per row and a CSV export.
 
     Export Potential, Actual Exports, Export Gap and the Relative Export Gap are Gap Period
-    means, labelled as such (e.g. "Export Gap, 2022–2024 average (USD, nominal)"); each row
+    means, labelled as such (e.g. "Export Gap, 2022–2024 average (USD, nominal)"), and the Blocked
+    Opportunity value is labelled illustrative (ADR 0008); each row
     shows its Opportunity Type and its Potential Range as "low–high".
 
     `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
@@ -287,10 +289,8 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     table["Opportunity Type"] = raw["opportunity_type"]
     table["UK Trade Agreement in force"] = raw["trade_agreement"].map({True: "Yes", False: "No"})
     averaged, unit = body["gap_period_label"], usd_unit()
-    headings = {
-        field: f"{heading}, {averaged} ({unit})" if field in _GAP_PERIOD_MEANS else f"{heading} ({unit})"
-        for field, heading in _VALUES.items()
-    }
+    qualifiers = {field: averaged for field in _GAP_PERIOD_MEANS} | {"blocked_opportunity_value": illustrative()}
+    headings = {field: f"{heading}, {qualifiers[field]} ({unit})" for field, heading in _VALUES.items()}
     for field, heading in headings.items():
         table[heading] = raw[f"{field}_usd"]
     relative = f"Relative Export Gap, {averaged}"
