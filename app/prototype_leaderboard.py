@@ -260,8 +260,21 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
         "Click any value in a row to see which factors raised or lowered its Export Potential. "
         "More columns: the table's toolbar, *Show/hide columns*."
     )
-    event = st.dataframe(
-        table, hide_index=True, height=height, column_order=columns, column_config=config,
+    # Streamlit highlights only the clicked cell, so the whole row is tinted here. The clicked pair is
+    # remembered, so the row stays selected even if the restyled table drops its own selection.
+    pairs = [(r["hs6"], r["iso3"]) for r in rows]
+    cells = (st.session_state.get(key) or {}).get("selection", {}).get("cells", [])
+    if cells and cells[0][0] < len(rows):
+        st.session_state[f"{key}_pair"] = pairs[cells[0][0]]
+    chosen = st.session_state.get(f"{key}_pair")
+    at = pairs.index(chosen) if chosen in pairs else None
+    tint = "background-color: rgba(42, 120, 214, 0.28); font-weight: 600"
+    styled = table.style.apply(lambda r: [tint if r.name == at else ""] * len(r), axis=1)
+    if rule != "<0.1":
+        styled = styled.format({heading: "{:,." + number[2] + "f}" for heading in money})
+    styled = styled.format({"Relative Export Gap": "{:.0%}"}, na_rep="n/a")
+    st.dataframe(
+        styled, hide_index=True, height=height, column_order=columns, column_config=config,
         on_select="rerun", selection_mode="single-cell", key=key,
     )
     full = raw.drop(columns=["flagged_product", "reexport_hub", "uncertain_opportunity"], errors="ignore")
@@ -269,8 +282,8 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
         "Download CSV (full dollars, every column)", full.to_csv(index=False), "leaderboard.csv", "text/csv",
         key=f"csv_{key}",
     )
-    picked = [cell[0] for cell in event.selection.cells]  # any cell selects its row; no tick-box column
-    return rows[picked[0]] if picked else None
+
+    return rows[at] if at is not None else None
 
 
 def detail(row: dict) -> None:
@@ -315,6 +328,7 @@ def detail(row: dict) -> None:
         st.caption(f"Not blocked: a UK Trade Agreement is in force with {row['market']}.")
 
     st.markdown("**What raised or lowered its Export Potential**")
+    label_colour = "#e6e6e6" if st.context.theme.type == "dark" else "#222222"  # Vega text is black by default
     factors = pd.DataFrame(body["factors"][:8])
     factors = factors[factors["direction"] != "no effect"]
     factors["effect"] = [f"×{m:,.2f}" for m in factors["multiplier"]]
@@ -346,7 +360,7 @@ def detail(row: dict) -> None:
                         },
                     },
                 },
-                {"mark": {"type": "text", "align": "left", "dx": 4}, "encoding": {"text": {"field": "effect"}}},
+                {"mark": {"type": "text", "align": "left", "dx": 4, "color": label_colour}, "encoding": {"text": {"field": "effect"}}},
             ],
         },
         width="stretch",
