@@ -1,21 +1,24 @@
 """The notebook's charts and tables, one per main result, read from a loaded artefact (spec #66).
 
-Each function takes an `Artefacts` and returns a `Chart` (a static SVG image with the rows it
-draws), a small table, or `NotRun` where the artefact does not record that part. Nothing here
-trains, fits or recomputes a result: every figure is read from what the artefact records (its
+Each function takes an `Artefacts` and returns a `Chart` (a static image with the rows it draws),
+a small table, or `NotRun` where the artefact does not record that part. Nothing here trains,
+fits or recomputes a result: every figure is read from what the artefact records (its
 evaluation report, the experiment loop's results in `metadata["ranking_experiments"]` and the
 saved PPML benchmark). The notebook calls these and defines no functions of its own.
 
-Charts are SVG so that they render as images on GitHub without a plotting dependency.
+Charts are drawn with matplotlib and saved as SVG, which GitHub renders as an image. Text stays
+text, so each chart is a few kilobytes in the committed notebook.
 """
 
-import math
+import io
 import re
+import textwrap
 from dataclasses import dataclass
-from html import escape
 from pathlib import Path
 
+import matplotlib
 import polars as pl
+from matplotlib.figure import Figure
 
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
@@ -32,7 +35,7 @@ GRID = "#d9d8d4"
 
 @dataclass(frozen=True)
 class Chart:
-    """A static chart: its title, the rows it draws and the SVG image of them."""
+    """A static chart: its title, the rows it draws and the matplotlib SVG image of them."""
 
     title: str
     data: pl.DataFrame
@@ -311,89 +314,65 @@ class Bar:
     high: float | None = None
 
 
-LABEL_WIDTH, PLOT_WIDTH, VALUE_WIDTH = 380, 380, 90
 LABEL_CHARS = 60  # longer labels are cut, so they stay inside the image
-ROW, TOP, BOTTOM = 24, 44, 40
+TITLE_CHARS = 100  # longer titles wrap onto a second line
+CHART_LIMIT_BYTES = 30_000  # a chart's SVG stays under this, so the committed notebook stays small
+WIDTH_INCHES, ROW_INCHES, FRAME_INCHES = 9.5, 0.28, 1.3
+# Text as SVG text in a short font list (every label repeats it), ids salted so re-runs match.
+SVG_SETTINGS = {
+    "svg.fonttype": "none",
+    "svg.hashsalt": "exportspredictor",
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Arial", "DejaVu Sans"],
+}
 
 
 def bar_svg(
     title: str, bars: list[Bar], *, lines: dict[str, float] | None = None, axis: str = "", origin: float = 0.0
 ) -> str:
-    """An SVG image of horizontal bars, one per row, with labelled vertical reference `lines`.
+    """A matplotlib SVG image of horizontal bars, one per row, with labelled vertical reference `lines`.
 
-    The axis includes `origin` (0 unless a chart cuts its axis, as the gain ladder does)."""
+    The axis includes `origin` (0 unless a chart cuts its axis, as the gain ladder does). Text is
+    kept as SVG text, not glyph outlines, so the image stays small and its labels searchable; the
+    date is left out and ids are salted, so a re-run writes the same bytes."""
     lines = lines or {}
     values = [v for b in bars for v in (b.start, b.end, b.low, b.high) if v is not None] + list(lines.values())
     lo, hi = min([origin, *values]), max([origin, *values])
     span = (hi - lo) or 1.0
     lo, hi = lo - 0.04 * span * (lo < origin), hi + 0.04 * span
 
-    def x(value: float) -> float:
-        return LABEL_WIDTH + (value - lo) / (hi - lo) * PLOT_WIDTH
-
-    width, height = LABEL_WIDTH + PLOT_WIDTH + VALUE_WIDTH, TOP + ROW * len(bars) + BOTTOM
-    bottom = TOP + ROW * len(bars)
-    parts = [
-        (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-            f'viewBox="0 0 {width} {height}" font-family="Helvetica, Arial, sans-serif" font-size="12">'
-        ),
-        f'<rect width="{width}" height="{height}" fill="#ffffff"/>',
-        f'<text x="8" y="20" font-size="13" font-weight="bold" fill="{INK}">{escape(title)}</text>',
-    ]
-    for tick in _ticks(lo, hi):
-        parts.append(f'<line x1="{x(tick):.1f}" x2="{x(tick):.1f}" y1="{TOP - 6}" y2="{bottom}" stroke="{GRID}"/>')
-        parts.append(
-            f'<text x="{x(tick):.1f}" y="{bottom + 14}" text-anchor="middle" fill="{INK}">{_tick_text(tick)}</text>'
-        )
-    parts.append(f'<line x1="{x(origin):.1f}" x2="{x(origin):.1f}" y1="{TOP - 6}" y2="{bottom}" stroke="{INK}"/>')
-    if axis:
-        parts.append(
-            f'<text x="{LABEL_WIDTH + PLOT_WIDTH / 2:.1f}" y="{bottom + 32}" text-anchor="middle" fill="{INK}">'
-            f'{escape(axis)}</text>'
-        )
-    for i, bar in enumerate(bars):
-        y = TOP + i * ROW
-        left, right = sorted((x(bar.start), x(bar.end)))
-        parts.append(
-            f'<text x="{LABEL_WIDTH - 8}" y="{y + 16}" text-anchor="end" fill="{INK}">{escape(_cut(bar.label))}</text>'
-        )
-        parts.append(
-            f'<rect x="{left:.1f}" y="{y + 4}" width="{max(right - left, 1):.1f}" height="{ROW - 8}" '
-            f'fill="{bar.colour}" rx="2"/>'
-        )
+    figure = Figure(figsize=(WIDTH_INCHES, FRAME_INCHES + ROW_INCHES * len(bars)), layout="constrained")
+    ax = figure.add_subplot()
+    rows = list(range(len(bars)))
+    ax.barh(rows, [b.end - b.start for b in bars], left=[b.start for b in bars],
+            color=[b.colour for b in bars], height=0.66)
+    for row, bar in zip(rows, bars, strict=True):
         if bar.low is not None and bar.high is not None:
-            mid = y + ROW / 2
-            parts.append(
-                f'<line x1="{x(bar.low):.1f}" x2="{x(bar.high):.1f}" y1="{mid}" y2="{mid}" stroke="{INK}" '
-                'stroke-width="1.5"/>'
-            )
-        parts.append(f'<text x="{LABEL_WIDTH + PLOT_WIDTH + 6}" y="{y + 16}" fill="{INK}">{escape(bar.text)}</text>')
+            ax.hlines(row, bar.low, bar.high, color=INK, linewidth=1.5)
+        ax.annotate(bar.text, (1, row), xycoords=("axes fraction", "data"), xytext=(6, 0),
+                    textcoords="offset points", va="center", fontsize=9, color=INK)
+    ax.set_yticks(rows, [_cut(bar.label) for bar in bars], fontsize=9, color=INK)
+    ax.set_ylim(len(bars) - 0.5, -0.5)  # first row at the top
+    ax.set_xlim(lo, hi)
+    ax.axvline(origin, color=INK, linewidth=0.8)
     for j, (name, value) in enumerate(lines.items()):
-        parts.append(
-            f'<line x1="{x(value):.1f}" x2="{x(value):.1f}" y1="{TOP - 6}" y2="{bottom}" stroke="{INK}" '
-            'stroke-dasharray="4 3"/>'
-        )
-        parts.append(
-            f'<text x="{x(value):.1f}" y="{TOP - 10 - 12 * (j % 2)}" text-anchor="middle" font-size="11" '
-            f'fill="{INK}">{escape(name)}</text>'
-        )
-    parts.append("</svg>")
-    return "\n".join(parts)
+        ax.axvline(value, color=INK, linewidth=1, linestyle=(0, (4, 3)))
+        ax.annotate(name, (value, 1), xycoords=("data", "axes fraction"), xytext=(0, 3 + 11 * (j % 2)),
+                    textcoords="offset points", ha="center", va="bottom", fontsize=8, color=INK)
+    ax.grid(axis="x", color=GRID)
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="x", labelsize=9, colors=INK)
+    ax.tick_params(axis="y", length=0)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_xlabel(axis, fontsize=9, color=INK)
+    figure.suptitle(textwrap.fill(title, TITLE_CHARS), x=0.01, ha="left", fontsize=11, fontweight="bold", color=INK)
 
-
-def _ticks(lo: float, hi: float, count: int = 5) -> list[float]:
-    """About `count` round tick values between `lo` and `hi`."""
-    raw = (hi - lo) / count
-    magnitude = 10 ** math.floor(math.log10(raw))
-    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw)
-    first = math.ceil(lo / step) * step
-    return [round(first + k * step, 10) for k in range(int((hi - first) / step) + 1)]
+    buffer = io.StringIO()
+    with matplotlib.rc_context(SVG_SETTINGS):
+        figure.savefig(buffer, format="svg", metadata={"Date": None})
+    return re.sub(r">\s+<", "><", re.sub(r"<!--.*?-->", "", buffer.getvalue(), flags=re.DOTALL))
 
 
 def _cut(label: str) -> str:
     return label if len(label) <= LABEL_CHARS else label[: LABEL_CHARS - 1] + "…"
-
-
-def _tick_text(value: float) -> str:
-    return f"{value:g}"

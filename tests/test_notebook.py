@@ -291,7 +291,8 @@ def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
         assert source != pipeline.FIXTURE_SOURCE, "the committed outputs come from the fixture, not real data"
 
 
-# "Outputs stay small" (spec #66): the largest single output, a table or an SVG chart, stays under this.
+# "Outputs stay small" (spec #66): the largest printed output or table stays under this; a chart
+# image under `reporting.CHART_LIMIT_BYTES`.
 OUTPUT_LIMIT_BYTES = 15_000
 
 
@@ -299,7 +300,10 @@ def test_no_committed_output_is_large():
     notebook = nbformat.read(NOTEBOOK, as_version=4)
 
     sizes = [
-        (len(json.dumps(output)), cell.source[:60])
+        (len(json.dumps(output)), "image/svg+xml" in output.get("data", {}), cell.source[:60])
         for cell in notebook.cells if cell.cell_type == "code" for output in cell.outputs
     ]
-    assert not [size for size in sizes if size[0] > OUTPUT_LIMIT_BYTES], max(sizes)
+    too_large = [
+        size for size in sizes if size[0] > (reporting.CHART_LIMIT_BYTES if size[1] else OUTPUT_LIMIT_BYTES)
+    ]
+    assert not too_large, too_large

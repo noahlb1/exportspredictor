@@ -5,6 +5,7 @@ table's rows, "not run" where a part is absent), not for how a chart looks.
 """
 
 from dataclasses import replace
+from html import escape
 
 import pytest
 
@@ -22,13 +23,21 @@ def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlie
     assert str(block["test_year"]) in chart.title
 
 
-def test_a_chart_is_a_static_svg_image_naming_each_row(fixture_artefacts):
+def test_a_chart_is_a_static_matplotlib_svg_image_naming_each_row(fixture_artefacts):
     chart = reporting.ranking_by_version(fixture_artefacts)
 
     svg = chart._repr_svg_()
-    assert svg.startswith("<svg")
+    assert svg.lstrip().startswith(("<?xml", "<svg"))
+    assert "Matplotlib" in svg  # drawn by matplotlib, not by hand
+    assert "<script" not in svg  # static: nothing GitHub would refuse to render
     for name in chart.data["name"]:
-        assert name.replace("'", "&#x27;") in svg
+        assert escape(name, quote=False) in svg  # text stays text, so labels are searchable
+
+
+def test_a_chart_is_small_enough_for_a_committed_notebook_output(fixture_artefacts):
+    chart = reporting.event_backtests(fixture_artefacts)
+
+    assert len(chart._repr_svg_().encode()) < reporting.CHART_LIMIT_BYTES
 
 
 def test_the_experiments_table_has_every_arm_and_whether_it_was_kept(fixture_artefacts):
