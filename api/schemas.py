@@ -346,7 +346,8 @@ class ModelFormOut(BaseModel):
 
 
 class ExperimentOut(BaseModel):
-    name: str
+    name: str  # as the loop recorded it
+    label: str | None = None  # as shown: the research note's experiment number and the Glossary's name
     kept: str | None = None  # the kept Arm, None if every Arm was dropped
     best_arm: str | None = None
     selection_measure: float | None = None  # the best Arm's
@@ -432,6 +433,7 @@ class ModelChoice(BaseModel):
     noise_floor_sd: float | None = None
     win_threshold: float | None = None
     experiments: list[ExperimentOut]
+    n_experiments: int | None = None  # the experiments the recorded decisions cover (seven for nine decisions)
     confirmation: Confirmation | None = None
     text: str
     test_year_ranking: TestYearRanking | None = None

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
-from exportspredictor import conformal, illustrative
+from exportspredictor import conformal, illustrative, loop
 from exportspredictor.fixture import PRODUCTS
 from exportspredictor.pipeline import build_artefacts
 
@@ -1003,6 +1003,7 @@ def test_evaluation_serves_every_experiment_and_whether_it_was_kept(client, fixt
         assert served["kept"] == section.get("kept")
         best = next(row for row in section["arms"] if row.get("best"))
         assert served["best_arm"] == best["arm"]
+        assert served["label"] == loop.experiment_label(served["name"], [row["arm"] for row in section["arms"]])
         assert served["selection_measure"] == pytest.approx(best["selection_measure"])
 
 

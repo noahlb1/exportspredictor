@@ -240,10 +240,14 @@ def _ranking_lines(summary: dict | None) -> list[str]:
     lines = [
         selection_rule_text(summary),
         "",
+        (f"Each row is one decision of the rule, labelled with its experiment's number in "
+         f"docs/research/opportunity-ranking-experiments.md: {len(summary['experiments'])} decisions for "
+         f"{summary['n_experiments']} experiments."),
+        "",
         "| Experiment | Best Arm | Selection Measure | Change on the best so far | Kept |",
         "| --- | --- | --- | --- | --- |",
         *[
-            f"| {e['name']} | {e['best_arm'] or 'n/a'} | {number_text(e['selection_measure'], '.4f')} | "
+            f"| {e['label']} | {e['best_arm'] or 'n/a'} | {number_text(e['selection_measure'], '.4f')} | "
             f"{number_text(e['change'], '+.4f')} | {e['kept'] or 'no'} |"
             for e in summary["experiments"]
         ],

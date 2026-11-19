@@ -36,11 +36,13 @@ def test_the_experiments_table_has_every_arm_and_whether_it_was_kept(fixture_art
 
     table = reporting.experiments(fixture_artefacts)
 
-    arms = [(name, row["arm"]) for name, section in record["experiments"].items() for row in section["arms"]]
-    assert list(zip(table["experiment"], table["arm"], strict=True)) == arms
-    kept = {name: section["kept"] for name, section in record["experiments"].items()}
+    arms = [row["arm"] for section in record["experiments"].values() for row in section["arms"]]
+    assert list(table["arm"]) == arms
+    # The fixture's loop ran the blend alone: the research note's experiment 1, in the Glossary's words.
+    assert set(table["experiment"]) == {"1. Naive Baseline"}
+    kept = [section["kept"] for section in record["experiments"].values()]
     for row in table.iter_rows(named=True):
-        assert row["kept"] == (row["arm"] == kept[row["experiment"]])
+        assert row["kept"] == (row["arm"] in kept)
         assert row["stopped_early"] == (row["rounds"] < reporting.EARLY_STOP_ROUNDS)
 
 

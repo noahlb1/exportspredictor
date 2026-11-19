@@ -66,7 +66,7 @@ def test_page_shows_every_experiment_and_whether_it_was_kept(served):
     experiments = body["model_choice"]["experiments"]
     table = next(t for t in _tables(page) if "Experiment" in t.columns)
 
-    assert list(table["Experiment"]) == [e["name"] for e in experiments]
+    assert list(table["Experiment"]) == [e["label"] for e in experiments]
     assert list(table["Selection Measure"]) == pytest.approx([e["selection_measure"] for e in experiments])
     assert list(table["Kept"]) == [e["kept"] or "no" for e in experiments]
 

@@ -18,6 +18,7 @@ import polars as pl
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.evaluation import NOT_RUN
+from exportspredictor.loop import experiment_label
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
 NEUTRAL = "#8a8984"
@@ -91,14 +92,15 @@ EARLY_STOP_ROUNDS = 50
 
 
 def experiments(bundle: Artefacts) -> pl.DataFrame | NotRun:
-    """Every Arm of every experiment the loop ran: its Selection Measure, its change on the best so far,
-    its best round, whether it was kept, and whether it stopped within its first `EARLY_STOP_ROUNDS` rounds."""
+    """Every Arm of every experiment the loop ran: its experiment (`loop.experiment_label`), its Selection
+    Measure, its change on the best so far, its best round, whether it was kept, and whether it stopped
+    within its first `EARLY_STOP_ROUNDS` rounds."""
     record = bundle.metadata.get("ranking_experiments")
     if not record or not record.get("experiments"):
         return NotRun("The experiment loop")
     rows = [
         {
-            "experiment": name,
+            "experiment": experiment_label(name, [arm["arm"] for arm in section.get("arms", [])]),
             "arm": row["arm"],
             "selection_measure": row.get("selection_measure"),
             "change": row.get("change"),
