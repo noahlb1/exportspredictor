@@ -389,6 +389,7 @@ def build_real_artefacts(
     ladder_plan: comparison.LadderPlan = comparison.REAL_LADDER,
     parts: Parts = Parts(),
     ranking_results: dict | None = None,
+    ppml_years: Sequence[int] = ppml.YEARS,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
@@ -402,7 +403,8 @@ def build_real_artefacts(
     rungs trained with `ladder_plan` (cached under `ladder_dir`). The Event Backtests, the
     constraint comparison and the gain ladder run only when switched on in `parts` (`Parts`).
     The model form served is the one the experiment loop chose, read from `ranking_results`,
-    by default the saved loop results (`loop.load`).
+    by default the saved loop results (`loop.load`). The PPML benchmark (`parts.ppml_benchmark`) is fitted
+    on the Flows of `ppml_years` only.
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -518,7 +520,7 @@ def build_real_artefacts(
     )
     if not parts.ppml_benchmark:
         return bundle
-    return replace(bundle, ppml_benchmark=_timed_benchmark(ppml.real_sector_flows(root), bundle))
+    return replace(bundle, ppml_benchmark=_timed_benchmark(ppml.real_sector_flows(root, years=ppml_years), bundle))
 
 
 def _file_key(path: Path) -> str:
