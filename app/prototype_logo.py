@@ -1,96 +1,68 @@
 """PROTOTYPE, throwaway (wayfinder ticket #97): never merge.
 
-Four original marks for the app, on the Leaderboard's own route over the split view settled in #95,
-switched with `?variant=` or the bar pinned to the bottom of the page. The bar also switches the
-questions that cut across marks: tile or bare, where the mark sits, and the accent colour.
-
-    A  Gap bars     two bars level to the same height, the taller one's extra in a lighter tint: the Export Gap
-    B  Route        a line leaving a dot and arriving at an arrowhead: an export route
-    C  Matrix       a 3 x 3 grid with one cell lit: one Product-Market pair picked out of the grid
-    D  Globe        a globe with one point marked: a Market
+The chosen mark (the Profile container ship, bare, with the app's name) tried in the app itself, on
+the Leaderboard's own route over the split view settled in #95. The bar pinned to the bottom of the
+page switches where it sits, its size and the browser-tab icon. The marks it was chosen from are in
+`prototype_logo_gallery.html`, `prototype_logo_ships.html` and `prototype_logo_profiles.html`.
 
 Run it (PowerShell, from this worktree; the API must be up on :8000):
 
     $env:EXPORTSPREDICTOR_PROTOTYPE = "1"; ./scripts/wt.ps1 streamlit run app/Home.py
 
-The accent is `primaryColor` under `[theme.light]` and `[theme.dark]` in `.streamlit/config.toml`;
-the bar's Accent control overwrites both at run time, for this server only.
+The accent is `primaryColor` under `[theme.light]` and `[theme.dark]` in `.streamlit/config.toml`, so
+the app follows the computer's light or dark setting. The logo's colours follow `st.context.theme.type`.
 """
 
 import base64
 
 import streamlit as st
-from streamlit import config
 
 NAME = "UK Exports Predictor"
-MARKS = {"A": "Gap bars", "B": "Route", "C": "Matrix", "D": "Globe"}
-STYLES = ["Tile", "Bare"]
+BLUE = "#2a78d6"
+BLUE_ON_DARK = "#5b9dea"  # the blue, lightened so the bare mark stays readable on the dark background
 PLACEMENTS = {
-    "sidebar-mark": "Mark in the sidebar, title as text",
-    "sidebar-wordmark": "Mark and name in the sidebar, no page title",
-    "title": "Mark beside the title",
+    "sidebar": "Ship and name in the sidebar, no page title",
+    "sidebar-title": "Ship and name in the sidebar, page title kept",
+    "sidebar-ship": "Ship alone in the sidebar, page title kept",
+    "title": "Ship beside the page title",
 }
-ACCENTS = {"Blue": "#2a78d6", "Teal": "#0f766e", "Indigo": "#4f46e5", "Streamlit red": "#ff4b4b"}
-LIGHT, DARK = "#ffffff", "#171614"  # Streamlit 1.67 page backgrounds, light and dark
+SIZES = ["large", "medium", "small"]
+TAB_ICONS = ["Tile", "Bare"]
 
 
-def glyph(mark: str, ink: str) -> str:
-    """The mark's shapes on a 64 x 64 canvas, in one ink, with a fainter tint of it for the quiet parts."""
-    soft = f'fill="{ink}" fill-opacity="0.45"'
-    soft_line = f'stroke="{ink}" stroke-opacity="0.45"'
-    if mark == "A":
-        return (
-            f'<rect x="14" y="36" width="14" height="16" rx="2" fill="{ink}"/>'
-            f'<rect x="36" y="36" width="14" height="16" fill="{ink}"/>'
-            f'<path d="M36 36V14a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v22z" {soft}/>'
-        )
-    if mark == "B":
-        return (
-            f'<path d="M16 48C18 30 28 20 44 18" fill="none" stroke="{ink}" stroke-width="6" stroke-linecap="round"/>'
-            f'<path d="M38 10l12 7-10 9" fill="none" stroke="{ink}" stroke-width="6" stroke-linecap="round" '
-            'stroke-linejoin="round"/>'
-            f'<circle cx="16" cy="49" r="6" fill="{ink}"/>'
-        )
-    if mark == "C":
-        cells = ""
-        for row, y in enumerate((9, 26, 43)):
-            for col, x in enumerate((9, 26, 43)):
-                lit = (row, col) == (0, 2)
-                cells += f'<rect x="{x}" y="{y}" width="12" height="12" rx="2.5" ' + (
-                    f'fill="{ink}"/>' if lit else f"{soft}/>"
-                )
-        return cells
+def ship(ink: str) -> str:
+    """The Profile container ship on a 64 x 64 canvas, in one ink."""
+    line = f'fill="none" stroke="{ink}" stroke-linecap="round" stroke-linejoin="round"'
+    soft = "".join(
+        f'<rect x="{x}" y="{y}" width="9.5" height="7.5" rx="1.5" fill="{ink}" opacity=".55"/>'
+        for x, y in ((21, 30), (32.5, 30), (44, 30), (21, 20.5))
+    )
     return (
-        f'<circle cx="30" cy="34" r="19" fill="none" {soft_line} stroke-width="5"/>'
-        f'<ellipse cx="30" cy="34" rx="8" ry="19" fill="none" {soft_line} stroke-width="4"/>'
-        f'<path d="M11 34h38" {soft_line} stroke-width="4"/>'
-        f'<circle cx="46" cy="18" r="8" fill="{ink}"/>'
+        '<g transform="translate(0 -3)">'
+        f'<path d="M7 42h50l-7 10H13z" fill="{ink}" stroke="{ink}" stroke-width="3" stroke-linejoin="round"/>'
+        f'<path d="M9 38V26.5a1.5 1.5 0 0 1 1.5-1.5h5a1.5 1.5 0 0 1 1.5 1.5V38z" fill="{ink}"/>'
+        f'{soft}<rect x="32.5" y="20.5" width="9.5" height="7.5" rx="1.5" fill="{ink}"/>'
+        f'<path d="M7 60q4-3 8.3 0t8.3 0 8.3 0 8.3 0 8.3 0 8.3 0" {line} stroke-width="2.5" opacity=".5"/>'
+        "</g>"
     )
 
 
-def _inner(mark: str, style: str, accent: str) -> str:
-    """A white glyph on an accent tile, or a bare accent glyph."""
+def mark_svg(style: str, dark: bool) -> str:
+    """The ship as a square SVG: bare in the theme's blue, or white on a blue tile."""
     if style == "Tile":
-        return f'<rect width="64" height="64" rx="14" fill="{accent}"/>{glyph(mark, "#ffffff")}'
-    return glyph(mark, accent)
+        inner = f'<rect width="64" height="64" rx="14" fill="{BLUE}"/>{ship("#ffffff")}'
+    else:
+        inner = ship(BLUE_ON_DARK if dark else BLUE)
+    return f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">{inner}</svg>'
 
 
-def mark_svg(mark: str, style: str, accent: str) -> str:
-    """One mark as a square SVG."""
+def wordmark_svg(dark: bool) -> str:
+    """The bare ship with the app's name, coloured for the light or the dark theme."""
+    text = "#f4f5f7" if dark else "#1f2430"
     return (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
-        f"{_inner(mark, style, accent)}</svg>"
-    )
-
-
-def wordmark_svg(mark: str, style: str, accent: str) -> str:
-    """The mark with the app's name. One image serves both themes, so the name's colour follows the
-    browser's light or dark setting (not Streamlit's own theme menu)."""
-    return (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="430" height="64" viewBox="0 0 430 64">'
-        "<style>text{fill:#1f2430}@media(prefers-color-scheme:dark){text{fill:#f4f5f7}}</style>"
-        f"{_inner(mark, style, accent)}"
-        '<text x="80" y="44" font-family="Source Sans Pro,Segoe UI,Arial,sans-serif" font-size="36" '
+        '<svg xmlns="http://www.w3.org/2000/svg" width="412" height="64" viewBox="0 0 412 64">'
+        f"{ship(BLUE_ON_DARK if dark else BLUE)}"
+        f'<text x="72" y="44" fill="{text}" font-family="Source Sans Pro,Segoe UI,Arial,sans-serif" font-size="36" '
         f'font-weight="600">{NAME}</text></svg>'
     )
 
@@ -99,102 +71,63 @@ def data_uri(svg: str) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
 
-def contact_sheet(accent: str) -> str:
-    """Every mark in both styles at 16, 24, 32 and 64 px, on Streamlit's light and dark backgrounds,
-    with a mock browser tab for the 16 px icon."""
-    rows = ""
-    for mark, name in MARKS.items():
-        for style in STYLES:
-            uri = data_uri(mark_svg(mark, style, accent))
-            cells = ""
-            for background, text in ((LIGHT, "#31333f"), (DARK, "#fafafa")):
-                images = "".join(
-                    f'<img src="{uri}" width="{px}" height="{px}" style="margin-right:14px;vertical-align:middle">'
-                    for px in (16, 24, 32, 64)
-                )
-                tab = (
-                    '<span style="display:inline-block;border:1px solid #8884;border-radius:8px 8px 0 0;'
-                    f'padding:5px 12px;font:13px Segoe UI,Arial,sans-serif;color:{text};vertical-align:middle">'
-                    f'<img src="{uri}" width="16" height="16" style="vertical-align:-3px;margin-right:7px">'
-                    f"{NAME}</span>"
-                )
-                cells += (
-                    f'<td style="background:{background};padding:14px 18px;border:1px solid #8883">{images}{tab}</td>'
-                )
-            rows += (
-                '<tr><td style="padding:6px 14px 6px 0;font:14px Segoe UI,Arial,sans-serif;white-space:nowrap">'
-                f"{mark} · {name}, {style.lower()}</td>{cells}</tr>"
-            )
-    return f'<table style="border-collapse:collapse">{rows}</table>'
-
-
 def _init() -> None:
-    """Defaults for the bar's controls, taking `?variant=`, `?style=`, `?placement=` and `?accent=` from the URL once."""
+    """Defaults for the bar's controls, taking `?variant=`, `?size=` and `?tab=` from the URL once."""
     asked = st.query_params
     defaults = {
-        "logo_mark": (asked.get("variant"), list(MARKS), "A"),
-        "logo_style": (asked.get("style"), STYLES, "Tile"),
-        "logo_placement": (asked.get("placement"), list(PLACEMENTS), "sidebar-mark"),
-        "logo_accent": (asked.get("accent"), list(ACCENTS), "Blue"),
+        "logo_placement": (asked.get("variant"), list(PLACEMENTS), "sidebar"),
+        "logo_size": (asked.get("size"), SIZES, "large"),
+        "logo_tab": (asked.get("tab"), TAB_ICONS, "Tile"),
     }
     for key, (value, allowed, default) in defaults.items():
         if st.session_state.get(key) not in allowed:
             st.session_state[key] = value if value in allowed else default
 
 
-def _set_accent() -> None:
-    colour = ACCENTS[st.session_state["logo_accent"]]
-    config.set_option("theme.light.primaryColor", colour)
-    config.set_option("theme.dark.primaryColor", colour)
-
-
 def page_setup() -> None:
     """The browser-tab icon, the sidebar logo and the title, as the bar's controls choose them."""
     _init()
-    mark, style = st.session_state["logo_mark"], st.session_state["logo_style"]
-    placement, accent = st.session_state["logo_placement"], ACCENTS[st.session_state["logo_accent"]]
-    if config.get_option("theme.light.primaryColor") != accent:  # an accent asked for in the URL
-        _set_accent()
-        st.rerun()  # the browser takes the theme at the start of a run
-    icon = mark_svg(mark, style, accent)
-    st.set_page_config(page_title=NAME, page_icon=data_uri(icon), layout="wide")
-    if placement == "sidebar-mark":
-        st.logo(icon, size="large")
-        st.title(NAME)
-    elif placement == "sidebar-wordmark":
+    placement, size = st.session_state["logo_placement"], st.session_state["logo_size"]
+    st.set_page_config(
+        page_title=NAME, page_icon=data_uri(mark_svg(st.session_state["logo_tab"], dark=False)), layout="wide"
+    )
+    dark = st.context.theme.type == "dark"
+    bare = mark_svg("Bare", dark)
+    if placement in ("sidebar", "sidebar-title"):
         # `icon_image` is what shows at the top left while the sidebar is collapsed.
-        st.logo(wordmark_svg(mark, style, accent), size="large", icon_image=icon)
-    else:
-        image, title = st.columns([1, 24], vertical_alignment="center")
-        image.image(icon, width=56)
+        st.logo(wordmark_svg(dark), size=size, icon_image=bare)
+    elif placement == "sidebar-ship":
+        st.logo(bare, size=size)
+    if placement == "title":
+        image, title = st.columns([1, 22], vertical_alignment="center")
+        image.image(bare, width=64)
         title.title(NAME)
-    with st.expander("PROTOTYPE: every mark at 16, 24, 32 and 64 px, on the light and the dark background"):
-        st.html(contact_sheet(accent))
+    elif placement != "sidebar":
+        st.title(NAME)
 
 
 def bar() -> None:
     """The prototype bar, pinned to the bottom of the page. Not part of any design."""
-    keys = list(MARKS)
+    keys = list(PLACEMENTS)
 
     def step(by: int) -> None:
-        st.session_state["logo_mark"] = keys[(keys.index(st.session_state["logo_mark"]) + by) % len(keys)]
+        st.session_state["logo_placement"] = keys[(keys.index(st.session_state["logo_placement"]) + by) % len(keys)]
 
+    st.sidebar.divider()
+    st.sidebar.caption("Light or dark: the app follows your computer. To change it here, open the ⋮ menu at the "
+                       "top right, then Settings.")
     with st.bottom, st.container(border=True):
-        back, pick, forward, style, place, accent = st.columns([1, 8, 1, 3, 6, 3], vertical_alignment="bottom")
+        back, pick, forward, size, tab = st.columns([1, 9, 1, 4, 3], vertical_alignment="bottom")
         back.button("←", on_click=step, args=(-1,), key="logo_back")
-        pick.segmented_control(
-            "PROTOTYPE: mark", keys, format_func=lambda k: f"{k} · {MARKS[k]}", key="logo_mark", required=True
-        )
+        pick.selectbox("PROTOTYPE: where the logo sits", keys, format_func=PLACEMENTS.get, key="logo_placement")
         forward.button("→", on_click=step, args=(1,), key="logo_forward")
-        style.segmented_control("Style", STYLES, key="logo_style", required=True)
-        place.selectbox("Where it sits", list(PLACEMENTS), format_func=PLACEMENTS.get, key="logo_placement")
-        accent.selectbox("Accent", list(ACCENTS), key="logo_accent", on_change=_set_accent)
+        size.segmented_control("Sidebar logo size", SIZES, key="logo_size", required=True)
+        tab.segmented_control("Browser-tab icon", TAB_ICONS, key="logo_tab", required=True)
     state = {
-        "variant": st.session_state["logo_mark"],
-        "style": st.session_state["logo_style"],
-        "placement": st.session_state["logo_placement"],
-        "accent": st.session_state["logo_accent"],
+        "variant": st.session_state["logo_placement"],
+        "size": st.session_state["logo_size"],
+        "tab": st.session_state["logo_tab"],
     }
     st.query_params.update(state)
     with st.expander("PROTOTYPE state"):
-        st.json(state | {"primaryColor": ACCENTS[state["accent"]]})
+        st.json(state | {"theme": st.context.theme.type})

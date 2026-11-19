@@ -1,0 +1,88 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway (wayfinder ticket #97): never merge. Double-click to open. The buttons change this page's own browser-tab icon. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UK Exports Predictor</title>
+<link id="icon" rel="icon" href="">
+<style>
+  body { margin: 0; padding: 24px 28px; font: 15px/1.5 "Segoe UI", Arial, sans-serif; background: #eceef2; color: #1f2430; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { margin: 0 0 18px; color: #454b59; max-width: 760px; }
+  .pick { display: flex; gap: 10px; margin-bottom: 26px; flex-wrap: wrap; }
+  button { font: inherit; border: 2px solid #b9bfcc; background: #fff; border-radius: 10px; padding: 8px 16px; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+  button.on { border-color: #1f2430; }
+  table { border-collapse: collapse; }
+  th { text-align: left; font-weight: 600; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: #5b6272; padding: 0 22px 10px 0; }
+  td { padding: 0 22px 22px 0; vertical-align: middle; }
+  .bar { display: inline-flex; align-items: flex-end; padding: 8px 10px 0; border-radius: 10px 10px 0 0; height: 44px; }
+  .bar.l { background: #dee1e6; } .bar.d { background: #1f2020; }
+  .tab { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 44px 0 12px; border-radius: 9px 9px 0 0; font-size: 12px; white-space: nowrap; }
+  .l .tab { background: #fff; color: #1f2430; } .d .tab { background: #3c3c3c; color: #f1f3f4; }
+  .zoom { display: inline-block; image-rendering: pixelated; border: 1px solid #b9bfcc; }
+  img { display: block; }
+</style>
+</head>
+<body>
+<h1>Browser-tab icon at real size</h1>
+<p>The tab icon is 16 px. Click an option to put it in <b>this page's own tab</b> at the top of your browser. Each row shows that option at real size in a light and a dark tab bar, then the same 16 pixels magnified eight times.</p>
+<div class="pick" id="pick"></div>
+<table id="rows"><tr><th>Option</th><th>Light tab bar</th><th>Dark tab bar</th><th>16 px, magnified</th></tr></table>
+
+<script>
+const ship = (ink, waves = true, heavy = false) => {
+  const soft = heavy ? "1" : ".55";
+  const boxes = [[21, 30], [32.5, 30], [44, 30], [21, 20.5]].map(([x, y]) => `<rect x="${x}" y="${y}" width="9.5" height="7.5" rx="1.5" fill="${ink}" opacity="${soft}"/>`).join("");
+  return `<g transform="translate(0 ${waves ? -3 : 1})"><path d="M7 42h50l-7 10H13z" fill="${ink}" stroke="${ink}" stroke-width="3" stroke-linejoin="round"/>`
+    + `<path d="M9 38V26.5a1.5 1.5 0 0 1 1.5-1.500h5a1.5 1.5 0 0 1 1.5 1.5V38z" fill="${ink}"/>${boxes}<rect x="32.5" y="20.5" width="9.5" height="7.5" rx="1.5" fill="${ink}"/>`
+    + (waves ? `<path d="M7 60q4-3 8.3 0t8.3 0 8.3 0 8.3 0 8.3 0 8.3 0" fill="none" stroke="${ink}" stroke-width="2.5" stroke-linecap="round" opacity=".5"/>` : "") + `</g>`;
+};
+const wrap = (inner) => `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">${inner}</svg>`;
+const big = (inner) => `<g transform="translate(-5 -10) scale(1.160)">${inner}</g>`;
+const OPTIONS = [
+  { name: "Tile", note: "white ship on a blue square", svg: wrap(`<rect width="64" height="64" rx="14" fill="#2a78d6"/>${ship("#fff")}`) },
+  { name: "Tile, no waves", note: "the square, with the ship simplified", svg: wrap(`<rect width="64" height="64" rx="14" fill="#2a78d6"/>${ship("#fff", false)}`) },
+  { name: "Bare", note: "the same bare ship as in the app", svg: wrap(ship("#2a78d6")) },
+  { name: "Bare, enlarged, no waves", note: "the bare ship filling the icon, simplified", svg: wrap(big(ship("#2a78d6", false))) },
+  { name: "Bare, enlarged, solid", note: "as above, with every container solid", svg: wrap(big(ship("#2a78d6", false, true))) },
+];
+const uri = (svg) => "data:image/svg+xml;base64," + btoa(svg);
+const tab = (o) => `<span class="tab"><img src="${uri(o.svg)}" width="16" height="16">UK Exports Predictor</span>`;
+
+// The magnified view draws the icon at 16 px on a canvas first, so it shows the pixels a tab really gets.
+function magnified(o, cell) {
+  const img = new Image();
+  img.onload = () => {
+    const small = document.createElement("canvas");
+    small.width = small.height = 16;
+    small.getContext("2d").drawImage(img, 0, 0, 16, 16);
+    for (const bg of ["#ffffff", "#3c3c3c"]) {
+      const c = document.createElement("canvas");
+      c.width = c.height = 128; c.className = "zoom"; c.style.marginRight = "10px";
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, 128, 128);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(small, 0, 0, 128, 128);
+      cell.appendChild(c);
+    }
+  };
+  img.src = uri(o.svg);
+}
+
+function choose(i) {
+  document.getElementById("icon").href = uri(OPTIONS[i].svg);
+  document.querySelectorAll("#pick button").forEach((b, n) => b.classList.toggle("on", n === i));
+}
+OPTIONS.forEach((o, i) => {
+  const b = document.createElement("button");
+  b.innerHTML = `<img src="${uri(o.svg)}" width="16" height="16">${i + 1}. ${o.name}`;
+  b.onclick = () => choose(i);
+  document.getElementById("pick").appendChild(b);
+  const row = document.getElementById("rows").insertRow();
+  row.innerHTML = `<td><b>${i + 1}. ${o.name}</b><br><small>${o.note}</small></td><td><span class="bar l">${tab(o)}</span></td><td><span class="bar d">${tab(o)}</span></td><td style="white-space:nowrap"></td>`;
+  magnified(o, row.cells[3]);
+});
+choose(0);
+</script>
+</body>
+</html>
