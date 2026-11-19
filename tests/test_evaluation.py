@@ -69,9 +69,9 @@ def test_headline_says_plainly_when_the_model_does_not_beat_the_naive_baseline()
     better = evaluation.headline({"model_spearman_within_product": 0.6, "naive_spearman_within_product": 0.5}, 2023)
 
     assert worse["beats_naive"] is False
-    assert "does not beat the naive baseline" in worse["text"]
+    assert "does not beat the Naive Baseline" in worse["text"]
     assert better["beats_naive"] is True
-    assert "better than the naive baseline" in better["text"]
+    assert "better than the Naive Baseline" in better["text"]
 
 
 def test_headline_says_when_the_win_over_the_naive_baseline_is_narrow():
@@ -79,7 +79,7 @@ def test_headline_says_when_the_win_over_the_naive_baseline_is_narrow():
     clear = evaluation.headline({"model_spearman_within_product": 0.70, "naive_spearman_within_product": 0.52}, 2023)
 
     assert narrow["beats_naive"] is True
-    assert "only slightly better than the naive baseline" in narrow["text"]
+    assert "only slightly better than the Naive Baseline" in narrow["text"]
     assert "only slightly" not in clear["text"]
 
 
@@ -331,23 +331,23 @@ def test_the_test_year_is_reported_beside_v2_v1_and_both_naive_figures():
     block = evaluation.earlier_versions(_final_report(0.55, 0.52), v2=V2)
 
     rows = {row["name"]: row for row in block["rows"]}
-    assert rows["This version (blend)"]["uk_ranking"] == 0.55
-    assert rows["This version (blend)"]["size_matched_lift"] == 0.9
-    assert rows["This version (blend)"]["tweedie_deviance_all_exporters"] == 400.0
+    assert rows["Blend"]["uk_ranking"] == 0.55
+    assert rows["Blend"]["size_matched_lift"] == 0.9
+    assert rows["Blend"]["tweedie_deviance_all_exporters"] == 400.0
     assert rows["v2"]["uk_ranking"] == 0.5115 and rows["v2"]["size_matched_lift"] == 0.788
     assert rows["v1"]["uk_ranking"] == 0.5397
     naive = {row["name"]: row["uk_ranking"] for row in block["naive"]}
-    assert naive == {"Naive baseline, every Exporter's Flows (this run)": 0.52,
-                     "Naive baseline as reported for v2 (training rows' Flows)": 0.5233}
+    assert naive == {"Naive Baseline, every Exporter's Flows (this run)": 0.52,
+                     "Naive Baseline as reported for v2 (training rows' Flows)": 0.5233}
     assert block["beats_naive"] is True
-    assert "beats the naive baseline" in block["text"] and "2023" in block["text"]
+    assert "beats the Naive Baseline" in block["text"] and "2023" in block["text"]
 
 
 def test_a_model_that_does_not_beat_the_naive_baseline_is_said_so_plainly():
     block = evaluation.earlier_versions(_final_report(0.515, 0.52), v2=V2)
 
     assert block["beats_naive"] is False
-    assert "does not beat the naive baseline" in block["text"]
+    assert "does not beat the Naive Baseline" in block["text"]
 
 
 def test_without_v2_figures_only_this_version_and_v1_are_listed():
@@ -355,9 +355,28 @@ def test_without_v2_figures_only_this_version_and_v1_are_listed():
     del report["lift"]
     block = evaluation.earlier_versions(report, v2=None)
 
-    assert [row["name"] for row in block["rows"]] == ["This version (blend)", "v1"]
+    assert [row["name"] for row in block["rows"]] == ["Blend", "v1"]
     assert block["rows"][0]["size_matched_lift"] is None
-    assert [row["name"] for row in block["naive"]] == ["Naive baseline, every Exporter's Flows (this run)"]
+    assert [row["name"] for row in block["naive"]] == ["Naive Baseline, every Exporter's Flows (this run)"]
+
+
+def test_a_report_saved_with_the_old_names_is_read_with_the_glossary_s(fixture_artefacts):
+    # Artefact 20261119T001736Z saved "This version (blend)" and "Naive baseline, ..." before review2.
+    block = evaluation.earlier_versions(_final_report(0.555, 0.523), v2=V2)
+    saved_names = {"Blend": "This version (blend)",
+                   evaluation.NAIVE_THIS_RUN: "Naive baseline, every Exporter's Flows (this run)",
+                   evaluation.NAIVE_AS_REPORTED_FOR_V2: "Naive baseline as reported for v2 (training rows' Flows)"}
+    saved = {**block, "rows": [{**row, "name": saved_names.get(row["name"], row["name"])} for row in block["rows"]],
+             "naive": [{**row, "name": saved_names[row["name"]]} for row in block["naive"]],
+             "text": block["text"].replace("Naive Baseline", "naive baseline")}
+    report = {**_final_report(0.555, 0.523), "earlier_versions": saved}
+
+    assert evaluation.relabelled(report)["earlier_versions"] == block
+    saved_headline = {"model": 0.555, "naive": 0.523, "beats_naive": True, "text": "... than the naive baseline ..."}
+    headline = evaluation.relabelled({**report, "headline": saved_headline})["headline"]
+    assert "only slightly better than the Naive Baseline" in headline["text"] and "0.56" in headline["text"]
+    assert evaluation.served_report(report)["earlier_versions"] == block
+    assert report["earlier_versions"] is saved and saved["rows"][0]["name"] == "This version (blend)"
 
 
 def test_the_served_report_leaves_out_the_v1_comparison_and_words_the_potential_range_now(fixture_artefacts):

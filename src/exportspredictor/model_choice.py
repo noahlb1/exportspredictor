@@ -8,6 +8,7 @@ read beyond the report. The model card (`governance`) and the notebook (`reporti
 same functions, so they cannot state different figures.
 """
 
+from exportspredictor.evaluation import relabelled
 from exportspredictor.loop import count_experiments, experiment_label, served_configuration
 from exportspredictor.prediction import MODEL_ALONE, ModelForm
 from exportspredictor.wording import number_text
@@ -23,6 +24,7 @@ def how_chosen(metadata: dict, report: dict) -> dict:
     experiment fields empty) when the artefact records no experiment results."""
     form = served_model_form(metadata)
     summary = ranking_summary(metadata.get("ranking_experiments"))
+    report = relabelled(report)  # today's names for a report saved earlier
     return {
         "recorded": summary is not None,
         "model_form": model_form_summary(metadata),

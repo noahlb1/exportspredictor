@@ -934,6 +934,7 @@ def _v1_comparison(
         uk=UK,
         test_year=test_year,
         seed=seed,
+        name=comparison.version_name(report),
         ladder=ladder,
         ladder_plan=v1.ladder,
     )

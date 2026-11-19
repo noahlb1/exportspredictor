@@ -17,7 +17,7 @@ import polars as pl
 
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.evaluation import NOT_RUN
+from exportspredictor.evaluation import NOT_RUN, relabelled
 from exportspredictor.loop import experiment_label
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
@@ -70,7 +70,7 @@ def provenance(bundle: Artefacts) -> str:
 
 def ranking_by_version(bundle: Artefacts) -> Chart | NotRun:
     """The test year's UK ranking for this version beside the Naive Baseline and earlier versions."""
-    block = (bundle.evaluation or {}).get("earlier_versions")
+    block = relabelled(bundle.evaluation or {}).get("earlier_versions")
     if not block:
         return NotRun("UK ranking by version")
     rows = [{**_pick(row, "name", "uk_ranking"), "kind": "this version" if i == 0 else "earlier version"}

@@ -45,6 +45,7 @@ from exportspredictor.evaluation import (
     naive_potential,
     tweedie_unit_deviance,
 )
+from exportspredictor.evaluation import relabelled as relabelled_report
 from exportspredictor.exclusions import drop_excluded, is_excluded
 from exportspredictor.features import (
     FEATURES,
@@ -69,9 +70,13 @@ PRIMARY = {
 }
 CONDITIONS = {
     "primary_interval_above_zero": "the paired-bootstrap interval of the primary metric lies above 0",
-    "larger_margin_over_naive": "v2 beats the naive baseline by more than v1 did",
+    "larger_margin_over_naive": "{name} beats the Naive Baseline by more than v1 did",
     "no_secondary_worse": "no secondary metric gets worse beyond its own interval",
 }
+# What the words call the new version. The comparison was written when v2 was new, and its keys
+# ("v2", "v2_beats_v1") keep that name; the words name the version that was actually compared.
+NEW_VERSION = "v2"
+BLEND_VERSION = "the Blend"
 _PAIR = ["exporter", "importer", "hs6"]
 
 # --- The gain ladder (reporting only; it decides nothing) -------------------------------------------
@@ -522,8 +527,9 @@ def _ladder(
 # --- The verdict -----------------------------------------------------------------------------------
 
 
-def verdict(primary: dict, secondary: Sequence[dict]) -> dict:
-    """Whether v2 beats v1 under the pre-registered rule, and the result in words, metric by metric.
+def verdict(primary: dict, secondary: Sequence[dict], *, name: str = NEW_VERSION) -> dict:
+    """Whether the new version ("v2" in the keys) beats v1 under the pre-registered rule, and the result in
+    words, metric by metric, calling the new version `name`.
 
     `primary` has v1, v2, naive and the bootstrap `ci` of v2 − v1; each `secondary` entry
     has `label`, v1, v2, `worse` and `counts`.
@@ -539,12 +545,12 @@ def verdict(primary: dict, secondary: Sequence[dict]) -> dict:
         "no_secondary_worse": not any(entry["worse"] for entry in secondary if entry["counts"]),
     }
     beats = all(conditions.values())
-    lines = [_primary_text(primary, margins)]
-    lines += [_secondary_text(entry) for entry in secondary]
+    lines = [_primary_text(primary, margins, name)]
+    lines += [_secondary_text(entry, name) for entry in secondary]
     if beats:
-        head = "v2 beats v1 under the pre-registered rule: all three conditions hold."
+        head = f"{_capital(name)} beats v1 under the pre-registered rule: all three conditions hold."
     else:
-        failed = "; ".join(CONDITIONS[name] for name, held in conditions.items() if not held)
+        failed = "; ".join(CONDITIONS[key].format(name=name) for key, held in conditions.items() if not held)
         head = f"The result is mixed, so it is reported metric by metric. Not met: {failed}."
     return {
         "v2_beats_v1": beats,
@@ -558,27 +564,63 @@ def _number(value: float | None, signed: bool = False) -> str:
     return number_text(value, "+.3f" if signed else ".3f")
 
 
-def _primary_text(primary: dict, margins: dict) -> str:
+def _capital(name: str) -> str:
+    """A name opening a sentence: "the Blend" becomes "The Blend"; a version tag such as "v2" stays as it is."""
+    return "The" + name[3:] if name.startswith("the ") else name
+
+
+def _primary_text(primary: dict, margins: dict, name: str) -> str:
     low, high = primary["ci"]
     interval = "" if low is None else f", 95% interval {_number(low, True)} to {_number(high, True)}"
     difference = primary["difference"]
     agreement = "closer" if difference >= 0 else "less close"
     return (
-        f"On the {primary['label']}, v2's Export Potential ranks Markets in {agreement} agreement with Actual "
+        f"On the {primary['label']}, {name}'s Export Potential ranks Markets in {agreement} agreement with Actual "
         f"Exports than v1's ({_number(primary['v2'])} against {_number(primary['v1'])}, a difference of "
-        f"{_number(difference, True)}{interval}); against the naive baseline ({_number(primary['naive'])}) the "
-        f"margins are {_number(margins['v2'], True)} for v2 and {_number(margins['v1'], True)} for v1."
+        f"{_number(difference, True)}{interval}); against the Naive Baseline ({_number(primary['naive'])}) the "
+        f"margins are {_number(margins['v2'], True)} for {name} and {_number(margins['v1'], True)} for v1."
     )
 
 
-def _secondary_text(entry: dict) -> str:
+def _secondary_text(entry: dict, name: str) -> str:
     if entry["v1"] is None or entry["v2"] is None:
         return f"{entry['label']}: could not be measured for both models."
     judged = (
         "worse beyond its interval" if entry["worse"] else ("not counted" if not entry["counts"] else "not worse beyond its interval")
     )
-    bonus = " v2's Scenario Effect lies inside the observed interval." if entry.get("v2_inside") else ""
-    return f"{entry['label']}: v1 {_number(entry['v1'])}, v2 {_number(entry['v2'])} ({judged}).{bonus}"
+    bonus = f" {_capital(name)}'s Scenario Effect lies inside the observed interval." if entry.get("v2_inside") else ""
+    return f"{entry['label']}: v1 {_number(entry['v1'])}, {name} {_number(entry['v2'])} ({judged}).{bonus}"
+
+
+def _not_run_text(not_run: Sequence[str]) -> str:
+    if not not_run:
+        return ""
+    return (
+        f" The {' and '.join(not_run)} secondaries were not run for this version, so the third condition "
+        "is judged on the other secondaries only."
+    )
+
+
+def version_name(report: dict) -> str:
+    """What the comparison's words call the version a report evaluates: the Blend when it serves one, else v2."""
+    return BLEND_VERSION if (report.get("model_form") or {}).get("naive_weight") else NEW_VERSION
+
+
+def saved_verdict_text(block: dict, *, name: str) -> str:
+    """A saved `v1_comparison` block's verdict, worded again from its saved figures, the new version called `name`."""
+    judged = verdict(block["primary"], block["secondary"], name=name)
+    return judged["text"] + _not_run_text(block.get("secondaries_not_run") or [])
+
+
+def relabelled(report: dict) -> dict:
+    """A saved evaluation report in today's words: `evaluation.relabelled`, and its v1 comparison's verdict
+    worded for the version it evaluated (`version_name`). Nothing is recomputed; the saved report is not changed."""
+    out = relabelled_report(report)
+    block = out.get("v1_comparison")
+    if block:
+        text = saved_verdict_text(block, name=version_name(report))
+        out = {**out, "v1_comparison": {**block, "verdict": {**block["verdict"], "text": text}}}
+    return out
 
 
 # --- The comparison --------------------------------------------------------------------------------
@@ -600,8 +642,9 @@ def compare(
     level: float = CI_LEVEL,
     ladder: Mapping[str, pl.DataFrame] | None = None,
     ladder_plan: LadderPlan | None = None,
+    name: str = NEW_VERSION,
 ) -> dict:
-    """The `v1_comparison` block of v2's evaluation results.
+    """The `v1_comparison` block of v2's evaluation results; its words call the new version `name`.
 
     `v2` maps each common row set to v2's scores on exactly its keys (`scored_rows`).
     `flows` holds the Flows (exporter, importer, hs6, year, value_usd) of the test year and of
@@ -631,12 +674,8 @@ def compare(
         *lifts,
         *([] if event_v2 is None else _event_secondaries(frozen, event_v2=event_v2)),
     ]
-    judged = verdict(primary, secondary)
-    if not_run:
-        judged["text"] += (
-            f" The {' and '.join(not_run)} secondaries were not run for this version, so the third condition "
-            "is judged on the other secondaries only."
-        )
+    judged = verdict(primary, secondary, name=name)
+    judged["text"] += _not_run_text(not_run)
     block = {
         "test_year": test_year,
         "frozen": {key: frozen.manifest.get(key) for key in ("tag", "commit", "source_models", "frozen_at")},

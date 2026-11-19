@@ -99,10 +99,10 @@ NOT_RUN = "not run for this version"
 
 
 def served_report(report: dict) -> dict:
-    """An evaluation report as the API serves it: without the parts in `NOT_SERVED`, and with the Potential
-    Range worded now (`conformal.coverage_text`), not when saved, so older versions state the share of
-    Uncertain Opportunities the same way. The saved report is not changed."""
-    served = {key: value for key, value in report.items() if key not in NOT_SERVED}
+    """An evaluation report as the API serves it: without the parts in `NOT_SERVED`, with today's names
+    (`relabelled`) and with the Potential Range worded now (`conformal.coverage_text`), not when saved, so
+    older versions state the share of Uncertain Opportunities the same way. The saved report is not changed."""
+    served = {key: value for key, value in relabelled(report).items() if key not in NOT_SERVED}
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
     return served
@@ -479,12 +479,12 @@ def headline(overall: dict, test_year: int) -> dict:
     if beats:
         degree = "only slightly better" if model - naive < NARROW_MARGIN else "better"
         verdict = (
-            f"That is {degree} than the naive baseline (the UK's world market share times each Market's imports), "
+            f"That is {degree} than the Naive Baseline (the UK's world market share times each Market's imports), "
             f"which scores {naive:.2f}."
         )
     else:
         verdict = (
-            f"The model does not beat the naive baseline on this measure: the UK's world market share times each "
+            f"The model does not beat the Naive Baseline on this measure: the UK's world market share times each "
             f"Market's imports scores {naive:.2f}. Treat its rankings with extra caution."
         )
     text = (
@@ -514,8 +514,19 @@ V2_REPORTED = {
     "tweedie_deviance_all_exporters": 355.5288087632071,
     "tweedie_deviance_uk": 568.5883343927953,
 }
-NAIVE_THIS_RUN = "Naive baseline, every Exporter's Flows (this run)"
-NAIVE_AS_REPORTED_FOR_V2 = "Naive baseline as reported for v2 (training rows' Flows)"
+NAIVE_THIS_RUN = "Naive Baseline, every Exporter's Flows (this run)"
+NAIVE_AS_REPORTED_FOR_V2 = "Naive Baseline as reported for v2 (training rows' Flows)"
+# The names reports saved before review2 used, and today's (GLOSSARY.md), for `relabelled`.
+_SAVED_NAMES = {
+    "Naive baseline, every Exporter's Flows (this run)": NAIVE_THIS_RUN,
+    "Naive baseline as reported for v2 (training rows' Flows)": NAIVE_AS_REPORTED_FOR_V2,
+}
+_SAVED_THIS_VERSION = "This version ("
+
+
+def version_name(form: str) -> str:
+    """This version's row in `earlier_versions`: the Blend (GLOSSARY.md) when it serves one, else the model alone."""
+    return "Blend" if form == "blend" else f"{_SAVED_THIS_VERSION}{form})"
 
 
 def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED) -> dict:
@@ -531,7 +542,7 @@ def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED) -> dict:
     lift = report.get("lift") or {}
     form = (report.get("model_form") or {}).get("form", "model alone")
     rows = [{
-        "name": f"This version ({form})",
+        "name": version_name(form),
         "uk_ranking": head["model"],
         "lift": lift.get("lift"),
         "size_matched_lift": (lift.get("size_matched") or {}).get("lift"),
@@ -546,17 +557,46 @@ def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED) -> dict:
     if v1 is not None:
         rows.append({"name": "v1", "uk_ranking": v1})
     beats = head["model"] is not None and head["naive"] is not None and head["model"] > head["naive"]
-    verdict = "beats the naive baseline" if beats else "does not beat the naive baseline"
-    others = ", ".join(f"{row['name']} {row['uk_ranking']:.3f}" for row in rows[1:])
-    text = (
-        f"On {year}, read once, the UK ranking of this version is {head['model']:.3f}: it {verdict} "
-        f"({head['naive']:.3f} from every Exporter's Flows"
-        + (f"; {v2['naive']:.3f} as reported for v2" if v2 is not None else "")
+    block = {"test_year": year, "rows": rows, "naive": naive, "beats_naive": beats}
+    return {**block, "text": _earlier_versions_text(block)}
+
+
+def _earlier_versions_text(block: dict) -> str:
+    """The `earlier_versions` sentence, worded from the block's rows."""
+    this, *others = block["rows"]
+    naive = {row["name"]: row["uk_ranking"] for row in block["naive"]}
+    verdict = "beats the Naive Baseline" if block["beats_naive"] else "does not beat the Naive Baseline"
+    reported = naive.get(NAIVE_AS_REPORTED_FOR_V2)
+    earlier = ", ".join(f"{row['name']} {row['uk_ranking']:.3f}" for row in others)
+    return (
+        f"On {block['test_year']}, read once, the UK ranking of this version is {this['uk_ranking']:.3f}: it {verdict} "
+        f"({naive[NAIVE_THIS_RUN]:.3f} from every Exporter's Flows"
+        + (f"; {reported:.3f} as reported for v2" if reported is not None else "")
         + ")."
-        + (f" Earlier versions: {others}." if others else "")
+        + (f" Earlier versions: {earlier}." if earlier else "")
         + " These are associations on one test year, not a forecast."
     )
-    return {"test_year": year, "rows": rows, "naive": naive, "beats_naive": beats, "text": text}
+
+
+def relabelled(report: dict) -> dict:
+    """A saved evaluation report with today's names (the Blend, the Naive Baseline; GLOSSARY.md) in its
+    headline and `earlier_versions` block, worded again from their saved figures. Nothing is recomputed, keys keep their
+    names and the saved report is not changed. `comparison.relabelled` also rewords the v1 comparison."""
+    saved = report.get("headline")
+    if saved and saved.get("model") is not None and report.get("test_year") is not None:
+        worded = headline({f"model_{HEADLINE_METRIC}": saved["model"], f"naive_{HEADLINE_METRIC}": saved["naive"]},
+                          report["test_year"])
+        report = {**report, "headline": {**saved, "text": worded["text"]}}
+    block = report.get("earlier_versions")
+    if not block:
+        return report
+    form = (report.get("model_form") or {}).get("form", "model alone")
+    this, *others = block["rows"]
+    if this["name"].startswith(_SAVED_THIS_VERSION):
+        this = {**this, "name": version_name(form)}
+    naive = [{**row, "name": _SAVED_NAMES.get(row["name"], row["name"])} for row in block["naive"]]
+    block = {**block, "rows": [this, *others], "naive": naive}
+    return {**report, "earlier_versions": {**block, "text": _earlier_versions_text(block)}}
 
 
 def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STABILITY_TOP_N) -> dict:
