@@ -233,7 +233,7 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
             "effect_pct": fit.effect_pct,
             "low_pct": _pct(fit.ci_low),
             "high_pct": _pct(fit.ci_high),
-            "source": f"this notebook; {CI_LEVEL:.0%} interval clustered by Exporter–Importer pair",
+            "source": f"fitted once and saved with the artefact; {CI_LEVEL:.0%} interval clustered by Exporter–Importer pair",
         },
         {
             "estimate": "Model: Trade Agreement Scenario Effect, Baseline-weighted",
