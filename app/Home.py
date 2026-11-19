@@ -12,6 +12,7 @@ import streamlit as st
 from app import (  # PROTOTYPE (#95, #97): never merge
     client,
     prototype_banner,
+    prototype_pages,
     prototype_leaderboard,
     prototype_logo,
 )
@@ -26,8 +27,8 @@ from app.ui import (
 )
 
 PROTOTYPE = bool(os.environ.get("EXPORTSPREDICTOR_PROTOTYPE"))  # off unless asked for, so the app tests see today's page
-if PROTOTYPE:  # PROTOTYPE (#98): the banner prototype draws the whole page
-    prototype_banner.page()
+if PROTOTYPE:  # PROTOTYPE (#100): the four pages under the settled menu, each drawn by the prototype
+    prototype_pages.run()
     st.stop()
 if PROTOTYPE:
     prototype_logo.page_setup()

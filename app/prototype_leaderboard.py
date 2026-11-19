@@ -288,30 +288,7 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
     return rows[at] if at is not None else None
 
 
-def detail(row: dict) -> None:
-    """One pair's Why?, in place."""
-    body = fetch(f"/explain/{row['hs6']}/{row['iso3']}", client.api_url())
-    st.subheader(f"{row['description']} → {row['market']}")
-    st.caption(f"HS6 {row['hs6']} · Sector {sector_text(row['sector'])} · {row['region']} · {body['opportunity_type']}")
-    show_caveats(body)
-    potential, actual, gap = st.columns(3)
-    potential.metric(
-        "Export Potential", format_usd(body["export_potential_usd"]), help=TERM_HELP.get("Export Potential")
-    )
-    actual.metric("Actual Exports", format_usd(body["actual_exports_usd"]), help=TERM_HELP.get("Actual Exports"))
-    gap.metric("Export Gap", format_usd(body["export_gap_usd"]), help=TERM_HELP.get("Export Gap"))
-    facts = {
-        "Opportunity Type": body["opportunity_type"],
-        "Relative Export Gap": "n/a" if body["relative_export_gap"] is None else f"{body['relative_export_gap']:.0%}",
-        "Potential Range": (
-            f"{format_usd(body['potential_range_low_usd'])} to {format_usd(body['potential_range_high_usd'])}"
-        ),
-        "UK Trade Agreement in force": "Yes" if row["trade_agreement"] else "No",
-        "Blocked Opportunity value": format_usd(row["blocked_opportunity_value_usd"]),
-    }
-    st.dataframe(pd.DataFrame({"": list(facts), " ": list(facts.values())}), hide_index=True)
-    st.caption(OPPORTUNITY_TYPE_HELP)
-
+def _barrier(row: dict, body: dict) -> None:
     # The Barrier, for a pair with no UK Trade Agreement.
     value, baseline = row["blocked_opportunity_value_usd"], body["baseline_export_potential_usd"]
     tariff = next((f["value_text"] for f in body["factors"] if "tariff" in f["label"].lower()), None)
@@ -330,6 +307,36 @@ def detail(row: dict) -> None:
             st.info(barrier + " That is too small to count as a Blocked Opportunity (at least 20% and $1m).")
     else:
         st.caption(f"Not blocked: a UK Trade Agreement is in force with {row['market']}.")
+
+
+def detail(row: dict, barrier_first: bool = False) -> None:
+    """One pair's Why?, in place. PROTOTYPE (#100): `barrier_first` leads with the Barrier."""
+    body = fetch(f"/explain/{row['hs6']}/{row['iso3']}", client.api_url())
+    st.subheader(f"{row['description']} → {row['market']}")
+    st.caption(f"HS6 {row['hs6']} · Sector {sector_text(row['sector'])} · {row['region']} · {body['opportunity_type']}")
+    show_caveats(body)
+    if barrier_first:
+        _barrier(row, body)
+    potential, actual, gap = st.columns(3)
+    potential.metric(
+        "Export Potential", format_usd(body["export_potential_usd"]), help=TERM_HELP.get("Export Potential")
+    )
+    actual.metric("Actual Exports", format_usd(body["actual_exports_usd"]), help=TERM_HELP.get("Actual Exports"))
+    gap.metric("Export Gap", format_usd(body["export_gap_usd"]), help=TERM_HELP.get("Export Gap"))
+    facts = {
+        "Opportunity Type": body["opportunity_type"],
+        "Relative Export Gap": "n/a" if body["relative_export_gap"] is None else f"{body['relative_export_gap']:.0%}",
+        "Potential Range": (
+            f"{format_usd(body['potential_range_low_usd'])} to {format_usd(body['potential_range_high_usd'])}"
+        ),
+        "UK Trade Agreement in force": "Yes" if row["trade_agreement"] else "No",
+        "Blocked Opportunity value": format_usd(row["blocked_opportunity_value_usd"]),
+    }
+    st.dataframe(pd.DataFrame({"": list(facts), " ": list(facts.values())}), hide_index=True)
+    st.caption(OPPORTUNITY_TYPE_HELP)
+
+    if not barrier_first:
+        _barrier(row, body)
 
     st.markdown("**What raised or lowered its Export Potential**")
     label_colour = "#e6e6e6" if st.context.theme.type == "dark" else "#222222"  # Vega text is black by default
@@ -403,7 +410,6 @@ def detail(row: dict) -> None:
         f"The Export Gap is the gap between the two lines, averaged over the Gap Period. "
         f"{body['baseline_year']} figures are provisional."
     )
-    st.markdown(f"[Full Why? page: every factor]({why_link(row['hs6'], row['iso3'])})")
 
 
 def header() -> None:
