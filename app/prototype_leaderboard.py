@@ -78,6 +78,8 @@ SECTOR_NAMES = dict(zip(
     .replace("\n", "").split("|"),
     strict=True,
 ))
+TERM_HELP: dict = {}  # set by prototype_banner (#98): tooltips on the panel's three metrics
+CAPTION_EXTRA = ""  # set by prototype_banner (#98): the caution, when it sits in the table's unit line
 AGREEMENT = {"Any": None, "Yes": True, "No": False}
 FILTER_DEFAULTS = {
     "q": "", "product": None, "sector": None, "region": None, "market": None, "type": None,
@@ -258,7 +260,7 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
     st.caption(
         f"Amounts are **$ millions** ({labels()['usd_unit']}), {averaged}. "
         "Click any value in a row to see which factors raised or lowered its Export Potential. "
-        "More columns: the table's toolbar, *Show/hide columns*."
+        "More columns: the table's toolbar, *Show/hide columns*." + CAPTION_EXTRA
     )
     # Streamlit highlights only the clicked cell, so the whole row is tinted here. The clicked pair is
     # remembered, so the row stays selected even if the restyled table drops its own selection.
@@ -293,9 +295,11 @@ def detail(row: dict) -> None:
     st.caption(f"HS6 {row['hs6']} · Sector {sector_text(row['sector'])} · {row['region']} · {body['opportunity_type']}")
     show_caveats(body)
     potential, actual, gap = st.columns(3)
-    potential.metric("Export Potential", format_usd(body["export_potential_usd"]))
-    actual.metric("Actual Exports", format_usd(body["actual_exports_usd"]))
-    gap.metric("Export Gap", format_usd(body["export_gap_usd"]))
+    potential.metric(
+        "Export Potential", format_usd(body["export_potential_usd"]), help=TERM_HELP.get("Export Potential")
+    )
+    actual.metric("Actual Exports", format_usd(body["actual_exports_usd"]), help=TERM_HELP.get("Actual Exports"))
+    gap.metric("Export Gap", format_usd(body["export_gap_usd"]), help=TERM_HELP.get("Export Gap"))
     facts = {
         "Opportunity Type": body["opportunity_type"],
         "Relative Export Gap": "n/a" if body["relative_export_gap"] is None else f"{body['relative_export_gap']:.0%}",

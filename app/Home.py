@@ -11,6 +11,7 @@ import streamlit as st
 
 from app import (  # PROTOTYPE (#95, #97): never merge
     client,
+    prototype_banner,
     prototype_leaderboard,
     prototype_logo,
 )
@@ -25,6 +26,9 @@ from app.ui import (
 )
 
 PROTOTYPE = bool(os.environ.get("EXPORTSPREDICTOR_PROTOTYPE"))  # off unless asked for, so the app tests see today's page
+if PROTOTYPE:  # PROTOTYPE (#98): the banner prototype draws the whole page
+    prototype_banner.page()
+    st.stop()
 if PROTOTYPE:
     prototype_logo.page_setup()
 else:
