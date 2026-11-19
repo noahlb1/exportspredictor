@@ -49,6 +49,8 @@ from exportspredictor.prediction import ModelForm
 METADATA_FILE = "metadata.json"
 EVALUATION_FILE = "evaluation.json"
 PPML_BENCHMARK_FILE = "ppml_benchmark.json"
+# The optional JSON results, by `Artefacts` field: each is None where its file is absent.
+_OPTIONAL_JSON = {"evaluation": EVALUATION_FILE, "ppml_benchmark": PPML_BENCHMARK_FILE}
 ARTEFACT_FORMAT = 3
 _TABLES = (
     "baseline",
@@ -130,10 +132,7 @@ def save(artefacts: Artefacts, root: Path) -> Path:
         model.save_model(folder / "models" / f"fold_{k}.ubj")
     for name in _TABLES:
         getattr(artefacts, name).write_parquet(folder / f"{name}.parquet")
-    if artefacts.evaluation is not None:
-        (folder / EVALUATION_FILE).write_text(json.dumps(artefacts.evaluation, indent=2), encoding="utf-8")
-    if artefacts.ppml_benchmark is not None:
-        (folder / PPML_BENCHMARK_FILE).write_text(json.dumps(artefacts.ppml_benchmark, indent=2), encoding="utf-8")
+    _write_optional_json(folder, {field: getattr(artefacts, field) for field in _OPTIONAL_JSON})
     # Metadata goes last: its presence marks the folder as complete.
     (folder / METADATA_FILE).write_text(json.dumps(artefacts.metadata, indent=2), encoding="utf-8")
     return folder
@@ -164,8 +163,7 @@ def load(folder: Path) -> Artefacts:
         metadata=metadata,
         fold_models=models,
         **tables,
-        evaluation=_read_json(folder / EVALUATION_FILE),
-        ppml_benchmark=_read_json(folder / PPML_BENCHMARK_FILE),
+        **{field: _read_json(folder / name) for field, name in _OPTIONAL_JSON.items()},
     )
 
 
@@ -190,19 +188,26 @@ def copy_version(
 
     Models and tables are copied byte for byte, including any this code does not know
     about, so a step that adds one result does not drop another step's tables. The
-    metadata is replaced and, if given, the evaluation report and the PPML benchmark too.
-    Returns the new folder.
+    metadata is replaced and, if given, the evaluation report and the PPML benchmark too;
+    an optional result not given is the source's. Returns the new folder.
     """
     target = Path(root) / metadata["version"]
-    shutil.copytree(source, target, ignore=shutil.ignore_patterns(METADATA_FILE, EVALUATION_FILE))
-    report = evaluation if evaluation is not None else _read_json(Path(source) / EVALUATION_FILE)
-    if report is not None:
-        (target / EVALUATION_FILE).write_text(json.dumps(report, indent=2), encoding="utf-8")
-    if ppml_benchmark is not None:
-        (target / PPML_BENCHMARK_FILE).write_text(json.dumps(ppml_benchmark, indent=2), encoding="utf-8")
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns(METADATA_FILE, *_OPTIONAL_JSON.values()))
+    given = {"evaluation": evaluation, "ppml_benchmark": ppml_benchmark}
+    _write_optional_json(target, {
+        field: given[field] if given[field] is not None else _read_json(Path(source) / name)
+        for field, name in _OPTIONAL_JSON.items()
+    })
     # Metadata goes last: its presence marks the folder as complete.
     (target / METADATA_FILE).write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return target
+
+
+def _write_optional_json(folder: Path, results: dict) -> None:
+    """Write each optional JSON result that is not None (`_OPTIONAL_JSON`)."""
+    for field, value in results.items():
+        if value is not None:
+            (folder / _OPTIONAL_JSON[field]).write_text(json.dumps(value, indent=2), encoding="utf-8")
 
 
 def _read_json(path: Path) -> dict | None:
