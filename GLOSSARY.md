@@ -156,6 +156,10 @@ _Avoid_: what-if, shock, simulation
 The change in Export Potential between the Baseline and a Scenario.
 _Avoid_: impact, uplift
 
+**Illustrative**:
+How every Scenario Effect and Blocked Opportunity value is shown: an upper-end association the model has learned, beside its benchmarks (the PPML benchmark, the model's own Trade Agreement association and the Event Backtest result), never a forecast and never selected on (ADR 0008).
+_Avoid_: indicative, estimated, projected
+
 **Trade Agreement**:
 A bilateral or plurilateral preferential trade deal in force between two countries.
 _Avoid_: FTA (except as a type of Trade Agreement), deal

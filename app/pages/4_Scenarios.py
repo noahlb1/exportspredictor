@@ -7,7 +7,16 @@ import streamlit as st
 
 from app import client
 from app.format import format_change
-from app.ui import SECTORS, banner, fetch, labels, run_scenario, usd_unit
+from app.ui import (
+    SECTORS,
+    banner,
+    fetch,
+    illustrative,
+    labels,
+    run_scenario,
+    scenario_note,
+    usd_unit,
+)
 
 st.title("Scenarios")
 
@@ -18,12 +27,13 @@ PAIR_NAMES = {"hs6": "HS6", "description": "Product", "market": "Market"}
 DRILL_DOWN_ROWS = 50
 
 
-def value_columns(unit: str) -> dict[str, str]:
+def value_columns(unit: str, word: str) -> dict[str, str]:
+    """Value headings; Scenario Effects carry the API's Illustrative label `word`."""
     return {
         "baseline_potential_usd": f"Baseline Export Potential ({unit})",
         "scenario_potential_usd": f"Scenario Export Potential ({unit})",
-        "effect_usd": f"Scenario Effect ({unit})",
-        "effect_share": "Scenario Effect (share of Baseline)",
+        "effect_usd": f"Scenario Effect, {word} ({unit})",
+        "effect_share": f"Scenario Effect, {word} (share of Baseline)",
     }
 
 
@@ -45,13 +55,6 @@ if banner() is not None:
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
         st.stop()
-    try:
-        backtest = fetch("/evaluation", client.api_url()).get("event_backtest")
-    except client.NotFound:
-        backtest = None
-    if backtest:
-        st.info(f"**How the model's Scenario Effects compared with a real Trade Agreement.** {backtest['text']}")
-        st.caption(f"{backtest['caveat']} The Model Evaluation page has the details.")
     preset_info = {preset["name"]: preset for preset in presets}
     market_names = {market["iso3"]: market["name"] for market in markets}
 
@@ -132,14 +135,17 @@ if banner() is not None:
                     "forecasts: the model associates these policy conditions with this change in Export "
                     f"Potential, holding everything else at the {result['baseline_year']} Baseline."
                 )
-                unit = usd_unit()
-                pair_columns = {**PAIR_NAMES, **value_columns(unit), **TARIFF_COLUMNS}
-                total_columns = {**value_columns(unit), "pairs": "Product–Market pairs changed"}
+                unit, word = usd_unit(), illustrative()
+                pair_columns = {**PAIR_NAMES, **value_columns(unit, word), **TARIFF_COLUMNS}
+                total_columns = {**value_columns(unit, word), "pairs": "Product–Market pairs changed"}
                 total = result["total"]
-                a, b, c = st.columns(3)
-                a.metric(f"Scenario Effect ({unit})", format_change(total["effect_usd"]))
+                metrics, note = st.columns([1, 1])
+                a, b, c = metrics.columns(3)
+                a.metric(f"Scenario Effect, {word} ({unit})", format_change(total["effect_usd"]))
                 b.metric("Share of Baseline", f"{total['effect_share']:+.1%}")
                 c.metric("Blocked Opportunities", f"{result['blocked_count']:,}")
+                with note:
+                    scenario_note(result["note"])
 
                 st.subheader("Change per Market")
                 st.dataframe(table(result["markets"], {"market": "Market", **total_columns}), hide_index=True)
