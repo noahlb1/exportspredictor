@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
+from exportspredictor import conformal, illustrative, loop
 from exportspredictor.fixture import PRODUCTS
 from exportspredictor.pipeline import build_artefacts
 
@@ -44,7 +45,6 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     assert {field: caveat["badge"] for field, caveat in body["caveats"].items()} == {
         "flagged_product": "Flagged Product",
         "reexport_hub": "Re-export Hub",
-        "uncertain_opportunity": "Uncertain Opportunity",
     }
     assert all(caveat["text"].startswith(caveat["badge"]) for caveat in body["caveats"].values())
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
@@ -780,28 +780,10 @@ def test_every_ranking_row_has_a_potential_range_from_zero_up_and_flags_uncertai
 @pytest.mark.parametrize(
     "path", ["/opportunities/top", f"/opportunities/by-product/{FIXTURE_HS6}", "/opportunities/by-market/JPN"]
 )
-def test_hide_uncertain_is_off_by_default_and_removes_exactly_the_uncertain_rows_keeping_the_order(client, path):
-    def rows(**params):
-        body = client.get(path, params=params)
-        assert body.status_code == 200, body.text
-        return body.json()["opportunities"]
-
-    everything = rows()
-    assert everything == rows(hide_uncertain=False)
-    for rank_by in ("gap", "relative"):
-        ranked = rows(rank_by=rank_by, min_potential_usd=0)
-        assert rows(rank_by=rank_by, min_potential_usd=0, hide_uncertain=True) == [
-            row for row in ranked if not row["uncertain_opportunity"]
-        ]
-
-
-def test_hide_uncertain_removes_uncertain_opportunities_from_the_leaderboard_summary(client):
-    everything, shown = _top(client), _top(client, hide_uncertain=True)
-
-    assert shown["summary"]["pairs"] == everything["summary"]["pairs"] - sum(
-        row["uncertain_opportunity"] for row in everything["opportunities"]
-    )
-    assert shown["summary"]["pairs"] < everything["summary"]["pairs"]
+def test_the_ranking_query_no_longer_accepts_a_filter_for_uncertain_opportunities(client, path):
+    # The Uncertain Opportunity is reported as a share on the Model Evaluation page, not filtered per row (spec #66)
+    assert client.get(path).status_code == 200
+    assert client.get(path, params={"hide_uncertain": True}).status_code == 422
 
 
 def test_an_explanation_carries_the_pairs_potential_range_as_its_ranking_row_does(client):
@@ -833,3 +815,313 @@ def test_evaluation_never_serves_the_v1_comparison(client, fixture_artefacts):
     body = client.get("/evaluation").json()
 
     assert "v1_comparison" not in body
+
+
+def test_evaluation_states_the_share_of_opportunities_inside_their_potential_range(client, fixture_artefacts):
+    saved = fixture_artefacts.evaluation["potential_range"]
+    served = client.get("/evaluation").json()["potential_range"]
+
+    # Worded by the package at serve time, so a version saved before the badge was removed reads the same
+    assert served["text"] == conformal.coverage_text(saved)
+    assert served["uncertain_opportunity_share"] == saved["uncertain_opportunity_share"]
+
+
+# --- The Scenario note: Illustrative, beside its benchmarks (spec #66) ------------------
+
+SCENARIO = {"add_agreements": ["IND"]}
+
+def _note(artefacts, tmp_path) -> dict:
+    store.save(artefacts, tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        return client.post("/scenarios", json=SCENARIO).json()["note"]
+
+
+def test_the_scenario_response_labels_its_effects_illustrative(client):
+    note = client.post("/scenarios", json=SCENARIO).json()["note"]
+
+    assert note["label"] == "Illustrative"
+    assert "forecast" in note["text"]
+
+
+def test_the_note_carries_the_saved_ppml_benchmark_with_its_interval(client, fixture_artefacts):
+    saved = fixture_artefacts.ppml_benchmark["ppml"]
+
+    benchmark = client.post("/scenarios", json=SCENARIO).json()["note"]["benchmark"]
+
+    assert benchmark["run"] is True
+    assert benchmark["effect_pct"] == pytest.approx(saved["effect_pct"])
+    assert benchmark["low_pct"] == pytest.approx(saved["effect_low_pct"])
+    assert benchmark["high_pct"] == pytest.approx(saved["effect_high_pct"])
+    assert f"{saved['effect_pct']:+.1f}%" in benchmark["text"]
+
+
+def test_the_note_carries_the_models_own_trade_agreement_association_on_the_served_form(client, fixture_artefacts):
+    saved = fixture_artefacts.ppml_benchmark["model"]
+
+    association = client.post("/scenarios", json=SCENARIO).json()["note"]["model_association"]
+
+    assert association["run"] is True
+    assert association["effect_pct"] == pytest.approx(saved["effect_pct"])
+    assert association["pairs"] == saved["pairs"]
+    assert association["model_form"] == saved["model_form"]["form"]
+    assert "associates" in association["text"]
+
+
+def test_the_note_carries_the_primary_event_backtests_predicted_and_observed_change(client, fixture_artefacts):
+    primary = next(e for e in fixture_artefacts.evaluation["event_backtest"]["events"] if e["role"] == "primary")
+    pooled = primary["directions"][0]["pooled"]
+
+    backtest = client.post("/scenarios", json=SCENARIO).json()["note"]["event_backtest"]
+
+    assert backtest["run"] is True
+    assert backtest["title"] == primary["title"]
+    assert backtest["direction"] == primary["directions"][0]["label"]
+    assert backtest["predicted"] == pytest.approx(pooled["predicted"])
+    assert backtest["observed"] == pytest.approx(pooled["observed"])
+    assert [backtest["observed_low"], backtest["observed_high"]] == pytest.approx(pooled["observed_ci"])
+
+
+def test_the_note_says_the_event_backtest_and_the_models_association_cover_different_populations(client):
+    # Spec #66 story 29: the Blend's association over every UK pair is not to be compared with one agreement's backtest
+    backtest = client.post("/scenarios", json=SCENARIO).json()["note"]["event_backtest"]
+
+    assert illustrative.DIFFERENT_POPULATIONS in backtest["text"]
+
+
+def test_the_note_says_a_scenario_moves_only_the_models_share_of_the_blend(client, fixture_artefacts):
+    weight = 1 - fixture_artefacts.metadata["model_form"]["naive_weight"]
+    primary = next(e for e in fixture_artefacts.evaluation["event_backtest"]["events"] if e["role"] == "primary")
+    predicted = primary["directions"][0]["pooled"]["predicted"]
+
+    blend = client.post("/scenarios", json=SCENARIO).json()["note"]["blend"]
+
+    assert blend["model_weight"] == pytest.approx(weight)
+    # The served effect is the model's scaled by its weight on the log scale: (1 + e) ** w - 1
+    assert blend["served_effect"] == pytest.approx((1 + predicted) ** weight - 1)
+    assert "model alone" in blend["text"]
+
+
+def test_the_blend_note_and_the_event_backtest_part_read_the_same_primary_event_backtest(fixture_artefacts, tmp_path):
+    backtest = fixture_artefacts.evaluation["event_backtest"]
+    primary = next(e for e in backtest["events"] if e["role"] == "primary")
+    direction = primary["directions"][0]
+    secondary = {**primary, "role": "secondary", "title": "A secondary check", "directions": [
+        {**direction, "pooled": {**direction["pooled"], "predicted": direction["pooled"]["predicted"] + 0.5}},
+    ]}
+    report = {**fixture_artefacts.evaluation, "event_backtest": {**backtest, "events": [secondary, primary]}}
+
+    note = _note(replace(fixture_artefacts, evaluation=report), tmp_path)
+
+    assert note["event_backtest"]["title"] == primary["title"]
+    assert note["blend"]["model_effect"] == pytest.approx(primary["directions"][0]["pooled"]["predicted"])
+    assert primary["title"] in note["blend"]["text"]
+
+
+def test_with_no_saved_benchmark_the_note_keeps_the_label_and_says_the_benchmark_was_not_run(fixture_artefacts, tmp_path):
+    note = _note(replace(fixture_artefacts, ppml_benchmark=None), tmp_path)
+
+    assert note["label"] == "Illustrative"
+    for part in ("benchmark", "model_association"):
+        assert note[part]["run"] is False
+        assert "not run for this version" in note[part]["text"]
+    assert note["event_backtest"]["run"] is True
+
+
+def test_with_no_event_backtests_the_note_keeps_the_label_and_says_they_were_not_run(fixture_artefacts, tmp_path):
+    report = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "event_backtest"}
+
+    note = _note(replace(fixture_artefacts, evaluation=report), tmp_path)
+
+    assert note["label"] == "Illustrative"
+    assert note["event_backtest"]["run"] is False
+    assert "not run for this version" in note["event_backtest"]["text"]
+    assert note["benchmark"]["run"] is True
+
+
+def test_the_labels_endpoint_carries_the_illustrative_label(client):
+    label = client.get("/labels").json()["illustrative"]
+
+    assert label["badge"] == "Illustrative"
+    assert "forecast" in label["text"]
+
+
+def test_with_no_evaluation_the_note_still_carries_the_label(fixture_artefacts, tmp_path):
+    note = _note(replace(fixture_artefacts, evaluation=None), tmp_path)
+
+    assert note["label"] == "Illustrative"
+    assert note["event_backtest"]["run"] is False
+    assert note["benchmark"]["run"] is True
+
+
+def test_the_blocked_opportunities_response_carries_the_same_scenario_note(client):
+    scenario_note = client.post("/scenarios", json=SCENARIO).json()["note"]
+
+    blocked = client.get("/opportunities/blocked").json()
+
+    assert blocked["note"] == scenario_note
+
+
+def test_with_no_saved_benchmark_the_blocked_note_says_the_benchmark_was_not_run(fixture_artefacts, tmp_path):
+    store.save(replace(fixture_artefacts, ppml_benchmark=None), tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        note = client.get("/opportunities/blocked").json()["note"]
+
+    assert note["label"] == "Illustrative"
+    assert note["benchmark"]["run"] is False and "not run for this version" in note["benchmark"]["text"]
+
+
+# --- How the model was chosen, read from the artefact (spec #66 stories 46–49) ----------
+
+
+def _served(artefacts, tmp_path) -> dict:
+    store.save(artefacts, tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        return client.get("/evaluation").json()
+
+
+def test_evaluation_serves_the_selection_measure_the_model_form_and_the_win_threshold(client, fixture_artefacts):
+    recorded = fixture_artefacts.metadata["ranking_experiments"]
+
+    choice = client.get("/evaluation").json()["model_choice"]
+
+    assert choice["recorded"] is True
+    assert choice["selection_measure"] == recorded["selection_measure"]
+    assert choice["validation_year"] == recorded["validation_year"]
+    assert choice["win_threshold"] == pytest.approx(recorded["noise_floor"]["win_threshold"])
+    assert choice["model_form"]["form"] == "blend"
+    assert choice["model_form"]["naive_weight"] == pytest.approx(fixture_artefacts.metadata["model_form"]["naive_weight"])
+    assert "Naive Baseline" in choice["model_form"]["text"]
+
+
+def test_evaluation_serves_every_experiment_and_whether_it_was_kept(client, fixture_artefacts):
+    recorded = fixture_artefacts.metadata["ranking_experiments"]["experiments"]
+
+    experiments = client.get("/evaluation").json()["model_choice"]["experiments"]
+
+    assert [e["name"] for e in experiments] == list(recorded)
+    for served, section in zip(experiments, recorded.values(), strict=True):
+        assert served["kept"] == section.get("kept")
+        best = next(row for row in section["arms"] if row.get("best"))
+        assert served["best_arm"] == best["arm"]
+        assert served["label"] == loop.experiment_label(served["name"], [row["arm"] for row in section["arms"]])
+        assert served["selection_measure"] == pytest.approx(best["selection_measure"])
+
+
+CONFIRMATION = {
+    "n_folds": 2, "validation_year": 2022, "difference": 0.0429, "win_threshold": 0.0089, "beats_v2": True,
+    "winner": {"selection_measure": 0.5635}, "v2": {"selection_measure": 0.5206},
+    "naive": {"selection_measure": 0.5332},
+    "folds": [
+        {"fold": 0, "v2": {"selection_measure": 0.5334}, "winner": {"selection_measure": 0.5771}},
+        {"fold": 1, "v2": {"selection_measure": 0.5295}, "winner": {"selection_measure": 0.5745}},
+    ],
+}
+
+
+def test_evaluation_serves_the_five_fold_confirmation_fold_by_fold(fixture_artefacts, tmp_path):
+    ranking = {**fixture_artefacts.metadata["ranking_experiments"], "confirmation": CONFIRMATION}
+    confirmed = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": ranking})
+
+    confirmation = _served(confirmed, tmp_path)["model_choice"]["confirmation"]
+
+    assert confirmation["n_folds"] == 2 and confirmation["beats_v2"] is True
+    assert confirmation["winner"] == 0.5635 and confirmation["v2"] == 0.5206 and confirmation["naive"] == 0.5332
+    assert confirmation["difference"] == 0.0429 and confirmation["win_threshold"] == 0.0089
+    assert confirmation["folds"] == [{"fold": 0, "winner": 0.5771, "v2": 0.5334}, {"fold": 1, "winner": 0.5745, "v2": 0.5295}]
+
+
+def test_the_fixture_records_no_confirmation_and_serves_none(client):
+    assert client.get("/evaluation").json()["model_choice"]["confirmation"] is None
+
+
+def test_an_artefact_without_experiment_results_says_so(fixture_artefacts, tmp_path):
+    metadata = {key: value for key, value in fixture_artefacts.metadata.items() if key != "ranking_experiments"}
+
+    choice = _served(replace(fixture_artefacts, metadata=metadata), tmp_path)["model_choice"]
+
+    assert choice["recorded"] is False
+    assert choice["experiments"] == [] and choice["confirmation"] is None and choice["win_threshold"] is None
+    assert "No experiment results" in choice["text"]
+    assert choice["model_form"]["form"] == "blend"  # the served form is still named
+
+
+V2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
+      "tweedie_deviance_all_exporters": 355.5, "tweedie_deviance_uk": 568.6}
+
+
+def _with_v2(fixture_artefacts, v2: dict = V2):
+    from exportspredictor import evaluation
+
+    report = {**fixture_artefacts.evaluation}
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    return replace(fixture_artefacts, evaluation=report)
+
+
+def test_evaluation_serves_the_test_year_ranking_beside_the_naive_baseline_and_earlier_versions(
+    fixture_artefacts, tmp_path
+):
+    artefacts = _with_v2(fixture_artefacts)
+    block = artefacts.evaluation["earlier_versions"]
+
+    ranking = _served(artefacts, tmp_path)["model_choice"]["test_year_ranking"]
+
+    assert ranking["test_year"] == block["test_year"]
+    assert [(r["name"], r["uk_ranking"]) for r in ranking["rows"]] == [(r["name"], r["uk_ranking"]) for r in block["rows"]]
+    assert [r["uk_ranking"] for r in ranking["naive"]] == [r["uk_ranking"] for r in block["naive"]]
+    assert ranking["beats_naive"] == block["beats_naive"] and ranking["text"] == block["text"]
+
+
+def test_evaluation_says_what_the_blend_traded_away_with_the_deviance_read_from_the_artefact(
+    fixture_artefacts, tmp_path
+):
+    this = fixture_artefacts.evaluation["accuracy"]["all_exporters"]["overall"]["model_tweedie_deviance"]
+    v2 = {**V2, "tweedie_deviance_all_exporters": round(this / 2, 1)}  # v2 estimated size better
+    artefacts = _with_v2(fixture_artefacts, v2)
+
+    traded = _served(artefacts, tmp_path)["model_choice"]["traded_away"]
+
+    assert traded["deviance"] == pytest.approx(this) and traded["earlier_deviance"] == round(this / 2, 1)
+    assert traded["earlier_name"] == "v2"
+    assert f"{this:,.1f}" in traded["text"] and f"{round(this / 2, 1):,.1f}" in traded["text"]
+    assert "ranking" in traded["text"] and "dollar" in traded["text"]
+
+
+def test_without_an_earlier_version_to_compare_nothing_is_said_to_be_traded_away(client):
+    assert client.get("/evaluation").json()["model_choice"]["traded_away"] is None  # the fixture has no v2
+
+
+def test_nothing_is_said_to_be_traded_away_when_the_deviance_is_no_worse(fixture_artefacts, tmp_path):
+    this = fixture_artefacts.evaluation["accuracy"]["all_exporters"]["overall"]["model_tweedie_deviance"]
+    artefacts = _with_v2(fixture_artefacts, {**V2, "tweedie_deviance_all_exporters": this * 2})
+
+    assert _served(artefacts, tmp_path)["model_choice"]["traded_away"] is None
+
+
+def test_the_event_backtest_note_says_it_measured_the_model_alone_and_served_effects_are_smaller(
+    client, fixture_artefacts
+):
+    weight = 1 - fixture_artefacts.metadata["model_form"]["naive_weight"]
+
+    note = client.get("/evaluation").json()["event_backtest_note"]
+
+    assert "model alone" in note["text"]
+    assert note["model_weight"] == pytest.approx(weight)
+    predicted = fixture_artefacts.evaluation["event_backtest"]["events"][0]["directions"][0]["pooled"]["predicted"]
+    assert note["model_effect"] == pytest.approx(predicted)
+    assert note["served_effect"] == pytest.approx((1 + predicted) ** weight - 1)  # scaled on the log scale
+    assert abs(note["served_effect"]) <= abs(note["model_effect"])
+
+
+def test_no_event_backtest_note_when_the_model_alone_is_served(fixture_artefacts, tmp_path):
+    metadata = {**fixture_artefacts.metadata, "model_form": {"form": "model alone", "naive_weight": 0.0}}
+
+    assert _served(replace(fixture_artefacts, metadata=metadata), tmp_path)["event_backtest_note"] is None
+
+
+def test_the_v1_comparisons_detail_is_still_not_served(client, fixture_artefacts):
+    assert "v1_comparison" in fixture_artefacts.evaluation
+
+    body = client.get("/evaluation").json()
+
+    assert "v1_comparison" not in body and "v1_comparison" not in body["model_choice"]
+    assert "ladder" not in str(body["model_choice"]) and "verdict" not in str(body["model_choice"])

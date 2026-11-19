@@ -4,6 +4,7 @@ v2's scores here are a stand-in (Actual Exports with seeded noise), so these tes
 protocol (common rows, bootstrap, verdict, manifest), not either model.
 """
 
+import json
 import shutil
 
 import numpy as np
@@ -13,6 +14,7 @@ import pytest
 from exportspredictor import comparison, freeze
 from exportspredictor.exclusions import is_excluded
 from exportspredictor.fixture import UK
+from exportspredictor.paths import artefacts_dir
 
 TEST_YEAR = 2023
 KEYS = ["exporter", "importer", "hs6"]
@@ -326,3 +328,41 @@ def test_the_fixture_evaluation_holds_the_gain_ladder_of_two_extra_test_year_mod
     assert ladder["rungs"][-1]["value"] == pytest.approx(block["primary"]["v2"])
     assert ladder["v1_configuration"]["rounds"] == comparison.FIXTURE_LADDER.rounds
     assert ladder["v1_configuration"]["features"]["A"] == comparison.V1_FEATURES
+
+
+# --- Naming the new version: the comparison was written when v2 was the new version ----------------
+
+
+def test_the_verdict_names_the_new_version_it_is_given():
+    result = comparison.verdict(_primary(), [_secondary(worse=True)], name="the Blend")
+
+    assert "the Blend's Export Potential ranks Markets" in result["text"]
+    assert "v1 300.000, the Blend 290.000" in result["text"]
+    assert "v2" not in result["text"]
+    assert "Naive Baseline" in result["text"] and "naive baseline" not in result["text"]
+
+
+def test_a_saved_comparison_is_relabelled_from_its_saved_figures():
+    block = {"primary": _primary(), "secondary": [_secondary()], "secondaries_not_run": ["Lift"],
+             "verdict": {"text": "v2 beats v1 under the pre-registered rule ..."}}
+
+    relabelled = comparison.relabelled({"model_form": {"form": "blend", "naive_weight": 0.3}, "v1_comparison": block})
+
+    text = relabelled["v1_comparison"]["verdict"]["text"]
+    assert text.startswith("The Blend beats v1")
+    assert "The Lift secondaries were not run" in text
+    assert block["verdict"]["text"].startswith("v2")  # the saved report is not changed
+
+
+# The served real artefact, whose comparison was saved while v2 was the name of the new version.
+REAL_REPORT = artefacts_dir() / "20261119T001736Z" / "evaluation.json"
+
+
+@pytest.mark.skipif(not REAL_REPORT.exists(), reason="the real artefact 20261119T001736Z is absent")
+def test_relabelling_the_real_comparison_as_v2_reproduces_its_saved_text_bar_the_naive_baseline_s_casing():
+    report = json.loads(REAL_REPORT.read_text(encoding="utf-8"))
+    block = report["v1_comparison"]
+
+    again = comparison.saved_verdict_text(block, name="v2")
+
+    assert again == block["verdict"]["text"].replace("naive baseline", "Naive Baseline")

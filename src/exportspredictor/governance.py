@@ -17,16 +17,24 @@ from pathlib import Path
 
 import polars as pl
 
+from exportspredictor import comparison
 from exportspredictor.artefacts import Artefacts
+from exportspredictor.conformal import coverage_text
 from exportspredictor.evaluation import (
     LIMITATIONS,
     parts_not_run,
     range_limitations,
     result_limitations,
 )
+from exportspredictor.illustrative import scenario_note
+from exportspredictor.model_choice import (
+    model_form_summary,
+    ranking_summary,
+    round_count,
+    selection_rule_text,
+    traded_away,
+)
 from exportspredictor.paths import data_dir
-from exportspredictor.ppml import LITERATURE
-from exportspredictor.prediction import ModelForm
 from exportspredictor.wording import number_text, rate_text, years_text
 
 OWNER = "UNASSIGNED"
@@ -60,7 +68,7 @@ DECISIONS = [
      ("UK Product–Market pairs are split into five folds by a hash of the pair, all years together. Each pair's "
      "Export Potential, Scenario Effect and explanation come from the fold model that never saw it, so the "
      "Export Gap is not shrunk by memorisation. UK supply features leave the target Market out.")),
-    ("One monotone-constrained XGBoost model, blended with the naive baseline (ADR 0002, ADR 0008)",
+    ("One monotone-constrained XGBoost model, blended with the Naive Baseline (ADR 0002, ADR 0008)",
      ("A Tweedie-loss gradient-boosted model serves Opportunities and Scenarios. Every Trade Agreement and "
      "Trading Bloc feature has a +1 monotone constraint and the Applied Tariff a −1 constraint, so adding an "
      "agreement or cutting a tariff never lowers Export Potential; it does not make the size of the effect right. "
@@ -116,12 +124,12 @@ DECISIONS = [
      "Markets with no agreement, with the tariff zeroed when the agreement is on.")),
     ("A pre-registered comparison with v1",
      ("v2 is said to beat v1 only if, on the same 2023 UK rows, its within-Product rank correlation is higher with a "
-     "paired-bootstrap interval above 0, it beats the naive baseline by more than v1 did, and no secondary metric is "
+     "paired-bootstrap interval above 0, it beats the Naive Baseline by more than v1 did, and no secondary metric is "
      "worse beyond its interval. The rule was fixed before 2023 was read; a gain ladder splits the change.")),
     ("A PPML gravity benchmark for the Trade Agreement Scenario Effect",
      ("A 3-way fixed-effects Poisson pseudo-maximum-likelihood gravity model, at Sector level on the same Flows and "
-     "scope, gives an independent estimate of what a Trade Agreement is associated with. It is reported in the "
-     "notebook and never served.")),
+     "scope, gives an independent estimate of what a Trade Agreement is associated with. It is fitted once and "
+     "saved with the artefact (`python -m exportspredictor.ppml`), beside the model's own association.")),
     ("Values in nominal US dollars",
      ("Every value is in nominal USD, BACI's unit, so figures match international trade sources and need no "
      "conversion. The Bank of England's annual averages (XUAAUSS) only convert HMRC's £ for the cross-check.")),
@@ -167,17 +175,19 @@ _RAW_SOURCES = {
 # --- Model card ----------------------------------------------------------------------------
 
 
-def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -> dict:
-    """The model card of one artefact version, built from its metadata and evaluation report.
-
-    `gravity_benchmark` is the notebook's PPML benchmark, which is never saved in an artefact:
-    {"ppml": `ppml.PpmlFit.as_dict()`, "model": `ppml.model_agreement_effect(...)`}.
+def model_card(artefacts: Artefacts) -> dict:
+    """The model card of one artefact version, built from its metadata, evaluation report and
+    saved PPML benchmark (`Artefacts.ppml_benchmark`; listed under the parts not run where absent).
     """
-    metadata, report = artefacts.metadata, artefacts.evaluation or {}
+    # Read in today's words: the saved report's names and the v1 comparison's, which predate the Blend.
+    metadata, report = artefacts.metadata, comparison.relabelled(artefacts.evaluation or {})
     return {
         "version": artefacts.version,
         "owner": OWNER,
         "model": _model_summary(metadata),
+        "model_form": model_form_summary(metadata),
+        "round_count": round_count(metadata),
+        "illustrative": scenario_note(artefacts),
         "intended_use": INTENDED_USE,
         "out_of_scope": OUT_OF_SCOPE,
         "training_scope": _training_scope(metadata),
@@ -185,13 +195,15 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
         "dropped_features": _dropped_features(metadata),
         "excluded_products": _excluded_products(artefacts.excluded_products),
         "metrics": _metrics(report),
-        "not_run": parts_not_run(report) if report else [],
-        "v1_comparison": _comparison_summary(report.get("v1_comparison")),
+        "not_run": parts_not_run(report, artefacts.ppml_benchmark) if report else [],
+        "v1_comparison": _comparison_summary(report.get("v1_comparison"), comparison.version_name(report)),
         "earlier_versions": report.get("earlier_versions"),
-        "ranking_experiments": _ranking_summary(metadata.get("ranking_experiments")),
+        "traded_away": traded_away(report.get("earlier_versions")),
+        "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
+        "potential_range": _potential_range(report.get("potential_range")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
         "limitations": [
-            *result_limitations(metadata, report), *_benchmark_limitations(gravity_benchmark),
+            *result_limitations(metadata, report), *_benchmark_limitations(artefacts.ppml_benchmark),
             *range_limitations(artefacts.potential_range_bands), *LIMITATIONS,
         ],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
@@ -202,56 +214,42 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
 
 def _model_summary(metadata: dict) -> str:
     params = metadata.get("params", {})
-    form = metadata.get("model_form")
-    blended = f" {ModelForm.from_dict(form).text}" if form and form.get("naive_weight") else ""
     return (
         f"XGBoost, Tweedie objective (variance power {number_text(params.get('tweedie_variance_power'), '.2f')}), depth "
         f"{params.get('max_depth', '?')}, {number_text(metadata.get('rounds'), ',')} rounds; {metadata.get('n_folds', '?')} "
         f"out-of-fold models trained on {years_text(metadata.get('training_years'))}, scoring the "
-        f"{metadata.get('baseline_year', '?')} Baseline.{blended} Source: {metadata.get('source', '?')}."
+        f"{metadata.get('baseline_year', '?')} Baseline. Source: {metadata.get('source', '?')}."
     )
 
 
-def _ranking_summary(record: dict | None) -> dict | None:
-    """How the experiment loop chose the served form (ADR 0008): the selection measure, the noise
-    floor's win threshold, each experiment's best arm and whether it was kept, and the confirmation."""
-    if not record:
-        return None
-    floor = record.get("noise_floor") or {}
-    experiments = []
-    for name, section in (record.get("experiments") or {}).items():
-        best = next((row for row in section.get("arms", []) if row.get("best")), None)
-        experiments.append({
-            "name": name,
-            "kept": section.get("kept"),
-            "best_arm": best["arm"] if best else None,
-            "selection_measure": best["selection_measure"] if best else None,
-            "change": best.get("change") if best else None,
-        })
-    confirmation = record.get("confirmation")
-    return {
-        "selection_measure": record.get("selection_measure"),
-        "validation_year": record.get("validation_year"),
-        "win_threshold": floor.get("win_threshold"),
-        "experiments": experiments,
-        "confirmation": {key: confirmation[key] for key in ("n_folds", "difference", "win_threshold", "beats_v2")}
-        | {name: confirmation[name]["selection_measure"] for name in ("winner", "v2", "naive")}
-        if confirmation else None,
-    }
+def _headline_lines(card: dict) -> list[str]:
+    """The test-year UK ranking beside the Naive Baseline and earlier versions, else the report's headline."""
+    if card.get("earlier_versions"):
+        return _earlier_lines(card["earlier_versions"])
+    headline = next((m for m in card["metrics"] if m["name"] == "UK ranking (headline)"), None)
+    return [headline["text"]] if headline else ["The test year has not been evaluated for this version."]
+
+
+def _illustrative_lines(note: dict) -> list[str]:
+    """The Scenario note (`illustrative.scenario_note`): the label, then each benchmark part, run or not."""
+    parts = [note["benchmark"], note["model_association"], note["event_backtest"], note["blend"]]
+    return [f"**{note['label']}.** {note['text']}", "", *[f"- {part['text']}" for part in parts if part]]
 
 
 def _ranking_lines(summary: dict | None) -> list[str]:
     if summary is None:
         return ["No experiment loop is recorded for this version."]
     lines = [
-        (f"Every choice was made on one selection measure, on {summary['validation_year']} only: "
-        f"{summary['selection_measure']}. An arm was kept only if it beat the best so far by more than the win "
-        f"threshold, {number_text(summary['win_threshold'], '.4f')} (twice the SD of three seeds of one configuration)."),
+        selection_rule_text(summary),
         "",
-        "| Experiment | Best arm | Selection measure | Change on the best so far | Kept |",
+        (f"Each row is one decision of the rule, labelled with its experiment's number in "
+         f"docs/research/opportunity-ranking-experiments.md: {len(summary['experiments'])} decisions for "
+         f"{summary['n_experiments']} experiments."),
+        "",
+        "| Experiment | Best Arm | Selection Measure | Change on the best so far | Kept |",
         "| --- | --- | --- | --- | --- |",
         *[
-            f"| {e['name']} | {e['best_arm'] or 'n/a'} | {number_text(e['selection_measure'], '.4f')} | "
+            f"| {e['label']} | {e['best_arm'] or 'n/a'} | {number_text(e['selection_measure'], '.4f')} | "
             f"{number_text(e['change'], '+.4f')} | {e['kept'] or 'no'} |"
             for e in summary["experiments"]
         ],
@@ -261,7 +259,7 @@ def _ranking_lines(summary: dict | None) -> list[str]:
         lines += ["", (
             f"Confirmed on all {confirmation['n_folds']} folds of {summary['validation_year']}: the chosen form "
             f"{number_text(confirmation['winner'], '.4f')}, v2's form (the model alone) {number_text(confirmation['v2'], '.4f')}, "
-            f"the naive baseline {number_text(confirmation['naive'], '.4f')}; difference "
+            f"the Naive Baseline {number_text(confirmation['naive'], '.4f')}; difference "
             f"{number_text(confirmation['difference'], '+.4f')} against a threshold of "
             f"{number_text(confirmation['win_threshold'], '.4f')} ("
             f"{'confirmed' if confirmation['beats_v2'] else 'not confirmed'})."
@@ -385,13 +383,15 @@ def _metrics(report: dict) -> list[dict]:
     return rows
 
 
-def _comparison_summary(block: dict | None) -> dict | None:
-    """The pre-registered v1 comparison in brief: the verdict, the primary metric and the gain ladder."""
+def _comparison_summary(block: dict | None, name: str) -> dict | None:
+    """The pre-registered v1 comparison in brief: the verdict, the primary metric and the gain ladder;
+    `name` is what the words call the version compared with v1 (`comparison.version_name`)."""
     if not block:
         return None
     primary = block["primary"]
     ladder = block.get("ladder")
     return {
+        "name": name,
         "verdict": block["verdict"]["text"],
         "v2_beats_v1": block["verdict"]["v2_beats_v1"],
         "primary": {key: primary[key] for key in ("label", "v1", "v2", "naive", "difference", "ci")},
@@ -434,6 +434,15 @@ def range_coverage_by_exporter(potential_range: dict, tolerance: float = RANGE_C
         )
         .sort("coverage")
     )
+
+
+def _potential_range(potential_range: dict | None) -> dict | None:
+    """The share of Opportunities whose UK Actual Exports lie inside their Potential Range (Uncertain
+    Opportunities), reported as a share and never per row (ADR 0007). None where not recorded."""
+    if not potential_range or potential_range.get("uncertain_opportunity_share") is None:
+        return None
+    keys = ("coverage", "target", "opportunities", "uncertain_opportunities", "uncertain_opportunity_share")
+    return {key: potential_range[key] for key in keys} | {"text": coverage_text(potential_range)}
 
 
 def _range_review(potential_range: dict | None) -> dict | None:
@@ -480,27 +489,49 @@ def _some(names: list[str], limit: int = 10) -> str:
 def _benchmark_limitations(benchmark: dict | None) -> list[dict]:
     if not benchmark:
         return []
-    ppml, model = benchmark["ppml"], benchmark["model"]
-    published = [math.expm1(row["coefficient"]) for row in LITERATURE]
+    ppml, model, published = benchmark["ppml"], benchmark["model"], benchmark["published_range"]
+    low, high = published["low_pct"] / 100, published["high_pct"] / 100
     return [{
         "title": "Scenario Effects are far above a gravity benchmark",
         "text": f"Over the UK pairs with no Trade Agreement, the model associates adding one (with its tariff "
         f"removed) with {model['effect_pct']:+.1f}% Export Potential, Baseline-weighted. A 3-way fixed-effects PPML "
         f"gravity model on the same Flows associates a Trade Agreement with {ppml['effect_pct']:+.1f}% (95% interval "
-        f"{_signed_pct(ppml['effect_low_pct'])} to {_signed_pct(ppml['effect_high_pct'])}). Published estimates span "
-        f"about {min(published):+.0%} to {max(published):+.0%}, but the Event Backtests point the same way as the benchmark: the model overstates the "
+        f"{_signed_percent_with_minus_sign(ppml['effect_low_pct'])} to {_signed_percent_with_minus_sign(ppml['effect_high_pct'])}). Published estimates span "
+        f"about {low:+.0%} to {high:+.0%}, but the Event Backtests point the same way as the benchmark: the model overstates the "
         f"association. Read Scenario Effects as an upper end.",
     }]
 
 
-def _signed_pct(value: float) -> str:
+def _signed_percent_with_minus_sign(value: float) -> str:
     return f"{value:+.1f}%".replace("-", "−")
 
 
 def render_model_card(card: dict) -> str:
-    """The model card as Markdown."""
+    """The model card as Markdown. It leads with what the notebook leads with (the headline, the Model
+    Form and the Illustrative label), and ends with the frozen v1 comparison as a short reported result."""
     lines = [f"# Model card: UK Exports Predictor, version {card['version']}", "",
-             f"**Owner:** {card['owner']}", "", f"**Model:** {card['model']}", ""]
+             f"**Owner:** {card['owner']}", ""]
+    lines += ["## Headline", "", *_headline_lines(card), ""]
+    if card.get("traded_away"):
+        lines += [card["traded_away"]["text"], ""]
+    lines += ["## Model Form", "", card["model_form"]["text"], "", f"**Model:** {card['model']}", "",
+              card["round_count"]["text"], ""]
+    lines += ["## Illustrative Scenario Effects", "", *_illustrative_lines(card["illustrative"]), ""]
+    lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
+    lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
+        "text", "The artefact records no Potential Range coverage for this version."), ""]
+    lines += ["## Metrics", "", "| Metric | Model | Reference (Naive Baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
+    lines += [
+        f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
+        f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"
+        for m in card["metrics"]
+    ]
+    lines += [""]
+    if card.get("not_run"):
+        lines += ["## Parts not run", "", *[f"- {part['text']}" for part in card["not_run"]], ""]
+    lines += ["## Limitations", "", *[f"- **{x['title']}.** {x['text']}" for x in card["limitations"]], ""]
+    lines += ["## Intended use", "", *[f"- {item}" for item in card["intended_use"]], ""]
+    lines += ["## Out-of-scope use", "", *[f"- {item}" for item in card["out_of_scope"]], ""]
     lines += ["## Training scope and sampling", "", card["training_scope"]["text"], ""]
     dropped = card["dropped_features"]
     lines += ["## Features", "", (
@@ -513,22 +544,8 @@ def render_model_card(card: dict) -> str:
         "world totals still count them."), "", *[
         f"- **{group['reason']}** {len(group['products'])} Product{'s' if len(group['products']) != 1 else ''}: {', '.join(group['products'])}."
         for group in card["excluded_products"]], ""]
-    lines += ["## Intended use", "", *[f"- {item}" for item in card["intended_use"]], ""]
-    lines += ["## Out-of-scope use", "", *[f"- {item}" for item in card["out_of_scope"]], ""]
-    lines += ["## Metrics", "", "| Metric | Model | Reference (naive baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
-    lines += [
-        f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
-        f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"
-        for m in card["metrics"]
-    ]
-    if card.get("not_run"):
-        lines += ["", "## Parts not run", "", *[f"- {part['text']}" for part in card["not_run"]]]
-    lines += ["", "## UK ranking beside earlier versions", "", *_earlier_lines(card.get("earlier_versions"))]
-    lines += ["", "## How the model form was chosen", "", *_ranking_lines(card.get("ranking_experiments"))]
-    lines += ["", "## Bias review: Potential Range coverage by Exporter", "",
+    lines += ["## Bias review: Potential Range coverage by Exporter", "",
               *_range_review_lines(card["range_coverage_by_exporter"]), ""]
-    lines += ["## Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
-    lines += ["## Limitations", "", *[f"- **{x['title']}.** {x['text']}" for x in card["limitations"]], ""]
     lines += ["## Data sources", "", *[f"- **{s['name']}** ({s['location']}): {s['use']}" for s in card["data_sources"]], ""]
     if card["source_versions"]:
         lines += ["## Source versions", "", *[
@@ -536,19 +553,21 @@ def render_model_card(card: dict) -> str:
             for s in card["source_versions"]
         ], ""]
     lines += ["## Decisions behind the model", "", *[f"- **{d['title']}.** {d['text']}" for d in card["decisions"]], ""]
+    lines += ["## Frozen results", "", ("Reported once and no longer extended: they decided v2, not the served "
+              "Model Form (ADR 0008)."), "", "### Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
     return "\n".join(lines)
 
 
 def _comparison_lines(summary: dict | None) -> list[str]:
     if summary is None:
         return ["The pre-registered comparison with v1 has not been run for this version."]
-    primary = summary["primary"]
+    primary, name = summary["primary"], summary["name"]
     lines = [
         f"**Verdict.** {summary['verdict']}",
         "",
         (
-            f"Primary metric ({primary['label']}): v1 {number_text(primary['v1'], '.3f')}, v2 {number_text(primary['v2'], '.3f')}, "
-            f"naive {number_text(primary['naive'], '.3f')}; v2 − v1 {number_text(primary['difference'], '+.3f')} (95% interval "
+            f"Primary metric ({primary['label']}): v1 {number_text(primary['v1'], '.3f')}, {name} {number_text(primary['v2'], '.3f')}, "
+            f"Naive Baseline {number_text(primary['naive'], '.3f')}; {name} − v1 {number_text(primary['difference'], '+.3f')} (95% interval "
             f"{number_text(primary['ci'][0], '+.3f')} to {number_text(primary['ci'][1], '+.3f')})."
         ),
     ]
@@ -569,10 +588,10 @@ def _number(value, percent: bool = False) -> str:
     return number_text(value, ",.0f" if value is not None and abs(value) >= 100 else ".2f")
 
 
-def write_model_card(artefacts: Artefacts, folder: Path, *, gravity_benchmark: dict | None = None) -> Path:
+def write_model_card(artefacts: Artefacts, folder: Path) -> Path:
     """Write `model_card.md` into an artefact folder, next to the models it describes."""
     path = Path(folder) / MODEL_CARD_FILE
-    path.write_text(render_model_card(model_card(artefacts, gravity_benchmark=gravity_benchmark)), encoding="utf-8")
+    path.write_text(render_model_card(model_card(artefacts)), encoding="utf-8")
     return path
 
 

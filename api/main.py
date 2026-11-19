@@ -64,12 +64,9 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
-from exportspredictor.conformal import (
-    UNCERTAIN_OPPORTUNITY_CAVEAT,
-    potential_range_text,
-)
+from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
-from exportspredictor.evaluation import NOT_SERVED, known_limitations, parts_not_run
+from exportspredictor.evaluation import known_limitations, parts_not_run, served_report
 from exportspredictor.exclusions import (
     FLAGGED_PRODUCT_CAVEAT,
     REEXPORT_HUB_CAVEAT,
@@ -78,7 +75,9 @@ from exportspredictor.exclusions import (
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.gap_period import label as gap_period_label
+from exportspredictor.illustrative import ILLUSTRATIVE, ILLUSTRATIVE_TEXT, scenario_note
 from exportspredictor.lookups import search_products
+from exportspredictor.model_choice import event_backtest_note, how_chosen
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
     BLOCKED,
@@ -148,10 +147,10 @@ def create_app(
             caveats={
                 "flagged_product": Caveat(badge="Flagged Product", text=FLAGGED_PRODUCT_CAVEAT),
                 "reexport_hub": Caveat(badge="Re-export Hub", text=REEXPORT_HUB_CAVEAT),
-                "uncertain_opportunity": Caveat(badge="Uncertain Opportunity", text=UNCERTAIN_OPPORTUNITY_CAVEAT),
             },
             last_tariff_year=LAST_TRAINS_YEAR,
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
+            illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
         )
 
     @app.get("/products", response_model=list[ProductMatch])
@@ -197,6 +196,7 @@ def create_app(
             **_leaderboard(artefacts, query, BlockedSummary),
             rank_by=BLOCKED.name,
             order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
+            note=scenario_note(artefacts),
         )
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
@@ -219,13 +219,14 @@ def create_app(
         """
         if artefacts.evaluation is None:
             raise HTTPException(status_code=404, detail=f"Artefact version {artefacts.version} has no evaluation.")
-        served = {key: value for key, value in artefacts.evaluation.items() if key not in NOT_SERVED}
         return Evaluation(
-            **served,
+            **served_report(artefacts.evaluation),
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
             limitations=known_limitations(artefacts),
-            not_run=parts_not_run(artefacts.evaluation),
+            model_choice=how_chosen(artefacts.metadata, artefacts.evaluation),
+            event_backtest_note=event_backtest_note(artefacts.metadata, artefacts.evaluation),
+            not_run=parts_not_run(artefacts.evaluation, artefacts.ppml_benchmark),
         )
 
     @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)
@@ -356,7 +357,6 @@ def _filters(query: RankingQuery) -> dict:
         "trade_agreement": query.trade_agreement,
         "hide_flagged": query.hide_flagged,
         "hide_hubs": query.hide_hubs,
-        "hide_uncertain": query.hide_uncertain,
         "rank_by": query.rank_by,
         "min_potential_usd": query.min_potential_usd,
     }
@@ -419,6 +419,7 @@ def scenario_response(
         blocked_opportunities=blocked.head(request.limit).to_dicts(),
         blocked_count=blocked.height,
         clipped_pairs=result.clipped_pairs,
+        note=scenario_note(artefacts),
     )
 
 

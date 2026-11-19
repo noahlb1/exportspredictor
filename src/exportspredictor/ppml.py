@@ -1,4 +1,4 @@
-"""A PPML gravity benchmark of the Trade Agreement Scenario Effect (decision #33). Never served.
+"""A PPML gravity benchmark of the Trade Agreement Scenario Effect (decision #33), saved with the artefact.
 
 The model's Scenario Effects are associations learned by a Tweedie XGBoost. This module
 checks their *size* against the econometric standard for Trade Agreement effects: Poisson
@@ -32,12 +32,16 @@ import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
 
 from exportspredictor import baci, features, scope
 from exportspredictor.exclusions import drop_excluded
+
+if TYPE_CHECKING:
+    from exportspredictor.artefacts import Artefacts
 
 YEARS = (2012, 2015, 2018, 2021, 2024)
 _LOG = logging.getLogger(__name__)
@@ -73,7 +77,7 @@ class PpmlFit:
     @property
     def effect_pct(self) -> float:
         """The proportional change in Flows associated with a Trade Agreement, in percent."""
-        return _pct(self.coefficient)
+        return _percent_change(self.coefficient)
 
     def as_dict(self) -> dict:
         return {
@@ -82,8 +86,8 @@ class PpmlFit:
             "ci_low": self.ci_low,
             "ci_high": self.ci_high,
             "effect_pct": self.effect_pct,
-            "effect_low_pct": _pct(self.ci_low),
-            "effect_high_pct": _pct(self.ci_high),
+            "effect_low_pct": _percent_change(self.ci_low),
+            "effect_high_pct": _percent_change(self.ci_high),
             "rows": self.rows,
             "dropped_rows": self.dropped_rows,
             "clusters": self.clusters,
@@ -143,7 +147,9 @@ def real_sector_flows(root: Path | None = None, *, years: Sequence[int] = YEARS)
     """
     sources, to_iso3 = features.load_sources(root)
     exporters = scope.exporter_scope(sources.country_year, uk=baci.UK)
-    flows = baci.scan_flows(root).with_columns(
+    # Only the panel's own years' files are opened: the test year (2023) is never read.
+    files = [baci.flows_dir(root) / f"flows_{year}.parquet" for year in years]
+    flows = pl.scan_parquet(files).with_columns(
         pl.col(side).cast(pl.String).replace_strict(to_iso3, return_dtype=pl.String) for side in ("exporter", "importer")
     )
     return sector_flows(flows, sources.agreements, years=years, exporters=exporters)
@@ -225,9 +231,9 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
             "estimate": "PPML benchmark: 3-way fixed effects, Sector level",
             "coefficient": fit.coefficient,
             "effect_pct": fit.effect_pct,
-            "low_pct": _pct(fit.ci_low),
-            "high_pct": _pct(fit.ci_high),
-            "source": f"this notebook; {CI_LEVEL:.0%} interval clustered by Exporter–Importer pair",
+            "low_pct": _percent_change(fit.ci_low),
+            "high_pct": _percent_change(fit.ci_high),
+            "source": f"fitted once and saved with the artefact; {CI_LEVEL:.0%} interval clustered by Exporter–Importer pair",
         },
         {
             "estimate": "Model: Trade Agreement Scenario Effect, Baseline-weighted",
@@ -249,7 +255,7 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
             {
                 "estimate": row["estimate"],
                 "coefficient": row["coefficient"],
-                "effect_pct": _pct(row["coefficient"]),
+                "effect_pct": _percent_change(row["coefficient"]),
                 "low_pct": None,
                 "high_pct": None,
                 "source": row["source"],
@@ -260,8 +266,8 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
             "estimate": "Literature range (RTA estimates)",
             "coefficient": None,
             "effect_pct": None,
-            "low_pct": _pct(min(coefficients)),
-            "high_pct": _pct(max(coefficients)),
+            "low_pct": _percent_change(min(coefficients)),
+            "high_pct": _percent_change(max(coefficients)),
             "source": "lowest to highest of the estimates above",
         },
     ]
@@ -278,8 +284,86 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
     )
 
 
-def _pct(log_points: float) -> float:
+def _percent_change(log_points: float) -> float:
     return float(np.expm1(log_points) * 100)
+
+
+# --- The saved benchmark: fitted once and carried with the artefact (spec #66) -----------------
+
+LEVEL = "Sector"  # the frozen specification: Sector-level Flows, the fit above
+
+
+def published_range(literature: Sequence[dict] = LITERATURE) -> dict:
+    """The lowest and highest published Trade Agreement estimates, as percent changes, with the estimates."""
+    coefficients = [row["coefficient"] for row in literature]
+    return {
+        "low_pct": _percent_change(min(coefficients)),
+        "high_pct": _percent_change(max(coefficients)),
+        "estimates": [{**row, "effect_pct": _percent_change(row["coefficient"])} for row in literature],
+    }
+
+
+def model_agreement_association(bundle: "Artefacts") -> dict:
+    """The model's Trade Agreement association for UK pairs, on the artefact's served Model Form.
+
+    Every UK pair without a Trade Agreement is re-predicted with one added (its tariff removed,
+    ADR 0006) through `prediction.export_potential` with `bundle.model_form`, each pair by the
+    fold model that held it out (ADR 0001), and summarised by `model_agreement_effect`.
+    """
+    from exportspredictor import scenarios
+
+    form = bundle.model_form
+    values = scenarios.blocked_opportunity_values(bundle.baseline_features, bundle.baseline, bundle.fold_models, form=form)
+    baseline = scenarios.with_blocked_opportunity_values(bundle.baseline, values)
+    return {**model_agreement_effect(baseline, bundle.baseline_features), "model_form": form.to_dict()}
+
+
+def benchmark(panel: pl.DataFrame, bundle: "Artefacts") -> dict:
+    """The PPML benchmark of an artefact, JSON-ready: what `Artefacts.ppml_benchmark` holds.
+
+    `ppml` is the fit on the Sector `panel` (`PpmlFit.as_dict`: the effect and its interval),
+    `published_range` the published estimates it is compared with, and `model` the model's own
+    Trade Agreement association on the served Model Form (`model_agreement_association`).
+    """
+    years = sorted(int(y) for y in panel["year"].unique())
+    return {
+        "level": LEVEL,
+        "years": years,
+        "ci_level": CI_LEVEL,
+        "ppml": fit_ppml(panel).as_dict(),
+        "published_range": published_range(),
+        "model": model_agreement_association(bundle),
+    }
+
+
+def add_benchmark(root: Path, *, panel: pl.DataFrame | None = None, version: str | None = None) -> Path:
+    """Fit the PPML benchmark and save it with a new artefact version derived from the newest one.
+
+    The fold models, the tables and the evaluation report are copied byte for byte
+    (`artefacts.copy_version`): nothing is trained or re-evaluated. `panel` defaults to the
+    real Sector panel (`real_sector_flows`, which reads only `YEARS`). The new version's model
+    card is rewritten, so it reads the saved benchmark. Returns the new folder.
+    """
+    from exportspredictor import artefacts as store
+    from exportspredictor import governance
+
+    source = store.latest_folder(root)
+    bundle = store.load(source)
+    started = time.perf_counter()
+    panel = real_sector_flows() if panel is None else panel
+    saved = {**benchmark(panel, bundle), "seconds": round(time.perf_counter() - started, 2)}
+    metadata = {**bundle.metadata, "version": version or store.new_version(), "ppml_benchmark_from": bundle.version}
+    target = store.copy_version(source, root, metadata=metadata, ppml_benchmark=saved)
+    governance.write_model_card(store.load(target), target)
+    return target
+
+
+def main() -> None:
+    """`python -m exportspredictor.ppml`: derive a version of the newest artefact with the PPML benchmark."""
+    from exportspredictor.paths import artefacts_dir
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    print(add_benchmark(artefacts_dir()), flush=True)
 
 
 def fit_ppml(
@@ -390,3 +474,7 @@ def _demean(
 def _deviance(y: np.ndarray, mu: np.ndarray) -> float:
     ratio = np.where(y > 0, y / mu, 1.0)
     return float(2 * np.sum(np.where(y > 0, y * np.log(ratio), 0.0) - (y - mu)))
+
+
+if __name__ == "__main__":
+    main()

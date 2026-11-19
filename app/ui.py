@@ -22,7 +22,8 @@ _VALUES = {
     "export_gap": "Export Gap",
     "blocked_opportunity_value": "Blocked Opportunity value",
 }
-# The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's.
+# The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's, and its
+# heading says it is illustrative instead.
 _GAP_PERIOD_MEANS = ("export_potential", "actual_exports", "export_gap")
 ROWS_SHOWN = 500  # the top of a Leaderboard-style ranking sent to the page; its summary covers every filtered pair
 # The row fields that name each row of the Leaderboard and the Blocked Opportunities page, and their headings.
@@ -54,8 +55,23 @@ def usd_unit() -> str:
     return labels()["usd_unit"]
 
 
+def illustrative() -> str:
+    """The word every Scenario Effect and Blocked Opportunity value heading carries, e.g. "illustrative"."""
+    return labels()["illustrative"]["badge"].lower()
+
+
+def scenario_note(note: dict) -> None:
+    """The API's Scenario note beside a Scenario Effect: the Illustrative label, then each benchmark
+    (or that it was not run for this version) and, for a Blend, what a Scenario moves."""
+    st.info(f"**{note['label']}.** {note['text']}")
+    parts = [note[part]["text"] for part in ("benchmark", "model_association", "event_backtest")]
+    if note.get("blend"):
+        parts.append(note["blend"]["text"])
+    st.markdown("\n".join(f"- {text}" for text in parts))
+
+
 def caveats() -> dict[str, tuple[str, str]]:
-    """Caveat badges (ADR 0005, 0007): the row field that sets each, its badge and what it means."""
+    """Caveat badges (ADR 0005): the row field that sets each, its badge and what it means."""
     return {field: (caveat["badge"], caveat["text"]) for field, caveat in labels()["caveats"].items()}
 
 
@@ -89,7 +105,7 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
     Returns the API query parameters that are set: `rank_by` (with `min_potential_usd`, chosen
     from the API's options, when the order ranks only pairs above a minimum Export Potential),
     `sector`, `region`, `opportunity_type`, `trade_agreement`, `min_gap_usd`, and
-    `hide_flagged` / `hide_hubs` / `hide_uncertain` when ticked (all off by default). With `market_filter`
+    `hide_flagged` / `hide_hubs` when ticked (both off by default). With `market_filter`
     (the Leaderboard), one Market can be chosen too (`market`). Without `rank_by_toggle` (the
     Blocked Opportunities page, which has one order) no `rank_by` is offered or returned.
     """
@@ -129,14 +145,11 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
             key="market",
         )
     caveat = caveats()
-    flagged_column, hubs_column, uncertain_column = st.columns(3)
+    flagged_column, hubs_column = st.columns(2)
     hide_flagged = flagged_column.checkbox(
         "Hide Flagged Products", key="hide_flagged", help=caveat["flagged_product"][1]
     )
     hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=caveat["reexport_hub"][1])
-    hide_uncertain = uncertain_column.checkbox(
-        "Hide Uncertain Opportunities", key="hide_uncertain", help=caveat["uncertain_opportunity"][1]
-    )
     rank_by = min_potential_usd = options = None
     if rank_by_toggle:
         orders = rank_orders()
@@ -165,7 +178,6 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
         "min_gap_usd": min_gap_usd,
         "hide_flagged": hide_flagged or None,
         "hide_hubs": hide_hubs or None,
-        "hide_uncertain": hide_uncertain or None,
     }
     return {name: value for name, value in params.items() if value is not None}
 
@@ -258,7 +270,8 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     """The ranking table in nominal USD, with caveat badges, a Why? link per row and a CSV export.
 
     Export Potential, Actual Exports, Export Gap and the Relative Export Gap are Gap Period
-    means, labelled as such (e.g. "Export Gap, 2022–2024 average (USD, nominal)"); each row
+    means, labelled as such (e.g. "Export Gap, 2022–2024 average (USD, nominal)"), and the Blocked
+    Opportunity value is labelled illustrative (ADR 0008); each row
     shows its Opportunity Type and its Potential Range as "low–high".
 
     `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
@@ -276,10 +289,8 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     table["Opportunity Type"] = raw["opportunity_type"]
     table["UK Trade Agreement in force"] = raw["trade_agreement"].map({True: "Yes", False: "No"})
     averaged, unit = body["gap_period_label"], usd_unit()
-    headings = {
-        field: f"{heading}, {averaged} ({unit})" if field in _GAP_PERIOD_MEANS else f"{heading} ({unit})"
-        for field, heading in _VALUES.items()
-    }
+    qualifiers = {field: averaged for field in _GAP_PERIOD_MEANS} | {"blocked_opportunity_value": illustrative()}
+    headings = {field: f"{heading}, {qualifiers[field]} ({unit})" for field, heading in _VALUES.items()}
     for field, heading in headings.items():
         table[heading] = raw[f"{field}_usd"]
     relative = f"Relative Export Gap, {averaged}"

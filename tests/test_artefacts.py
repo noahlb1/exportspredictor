@@ -113,3 +113,34 @@ def test_excluded_products_round_trip(fixture_artefacts, tmp_path):
     loaded = store.load(store.save(fixture_artefacts, tmp_path))
 
     assert loaded.excluded_products.equals(fixture_artefacts.excluded_products)
+
+
+def test_round_trip_keeps_the_ppml_benchmark_of_a_full_run(fixture_artefacts, tmp_path):
+    assert fixture_artefacts.ppml_benchmark is not None
+    folder = store.save(fixture_artefacts, tmp_path)
+
+    assert store.load(folder).ppml_benchmark == fixture_artefacts.ppml_benchmark
+
+
+def test_a_format_3_folder_without_the_ppml_benchmark_still_loads(fixture_default_artefacts, tmp_path):
+    folder = store.save(fixture_default_artefacts, tmp_path)
+
+    assert not (folder / store.PPML_BENCHMARK_FILE).exists()
+    bundle = store.load(folder)
+    assert bundle.ppml_benchmark is None
+    assert bundle.metadata["artefact_format"] == 3
+
+
+def test_a_copied_version_keeps_the_sources_optional_results_unless_given_new_ones(fixture_artefacts, tmp_path):
+    source = store.save(fixture_artefacts, tmp_path / "source")
+    metadata = {**fixture_artefacts.metadata, "version": "copy"}
+
+    kept = store.load(store.copy_version(source, tmp_path, metadata=metadata))
+    benchmark = {**fixture_artefacts.ppml_benchmark, "seconds": -1.0}
+    report = {**fixture_artefacts.evaluation, "marker": "new"}
+    replaced = store.load(store.copy_version(
+        source, tmp_path, metadata={**metadata, "version": "copy-2"}, evaluation=report, ppml_benchmark=benchmark,
+    ))
+
+    assert (kept.evaluation, kept.ppml_benchmark) == (fixture_artefacts.evaluation, fixture_artefacts.ppml_benchmark)
+    assert (replaced.evaluation, replaced.ppml_benchmark) == (report, benchmark)

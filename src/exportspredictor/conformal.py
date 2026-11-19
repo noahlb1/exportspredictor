@@ -72,13 +72,6 @@ def score_calibration(
     ).with_columns(residual_usd=pl.col("actual_exports_usd") - pl.col("export_potential_usd"))
 
 
-UNCERTAIN_OPPORTUNITY_CAVEAT = (
-    "Uncertain Opportunity: UK Actual Exports lie inside the Potential Range, where comparable pairs' Actual "
-    "Exports fall 80% of the time, so this Export Gap is within the variation normally seen. It is still "
-    "ranked; treat it as a weaker lead."
-)
-
-
 def potential_range_text(low_usd: float, high_usd: float, actual_exports_usd: float, *, uncertain: bool) -> str:
     """One pair's Potential Range in plain words, for its detail view (never a confidence interval)."""
     text = (
@@ -257,10 +250,15 @@ def _weighted_quantiles(values: np.ndarray, weights: np.ndarray, quantiles) -> l
 
 
 def coverage_text(report: dict) -> str:
-    """The Potential Range's held-out coverage and the share of Uncertain Opportunities, in one paragraph."""
+    """The Potential Range's held-out coverage and the share of Uncertain Opportunities, in one paragraph.
+
+    The Uncertain Opportunity is reported only as this share, never as a badge per row (ADR 0007).
+    """
     return (
         f"On a held-out half of the calibration rows ({report['held_out_rows']:,} other Exporters' rows), "
         f"{report['coverage']:.0%} of their Actual Exports fell inside their Potential Range, against a target of "
         f"{report['target']:.0%}. {report['uncertain_opportunities']:,} of the {report['opportunities']:,} "
-        f"Opportunities ({report['uncertain_opportunity_share']:.0%}) are Uncertain Opportunities."
+        f"Opportunities ({report['uncertain_opportunity_share']:.0%}) have UK Actual Exports inside their "
+        "Potential Range (Uncertain Opportunities): most Export Gaps are within the variation normally seen among "
+        "comparable pairs, so an Export Gap ranks a lead rather than proving one."
     )

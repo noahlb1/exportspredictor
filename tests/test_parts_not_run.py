@@ -14,7 +14,7 @@ from exportspredictor import artefacts as store
 from exportspredictor import governance
 
 PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "6_Model_Evaluation.py"
-PARTS = ["Event Backtests", "Monotone-constraint comparison", "Gain ladder"]
+PARTS = ["Event Backtests", "Monotone-constraint comparison", "Gain ladder", "PPML benchmark"]
 NOTICE = "not run for this version"
 
 

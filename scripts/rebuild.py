@@ -3,13 +3,17 @@
 Run from the repo root:
     uv run python scripts/rebuild.py          # run every step in order
     uv run python scripts/rebuild.py --list   # show the steps without running them
+    uv run python scripts/rebuild.py --only notebook   # refresh the committed notebook's outputs only
 
 Data lands in `EXPORTSPREDICTOR_DATA_DIR` (default `<repo>/data`) and artefacts in
 `EXPORTSPREDICTOR_ARTEFACTS_DIR` (default `<repo>/artefacts`). Steps run in order and the
-script stops at the first one that fails.
+script stops at the first one that fails. `--only TEXT` runs only the steps whose name contains
+TEXT (case-insensitive); `--only notebook` executes the notebook on the real artefact and saves its
+outputs into the committed file, training nothing.
 
 To add a step, add ONE line to `STEPS` in its place in the order: downloads first, then
-derived tables, then the notebook, which trains, evaluates and saves the artefacts.
+derived tables, then the pipeline, which trains, evaluates and saves the artefacts, then the
+notebook, which reads them and trains nothing.
 """
 
 import argparse
@@ -21,6 +25,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PY = sys.executable
+NOTEBOOK = "notebooks/exports_predictor.ipynb"
+NOTEBOOK_STEP = "The notebook (reads the saved artefact)"
 
 
 @dataclass(frozen=True)
@@ -57,12 +63,14 @@ STEPS = [
     # The default run: the Event Backtests, the constraint comparison and the gain ladder are opt-in
     # (`--every-part` for all three, about two more hours).
     Step("Train the fold and test-year models, evaluate and save the artefacts (GPU, about 2.5 h)", [PY, "-m", "exportspredictor.pipeline"]),
-    # The notebook runs on real data here (it defaults to fixture mode, as the tests run it) and
-    # reads the artefact the step before saved.
+    # The notebook runs on real data here (it defaults to fixture mode, as the tests run it), reads
+    # the newest artefact and saves its outputs into the committed file: the one way to refresh them.
     Step(
-        "The notebook (reads the saved artefact)",
-        [PY, "-m", "jupyter", "execute", "notebooks/exports_predictor.ipynb"],
-        env={"EXPORTSPREDICTOR_FIXTURE_MODE": "0"},
+        NOTEBOOK_STEP,
+        [PY, "-m", "jupyter", "execute", "--inplace", NOTEBOOK],
+        # PYTHONUTF8: `jupyter execute` opens the notebook in the locale's encoding (cp1252 on
+        # Windows) and saves it as UTF-8, which garbles every non-ASCII character of the prose.
+        env={"EXPORTSPREDICTOR_FIXTURE_MODE": "0", "PYTHONUTF8": "1"},
     ),
 ]
 
@@ -81,12 +89,16 @@ def run(steps: list[Step]) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--list", action="store_true", help="print the steps without running them")
+    parser.add_argument("--only", metavar="TEXT", help="run only the steps whose name contains TEXT (case-insensitive)")
     args = parser.parse_args()
+    steps = [step for step in STEPS if args.only is None or args.only.lower() in step.name.lower()]
+    if not steps:
+        parser.error(f"no step name contains {args.only!r}; see --list")
     if args.list:
-        for number, step in enumerate(STEPS, start=1):
+        for number, step in enumerate(steps, start=1):
             print(f"{number}. {step.name}")
         return 0
-    return run(STEPS)
+    return run(steps)
 
 
 if __name__ == "__main__":

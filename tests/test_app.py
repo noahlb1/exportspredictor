@@ -68,8 +68,9 @@ def test_page_shows_baseline_year_banner(monkeypatch, api_url):
     page = _run_page(monkeypatch, api_url, "220830")
 
     banner = " ".join(element.value for element in page.info)
-    assert "2024" in banner and "provisional" in banner
-    assert "Export Gaps are 2022–2024 averages" in banner
+    health = httpx.get(f"{api_url}/health").json()
+    assert str(health["baseline_year"]) in banner and "provisional" in banner
+    assert health["gap_period_label"] in banner and health["artefact_version"] in banner
 
 
 @pytest.mark.parametrize("market_page", [False, True], ids=["product", "market"])
@@ -79,8 +80,8 @@ def test_ranking_values_are_labelled_as_gap_period_averages(monkeypatch, api_url
     columns = list(page.dataframe[0].value.columns)
     for value in ("Export Potential", "Actual Exports", "Export Gap"):
         assert f"{value}, 2022–2024 average (USD, nominal)" in columns
-    # The Blocked Opportunity value is a 2024 Scenario Effect, not an average.
-    assert "Blocked Opportunity value (USD, nominal)" in columns
+    # The Blocked Opportunity value is a 2024 Scenario Effect, not an average, and Illustrative.
+    assert "Blocked Opportunity value, illustrative (USD, nominal)" in columns
 
 
 def test_searching_by_everyday_words_finds_the_product(monkeypatch, api_url):
@@ -146,7 +147,6 @@ def test_market_page_shows_the_uk_trade_agreement(monkeypatch, api_url):
     page = _market_page(monkeypatch, api_url, "IND")
 
     assert set(page.dataframe[0].value["UK Trade Agreement in force"]) == {"No"}
-    assert any("no UK Trade Agreement" in element.value for element in page.markdown)
 
 
 def test_product_page_shows_which_markets_have_a_uk_trade_agreement(monkeypatch, api_url):

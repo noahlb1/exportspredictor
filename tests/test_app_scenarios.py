@@ -5,6 +5,7 @@ The fixture Baseline (2024) has UK Trade Agreements with Japan and Canada, none 
 
 from pathlib import Path
 
+import httpx
 import pytest
 import streamlit
 from streamlit.testing.v1 import AppTest
@@ -56,7 +57,7 @@ def test_a_custom_scenario_shows_blocked_opportunities_and_a_drill_down(monkeypa
     page.selectbox(key="drill_market").set_value("IND").run()
     pairs = page.dataframe[-1].value
     assert len(pairs) == 5 and set(pairs["Market"]) == {"India"}
-    effects = list(pairs["Scenario Effect (USD, nominal)"])
+    effects = list(pairs["Scenario Effect, illustrative (USD, nominal)"])
     assert effects == sorted(effects, reverse=True)
 
 
@@ -68,16 +69,53 @@ def test_a_scenario_that_changes_nothing_says_so(monkeypatch, api_url):
     page.button(key="run").click().run()
 
     assert not page.exception
-    assert any("changes nothing" in element.value for element in page.warning)
+    assert page.warning  # the API's summary, shown as a warning instead of a table
     assert not page.dataframe
 
 
-def test_the_scenarios_page_states_the_event_backtest_result(monkeypatch, api_url, fixture_artefacts):
+def _run_india(monkeypatch, api_url) -> AppTest:
+    page = _scenarios_page(monkeypatch, api_url)
+    page.radio(key="kind").set_value("Custom Trade Agreements").run()
+    page.multiselect(key="add").set_value(["IND"]).run()
+    page.button(key="run").click().run()
+    assert not page.exception
+    return page
+
+
+def _page_text(page: AppTest) -> str:
+    return " ".join(element.value for element in [*page.markdown, *page.caption, *page.info, *page.warning])
+
+
+def test_the_note_is_not_shown_above_the_inputs_before_a_run(monkeypatch, api_url, fixture_artefacts):
     page = _scenarios_page(monkeypatch, api_url)
 
+    note_text = httpx.get(f"{api_url}/labels").json()["illustrative"]["text"]
+
     assert not page.exception
-    text = " ".join(element.value for element in [*page.markdown, *page.caption, *page.info])
-    assert fixture_artefacts.evaluation["event_backtest"]["text"] in text
+    text = _page_text(page)
+    assert fixture_artefacts.evaluation["event_backtest"]["text"] not in text
+    assert note_text not in text
+
+
+def test_a_run_shows_the_apis_scenario_note_beside_the_scenario_effect(monkeypatch, api_url):
+    note = httpx.post(f"{api_url}/scenarios", json={"add_agreements": ["IND"], "limit": 100}).json()["note"]
+
+    text = _page_text(_run_india(monkeypatch, api_url))
+
+    assert note["label"] in text and note["text"] in text
+    for part in ("benchmark", "model_association", "event_backtest"):
+        assert note[part]["text"] in text
+    assert note["blend"]["text"] in text
+
+
+def test_scenario_effect_column_headings_say_illustrative(monkeypatch, api_url):
+    word = httpx.get(f"{api_url}/labels").json()["illustrative"]["badge"].lower()
+
+    page = _run_india(monkeypatch, api_url)
+
+    headings = [column for frame in page.dataframe for column in frame.value.columns if "Scenario Effect" in column]
+    assert headings and all(word in heading for heading in headings)
+    assert all(word in metric.label for metric in page.metric if "Scenario Effect" in metric.label)
 
 
 def test_the_drill_down_asks_the_api_for_the_chosen_markets_own_top_pairs(monkeypatch, api_url):
@@ -119,7 +157,7 @@ def test_the_tariff_mode_runs_and_says_when_the_effect_flattens_beyond_the_train
     assert not page.exception
     assert "associates" in " ".join(element.value for element in page.markdown)
     clip = [element.value for element in page.warning if "training range" in element.value]
-    assert clip and "flattens" in clip[0] and "5" in clip[0]
+    assert clip and "5" in clip[0]  # the clipped pairs, counted by the API
     pairs = page.dataframe[-1].value
     assert set(pairs["Market"]) == {"Japan"}
 

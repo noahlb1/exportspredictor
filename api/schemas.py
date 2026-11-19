@@ -56,6 +56,8 @@ class Labels(BaseModel):
     caveats: dict[str, Caveat]  # by the boolean row field that sets each (ADR 0005, 0007)
     last_tariff_year: int  # tariff data end here; later years carry it forward, and Scenarios restore its MFN rate
     tariff_carried_forward: str  # the caveat of a carried-forward Applied Tariff (ADR 0006)
+    # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
+    illustrative: Caveat
 
 
 class MarketOut(BaseModel):
@@ -97,9 +99,6 @@ class RankingQuery(BaseModel):
     )
     hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
     hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
-    hide_uncertain: bool = Field(
-        False, description="Leave out Uncertain Opportunities (Actual Exports inside the Potential Range)"
-    )
     min_potential_usd: float | None = Field(
         None,
         ge=0,
@@ -190,6 +189,8 @@ class BlockedOpportunities(Leaderboard):
     rank_by: Literal[BLOCKED.name]
     order: RankOrderOut  # the order's title and (associational) description, for the page caption
     summary: BlockedSummary
+    # Blocked Opportunity values are Illustrative: the same note as the Scenario response, defined below
+    note: "ScenarioNote"
 
 
 class ProductOpportunities(_Ranking):
@@ -338,6 +339,107 @@ class Limitation(BaseModel):
     text: str
 
 
+class ModelFormOut(BaseModel):
+    form: str  # "blend" or "model alone"
+    naive_weight: float  # the Naive Baseline's weight on the log scale
+    text: str
+
+
+class ExperimentOut(BaseModel):
+    name: str  # as the loop recorded it
+    label: str | None = None  # as shown: the research note's experiment number and the Glossary's name
+    kept: str | None = None  # the kept Arm, None if every Arm was dropped
+    best_arm: str | None = None
+    selection_measure: float | None = None  # the best Arm's
+    change: float | None = None  # the best Arm's change on the best so far
+
+
+class ConfirmationFold(BaseModel):
+    fold: int
+    winner: float
+    v2: float
+
+
+class Confirmation(BaseModel):
+    """The five-fold confirmation of the chosen form against v2's (the model alone)."""
+
+    n_folds: int
+    winner: float
+    v2: float
+    naive: float
+    difference: float
+    win_threshold: float
+    beats_v2: bool
+    folds: list[ConfirmationFold]
+
+
+class VersionResult(BaseModel):
+    """One version's test-year figures: this version or an earlier one (v2, v1)."""
+
+    model_config = ConfigDict(extra="allow")  # v2's artefact version
+
+    name: str
+    uk_ranking: float | None = None
+    lift: float | None = None
+    size_matched_lift: float | None = None
+    tweedie_deviance_all_exporters: float | None = None
+    tweedie_deviance_uk: float | None = None
+
+
+class NaiveBaselineResult(BaseModel):
+    """The Naive Baseline's test-year UK ranking, from this run or as reported for v2."""
+
+    name: str
+    uk_ranking: float | None = None
+
+
+class TestYearRanking(BaseModel):
+    """The test year's UK ranking beside the Naive Baseline and earlier versions' headline figures."""
+
+    test_year: int
+    rows: list[VersionResult]  # this version first, then earlier versions
+    naive: list[NaiveBaselineResult]
+    beats_naive: bool
+    text: str
+
+
+class TradedAway(BaseModel):
+    """What choosing on the ranking cost in the size of Export Potential (`model_choice.traded_away`)."""
+
+    deviance: float
+    earlier_deviance: float
+    earlier_name: str
+    size_matched_lift: float | None = None
+    earlier_size_matched_lift: float | None = None
+    text: str
+
+
+class EventBacktestNote(BaseModel):
+    """With a Blend served: the Event Backtests measured the model alone; served Scenario Effects are smaller."""
+
+    model_weight: float
+    model_effect: float | None = None
+    served_effect: float | None = None
+    text: str
+
+
+class ModelChoice(BaseModel):
+    """How the served model was chosen (ADR 0008), read from the artefact (`model_choice.how_chosen`)."""
+
+    recorded: bool  # False when the artefact records no experiment results
+    model_form: ModelFormOut
+    selection_measure: str | None = None
+    validation_year: int | None = None
+    noise_floor_sd: float | None = None
+    win_threshold: float | None = None
+    experiments: list[ExperimentOut]
+    n_experiments: int | None = None  # the experiments the recorded decisions cover (seven for nine decisions)
+    confirmation: Confirmation | None = None
+    text: str
+    test_year_ranking: TestYearRanking | None = None
+    traded_away: TradedAway | None = None
+
+
 class Evaluation(BaseModel):
     """The evaluation artefact. Later checks (Lift, the Event Backtest) add their own fields."""
 
@@ -360,6 +462,8 @@ class Evaluation(BaseModel):
     stability: Stability
     lift: Lift | None = None
     event_backtest: EventBacktest | None = None
+    model_choice: ModelChoice
+    event_backtest_note: EventBacktestNote | None = None
     not_run: list[NotRun] = []  # the opt-in parts skipped by the run that built this version
     limitations: list[Limitation]
 
@@ -456,6 +560,48 @@ class PairEffect(BaseModel):
     blocked_opportunity: bool
 
 
+class NotePart(BaseModel):
+    """One part of the Scenario note; `run` is False (and the figures absent) when the artefact lacks it."""
+
+    run: bool
+    text: str
+
+
+class BenchmarkPart(NotePart):
+    effect_pct: float | None = None  # the PPML benchmark's Trade Agreement effect, % change in Flows
+    low_pct: float | None = None
+    high_pct: float | None = None
+    ci_level: float | None = None
+    published_low_pct: float | None = None  # the published estimates it is compared with
+    published_high_pct: float | None = None
+
+
+class ModelAssociationPart(NotePart):
+    effect_pct: float | None = None  # the model's Trade Agreement association on the served Model Form, %
+    pairs: int | None = None  # UK pairs without a Trade Agreement it is taken over
+    model_form: str | None = None
+
+
+class EventBacktestPart(NotePart):
+    title: str | None = None  # the primary Event Backtest
+    direction: str | None = None
+    predicted: float | None = None  # the model alone's pooled effect, a relative change
+    observed: float | None = None  # the observed difference-in-differences
+    observed_low: float | None = None
+    observed_high: float | None = None
+
+
+class ScenarioNote(BaseModel):
+    """Served beside a Scenario Effect: Illustrative, with its benchmarks (`illustrative.scenario_note`)."""
+
+    label: str  # "Illustrative" (GLOSSARY.md)
+    text: str
+    benchmark: BenchmarkPart
+    model_association: ModelAssociationPart
+    event_backtest: EventBacktestPart
+    blend: EventBacktestNote | None = None  # for a Blend: a Scenario moves only the model's share
+
+
 class ScenarioResponse(BaseModel):
     artefact_version: str
     baseline_year: int
@@ -475,6 +621,7 @@ class ScenarioResponse(BaseModel):
     # Pairs whose Scenario tariff lay beyond the training range and was clipped to it, so
     # their Scenario Effect flattens there (ADR 0006).
     clipped_pairs: int
+    note: ScenarioNote  # Scenario Effects are Illustrative: the label and the benchmarks beside them
 
 
 class FactorOut(BaseModel):
@@ -520,3 +667,6 @@ class Explanation(BaseModel):
     # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
     # years with UK Actual Exports only
     history: list[HistoryOut]
+
+
+BlockedOpportunities.model_rebuild()  # resolves `note`, whose ScenarioNote is defined after it

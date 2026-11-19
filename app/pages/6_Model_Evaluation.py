@@ -168,8 +168,64 @@ def _show_potential_range(coverage: dict) -> None:
     )
 
 
-def _show_event_backtest(backtest: dict, names: dict[str, str]) -> None:
+def _show_model_choice(choice: dict) -> None:
+    """How the served model was chosen (ADR 0008): every figure comes from the API, read from the artefact."""
+    st.subheader("How the model was chosen")
+    st.markdown(choice["text"])
+    if choice["recorded"]:
+        st.markdown(f"**Model Form.** {choice['model_form']['text']}")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Experiment": e.get("label") or e["name"],
+                        "Best Arm": e["best_arm"] or "n/a",
+                        "Selection Measure": e["selection_measure"],
+                        "Change on the best so far": e["change"],
+                        "Kept": e["kept"] or "no",
+                    }
+                    for e in choice["experiments"]
+                ]
+            ),
+            hide_index=True,
+        )
+        st.caption(
+            f"Win Threshold {choice['win_threshold']:.4f}: an Arm had to beat the best so far by more than this, twice "
+            f"the Noise Floor's standard deviation, to be kept. Measured on {choice['validation_year']}, never on the "
+            "test year."
+        )
+        confirmation = choice["confirmation"]
+        if confirmation:
+            folds = [{"Fold": str(f["fold"]), "Chosen Model Form": f["winner"], "v2 (the model alone)": f["v2"]}
+                     for f in confirmation["folds"]]
+            folds.append({"Fold": "All folds", "Chosen Model Form": confirmation["winner"],
+                          "v2 (the model alone)": confirmation["v2"]})
+            verdict = "confirmed" if confirmation["beats_v2"] else "not confirmed"
+            st.markdown(
+                f"**Confirmation on all {confirmation['n_folds']} folds of {choice['validation_year']}**: the chosen "
+                f"Model Form against v2's, difference {confirmation['difference']:+.4f} against the Win Threshold "
+                f"{confirmation['win_threshold']:.4f} ({verdict}). The Naive Baseline scores {confirmation['naive']:.4f}."
+            )
+            st.dataframe(pd.DataFrame(folds), hide_index=True)
+    ranking = choice["test_year_ranking"]
+    if ranking:
+        st.markdown(f"**The UK ranking in {ranking['test_year']}, beside the Naive Baseline and earlier versions**")
+        (st.success if ranking["beats_naive"] else st.warning)(ranking["text"])
+        st.dataframe(
+            pd.DataFrame(
+                [{"Version": row["name"], "UK ranking": row["uk_ranking"]}
+                 for row in [*ranking["rows"], *ranking["naive"]]]
+            ),
+            hide_index=True,
+        )
+    if choice["traded_away"]:
+        st.markdown(f"**What the Blend traded away.** {choice['traded_away']['text']}")
+
+
+def _show_event_backtest(backtest: dict, names: dict[str, str], note: dict | None) -> None:
     st.subheader("Scenario Effects against a real Trade Agreement (Event Backtest)")
+    if note:
+        st.info(note["text"])
     for event in backtest["events"]:
         role = "Secondary check: " if event["role"] == "secondary" else ""
         st.markdown(f"**{role}{event['title']}**, in force {event['in_force']}")
@@ -219,6 +275,8 @@ if banner() is not None:
             f"{report['naive_baseline'][1:]}"
         )
 
+        _show_model_choice(report["model_choice"])
+
         st.subheader(f"Accuracy in {test_year}")
         for scope, label in SCOPES.items():
             st.markdown(f"**{label}**")
@@ -257,7 +315,7 @@ if banner() is not None:
             _show_lift(report["lift"])
         if report.get("event_backtest"):
             names = {market["iso3"]: market["name"] for market in fetch("/markets", client.api_url())}
-            _show_event_backtest(report["event_backtest"], names)
+            _show_event_backtest(report["event_backtest"], names, report.get("event_backtest_note"))
         if report.get("not_run"):
             st.subheader("Parts not run")
             for part in report["not_run"]:

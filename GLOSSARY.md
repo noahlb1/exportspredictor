@@ -89,7 +89,7 @@ The range within which Actual Exports fall 80% of the time for Product–Market 
 _Avoid_: confidence interval, error bars, margin
 
 **Uncertain Opportunity**:
-An Opportunity whose Actual Exports lie inside its Potential Range, so its Export Gap is within the variation normally seen among comparable pairs. It is still ranked, with a caveat.
+An Opportunity whose Actual Exports lie inside its Potential Range, so its Export Gap is within the variation normally seen among comparable pairs. It is still ranked. The term is reported as a share of all Opportunities (on the Model Evaluation page, in the notebook and in the model card), not shown as a badge on each row, because it covers most of them (ADR 0007).
 _Avoid_: weak lead, low-confidence opportunity, false positive
 
 **Blocked Opportunity**:
@@ -155,6 +155,10 @@ _Avoid_: what-if, shock, simulation
 **Scenario Effect**:
 The change in Export Potential between the Baseline and a Scenario.
 _Avoid_: impact, uplift
+
+**Illustrative**:
+How every Scenario Effect and Blocked Opportunity value is shown: an upper-end association the model has learned, beside its benchmarks (the PPML benchmark, the model's own Trade Agreement association and the Event Backtest result), never a forecast and never selected on (ADR 0008).
+_Avoid_: indicative, estimated, projected
 
 **Trade Agreement**:
 A bilateral or plurilateral preferential trade deal in force between two countries.

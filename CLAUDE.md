@@ -11,11 +11,11 @@ A final project for an ML/AI course. It is a model that learns from global HS6 g
 
 ## Shape
 
-- `notebooks/`: the narrative. Exploration, training, evaluation and the write-up, readable top to bottom by a marker. Notebooks import logic from the package and do not define reusable functions themselves.
+- `notebooks/`: the write-up, an argument a marker reads top to bottom. In real mode it reads the newest artefact and saved results, and trains, fits and builds nothing; charts and tables come from `exportspredictor.reporting`. Notebooks import logic from the package and define no functions.
 - `src/exportspredictor/`: the single source of truth for data loading, features, Scenario application and prediction. Both the notebook and the API import it, so training and serving compute features identically.
 - `api/`: FastAPI. It loads saved model artefacts and precomputed tables, and holds no training code.
 - `app/`: Streamlit. It talks to the model only through the API over HTTP.
-- `data/`: raw downloads and derived Parquet, kept out of git. Every derived file is reproducible from a script or a notebook cell.
+- `data/`: raw downloads and derived Parquet, kept out of git. Every derived file is reproducible from a script.
 
 ## Modelling guardrails
 
