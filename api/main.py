@@ -75,6 +75,7 @@ from exportspredictor.exclusions import (
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.gap_period import label as gap_period_label
+from exportspredictor.illustrative import ILLUSTRATIVE, ILLUSTRATIVE_TEXT, scenario_note
 from exportspredictor.lookups import search_products
 from exportspredictor.model_choice import event_backtest_note, how_chosen
 from exportspredictor.paths import artefacts_dir
@@ -149,6 +150,7 @@ def create_app(
             },
             last_tariff_year=LAST_TRAINS_YEAR,
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
+            illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
         )
 
     @app.get("/products", response_model=list[ProductMatch])
@@ -420,6 +422,7 @@ def scenario_response(
         blocked_opportunities=blocked.head(request.limit).to_dicts(),
         blocked_count=blocked.height,
         clipped_pairs=result.clipped_pairs,
+        note=scenario_note(artefacts),
     )
 
 
