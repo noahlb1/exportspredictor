@@ -56,6 +56,8 @@ class Labels(BaseModel):
     caveats: dict[str, Caveat]  # by the boolean row field that sets each (ADR 0005, 0007)
     last_tariff_year: int  # tariff data end here; later years carry it forward, and Scenarios restore its MFN rate
     tariff_carried_forward: str  # the caveat of a carried-forward Applied Tariff (ADR 0006)
+    # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
+    illustrative: Caveat
 
 
 class MarketOut(BaseModel):
@@ -545,6 +547,48 @@ class PairEffect(BaseModel):
     blocked_opportunity: bool
 
 
+class NotePart(BaseModel):
+    """One part of the Scenario note; `run` is False (and the figures absent) when the artefact lacks it."""
+
+    run: bool
+    text: str
+
+
+class BenchmarkPart(NotePart):
+    effect_pct: float | None = None  # the PPML benchmark's Trade Agreement effect, % change in Flows
+    low_pct: float | None = None
+    high_pct: float | None = None
+    ci_level: float | None = None
+    published_low_pct: float | None = None  # the published estimates it is compared with
+    published_high_pct: float | None = None
+
+
+class ModelAssociationPart(NotePart):
+    effect_pct: float | None = None  # the model's Trade Agreement association on the served Model Form, %
+    pairs: int | None = None  # UK pairs without a Trade Agreement it is taken over
+    model_form: str | None = None
+
+
+class EventBacktestPart(NotePart):
+    title: str | None = None  # the primary Event Backtest
+    direction: str | None = None
+    predicted: float | None = None  # the model alone's pooled effect, a relative change
+    observed: float | None = None  # the observed difference-in-differences
+    observed_low: float | None = None
+    observed_high: float | None = None
+
+
+class ScenarioNote(BaseModel):
+    """Served beside a Scenario Effect: Illustrative, with its benchmarks (`illustrative.scenario_note`)."""
+
+    label: str  # "Illustrative" (GLOSSARY.md)
+    text: str
+    benchmark: BenchmarkPart
+    model_association: ModelAssociationPart
+    event_backtest: EventBacktestPart
+    blend: EventBacktestNote | None = None  # for a Blend: a Scenario moves only the model's share
+
+
 class ScenarioResponse(BaseModel):
     artefact_version: str
     baseline_year: int
@@ -564,6 +608,7 @@ class ScenarioResponse(BaseModel):
     # Pairs whose Scenario tariff lay beyond the training range and was clipped to it, so
     # their Scenario Effect flattens there (ADR 0006).
     clipped_pairs: int
+    note: ScenarioNote  # Scenario Effects are Illustrative: the label and the benchmarks beside them
 
 
 class FactorOut(BaseModel):
