@@ -9,6 +9,7 @@ import pytest
 from nbclient import NotebookClient
 
 from exportspredictor import artefacts as store
+from exportspredictor import illustrative
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "exports_predictor.ipynb"
 
@@ -49,8 +50,7 @@ def _sections():
     return [(heading, cells) for heading, cells in sections if heading != "## Parameters"]
 
 
-# The argument's sections, in order (spec #66, "Section order"). #89 wrote 1-7; the sections after
-# them are still the old ones, unnumbered, until #90 numbers them and adds them here.
+# The argument's sections, in order (spec #66, "Section order"): the whole notebook after the parameters.
 SECTIONS = [
     "## 1. The question and the headline",
     "## 2. The data: Flows, Zero Cells and policy features",
@@ -59,9 +59,21 @@ SECTIONS = [
     "## 5. What v2 showed",
     "## 6. Re-choosing the model on the Selection Measure",
     "## 7. The 2023 result and what it cost",
+    "## 8. Scenarios and Blocked Opportunities as Illustrative figures",
+    "## 9. Explaining Export Potential",
+    "## 10. Limits and governance",
+    "## 11. Conclusions",
+    "## Appendix: frozen results",
 ]
 # No prose cell runs over about this many words (spec #66, "Length"); longer detail is linked.
 WORD_LIMIT = 300
+# The whole notebook's prose comes to about this many words, within 10% (spec #66, "Length").
+TOTAL_WORDS = 10_000
+# The parts that no longer decide anything, each one appendix entry (spec #66, "Freezing").
+FROZEN_PARTS = (
+    "hyperparameter search", "feature ablation", "learning curve", "v1 comparison", "gain ladder",
+    "constraint comparison",
+)
 
 
 def _words(source: str) -> int:
@@ -69,21 +81,32 @@ def _words(source: str) -> int:
     return sum(any(character.isalnum() for character in token) for token in source.split())
 
 
-def test_the_numbered_sections_are_in_the_argument_s_order():
-    numbered = [heading for heading, _ in _sections() if heading[3:4].isdigit()]
-
-    assert numbered == SECTIONS
-
-
-def test_no_prose_cell_in_the_rewritten_sections_runs_over_the_word_limit():
+def _prose() -> list[str]:
     notebook = nbformat.read(NOTEBOOK, as_version=4)
-    first = next(i for i, cell in enumerate(notebook.cells) if cell.source.startswith(SECTIONS[0]))
-    preamble = [cell for cell in notebook.cells[:first] if cell.cell_type == "markdown"]
-    rewritten = [cell for heading, cells in _sections() if heading in SECTIONS for cell in cells]
+    return [cell.source for cell in notebook.cells if cell.cell_type == "markdown"]
 
-    for cell in preamble + rewritten:
-        if cell.cell_type == "markdown":
-            assert _words(cell.source) <= WORD_LIMIT, f"{_words(cell.source)} words: {cell.source[:200]}"
+
+def test_the_sections_are_in_the_argument_s_order():
+    assert [heading for heading, _ in _sections()] == SECTIONS
+
+
+def test_no_prose_cell_runs_over_the_word_limit():
+    for source in _prose():
+        assert _words(source) <= WORD_LIMIT, f"{_words(source)} words: {source[:200]}"
+
+
+def test_the_prose_comes_to_about_ten_thousand_words():
+    total = sum(_words(source) for source in _prose())
+
+    assert 0.9 * TOTAL_WORDS <= total <= 1.1 * TOTAL_WORDS, total
+
+
+def test_each_frozen_part_is_one_appendix_entry():
+    appendix = next(cells for heading, cells in _sections() if heading.startswith("## Appendix"))
+    entries = [line.lower() for cell in appendix if cell.cell_type == "markdown" for line in cell.source.splitlines() if line.startswith("### ")]
+
+    for part in FROZEN_PARTS:
+        assert sum(part in entry for entry in entries) == 1, part
 
 
 def test_the_word_count_reads_whitespace_separated_words():
@@ -115,10 +138,10 @@ def test_the_write_up_covers_governance():
     sections = _sections()
     headings = " ".join(heading for heading, _ in sections)
 
-    for topic in ("Explaining", "Governance", "Conclusions"):
+    for topic in ("Explaining", "governance", "Conclusions"):
         assert topic in headings, topic
     # One entry per course topic, found by its subheading, not by its wording.
-    governance = next(cells for heading, cells in sections if "Governance" in heading)
+    governance = next(cells for heading, cells in sections if "governance" in heading)
     subheadings = _subheadings(governance)
     for topic in ("Model card", "Data lineage", "Bias review", "Regulation", "Drift"):
         assert topic in subheadings, topic
@@ -177,7 +200,7 @@ def test_the_notebook_shows_each_main_result_from_the_reporting_module():
 
     for result in (
         "provenance", "ranking_by_version", "experiments", "experiments_chart", "confirmation", "lift_by_tenth",
-        "event_backtests", "round_count",
+        "event_backtests", "round_count", "ppml_benchmark", "gain_ladder",
     ):
         assert f"reporting.{result}(bundle)" in source, result
 
@@ -212,6 +235,13 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
         output.get("text", "") for cell in notebook.cells if cell.cell_type == "code" for output in cell.outputs
     )
     assert f"{coverage['coverage']:.0%}" in printed  # the coverage is printed from the artefact
+    # The Uncertain Opportunity share is reported as a finding, read from the evaluation report.
+    assert f"({coverage['uncertain_opportunity_share']:.0%})" in printed
+    # The Scenarios section shows the package's Scenario note, every part of it.
+    note = illustrative.scenario_note(loaded)
+    for part in ("benchmark", "model_association", "event_backtest"):
+        assert note[part]["text"] in printed, part
+    assert note["text"] in printed
     # The pre-registered v1 comparison section runs on the fixture's synthetic frozen v1.
     assert loaded.evaluation["v1_comparison"]["verdict"]["text"] in printed
     # The outputs name the artefact version they come from.
