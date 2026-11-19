@@ -902,7 +902,7 @@ def evaluation_page() -> None:
 
 
 SHIP = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+    f"<svg xmlns='{prototype_logo.SVG_NS}' viewBox='0 0 64 64'>"
     "<defs><clipPath id='c'><rect width='64' height='64' rx='14'/></clipPath></defs>"
     "<g clip-path='url(#c)'><rect width='64' height='64' fill='#2a78d6'/><g transform='translate(0 -3)'>"
     # The logo's ship (#97), unchanged, riding up and down and rocking a little.

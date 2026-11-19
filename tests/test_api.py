@@ -116,6 +116,7 @@ def test_by_product_rows_have_the_documented_shape(client):
         "relative_export_gap",
         "opportunity_type",
         "trade_agreement",
+        "applied_tariff_pct",  # PROTOTYPE (#100)
         "blocked_opportunity_value_usd",
         "blocked_opportunity",
         "flagged_product",
