@@ -1,0 +1,156 @@
+"""The reporting module: one chart or table per main result, read from a loaded artefact (spec #66, #88).
+
+Tested on the fixture artefact for what each function returns (the rows behind a chart, the
+table's rows, "not run" where a part is absent), not for how a chart looks.
+"""
+
+from dataclasses import replace
+
+import pytest
+
+from exportspredictor import reporting
+
+
+def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlier_versions(fixture_artefacts):
+    block = fixture_artefacts.evaluation["earlier_versions"]
+
+    chart = reporting.ranking_by_version(fixture_artefacts)
+
+    rows = {row["name"]: row["uk_ranking"] for row in chart.data.iter_rows(named=True)}
+    expected = {row["name"]: row["uk_ranking"] for row in block["rows"] + block["naive"]}
+    assert rows == pytest.approx(expected)
+    assert str(block["test_year"]) in chart.title
+
+
+def test_a_chart_is_a_static_svg_image_naming_each_row(fixture_artefacts):
+    chart = reporting.ranking_by_version(fixture_artefacts)
+
+    svg = chart._repr_svg_()
+    assert svg.startswith("<svg")
+    for name in chart.data["name"]:
+        assert name.replace("'", "&#x27;") in svg
+
+
+def test_the_experiments_table_has_every_arm_and_whether_it_was_kept(fixture_artefacts):
+    record = fixture_artefacts.metadata["ranking_experiments"]
+
+    table = reporting.experiments(fixture_artefacts)
+
+    arms = [(name, row["arm"]) for name, section in record["experiments"].items() for row in section["arms"]]
+    assert list(zip(table["experiment"], table["arm"], strict=True)) == arms
+    kept = {name: section["kept"] for name, section in record["experiments"].items()}
+    for row in table.iter_rows(named=True):
+        assert row["kept"] == (row["arm"] == kept[row["experiment"]])
+        assert row["stopped_early"] == (row["rounds"] < reporting.EARLY_STOP_ROUNDS)
+
+
+def test_the_experiments_chart_draws_each_arm_against_the_win_threshold(fixture_artefacts):
+    record = fixture_artefacts.metadata["ranking_experiments"]
+
+    chart = reporting.experiments_chart(fixture_artefacts)
+
+    assert chart.data["change"].to_list() == [
+        row["change"] for section in record["experiments"].values() for row in section["arms"]
+    ]
+    assert set(chart.data["win_threshold"]) == {record["noise_floor"]["win_threshold"]}
+
+
+def test_without_experiment_results_the_experiments_are_not_run(fixture_artefacts):
+    bare = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": None})
+
+    assert isinstance(reporting.experiments(bare), reporting.NotRun)
+    assert isinstance(reporting.experiments_chart(bare), reporting.NotRun)
+    assert "not run" in repr(reporting.experiments(bare))
+
+
+CONFIRMATION = {
+    "n_folds": 2,
+    "difference": 0.04,
+    "win_threshold": 0.009,
+    "beats_v2": True,
+    "winner": {"selection_measure": 0.56},
+    "v2": {"selection_measure": 0.52},
+    "naive": {"selection_measure": 0.50},
+    "folds": [
+        {"fold": 0, "winner": {"selection_measure": 0.57}, "v2": {"selection_measure": 0.53}},
+        {"fold": 1, "winner": {"selection_measure": 0.55}, "v2": {"selection_measure": 0.52}},
+    ],
+}
+
+
+def test_the_confirmation_is_shown_fold_by_fold(fixture_artefacts):
+    record = {**fixture_artefacts.metadata["ranking_experiments"], "confirmation": CONFIRMATION}
+    bundle = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": record})
+
+    table = reporting.confirmation(bundle)
+
+    assert table["fold"].to_list() == ["0", "1", "all"]
+    assert table["winner"].to_list() == [0.57, 0.55, 0.56]
+    assert table["v2"].to_list() == [0.53, 0.52, 0.52]
+    assert table["difference"].to_list() == pytest.approx([0.04, 0.03, 0.04])
+
+
+def test_a_version_without_the_confirmation_says_it_was_not_run(fixture_artefacts):
+    assert isinstance(reporting.confirmation(fixture_artefacts), reporting.NotRun)
+
+
+def test_lift_by_tenth_reads_each_tenths_growth_rate_beside_the_base_rate(fixture_artefacts):
+    lift = fixture_artefacts.evaluation["lift"]
+
+    chart = reporting.lift_by_tenth(fixture_artefacts)
+
+    assert chart.data["tenth"].to_list() == [row["decile"] for row in lift["by_decile"]]
+    assert chart.data["rate"].to_list() == [row["rate"] for row in lift["by_decile"]]
+    assert set(chart.data["base_rate"]) == {lift["base_rate"]}
+
+
+def test_the_event_backtests_set_each_predicted_change_beside_the_observed_change(fixture_artefacts):
+    events = fixture_artefacts.evaluation["event_backtest"]["events"]
+
+    chart = reporting.event_backtests(fixture_artefacts)
+
+    pooled = chart.data.filter(year="pooled")
+    expected = [direction["pooled"] for event in events for direction in event["directions"]]
+    assert pooled["predicted"].to_list() == [row["predicted"] for row in expected]
+    assert pooled["observed"].to_list() == [row["observed"] for row in expected]
+    assert pooled["observed_low"].to_list() == [row["observed_ci"][0] for row in expected]
+    by_year = sum(len(direction["by_year"]) for event in events for direction in event["directions"])
+    assert chart.data.height == by_year + len(expected)
+
+
+def test_a_report_without_lift_or_event_backtests_says_they_were_not_run(fixture_artefacts):
+    report = {k: v for k, v in fixture_artefacts.evaluation.items() if k not in ("lift", "event_backtest")}
+    bare = replace(fixture_artefacts, evaluation=report)
+
+    assert isinstance(reporting.lift_by_tenth(bare), reporting.NotRun)
+    assert isinstance(reporting.event_backtests(bare), reporting.NotRun)
+
+
+def test_the_ppml_table_reads_the_saved_benchmark(fixture_artefacts):
+    saved = fixture_artefacts.ppml_benchmark
+
+    table = reporting.ppml_benchmark(fixture_artefacts)
+
+    assert table["effect_pct"][0] == pytest.approx(saved["ppml"]["effect_pct"])
+    assert table["low_pct"][0] == pytest.approx(saved["ppml"]["effect_low_pct"])
+    assert table["effect_pct"][1] == pytest.approx(saved["model"]["effect_pct"])
+    assert isinstance(reporting.ppml_benchmark(replace(fixture_artefacts, ppml_benchmark=None)), reporting.NotRun)
+
+
+def test_the_gain_ladder_runs_from_v1_through_each_step_to_v2(fixture_artefacts):
+    ladder = fixture_artefacts.evaluation["v1_comparison"]["ladder"]
+
+    chart = reporting.gain_ladder(fixture_artefacts)
+
+    values = {rung["name"]: rung["value"] for rung in ladder["rungs"]}
+    assert chart.data["end"].to_list() == pytest.approx(
+        [values["v1"], *(values[step["to"]] for step in ladder["steps"]), values["C"]]
+    )
+    assert chart.data["change"][1:-1].to_list() == pytest.approx([step["change"] for step in ladder["steps"]])
+
+
+def test_the_provenance_names_the_version_and_its_source(fixture_artefacts):
+    text = reporting.provenance(fixture_artefacts)
+
+    assert fixture_artefacts.version in text
+    assert "source: fixture" in text
