@@ -13,18 +13,21 @@
 
 import hashlib
 import math
+import statistics
 from pathlib import Path
 
 import polars as pl
 
 from exportspredictor.artefacts import Artefacts
+from exportspredictor.conformal import coverage_text
 from exportspredictor.evaluation import (
     LIMITATIONS,
     parts_not_run,
     range_limitations,
     result_limitations,
 )
-from exportspredictor.model_choice import ranking_summary
+from exportspredictor.illustrative import scenario_note
+from exportspredictor.model_choice import ranking_summary, traded_away
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import ModelForm
 from exportspredictor.wording import number_text, rate_text, years_text
@@ -176,6 +179,9 @@ def model_card(artefacts: Artefacts) -> dict:
         "version": artefacts.version,
         "owner": OWNER,
         "model": _model_summary(metadata),
+        "model_form": _model_form(metadata),
+        "round_count": _round_count(metadata),
+        "illustrative": scenario_note(artefacts),
         "intended_use": INTENDED_USE,
         "out_of_scope": OUT_OF_SCOPE,
         "training_scope": _training_scope(metadata),
@@ -186,7 +192,9 @@ def model_card(artefacts: Artefacts) -> dict:
         "not_run": parts_not_run(report, artefacts.ppml_benchmark) if report else [],
         "v1_comparison": _comparison_summary(report.get("v1_comparison")),
         "earlier_versions": report.get("earlier_versions"),
+        "traded_away": traded_away(report.get("earlier_versions")),
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
+        "potential_range": _potential_range(report.get("potential_range")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
         "limitations": [
             *result_limitations(metadata, report), *_benchmark_limitations(artefacts.ppml_benchmark),
@@ -200,25 +208,71 @@ def model_card(artefacts: Artefacts) -> dict:
 
 def _model_summary(metadata: dict) -> str:
     params = metadata.get("params", {})
-    form = metadata.get("model_form")
-    blended = f" {ModelForm.from_dict(form).text}" if form and form.get("naive_weight") else ""
     return (
         f"XGBoost, Tweedie objective (variance power {number_text(params.get('tweedie_variance_power'), '.2f')}), depth "
         f"{params.get('max_depth', '?')}, {number_text(metadata.get('rounds'), ',')} rounds; {metadata.get('n_folds', '?')} "
         f"out-of-fold models trained on {years_text(metadata.get('training_years'))}, scoring the "
-        f"{metadata.get('baseline_year', '?')} Baseline.{blended} Source: {metadata.get('source', '?')}."
+        f"{metadata.get('baseline_year', '?')} Baseline. Source: {metadata.get('source', '?')}."
     )
+
+
+def _model_form(metadata: dict) -> dict:
+    """The served Model Form (ADR 0008) with its plain-words text; the model alone where none is recorded."""
+    form = ModelForm.from_dict(metadata.get("model_form") or {"form": "model alone", "naive_weight": 0.0})
+    return {**form.to_dict(), "text": form.text}
+
+
+def _round_count(metadata: dict) -> dict:
+    """Where the served round count came from, read from `round_scaling`. The pipeline records
+    `selected_rounds` since #77 (chosen by the Selection Measure); an artefact recording the search's
+    `tuned_rounds` was trained at v2's deviance-chosen count, and the next rebuild takes the median of
+    the five-fold confirmation's rounds (`loop.served_configuration`) instead."""
+    scaling, rounds = metadata.get("round_scaling") or {}, metadata.get("rounds")
+    confirmation = (metadata.get("ranking_experiments") or {}).get("confirmation") or {}
+    fold_rounds = (confirmation.get("winner") or {}).get("rounds")
+    next_rounds = statistics.median_low(fold_rounds) if fold_rounds else None
+    if "selected_rounds" in scaling:
+        return {"chosen_by": "Selection Measure", "rounds": rounds, "next_rounds": None, "text": (
+            f"The {number_text(rounds, ',')} rounds were chosen by the Selection Measure ({scaling['rule']}: "
+            f"{number_text(scaling['selected_rounds'], ',')}), scaled by the ratio of training rows "
+            f"({number_text(scaling.get('ratio'), '.4f')}). Deviance chose none of it.")}
+    if "tuned_rounds" in scaling:
+        then = (f"the median of the five-fold confirmation's rounds ({number_text(next_rounds, ',')}, each chosen "
+                "by the Selection Measure), scaled the same way" if next_rounds else "the Selection Measure's count")
+        return {"chosen_by": "Tweedie deviance", "rounds": rounds, "next_rounds": next_rounds, "text": (
+            f"Disclosed deviation: the served models were trained for {number_text(rounds, ',')} rounds, the "
+            f"hyperparameter search's {number_text(scaling['tuned_rounds'], ',')} (early stopping on Tweedie "
+            f"deviance, v2's count) scaled by the ratio of training rows ({number_text(scaling.get('ratio'), '.4f')}). "
+            "Under ADR 0008 deviance should choose nothing. The artefact was not rebuilt, so that the test year "
+            f"stays read once; the next rebuild uses {then}.")}
+    return {"chosen_by": None, "rounds": rounds, "next_rounds": None,
+            "text": "How the round count was chosen is not recorded for this version."}
+
+
+def _headline_lines(card: dict) -> list[str]:
+    """The test-year UK ranking beside the Naive Baseline and earlier versions, else the report's headline."""
+    if card.get("earlier_versions"):
+        return _earlier_lines(card["earlier_versions"])
+    headline = next((m for m in card["metrics"] if m["name"] == "UK ranking (headline)"), None)
+    return [headline["text"]] if headline else ["The test year has not been evaluated for this version."]
+
+
+def _illustrative_lines(note: dict) -> list[str]:
+    """The Scenario note (`illustrative.scenario_note`): the label, then each benchmark part, run or not."""
+    parts = [note["benchmark"], note["model_association"], note["event_backtest"], note["blend"]]
+    return [f"**{note['label']}.** {note['text']}", "", *[f"- {part['text']}" for part in parts if part]]
 
 
 def _ranking_lines(summary: dict | None) -> list[str]:
     if summary is None:
         return ["No experiment loop is recorded for this version."]
     lines = [
-        (f"Every choice was made on one selection measure, on {summary['validation_year']} only: "
-        f"{summary['selection_measure']}. An arm was kept only if it beat the best so far by more than the win "
-        f"threshold, {number_text(summary['win_threshold'], '.4f')} (twice the SD of three seeds of one configuration)."),
+        (f"Every choice was made on one Selection Measure, on {summary['validation_year']} only: "
+        f"{summary['selection_measure']}. An Arm was kept only if it beat the best so far by more than the Win "
+        f"Threshold, {number_text(summary['win_threshold'], '.4f')} (twice the Noise Floor's standard deviation, "
+        "three seeds of one configuration)."),
         "",
-        "| Experiment | Best arm | Selection measure | Change on the best so far | Kept |",
+        "| Experiment | Best Arm | Selection Measure | Change on the best so far | Kept |",
         "| --- | --- | --- | --- | --- |",
         *[
             f"| {e['name']} | {e['best_arm'] or 'n/a'} | {number_text(e['selection_measure'], '.4f')} | "
@@ -231,7 +285,7 @@ def _ranking_lines(summary: dict | None) -> list[str]:
         lines += ["", (
             f"Confirmed on all {confirmation['n_folds']} folds of {summary['validation_year']}: the chosen form "
             f"{number_text(confirmation['winner'], '.4f')}, v2's form (the model alone) {number_text(confirmation['v2'], '.4f')}, "
-            f"the naive baseline {number_text(confirmation['naive'], '.4f')}; difference "
+            f"the Naive Baseline {number_text(confirmation['naive'], '.4f')}; difference "
             f"{number_text(confirmation['difference'], '+.4f')} against a threshold of "
             f"{number_text(confirmation['win_threshold'], '.4f')} ("
             f"{'confirmed' if confirmation['beats_v2'] else 'not confirmed'})."
@@ -406,6 +460,15 @@ def range_coverage_by_exporter(potential_range: dict, tolerance: float = RANGE_C
     )
 
 
+def _potential_range(potential_range: dict | None) -> dict | None:
+    """The share of Opportunities whose UK Actual Exports lie inside their Potential Range (Uncertain
+    Opportunities), reported as a share and never per row (ADR 0007). None where not recorded."""
+    if not potential_range or potential_range.get("uncertain_opportunity_share") is None:
+        return None
+    keys = ("coverage", "target", "opportunities", "uncertain_opportunities", "uncertain_opportunity_share")
+    return {key: potential_range[key] for key in keys} | {"text": coverage_text(potential_range)}
+
+
 def _range_review(potential_range: dict | None) -> dict | None:
     if not potential_range or not potential_range.get("by_exporter"):
         return None
@@ -468,9 +531,31 @@ def _signed_pct(value: float) -> str:
 
 
 def render_model_card(card: dict) -> str:
-    """The model card as Markdown."""
+    """The model card as Markdown. It leads with what the notebook leads with (the headline, the Model
+    Form and the Illustrative label), and ends with the frozen v1 comparison as a short reported result."""
     lines = [f"# Model card: UK Exports Predictor, version {card['version']}", "",
-             f"**Owner:** {card['owner']}", "", f"**Model:** {card['model']}", ""]
+             f"**Owner:** {card['owner']}", ""]
+    lines += ["## Headline", "", *_headline_lines(card), ""]
+    if card.get("traded_away"):
+        lines += [card["traded_away"]["text"], ""]
+    lines += ["## Model Form", "", card["model_form"]["text"], "", f"**Model:** {card['model']}", "",
+              card["round_count"]["text"], ""]
+    lines += ["## Illustrative Scenario Effects", "", *_illustrative_lines(card["illustrative"]), ""]
+    lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
+    lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
+        "text", "The artefact records no Potential Range coverage for this version."), ""]
+    lines += ["## Metrics", "", "| Metric | Model | Reference (naive baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
+    lines += [
+        f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
+        f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"
+        for m in card["metrics"]
+    ]
+    lines += [""]
+    if card.get("not_run"):
+        lines += ["## Parts not run", "", *[f"- {part['text']}" for part in card["not_run"]], ""]
+    lines += ["## Limitations", "", *[f"- **{x['title']}.** {x['text']}" for x in card["limitations"]], ""]
+    lines += ["## Intended use", "", *[f"- {item}" for item in card["intended_use"]], ""]
+    lines += ["## Out-of-scope use", "", *[f"- {item}" for item in card["out_of_scope"]], ""]
     lines += ["## Training scope and sampling", "", card["training_scope"]["text"], ""]
     dropped = card["dropped_features"]
     lines += ["## Features", "", (
@@ -483,22 +568,8 @@ def render_model_card(card: dict) -> str:
         "world totals still count them."), "", *[
         f"- **{group['reason']}** {len(group['products'])} Product{'s' if len(group['products']) != 1 else ''}: {', '.join(group['products'])}."
         for group in card["excluded_products"]], ""]
-    lines += ["## Intended use", "", *[f"- {item}" for item in card["intended_use"]], ""]
-    lines += ["## Out-of-scope use", "", *[f"- {item}" for item in card["out_of_scope"]], ""]
-    lines += ["## Metrics", "", "| Metric | Model | Reference (naive baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
-    lines += [
-        f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
-        f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"
-        for m in card["metrics"]
-    ]
-    if card.get("not_run"):
-        lines += ["", "## Parts not run", "", *[f"- {part['text']}" for part in card["not_run"]]]
-    lines += ["", "## UK ranking beside earlier versions", "", *_earlier_lines(card.get("earlier_versions"))]
-    lines += ["", "## How the model form was chosen", "", *_ranking_lines(card.get("ranking_experiments"))]
-    lines += ["", "## Bias review: Potential Range coverage by Exporter", "",
+    lines += ["## Bias review: Potential Range coverage by Exporter", "",
               *_range_review_lines(card["range_coverage_by_exporter"]), ""]
-    lines += ["## Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
-    lines += ["## Limitations", "", *[f"- **{x['title']}.** {x['text']}" for x in card["limitations"]], ""]
     lines += ["## Data sources", "", *[f"- **{s['name']}** ({s['location']}): {s['use']}" for s in card["data_sources"]], ""]
     if card["source_versions"]:
         lines += ["## Source versions", "", *[
@@ -506,6 +577,8 @@ def render_model_card(card: dict) -> str:
             for s in card["source_versions"]
         ], ""]
     lines += ["## Decisions behind the model", "", *[f"- **{d['title']}.** {d['text']}" for d in card["decisions"]], ""]
+    lines += ["## Frozen results", "", ("Reported once and no longer extended: they decided v2, not the served "
+              "Model Form (ADR 0008)."), "", "### Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
     return "\n".join(lines)
 
 

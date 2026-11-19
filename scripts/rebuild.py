@@ -9,7 +9,8 @@ Data lands in `EXPORTSPREDICTOR_DATA_DIR` (default `<repo>/data`) and artefacts 
 script stops at the first one that fails.
 
 To add a step, add ONE line to `STEPS` in its place in the order: downloads first, then
-derived tables, then the notebook, which trains, evaluates and saves the artefacts.
+derived tables, then the pipeline, which trains, evaluates and saves the artefacts, then the
+notebook, which reads them and trains nothing.
 """
 
 import argparse

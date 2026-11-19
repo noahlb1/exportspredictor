@@ -147,12 +147,13 @@ def test_model_card_says_plainly_when_the_model_does_not_beat_the_naive_ranking(
     assert "Only slightly better than a naive ranking for UK pairs" not in titles
 
 
-def test_model_card_compares_scenario_effects_with_the_saved_gravity_benchmark(fixture_default_artefacts):
+def test_model_card_compares_scenario_effects_with_the_saved_gravity_benchmark(fixture_default_artefacts, fixture_artefacts):
     from dataclasses import replace
 
-    benchmark = {"ppml": {"effect_pct": 5.1, "effect_low_pct": -0.4, "effect_high_pct": 11.0},
+    saved = fixture_artefacts.ppml_benchmark
+    benchmark = {**saved, "ppml": {**saved["ppml"], "effect_pct": 5.1, "effect_low_pct": -0.4, "effect_high_pct": 11.0},
                  "published_range": {"low_pct": 21.0, "high_pct": 100.0},
-                 "model": {"effect_pct": 58.1, "pairs": 678_216}}
+                 "model": {**saved["model"], "effect_pct": 58.1, "pairs": 678_216}}
 
     card = governance.model_card(replace(fixture_default_artefacts, ppml_benchmark=benchmark))
 
@@ -323,15 +324,14 @@ def test_model_card_shows_the_test_year_beside_earlier_versions_and_says_whether
     report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
     text = governance.render_model_card(governance.model_card(replace(fixture_artefacts, evaluation=report)))
 
-    section = text.split("## UK ranking beside earlier versions")[1].split("\n## ")[0]
+    section = _section(text, "## Headline")
     assert "0.511" in section and "0.523" in section and "0.550" in section and "0.520" in section
     assert "v1" in section and "v2" in section
     assert report["earlier_versions"]["text"] in section
 
 
 def test_model_card_names_the_form_the_selection_measure_and_the_experiments(card):
-    model = card["model"]
-    assert "blend" in model.lower() or "naive baseline" in model
+    assert card["model_form"]["form"] == "blend" and card["model_form"]["naive_weight"]
     ranking = card["ranking_experiments"]
     assert ranking["selection_measure"] and ranking["experiments"]
 
@@ -339,3 +339,111 @@ def test_model_card_names_the_form_the_selection_measure_and_the_experiments(car
 def test_model_card_says_the_event_backtests_measure_the_model_alone_when_a_blend_is_served(card):
     events = [m for m in card["metrics"] if m["name"].startswith("Event Backtest")]
     assert events and all("model alone" in m["text"] for m in events)
+
+
+# --- The card's lead (spec #66, #91) ------------------------------------------------------
+
+
+def _headings(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.startswith("## ")]
+
+
+def test_model_card_opens_with_the_headline_the_model_form_and_the_illustrative_label(card):
+    headings = _headings(governance.render_model_card(card))
+
+    assert headings[:3] == ["## Headline", "## Model Form", "## Illustrative Scenario Effects"]
+
+
+def test_the_headline_section_gives_the_test_year_ranking_beside_the_naive_baseline(card, fixture_artefacts):
+    block = fixture_artefacts.evaluation["earlier_versions"]
+    section = _section(governance.render_model_card(card), "## Headline")
+
+    assert f"{block['rows'][0]['uk_ranking']:.3f}" in section
+    assert f"{block['naive'][0]['uk_ranking']:.3f}" in section
+
+
+def test_the_model_form_section_gives_the_blend_weight_from_the_artefact(card, fixture_artefacts):
+    weight = fixture_artefacts.metadata["model_form"]["naive_weight"]
+    assert card["model_form"]["naive_weight"] == weight
+
+    section = _section(governance.render_model_card(card), "## Model Form")
+    assert f"{weight:g}" in section and f"{1 - weight:g}" in section
+
+
+def _section(text: str, heading: str) -> str:
+    return text.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_illustrative_section_shows_the_saved_benchmark_figures(card, fixture_artefacts):
+    saved = fixture_artefacts.ppml_benchmark
+    section = _section(governance.render_model_card(card), "## Illustrative Scenario Effects")
+
+    assert "Illustrative" in section
+    assert f"{saved['ppml']['effect_pct']:+.1f}%" in section
+    assert f"{saved['model']['effect_pct']:+.1f}%" in section
+
+
+def test_the_illustrative_section_says_which_parts_were_not_run(fixture_default_artefacts):
+    card = governance.model_card(fixture_default_artefacts)
+    section = _section(governance.render_model_card(card), "## Illustrative Scenario Effects")
+
+    assert "Illustrative" in section
+    assert section.count("not run for this version") == 3  # benchmark, model association, Event Backtest
+
+
+def test_model_card_reports_the_share_of_opportunities_inside_their_potential_range(card, fixture_artefacts):
+    saved = fixture_artefacts.evaluation["potential_range"]
+    assert card["potential_range"]["uncertain_opportunity_share"] == saved["uncertain_opportunity_share"]
+
+    section = _section(governance.render_model_card(card), "## Potential Range")
+    assert f"{saved['uncertain_opportunities']:,}" in section and f"{saved['opportunities']:,}" in section
+    assert f"{saved['uncertain_opportunity_share']:.0%}" in section
+
+
+def test_model_card_says_the_rounds_were_chosen_by_the_selection_measure(card, fixture_artefacts):
+    rounds = fixture_artefacts.metadata["rounds"]
+    assert card["round_count"]["chosen_by"] == "Selection Measure"
+    assert card["round_count"]["rounds"] == rounds
+    assert f"{rounds:,} rounds" in _section(governance.render_model_card(card), "## Model Form")
+
+
+def test_model_card_discloses_rounds_chosen_on_deviance_and_the_next_rebuilds_count(fixture_artefacts):
+    # The served real artefact (20261118T185910Z and its derived versions) kept v2's search rounds.
+    record = {**(fixture_artefacts.metadata.get("ranking_experiments") or {}),
+              "confirmation": {
+                  "n_folds": 5, "difference": 0.0429, "win_threshold": 0.0089, "beats_v2": True, "folds": [],
+                  "winner": {"selection_measure": 0.5635, "rounds": [951, 1075, 1097, 1303, 1120]},
+                  "v2": {"selection_measure": 0.5206}, "naive": {"selection_measure": 0.5472},
+              }}
+    scaling = {"tuned_rounds": 1198, "tuning_years": [2012], "training_years": [2012, 2013],
+               "tuning_rows": 82_454_208, "training_rows": 99_993_695, "ratio": 1.2127, "rounds": 1453}
+    artefacts = _with_metadata(fixture_artefacts, rounds=1453, round_scaling=scaling, ranking_experiments=record)
+
+    card = governance.model_card(artefacts)
+
+    assert card["round_count"]["chosen_by"] == "Tweedie deviance"
+    assert card["round_count"]["next_rounds"] == 1097  # the median of the confirmation's five folds
+    section = _section(governance.render_model_card(card), "## Model Form")
+    assert "1,453" in section and "1,198" in section and "1,097" in section
+
+
+def test_the_v1_comparison_is_a_frozen_result_at_the_end_of_the_card(card):
+    text = governance.render_model_card(card)
+
+    assert _headings(text)[-1] == "## Frozen results"
+    assert "### Comparison with v1" in _section(text, "## Frozen results")
+
+
+def test_the_headline_says_what_choosing_on_the_ranking_cost_in_deviance(fixture_artefacts):
+    from dataclasses import replace
+
+    v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
+          "tweedie_deviance_all_exporters": 0.5, "tweedie_deviance_uk": 568.6}  # below the fixture's deviance
+    report = {**fixture_artefacts.evaluation}
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    card = governance.model_card(replace(fixture_artefacts, evaluation=report))
+
+    deviance = report["earlier_versions"]["rows"][0]["tweedie_deviance_all_exporters"]
+    section = _section(governance.render_model_card(card), "## Headline")
+    assert card["traded_away"]["deviance"] == deviance
+    assert section.count(f"{deviance:,.1f}") == 2  # in the table and in the cost sentence

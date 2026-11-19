@@ -115,3 +115,20 @@ def test_with_no_evaluation_the_note_still_carries_the_label(fixture_artefacts, 
     assert note["label"] == "Illustrative"
     assert note["event_backtest"]["run"] is False
     assert note["benchmark"]["run"] is True
+
+
+def test_the_blocked_opportunities_response_carries_the_same_scenario_note(client):
+    scenario_note = client.post("/scenarios", json=SCENARIO).json()["note"]
+
+    blocked = client.get("/opportunities/blocked").json()
+
+    assert blocked["note"] == scenario_note
+
+
+def test_with_no_saved_benchmark_the_blocked_note_says_the_benchmark_was_not_run(fixture_artefacts, tmp_path):
+    store.save(replace(fixture_artefacts, ppml_benchmark=None), tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        note = client.get("/opportunities/blocked").json()["note"]
+
+    assert note["label"] == "Illustrative"
+    assert note["benchmark"]["run"] is False and "not run for this version" in note["benchmark"]["text"]

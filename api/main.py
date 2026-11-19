@@ -196,6 +196,7 @@ def create_app(
             **_leaderboard(artefacts, query, BlockedSummary),
             rank_by=BLOCKED.name,
             order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
+            note=scenario_note(artefacts),
         )
 
     @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)

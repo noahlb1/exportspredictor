@@ -5,15 +5,19 @@ The fixture Baseline has UK Trade Agreements with Japan and Canada, none with In
 
 import io
 import re
+from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pandas as pd
 import pytest
 import streamlit
 from streamlit.testing.v1 import AppTest
 
+from exportspredictor import artefacts as store
+
 PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "3_Blocked_Opportunities.py"
-VALUE = "Blocked Opportunity value (USD, nominal)"
+VALUE = "Blocked Opportunity value, illustrative (USD, nominal)"
 # Wording that would read a Blocked Opportunity value as a cause or a forecast.
 CAUSAL = re.compile(
     r"(?<!not )\b(causes?|caused|will (raise|add|unlock|increase)|would (raise|add|unlock|increase)|unlocks?)\b",
@@ -62,7 +66,7 @@ def test_the_page_ranks_every_uk_pair_by_blocked_opportunity_value(monkeypatch, 
     assert metrics["Product–Market pairs"] == "20"
     # The total covers the Blocked Opportunities only; the fixture's values are under the $1M threshold.
     blocked_total = table.loc[table["Blocked Opportunity"], VALUE].sum()
-    assert blocked_total == 0 and metrics["Total Blocked Opportunity value"] == "$0"
+    assert blocked_total == 0 and metrics["Total Blocked Opportunity value, illustrative"] == "$0"
     assert metrics["Blocked Opportunities"] == str(int(table["Blocked Opportunity"].sum()))
 
 
@@ -97,7 +101,7 @@ def test_every_caption_uses_associational_language(monkeypatch, fixture_api_url)
     texts = [element.value for element in [*page.caption, *page.markdown, *page.info]]
     assert not [text for text in texts if CAUSAL.search(text)]
     about_value = [text for text in texts if "Blocked Opportunity value" in text]
-    assert about_value and all("associate" in text for text in about_value)
+    assert about_value and all("associat" in text for text in about_value)  # associates, associations
 
 
 def test_the_leaderboard_no_longer_offers_a_blocked_ranking(monkeypatch, fixture_api_url):
@@ -107,3 +111,51 @@ def test_the_leaderboard_no_longer_offers_a_blocked_ranking(monkeypatch, fixture
 
     assert home.radio(key="rank_by").options == ["Export Gap", "Relative Export Gap"]
 
+
+
+def _page_text(page: AppTest) -> str:
+    return " ".join(element.value for element in [*page.markdown, *page.caption, *page.info])
+
+
+def test_the_page_shows_the_apis_scenario_note_beside_its_totals(monkeypatch, fixture_api_url):
+    note = httpx.get(f"{fixture_api_url}/opportunities/blocked").json()["note"]
+
+    page = _page(monkeypatch, fixture_api_url)
+
+    assert not page.exception
+    text = _page_text(page)
+    assert note["label"] in text and note["text"] in text
+    for part in ("benchmark", "model_association", "event_backtest"):
+        assert note[part]["text"] in text
+    assert note["blend"]["text"] in text
+
+
+def test_the_value_heading_metric_and_csv_export_say_illustrative(monkeypatch, fixture_api_url, downloads):
+    word = httpx.get(f"{fixture_api_url}/labels").json()["illustrative"]["badge"].lower()
+
+    page = _page(monkeypatch, fixture_api_url)
+
+    headings = [column for column in page.dataframe[0].value.columns if "Blocked Opportunity value" in column]
+    exported = pd.read_csv(io.StringIO(downloads[-1]), nrows=0).columns
+    exported = [column for column in exported if "Blocked Opportunity value" in column]
+    assert headings and all(word in heading for heading in headings)
+    assert exported == headings
+    assert all(word in metric.label for metric in page.metric if "Blocked Opportunity value" in metric.label)
+
+
+def test_with_no_benchmark_or_event_backtests_the_page_keeps_the_label_and_says_they_were_not_run(
+    monkeypatch, fixture_artefacts, tmp_path, live_api
+):
+    report = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "event_backtest"}
+    store.save(replace(fixture_artefacts, ppml_benchmark=None, evaluation=report), tmp_path)
+
+    with live_api(tmp_path) as api_url:
+        note = httpx.get(f"{api_url}/opportunities/blocked").json()["note"]
+        page = _page(monkeypatch, api_url)
+
+    assert not page.exception
+    text = _page_text(page)
+    assert note["label"] in text and note["text"] in text
+    for part in ("benchmark", "model_association", "event_backtest"):
+        assert note[part]["run"] is False and note[part]["text"] in text
+    assert page.dataframe[0].value[VALUE].max() > 0

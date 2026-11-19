@@ -80,8 +80,8 @@ def test_ranking_values_are_labelled_as_gap_period_averages(monkeypatch, api_url
     columns = list(page.dataframe[0].value.columns)
     for value in ("Export Potential", "Actual Exports", "Export Gap"):
         assert f"{value}, 2022–2024 average (USD, nominal)" in columns
-    # The Blocked Opportunity value is a 2024 Scenario Effect, not an average.
-    assert "Blocked Opportunity value (USD, nominal)" in columns
+    # The Blocked Opportunity value is a 2024 Scenario Effect, not an average, and Illustrative.
+    assert "Blocked Opportunity value, illustrative (USD, nominal)" in columns
 
 
 def test_searching_by_everyday_words_finds_the_product(monkeypatch, api_url):
