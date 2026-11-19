@@ -33,7 +33,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from app import client, prototype_banner, prototype_logo
+from app import client, prototype_banner, prototype_logo, prototype_theme
 from app import prototype_leaderboard as pl
 from app.format import format_change, format_usd, years_text
 from app.ui import (
@@ -85,6 +85,9 @@ def _kept(key: str, allowed: list[str], default: str) -> None:
 
 def bar(page: str, variants: dict[str, str], extras: dict[str, list[str]]) -> tuple[str, dict[str, str]]:
     """The prototype bar, pinned to the bottom of the page. Not part of any design."""
+    if prototype_theme.SETTLED:  # PROTOTYPE (#101): layouts are settled, each page is locked to its winner
+        settled = prototype_theme.SETTLED_EXTRAS
+        return prototype_theme.SETTLED[page], {k: settled.get(k, v[0]) for k, v in extras.items()}
     keys, vkey = list(variants), f"{page}_variant"
     asked = st.query_params.get("variant")
     _kept(vkey, keys, asked if asked in keys else keys[0])
@@ -112,8 +115,7 @@ def bar(page: str, variants: dict[str, str], extras: dict[str, list[str]]) -> tu
 
 
 def state_box(state: dict) -> None:
-    with st.expander("PROTOTYPE state"):
-        st.json(state)
+    prototype_theme.state_box()  # PROTOTYPE (#101)
 
 
 def money(tip: str | None = None, label: str | None = None):
@@ -153,7 +155,7 @@ def leaderboard() -> None:
     st.session_state.update(
         banner="D", app_name=prototype_banner.NAMES[0], guide="Three steps", terms="Tooltips only"
     )
-    prototype_banner.bar = lambda: None
+    prototype_banner.bar = prototype_theme.state_box  # PROTOTYPE (#101)
     prototype_banner.page()
 
 
@@ -944,6 +946,9 @@ def run() -> None:
     st.set_page_config(page_title=NAME, page_icon=prototype_logo.data_uri(tile), layout="wide")
     st.logo(tile, size="large")
     loader()
+    global TINT
+    _, TINT = prototype_theme.bar()  # PROTOTYPE (#101): the colours bar, on every page
+    pl.TINT = TINT
     PAGES.update({
         "Leaderboard": st.Page(leaderboard, title="Leaderboard", url_path="leaderboard", default=True),
         "Blocked Opportunities": st.Page(blocked_page, title="Blocked Opportunities", url_path="blocked-opportunities"),

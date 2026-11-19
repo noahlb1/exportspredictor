@@ -78,6 +78,7 @@ SECTOR_NAMES = dict(zip(
     strict=True,
 ))
 TERM_HELP: dict = {}  # set by prototype_banner (#98): tooltips on the panel's three metrics
+TINT = "background-color: rgba(42, 120, 214, 0.28); font-weight: 600"  # PROTOTYPE (#101): set by prototype_theme
 CAPTION_EXTRA = ""  # set by prototype_banner (#98): the caution, when it sits in the table's unit line
 AGREEMENT = {"Any": None, "Yes": True, "No": False}
 FILTER_DEFAULTS = {
@@ -273,7 +274,7 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
         st.session_state[f"{key}_pair"] = pairs[cells[0][0]]
     chosen = st.session_state.get(f"{key}_pair")
     at = pairs.index(chosen) if chosen in pairs else (0 if first else None)  # `first`: open on the top row
-    tint = "background-color: rgba(42, 120, 214, 0.28); font-weight: 600"
+    tint = TINT
     styled = table.style.apply(lambda r: [tint if r.name == at else ""] * len(r), axis=1)
     if rule != "<0.1":
         styled = styled.format({heading: "{:,." + number[2] + "f}" for heading in money})
