@@ -129,6 +129,7 @@ def _confirmation(confirmation: dict | None) -> dict | None:
 
 
 def _text(summary: dict | None, form: ModelForm) -> str:
+    """The section's lead sentence; without experiment results it says so and names the served form."""
     if summary is None:
         return f"{NOT_RECORDED} {form.text}"
     kept = [e["name"] for e in summary["experiments"] if e["kept"]]
@@ -138,5 +139,5 @@ def _text(summary: dict | None, form: ModelForm) -> str:
         f"Threshold, {summary['win_threshold']:.4f} (twice the Noise Floor's standard deviation). "
         f"Of {len(summary['experiments'])} experiments, {len(kept)} kept a change"
         + (f" ({', '.join(kept)})" if kept else "")
-        + f". {form.text}"
+        + "."
     )
