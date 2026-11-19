@@ -184,10 +184,12 @@ def test_why_page_shows_the_potential_range_bar_in_plain_words(monkeypatch, api_
     words = " ".join(m.value for m in page.markdown)
     assert "Potential Range" in words and "comparable pairs" in words
     assert "confidence" not in words.lower()
-    assert any("Uncertain Opportunity" in w.value for w in page.warning)
+    # Where Actual Exports lie is said in the range's words, not as a caveat warning (spec #66)
+    assert not any("Uncertain Opportunity" in w.value for w in page.warning)
 
     other = _why(monkeypatch, api_url, hs6=certain["hs6"], iso3=certain["iso3"])
     assert len(other.get("vega_lite_chart")) == 1
+    assert "Potential Range" in " ".join(m.value for m in other.markdown)
     assert not any("Uncertain Opportunity" in w.value for w in other.warning)
 
 

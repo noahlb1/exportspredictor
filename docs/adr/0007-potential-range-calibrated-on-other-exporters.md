@@ -16,3 +16,8 @@ Calibration is done separately within 20 equal-count bands of Export Potential (
 - **Exchangeability between the UK and other top-100 Exporters is assumed, not guaranteed.** The notebook reports the coverage achieved on a held-out half of the calibration rows, split by Exporter, overall and per band.
 - **The comparison runs over the Gap Period, but calibration uses only 2024.** The 2024 band offsets are applied around the Gap Period mean Export Potential and compared with the Gap Period mean Actual Exports. A three-year mean is less noisy than one year, so the range is wider than strictly needed. This errs towards flagging more Opportunities as uncertain, never fewer.
 - **Scenario Effects get no interval.** Conformal prediction covers outcomes, not differences between two predictions, and Event Backtests remain the check on Scenario Effects.
+
+## Outcome (spec #66, artefact `20261118T185910Z`)
+
+- **The Uncertain Opportunity is reported as a share, not shown per row.** On the served version 904,649 of 1,032,453 Opportunities (88%) are Uncertain Opportunities, so a badge on each one no longer separated one Opportunity from another. The badge, its caveat on the labels the API serves and the "Hide Uncertain Opportunities" filter were removed from the ranking pages and the ranking query.
+- **The Potential Range itself is unchanged.** Its calibration, the artefact's tables (each UK pair keeps its range and its `uncertain_opportunity` flag) and the artefact format stay as decided above. The range is still shown on the Why? page for a pair, and the Model Evaluation page states its held-out coverage and the share of Opportunities whose Actual Exports lie inside it.

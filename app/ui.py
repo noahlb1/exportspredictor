@@ -55,7 +55,7 @@ def usd_unit() -> str:
 
 
 def caveats() -> dict[str, tuple[str, str]]:
-    """Caveat badges (ADR 0005, 0007): the row field that sets each, its badge and what it means."""
+    """Caveat badges (ADR 0005): the row field that sets each, its badge and what it means."""
     return {field: (caveat["badge"], caveat["text"]) for field, caveat in labels()["caveats"].items()}
 
 
@@ -89,7 +89,7 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
     Returns the API query parameters that are set: `rank_by` (with `min_potential_usd`, chosen
     from the API's options, when the order ranks only pairs above a minimum Export Potential),
     `sector`, `region`, `opportunity_type`, `trade_agreement`, `min_gap_usd`, and
-    `hide_flagged` / `hide_hubs` / `hide_uncertain` when ticked (all off by default). With `market_filter`
+    `hide_flagged` / `hide_hubs` when ticked (both off by default). With `market_filter`
     (the Leaderboard), one Market can be chosen too (`market`). Without `rank_by_toggle` (the
     Blocked Opportunities page, which has one order) no `rank_by` is offered or returned.
     """
@@ -129,14 +129,11 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
             key="market",
         )
     caveat = caveats()
-    flagged_column, hubs_column, uncertain_column = st.columns(3)
+    flagged_column, hubs_column = st.columns(2)
     hide_flagged = flagged_column.checkbox(
         "Hide Flagged Products", key="hide_flagged", help=caveat["flagged_product"][1]
     )
     hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=caveat["reexport_hub"][1])
-    hide_uncertain = uncertain_column.checkbox(
-        "Hide Uncertain Opportunities", key="hide_uncertain", help=caveat["uncertain_opportunity"][1]
-    )
     rank_by = min_potential_usd = options = None
     if rank_by_toggle:
         orders = rank_orders()
@@ -165,7 +162,6 @@ def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True)
         "min_gap_usd": min_gap_usd,
         "hide_flagged": hide_flagged or None,
         "hide_hubs": hide_hubs or None,
-        "hide_uncertain": hide_uncertain or None,
     }
     return {name: value for name, value in params.items() if value is not None}
 

@@ -64,10 +64,7 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
-from exportspredictor.conformal import (
-    UNCERTAIN_OPPORTUNITY_CAVEAT,
-    potential_range_text,
-)
+from exportspredictor.conformal import coverage_text, potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
 from exportspredictor.evaluation import NOT_SERVED, known_limitations, parts_not_run
 from exportspredictor.exclusions import (
@@ -149,7 +146,6 @@ def create_app(
             caveats={
                 "flagged_product": Caveat(badge="Flagged Product", text=FLAGGED_PRODUCT_CAVEAT),
                 "reexport_hub": Caveat(badge="Re-export Hub", text=REEXPORT_HUB_CAVEAT),
-                "uncertain_opportunity": Caveat(badge="Uncertain Opportunity", text=UNCERTAIN_OPPORTUNITY_CAVEAT),
             },
             last_tariff_year=LAST_TRAINS_YEAR,
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
@@ -221,6 +217,9 @@ def create_app(
         if artefacts.evaluation is None:
             raise HTTPException(status_code=404, detail=f"Artefact version {artefacts.version} has no evaluation.")
         served = {key: value for key, value in artefacts.evaluation.items() if key not in NOT_SERVED}
+        if served.get("potential_range"):
+            # Worded now, not when saved, so older versions state the share of Uncertain Opportunities the same way
+            served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
         return Evaluation(
             **served,
             artefact_version=artefacts.version,
@@ -359,7 +358,6 @@ def _filters(query: RankingQuery) -> dict:
         "trade_agreement": query.trade_agreement,
         "hide_flagged": query.hide_flagged,
         "hide_hubs": query.hide_hubs,
-        "hide_uncertain": query.hide_uncertain,
         "rank_by": query.rank_by,
         "min_potential_usd": query.min_potential_usd,
     }

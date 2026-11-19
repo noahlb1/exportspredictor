@@ -99,7 +99,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Switch "Rank by" to Relative Export Gap: a minimum Export Potential selector appears ($0, $100.0k, $1.0m, $10.0m, $100.0m; default $1.0m), pairs below it disappear, and pairs tied at 100% are ordered by Export Gap.
 - [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
 - [ ] "Excluded Products" under the filters lists each Excluded Product with its reason.
-- [ ] Each Leaderboard row shows its Potential Range as "low–high"; Uncertain Opportunities carry the "Uncertain Opportunity" badge. "Hide Uncertain Opportunities" is off by default; ticking it removes exactly those rows and leaves the order of the rest unchanged.
+- [ ] Each Leaderboard row shows its Potential Range as "low–high". No ranking page (Leaderboard, Product → Markets, Market → Products, Blocked Opportunities) shows an "Uncertain Opportunity" badge or a filter for it; the Flagged Product and Re-export Hub badges and their hide filters are unchanged.
 - [ ] Export the Leaderboard to CSV and open it: the columns and rows match the table on screen.
 - [ ] Click **Why?** on a Leaderboard row: the Why? page opens for that pair and shows its Opportunity Type.
 
@@ -143,14 +143,14 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] A year-by-year table shows the last six years' UK Actual Exports (0 for years with none) and, for 2022–2024, each year's Export Potential and Export Gap; the three yearly gaps average to the Export Gap shown above it.
 - [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.
 - [ ] Open Why? for a Flagged Product or a Re-export Hub (e.g. `711319` to Hong Kong): its caveats are shown under the heading.
-- [ ] The Why? page shows a range bar with Export Potential and Actual Exports marked on the Potential Range, described in plain words (comparable pairs, never a confidence interval); an Uncertain Opportunity carries its caveat.
+- [ ] The Why? page shows a range bar with Export Potential and Actual Exports marked on the Potential Range, described in plain words (comparable pairs, never a confidence interval), saying whether Actual Exports lie below, inside or above it; no Uncertain Opportunity warning is shown.
 
 **Model Evaluation**
 - [ ] The plain-English accuracy headline renders, green if the model beats the naive baseline and amber with a plain warning if it does not, with the test year and the non-UK training sample stated below it.
 - [ ] The metric tables (model against naive baseline) render for UK pairs and for all Exporters.
 - [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
 - [ ] "Observed against carried-forward tariffs" splits the test rows by Applied Tariff (observed, carried forward from 2021) for both scopes, with a sentence saying how they split (on 2023 every row is carried forward).
-- [ ] The stability sentence renders, followed by the Potential Range's held-out coverage against its 80% target and a coverage table per Exporter.
+- [ ] The stability sentence renders, followed by the Potential Range's held-out coverage against its 80% target, the share of Opportunities whose Actual Exports lie inside their Potential Range (88% on the served version), and a coverage table per Exporter.
 - [ ] The known-limitations panel (the result limitations such as "Does not beat a naive ranking for UK pairs" when it does not, the Potential Range's fixed width in dollars, goods only, tariffs carried forward from 2021, Excluded Products, the top-100 Exporter scope, nominal US dollars, what the Potential Range assumes, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) renders, with no "no tariffs" entry.
 - [ ] The Lift section states how many times more often the largest Export Gaps grew, with a 95% interval, worded as a tendency, shows size-matched Lift next to raw Lift with the explanation that raw Lift mostly reflects pair size, and shows the growth share for each tenth of Export Gaps.
 - [ ] The Event Backtest shows, for EU exports to Japan and Japan's exports to the EU, a table of predicted against observed change per year, names the control Markets, says the Applied Tariff is 0 with the agreement on and the MFN rate with it off, and states the COVID caveat; the UK–Australia/New Zealand secondary check follows.

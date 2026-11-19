@@ -177,8 +177,8 @@ def test_the_coverage_text_states_the_held_out_coverage_and_the_uncertain_share(
         "uncertain_opportunity_share": 10 / 11,
     }
 
-    assert conformal.coverage_text(report) == (
-        "On a held-out half of the calibration rows (27 other Exporters' rows), 71% of their Actual Exports fell "
-        "inside their Potential Range, against a target of 80%. 10 of the 11 Opportunities (91%) are "
-        "Uncertain Opportunities."
-    )
+    text = conformal.coverage_text(report)
+
+    for figure in ("27", "71%", "80%", "10 of the 11 Opportunities (91%)"):
+        assert figure in text, figure
+    assert "Potential Range" in text.split("(91%)")[1]
