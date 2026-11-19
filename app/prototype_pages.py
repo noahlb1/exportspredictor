@@ -237,12 +237,24 @@ def blocked_filters(rows: list[dict]) -> tuple[list[dict], list[str]]:
     return kept, active
 
 
+def market_tariffs(iso3: str) -> dict[str, float]:
+    """Applied Tariff by HS6 for one Market. Prototype shortcut: the Blocked Opportunities read carries no
+    tariff, so this reads it from a Scenario run, which returns at most the Market's 1,000 most affected pairs."""
+    body = {"add_agreements": [iso3], "market": iso3, "limit": 1000}
+    try:
+        result = run_scenario(json.dumps(body, sort_keys=True), client.api_url())
+    except (client.InvalidRequest, client.ApiUnavailable):
+        return {}
+    return {row["hs6"]: row["baseline_tariff_pct"] for row in result["top_pairs"]}
+
+
 def blocked_frame(rows: list[dict]) -> pd.DataFrame:
     raw = pd.DataFrame(rows)
     return pd.DataFrame({
         "Product": raw["description"],
         "Market": raw["market"],
         "Blocked Opportunity value": raw["blocked_opportunity_value_usd"] / 1e6,
+        "Applied Tariff": [row.get("tariff_pct") for row in rows],
         "Export Potential": raw["export_potential_usd"] / 1e6,
         "Actual Exports": raw["actual_exports_usd"] / 1e6,
         "Export Gap": raw["export_gap_usd"] / 1e6,
@@ -269,13 +281,18 @@ def blocked_config(gap: str) -> dict:
             "Trade Agreement already holds its Export Potential down."
         ),
         "Opportunity Type": st.column_config.TextColumn("Type"),
+        "Applied Tariff": st.column_config.NumberColumn(
+            "Applied Tariff %", width="small",
+            help="The tariff this Market charges on this Product in the Baseline. A Blocked Opportunity with a "
+            "tariff of 0 rests on the Trade Agreement alone.",
+        ),
     }
 
 
 def blocked_table(rows: list[dict], gap: str, *, order: list[str], height: int, key: str) -> dict:
     at = pick_table(
         blocked_frame(rows), [(r["hs6"], r["iso3"]) for r in rows], key=key,
-        formats=dict.fromkeys(B_MONEY, "{:,.1f}"), config=blocked_config(gap), order=order, height=height,
+        formats=dict.fromkeys(B_MONEY, "{:,.1f}") | {"Applied Tariff": "{:.1f}"}, config=blocked_config(gap), order=order, height=height,
     )
     return rows[at]
 
@@ -378,17 +395,18 @@ def blocked_page() -> None:
                 config={"Total value": money(f"Total Blocked Opportunity value, {word}.")},
             )
         group = groups.iloc[at]
-        mine = [r for r in rows if r["iso3"] == group["iso3"]]
+        tariffs = market_tariffs(group["iso3"])
+        mine = [r | {"tariff_pct": tariffs.get(r["hs6"])} for r in rows if r["iso3"] == group["iso3"]]
         with products_side:
             st.markdown(
                 f"**{group['market']}**: {group['count']:,} Blocked Opportunities, with a total Blocked "
                 f"Opportunity value of **{format_usd(group['value'])}** ({word})"
             )
             row = blocked_table(
-                mine, gap, order=["Product", "Blocked Opportunity value", "Export Potential", "Actual Exports"],
+                mine, gap, order=["Product", "Blocked Opportunity value", "Applied Tariff", "Export Potential", "Actual Exports"],
                 height=250, key=f"b_products_{group['iso3']}",
             )
-            with st.container(border=True, height=470):
+            with st.container(border=True, height=470, key=f"b_panel_{row['hs6']}_{row['iso3']}"):
                 pl.detail(row, barrier_first=barrier_first)
 
     full = pd.DataFrame(rows).drop(columns=["flagged_product", "reexport_hub", "uncertain_opportunity"])
@@ -895,10 +913,42 @@ def evaluation_page() -> None:
 # ---------------------------------------------------------------- the app
 
 
+SHIP = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'>
+<defs><clipPath id='c'><rect width='120' height='120' rx='24'/></clipPath></defs>
+<g clip-path='url(#c)'><rect width='120' height='120' fill='#2a78d6'/>
+<g fill='#fff'><animateTransform attributeName='transform' type='translate' values='0 2;0 -7;0 2' dur='1.6s'
+ repeatCount='indefinite'/>
+<g><animateTransform attributeName='transform' type='rotate' values='-4 60 70;4 60 70;-4 60 70' dur='1.6s'
+ begin='-0.4s' repeatCount='indefinite'/>
+<path d='M22 66h76l-8 16H32z'/><rect x='30' y='52' width='14' height='12'/><rect x='46' y='52' width='14' height='12'/>
+<rect x='62' y='52' width='14' height='12'/><rect x='38' y='38' width='14' height='12'/>
+<rect x='54' y='38' width='14' height='12'/><rect x='82' y='40' width='10' height='24'/></g></g>
+<path fill='#a9cdf3' d='M-40 84q10-8 20 0t20 0 20 0 20 0 20 0 20 0 20 0 20 0 20 0V120H-40z'>
+<animateTransform attributeName='transform' type='translate' values='0 0;40 0' dur='1.6s' repeatCount='indefinite'/>
+</path></g></svg>"""
+
+
+def loader() -> None:
+    """A container ship riding waves in the middle of the page while the app is working. Plain CSS on
+    Streamlit's own running state, so no custom component; it waits 0.4s so quick reruns do not flash it."""
+    st.html(
+        f"""<style>
+        .stApp[data-test-script-state="running"]::after {{
+            content: ""; position: fixed; left: 50%; top: 45%; width: 120px; height: 120px; margin: -60px 0 0 -60px;
+            background: url("{prototype_logo.data_uri(SHIP)}") center / contain no-repeat; border-radius: 24px;
+            box-shadow: 0 6px 28px rgba(0, 0, 0, 0.35); z-index: 999999; pointer-events: none;
+            opacity: 0; animation: ship-in 0.2s ease 0.4s forwards;
+        }}
+        @keyframes ship-in {{ to {{ opacity: 1; }} }}
+        </style>"""
+    )
+
+
 def run() -> None:
     tile = prototype_logo.mark_svg("Tile", dark=False)
     st.set_page_config(page_title=NAME, page_icon=prototype_logo.data_uri(tile), layout="wide")
     st.logo(tile, size="large")
+    loader()
     PAGES.update({
         "Leaderboard": st.Page(leaderboard, title="Leaderboard", url_path="leaderboard", default=True),
         "Blocked Opportunities": st.Page(blocked_page, title="Blocked Opportunities", url_path="blocked-opportunities"),

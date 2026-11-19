@@ -301,7 +301,13 @@ def _barrier(row: dict, body: dict) -> None:
             f"{labels()['illustrative']['badge']}: an upper-end association, not a forecast."
         )
         if row["blocked_opportunity"]:
-            st.warning("**Blocked Opportunity.** " + barrier)
+            over = (
+                " Actual Exports are already above Export Potential here, so the pair shows no Export Gap. The "
+                "Blocked Opportunity value does not depend on Actual Exports: it is the rise in Export Potential "
+                "the model associates with the agreement."
+                if row.get("export_gap_usd", 0) < 0 else ""
+            )
+            st.warning("**Blocked Opportunity.** " + barrier + over)
         else:
             st.info(barrier + " That is too small to count as a Blocked Opportunity (at least 20% and $1m).")
     else:
