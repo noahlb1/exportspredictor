@@ -31,7 +31,6 @@ from app.ui import (
     caveats,
     fetch,
     labels,
-    potential_range_bar,
     rank_orders,
     show_caveats,
     why_link,
@@ -50,7 +49,13 @@ COLUMN_SETS = {
     ],
     "Everything (15)": None,
 }
-SMALL_RULES = ["0.0", "<0.1", "Second decimal"]
+SMALL_RULES = ["<0.1", "0.0", "Second decimal"]
+# The split view's wide table: everything except Type, Potential Range, HS6, Sector and Region,
+# which stay one click away in the table's Show/hide columns menu.
+WIDE_COLUMNS = [
+    "Product", "Market", "Export Gap", "Export Potential", "Actual Exports", "Relative Export Gap",
+    "UK Trade Agreement", "Blocked Opportunity value", "Blocked Opportunity", "Caveats",
+]
 
 # HS 2012 chapter names, shortened.
 SECTOR_NAMES = dict(zip(
@@ -278,17 +283,89 @@ def detail(row: dict) -> None:
     potential.metric("Export Potential", format_usd(body["export_potential_usd"]))
     actual.metric("Actual Exports", format_usd(body["actual_exports_usd"]))
     gap.metric("Export Gap", format_usd(body["export_gap_usd"]))
-    potential_range_bar(body)
-    top = body["factors"][:8]
-    for title, direction in (("higher", "raised"), ("lower", "lowered")):
-        found = [f for f in top if f["direction"] == direction][:3]
-        if found:
-            st.markdown(
-                f"**The model associates these most with {title} Export Potential:** "
-                + "; ".join(f"{f['label']} ({f['value_text']})" for f in found)
-            )
-    st.caption("These are associations the model has learned, not causes.")
-    st.markdown(f"[Full Why? page: every factor, and year by year]({why_link(row['hs6'], row['iso3'])})")
+    facts = {
+        "Opportunity Type": body["opportunity_type"],
+        "Relative Export Gap": "n/a" if body["relative_export_gap"] is None else f"{body['relative_export_gap']:.0%}",
+        "Potential Range": (
+            f"{format_usd(body['potential_range_low_usd'])} to {format_usd(body['potential_range_high_usd'])}"
+        ),
+        "UK Trade Agreement in force": "Yes" if row["trade_agreement"] else "No",
+        "Blocked Opportunity value": format_usd(row["blocked_opportunity_value_usd"]),
+    }
+    st.dataframe(pd.DataFrame({"": list(facts), " ": list(facts.values())}), hide_index=True)
+
+    st.markdown("**What raised or lowered its Export Potential**")
+    factors = pd.DataFrame(body["factors"][:8])
+    factors = factors[factors["direction"] != "no effect"]
+    factors["effect"] = [f"×{m:,.2f}" for m in factors["multiplier"]]
+    st.vega_lite_chart(
+        {
+            "data": {"values": factors.to_dict("records")},
+            "height": {"step": 26},
+            "encoding": {
+                "y": {"field": "label", "type": "nominal", "sort": None, "title": None, "axis": {"labelLimit": 330}},
+                "x": {
+                    "field": "multiplier", "type": "quantitative", "scale": {"type": "log"},
+                    "title": "Association with Export Potential (×1 = no effect)",
+                },
+                "tooltip": [
+                    {"field": "label", "title": "Factor"},
+                    {"field": "value_text", "title": "Value for this pair"},
+                    {"field": "effect", "title": "Association"},
+                ],
+            },
+            "layer": [
+                {
+                    "mark": "bar",
+                    "encoding": {
+                        "x2": {"datum": 1},
+                        "color": {
+                            "field": "direction", "type": "nominal", "title": None,
+                            "scale": {"domain": ["raised", "lowered"], "range": ["#2a78d6", "#e34948"]},
+                            "legend": {"orient": "top"},
+                        },
+                    },
+                },
+                {"mark": {"type": "text", "align": "left", "dx": 4}, "encoding": {"text": {"field": "effect"}}},
+            ],
+        },
+        width="stretch",
+    )
+    st.dataframe(
+        factors.rename(columns={"label": "Factor", "value_text": "Value for this pair", "effect": "Association"})[
+            ["Factor", "Value for this pair", "Association"]
+        ],
+        hide_index=True,
+    )
+    st.caption(
+        "×1.50 means the model associates the factor with 1.5 times the Export Potential it expects on average; "
+        "×0.70 means 30% lower. These are associations the model has learned, not causes."
+    )
+
+    st.markdown("**Year by year** ($ millions)")
+    history = pd.DataFrame(body["history"])
+    lines = pd.concat([
+        history.assign(series="Actual Exports", value=history["actual_exports_usd"] / 1e6),
+        history.assign(series="Export Potential", value=history["export_potential_usd"] / 1e6),
+    ]).dropna(subset=["value"])
+    st.vega_lite_chart(
+        {
+            "data": {"values": lines[["year", "series", "value"]].to_dict("records")},
+            "height": 220,
+            "mark": {"type": "line", "point": True, "tooltip": True},
+            "encoding": {
+                "x": {"field": "year", "type": "ordinal", "title": None, "axis": {"labelAngle": 0}},
+                "y": {"field": "value", "type": "quantitative", "title": "$ millions"},
+                "color": {"field": "series", "type": "nominal", "title": None, "legend": {"orient": "top"}},
+            },
+        },
+        width="stretch",
+    )
+    st.caption(
+        f"The Export Gap is the gap between the two lines, averaged over the Gap Period. "
+        f"{body['baseline_year']} figures are provisional."
+    )
+    st.markdown(f"[Full Why? page: every factor]({why_link(row['hs6'], row['iso3'])})")
 
 
 def header() -> None:
@@ -351,7 +428,7 @@ def variant_b(columns, rule) -> dict:
 
 
 def variant_c(columns, rule) -> dict:
-    del columns  # the split view fixes its own three columns
+
     st.sidebar.subheader("Filters")
     params, hs6, active = filters_ui(st.sidebar)
     st.sidebar.button("Reset filters", on_click=reset_filters, disabled=not active)
@@ -361,10 +438,22 @@ def variant_c(columns, rule) -> dict:
     if not body["opportunities"]:
         st.info("No Opportunities match these filters.")
         return params
+    view = st.segmented_control(
+        "View", ["Table and detail", "Wide table"], key="c_view", required=True, default="Table and detail",
+        label_visibility="collapsed",
+    )
+    if view == "Wide table":
+        # The same table key as the split view, so a selected row survives the swap.
+        del columns  # the wide table has its own settled set
+        row = ranking_table(body, columns=WIDE_COLUMNS, rule=rule, height=560, key="table_c")
+        if row:
+            with st.container(border=True):
+                detail(row)
+        return params
     table_side, detail_side = st.columns([5, 4], gap="large")
     with table_side:
-        row = ranking_table(body, columns=["Product", "Market", "Export Gap"], rule=rule, height=620, key="table_c")
-    with detail_side, st.container(border=True):
+        row = ranking_table(body, columns=["Product", "Market", "Export Gap"], rule=rule, height=700, key="table_c")
+    with detail_side, st.container(border=True, height=780):  # longer than the page: it scrolls on its own
         if row is None:
             st.caption("The top pair is shown until you select a row.")
         detail(row or body["opportunities"][0])
@@ -376,7 +465,7 @@ def switcher() -> tuple[str, list[str] | None, str]:
     keys = list(VARIANTS)
     if st.session_state.get("variant") not in keys:
         asked = st.query_params.get("variant")
-        st.session_state["variant"] = asked if asked in keys else "A"
+        st.session_state["variant"] = asked if asked in keys else "C"
 
     def step(by: int) -> None:
         st.session_state["variant"] = keys[(keys.index(st.session_state["variant"]) + by) % len(keys)]
