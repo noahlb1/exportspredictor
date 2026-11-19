@@ -5,9 +5,15 @@ Baseline table, so Advisors see the top Opportunities without searching. Each pa
 app/pages/ and reads the model only through the API (app/client.py).
 """
 
+import os
+
 import streamlit as st
 
-from app import client
+from app import (  # PROTOTYPE (#95, #97): never merge
+    client,
+    prototype_leaderboard,
+    prototype_logo,
+)
 from app.format import format_usd
 from app.ui import (
     ROWS_SHOWN,
@@ -17,10 +23,6 @@ from app.ui import (
     ranking_filters,
     show_leaderboard,
 )
-
-import os
-
-from app import prototype_leaderboard, prototype_logo  # PROTOTYPE (#95, #97): never merge
 
 PROTOTYPE = bool(os.environ.get("EXPORTSPREDICTOR_PROTOTYPE"))  # off unless asked for, so the app tests see today's page
 if PROTOTYPE:
