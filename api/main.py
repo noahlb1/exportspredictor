@@ -64,9 +64,9 @@ from api.schemas import (
 )
 from exportspredictor import artefacts as store
 from exportspredictor import scenarios
-from exportspredictor.conformal import coverage_text, potential_range_text
+from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
-from exportspredictor.evaluation import NOT_SERVED, known_limitations, parts_not_run
+from exportspredictor.evaluation import known_limitations, parts_not_run, served_report
 from exportspredictor.exclusions import (
     FLAGGED_PRODUCT_CAVEAT,
     REEXPORT_HUB_CAVEAT,
@@ -219,12 +219,8 @@ def create_app(
         """
         if artefacts.evaluation is None:
             raise HTTPException(status_code=404, detail=f"Artefact version {artefacts.version} has no evaluation.")
-        served = {key: value for key, value in artefacts.evaluation.items() if key not in NOT_SERVED}
-        if served.get("potential_range"):
-            # Worded now, not when saved, so older versions state the share of Uncertain Opportunities the same way
-            served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
         return Evaluation(
-            **served,
+            **served_report(artefacts.evaluation),
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
             limitations=known_limitations(artefacts),

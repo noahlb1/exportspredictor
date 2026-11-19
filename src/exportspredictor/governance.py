@@ -13,7 +13,6 @@
 
 import hashlib
 import math
-import statistics
 from pathlib import Path
 
 import polars as pl
@@ -27,9 +26,14 @@ from exportspredictor.evaluation import (
     result_limitations,
 )
 from exportspredictor.illustrative import scenario_note
-from exportspredictor.model_choice import ranking_summary, traded_away
+from exportspredictor.model_choice import (
+    model_form_summary,
+    ranking_summary,
+    round_count,
+    selection_rule_text,
+    traded_away,
+)
 from exportspredictor.paths import data_dir
-from exportspredictor.prediction import ModelForm
 from exportspredictor.wording import number_text, rate_text, years_text
 
 OWNER = "UNASSIGNED"
@@ -179,8 +183,8 @@ def model_card(artefacts: Artefacts) -> dict:
         "version": artefacts.version,
         "owner": OWNER,
         "model": _model_summary(metadata),
-        "model_form": _model_form(metadata),
-        "round_count": _round_count(metadata),
+        "model_form": model_form_summary(metadata),
+        "round_count": round_count(metadata),
         "illustrative": scenario_note(artefacts),
         "intended_use": INTENDED_USE,
         "out_of_scope": OUT_OF_SCOPE,
@@ -216,39 +220,6 @@ def _model_summary(metadata: dict) -> str:
     )
 
 
-def _model_form(metadata: dict) -> dict:
-    """The served Model Form (ADR 0008) with its plain-words text; the model alone where none is recorded."""
-    form = ModelForm.from_dict(metadata.get("model_form") or {"form": "model alone", "naive_weight": 0.0})
-    return {**form.to_dict(), "text": form.text}
-
-
-def _round_count(metadata: dict) -> dict:
-    """Where the served round count came from, read from `round_scaling`. The pipeline records
-    `selected_rounds` since #77 (chosen by the Selection Measure); an artefact recording the search's
-    `tuned_rounds` was trained at v2's deviance-chosen count, and the next rebuild takes the median of
-    the five-fold confirmation's rounds (`loop.served_configuration`) instead."""
-    scaling, rounds = metadata.get("round_scaling") or {}, metadata.get("rounds")
-    confirmation = (metadata.get("ranking_experiments") or {}).get("confirmation") or {}
-    fold_rounds = (confirmation.get("winner") or {}).get("rounds")
-    next_rounds = statistics.median_low(fold_rounds) if fold_rounds else None
-    if "selected_rounds" in scaling:
-        return {"chosen_by": "Selection Measure", "rounds": rounds, "next_rounds": None, "text": (
-            f"The {number_text(rounds, ',')} rounds were chosen by the Selection Measure ({scaling['rule']}: "
-            f"{number_text(scaling['selected_rounds'], ',')}), scaled by the ratio of training rows "
-            f"({number_text(scaling.get('ratio'), '.4f')}). Deviance chose none of it.")}
-    if "tuned_rounds" in scaling:
-        then = (f"the median of the five-fold confirmation's rounds ({number_text(next_rounds, ',')}, each chosen "
-                "by the Selection Measure), scaled the same way" if next_rounds else "the Selection Measure's count")
-        return {"chosen_by": "Tweedie deviance", "rounds": rounds, "next_rounds": next_rounds, "text": (
-            f"Disclosed deviation: the served models were trained for {number_text(rounds, ',')} rounds, the "
-            f"hyperparameter search's {number_text(scaling['tuned_rounds'], ',')} (early stopping on Tweedie "
-            f"deviance, v2's count) scaled by the ratio of training rows ({number_text(scaling.get('ratio'), '.4f')}). "
-            "Under ADR 0008 deviance should choose nothing. The artefact was not rebuilt, so that the test year "
-            f"stays read once; the next rebuild uses {then}.")}
-    return {"chosen_by": None, "rounds": rounds, "next_rounds": None,
-            "text": "How the round count was chosen is not recorded for this version."}
-
-
 def _headline_lines(card: dict) -> list[str]:
     """The test-year UK ranking beside the Naive Baseline and earlier versions, else the report's headline."""
     if card.get("earlier_versions"):
@@ -267,10 +238,7 @@ def _ranking_lines(summary: dict | None) -> list[str]:
     if summary is None:
         return ["No experiment loop is recorded for this version."]
     lines = [
-        (f"Every choice was made on one Selection Measure, on {summary['validation_year']} only: "
-        f"{summary['selection_measure']}. An Arm was kept only if it beat the best so far by more than the Win "
-        f"Threshold, {number_text(summary['win_threshold'], '.4f')} (twice the Noise Floor's standard deviation, "
-        "three seeds of one configuration)."),
+        selection_rule_text(summary),
         "",
         "| Experiment | Best Arm | Selection Measure | Change on the best so far | Kept |",
         "| --- | --- | --- | --- | --- |",
@@ -520,13 +488,13 @@ def _benchmark_limitations(benchmark: dict | None) -> list[dict]:
         "text": f"Over the UK pairs with no Trade Agreement, the model associates adding one (with its tariff "
         f"removed) with {model['effect_pct']:+.1f}% Export Potential, Baseline-weighted. A 3-way fixed-effects PPML "
         f"gravity model on the same Flows associates a Trade Agreement with {ppml['effect_pct']:+.1f}% (95% interval "
-        f"{_signed_pct(ppml['effect_low_pct'])} to {_signed_pct(ppml['effect_high_pct'])}). Published estimates span "
+        f"{_signed_percent_with_minus_sign(ppml['effect_low_pct'])} to {_signed_percent_with_minus_sign(ppml['effect_high_pct'])}). Published estimates span "
         f"about {low:+.0%} to {high:+.0%}, but the Event Backtests point the same way as the benchmark: the model overstates the "
         f"association. Read Scenario Effects as an upper end.",
     }]
 
 
-def _signed_pct(value: float) -> str:
+def _signed_percent_with_minus_sign(value: float) -> str:
     return f"{value:+.1f}%".replace("-", "−")
 
 
@@ -544,7 +512,7 @@ def render_model_card(card: dict) -> str:
     lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
     lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
         "text", "The artefact records no Potential Range coverage for this version."), ""]
-    lines += ["## Metrics", "", "| Metric | Model | Reference (naive baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
+    lines += ["## Metrics", "", "| Metric | Model | Reference (Naive Baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
     lines += [
         f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
         f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"

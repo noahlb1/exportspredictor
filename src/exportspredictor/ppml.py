@@ -77,7 +77,7 @@ class PpmlFit:
     @property
     def effect_pct(self) -> float:
         """The proportional change in Flows associated with a Trade Agreement, in percent."""
-        return _pct(self.coefficient)
+        return _percent_change(self.coefficient)
 
     def as_dict(self) -> dict:
         return {
@@ -86,8 +86,8 @@ class PpmlFit:
             "ci_low": self.ci_low,
             "ci_high": self.ci_high,
             "effect_pct": self.effect_pct,
-            "effect_low_pct": _pct(self.ci_low),
-            "effect_high_pct": _pct(self.ci_high),
+            "effect_low_pct": _percent_change(self.ci_low),
+            "effect_high_pct": _percent_change(self.ci_high),
             "rows": self.rows,
             "dropped_rows": self.dropped_rows,
             "clusters": self.clusters,
@@ -231,8 +231,8 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
             "estimate": "PPML benchmark: 3-way fixed effects, Sector level",
             "coefficient": fit.coefficient,
             "effect_pct": fit.effect_pct,
-            "low_pct": _pct(fit.ci_low),
-            "high_pct": _pct(fit.ci_high),
+            "low_pct": _percent_change(fit.ci_low),
+            "high_pct": _percent_change(fit.ci_high),
             "source": f"fitted once and saved with the artefact; {CI_LEVEL:.0%} interval clustered by Exporter–Importer pair",
         },
         {
@@ -255,7 +255,7 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
             {
                 "estimate": row["estimate"],
                 "coefficient": row["coefficient"],
-                "effect_pct": _pct(row["coefficient"]),
+                "effect_pct": _percent_change(row["coefficient"]),
                 "low_pct": None,
                 "high_pct": None,
                 "source": row["source"],
@@ -266,8 +266,8 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
             "estimate": "Literature range (RTA estimates)",
             "coefficient": None,
             "effect_pct": None,
-            "low_pct": _pct(min(coefficients)),
-            "high_pct": _pct(max(coefficients)),
+            "low_pct": _percent_change(min(coefficients)),
+            "high_pct": _percent_change(max(coefficients)),
             "source": "lowest to highest of the estimates above",
         },
     ]
@@ -284,7 +284,7 @@ def comparison_table(fit: PpmlFit, model: dict, literature: Sequence[dict] = LIT
     )
 
 
-def _pct(log_points: float) -> float:
+def _percent_change(log_points: float) -> float:
     return float(np.expm1(log_points) * 100)
 
 
@@ -297,14 +297,14 @@ def published_range(literature: Sequence[dict] = LITERATURE) -> dict:
     """The lowest and highest published Trade Agreement estimates, as percent changes, with the estimates."""
     coefficients = [row["coefficient"] for row in literature]
     return {
-        "low_pct": _pct(min(coefficients)),
-        "high_pct": _pct(max(coefficients)),
-        "estimates": [{**row, "effect_pct": _pct(row["coefficient"])} for row in literature],
+        "low_pct": _percent_change(min(coefficients)),
+        "high_pct": _percent_change(max(coefficients)),
+        "estimates": [{**row, "effect_pct": _percent_change(row["coefficient"])} for row in literature],
     }
 
 
 def model_agreement_association(bundle: "Artefacts") -> dict:
-    """The model's Trade Agreement association for UK pairs, on the artefact's served model form.
+    """The model's Trade Agreement association for UK pairs, on the artefact's served Model Form.
 
     Every UK pair without a Trade Agreement is re-predicted with one added (its tariff removed,
     ADR 0006) through `prediction.export_potential` with `bundle.model_form`, each pair by the
@@ -323,7 +323,7 @@ def benchmark(panel: pl.DataFrame, bundle: "Artefacts") -> dict:
 
     `ppml` is the fit on the Sector `panel` (`PpmlFit.as_dict`: the effect and its interval),
     `published_range` the published estimates it is compared with, and `model` the model's own
-    Trade Agreement association on the served model form (`model_agreement_association`).
+    Trade Agreement association on the served Model Form (`model_agreement_association`).
     """
     years = sorted(int(y) for y in panel["year"].unique())
     return {

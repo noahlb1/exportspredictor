@@ -358,3 +358,15 @@ def test_without_v2_figures_only_this_version_and_v1_are_listed():
     assert [row["name"] for row in block["rows"]] == ["This version (blend)", "v1"]
     assert block["rows"][0]["size_matched_lift"] is None
     assert [row["name"] for row in block["naive"]] == ["Naive baseline, every Exporter's Flows (this run)"]
+
+
+def test_the_served_report_leaves_out_the_v1_comparison_and_words_the_potential_range_now(fixture_artefacts):
+    saved = {**fixture_artefacts.evaluation, "v1_comparison": {"verdict": "frozen"}}
+    saved["potential_range"] = {**saved["potential_range"], "text": "Worded when saved."}
+
+    served = evaluation.served_report(saved)
+
+    assert "v1_comparison" not in served
+    assert served["potential_range"]["text"] != "Worded when saved."
+    assert f"{saved['potential_range']['uncertain_opportunity_share']:.0%}" in served["potential_range"]["text"]
+    assert saved["potential_range"]["text"] == "Worded when saved."  # the saved report is not changed

@@ -207,14 +207,14 @@ def _show_model_choice(choice: dict) -> None:
                 f"{confirmation['win_threshold']:.4f} ({verdict}). The Naive Baseline scores {confirmation['naive']:.4f}."
             )
             st.dataframe(pd.DataFrame(folds), hide_index=True)
-    test_year = choice["test_year"]
-    if test_year:
-        st.markdown(f"**The UK ranking in {test_year['test_year']}, beside the Naive Baseline and earlier versions**")
-        (st.success if test_year["beats_naive"] else st.warning)(test_year["text"])
+    ranking = choice["test_year_ranking"]
+    if ranking:
+        st.markdown(f"**The UK ranking in {ranking['test_year']}, beside the Naive Baseline and earlier versions**")
+        (st.success if ranking["beats_naive"] else st.warning)(ranking["text"])
         st.dataframe(
             pd.DataFrame(
                 [{"Version": row["name"], "UK ranking": row["uk_ranking"]}
-                 for row in [*test_year["rows"], *test_year["naive"]]]
+                 for row in [*ranking["rows"], *ranking["naive"]]]
             ),
             hide_index=True,
         )

@@ -3,7 +3,7 @@
 import polars as pl
 import pytest
 
-from exportspredictor import evaluation, governance, tariffs
+from exportspredictor import evaluation, governance, reporting, tariffs
 
 # --- Model card --------------------------------------------------------------------------
 
@@ -409,22 +409,38 @@ def test_model_card_says_the_rounds_were_chosen_by_the_selection_measure(card, f
 
 def test_model_card_discloses_rounds_chosen_on_deviance_and_the_next_rebuilds_count(fixture_artefacts):
     # The served real artefact (20261118T185910Z and its derived versions) kept v2's search rounds.
-    record = {**(fixture_artefacts.metadata.get("ranking_experiments") or {}),
-              "confirmation": {
-                  "n_folds": 5, "difference": 0.0429, "win_threshold": 0.0089, "beats_v2": True, "folds": [],
-                  "winner": {"selection_measure": 0.5635, "rounds": [951, 1075, 1097, 1303, 1120]},
-                  "v2": {"selection_measure": 0.5206}, "naive": {"selection_measure": 0.5472},
-              }}
-    scaling = {"tuned_rounds": 1198, "tuning_years": [2012], "training_years": [2012, 2013],
-               "tuning_rows": 82_454_208, "training_rows": 99_993_695, "ratio": 1.2127, "rounds": 1453}
-    artefacts = _with_metadata(fixture_artefacts, rounds=1453, round_scaling=scaling, ranking_experiments=record)
+    card = governance.model_card(_deviance_rounds(fixture_artefacts))
 
-    card = governance.model_card(artefacts)
-
-    assert card["round_count"]["chosen_by"] == "Tweedie deviance"
+    assert card["round_count"]["chosen_by"].startswith("Tweedie deviance")
     assert card["round_count"]["next_rounds"] == 1097  # the median of the confirmation's five folds
     section = _section(governance.render_model_card(card), "## Model Form")
     assert "1,453" in section and "1,198" in section and "1,097" in section
+
+
+def _deviance_rounds(fixture_artefacts):
+    """The served real artefact's shape: the search's 1,198 rounds scaled to 1,453, and a five-fold confirmation."""
+    record = fixture_artefacts.metadata["ranking_experiments"]
+    confirmed = {
+        "n_folds": 5, "difference": 0.0429, "win_threshold": 0.0089, "beats_v2": True, "folds": [],
+        "settings": {"winner": record["best"]["settings"]},
+        "winner": {"selection_measure": 0.5635, "rounds": [951, 1075, 1097, 1303, 1120]},
+        "v2": {"selection_measure": 0.5206}, "naive": {"selection_measure": 0.5472},
+    }
+    return _with_metadata(
+        fixture_artefacts, rounds=1453, round_scaling={"tuned_rounds": 1198, "ratio": 1.2127, "rounds": 1453},
+        ranking_experiments={**record, "confirmation": confirmed},
+    )
+
+
+@pytest.mark.parametrize("shape", ["selection measure", "deviance"])
+def test_the_model_card_and_the_notebook_state_the_same_round_counts(fixture_artefacts, shape):
+    artefacts = fixture_artefacts if shape == "selection measure" else _deviance_rounds(fixture_artefacts)
+
+    stated = governance.model_card(artefacts)["round_count"]
+    served, next_rebuild = reporting.round_count(artefacts).to_dicts()
+
+    assert (stated["rounds_chosen"], stated["rounds"]) == (served["rounds_chosen"], served["rounds_trained"])
+    assert stated["next_rounds"] == next_rebuild["rounds_chosen"]
 
 
 def test_the_v1_comparison_is_a_frozen_result_at_the_end_of_the_card(card):

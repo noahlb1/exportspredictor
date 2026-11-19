@@ -50,6 +50,7 @@ import xgboost as xgb
 
 from exportspredictor import artefacts as store
 from exportspredictor import baci
+from exportspredictor.conformal import coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import (
@@ -95,6 +96,17 @@ TARIFF_GROUPS = ("observed", "imputed")
 NOT_SERVED = frozenset({"v1_comparison"})
 
 NOT_RUN = "not run for this version"
+
+
+def served_report(report: dict) -> dict:
+    """An evaluation report as the API serves it: without the parts in `NOT_SERVED`, and with the Potential
+    Range worded now (`conformal.coverage_text`), not when saved, so older versions state the share of
+    Uncertain Opportunities the same way. The saved report is not changed."""
+    served = {key: value for key, value in report.items() if key not in NOT_SERVED}
+    if served.get("potential_range"):
+        served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
+    return served
+
 # The opt-in parts of a pipeline run (`pipeline.Parts`, spec #65 story 23): title, the report
 # block that holds its result, and the switch that runs it. A part whose block is absent was skipped.
 OPTIONAL_PARTS = (

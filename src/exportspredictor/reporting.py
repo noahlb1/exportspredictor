@@ -15,7 +15,7 @@ from html import escape
 
 import polars as pl
 
-from exportspredictor import loop, model_choice, ppml
+from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.evaluation import NOT_RUN
 
@@ -153,29 +153,15 @@ def confirmation(bundle: Artefacts) -> pl.DataFrame | NotRun:
 
 def round_count(bundle: Artefacts) -> pl.DataFrame | NotRun:
     """How many boosting rounds the served fold models trained, and what chose them, beside the count the
-    next rebuild takes from the Selection Measure (`loop.served_configuration`).
-
-    A version whose `round_scaling` records `tuned_rounds` was trained at the hyperparameter search's
-    early-stopped count, which Tweedie deviance chose; one built from the experiment loop records
-    `selected_rounds`. Both are scaled to the fold models' rows (`rounds_trained`)."""
-    scaling = bundle.metadata.get("round_scaling")
-    record = bundle.metadata.get("ranking_experiments")
-    if not scaling or not record or not record.get("best"):
+    next rebuild takes from the Selection Measure: `model_choice.round_count`, which the model card reads too."""
+    count = model_choice.round_count(bundle.metadata)
+    if count["chosen_by"] is None or count["next_rounds"] is None:
         return NotRun("The round count")
-    from_search = "selected_rounds" not in scaling
     rows = [
-        {
-            "model": "served",
-            "chosen_on": "Tweedie deviance (the hyperparameter search)" if from_search else "Selection Measure",
-            "rounds_chosen": scaling["tuned_rounds"] if from_search else scaling["selected_rounds"],
-            "rounds_trained": scaling["rounds"],
-        },
-        {
-            "model": "next rebuild",
-            "chosen_on": "Selection Measure",
-            "rounds_chosen": loop.served_configuration(record).rounds,
-            "rounds_trained": None,
-        },
+        {"model": "served", "chosen_on": count["chosen_by"], "rounds_chosen": count["rounds_chosen"],
+         "rounds_trained": count["rounds"]},
+        {"model": "next rebuild", "chosen_on": model_choice.CHOSEN_ON_SELECTION_MEASURE,
+         "rounds_chosen": count["next_rounds"], "rounds_trained": None},
     ]
     return pl.DataFrame(rows, schema={
         "model": pl.String, "chosen_on": pl.String, "rounds_chosen": pl.Int64, "rounds_trained": pl.Int64,

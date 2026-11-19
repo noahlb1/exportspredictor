@@ -2,12 +2,18 @@
 
 Everything here is read from what an artefact already records: `metadata["ranking_experiments"]`
 (the experiment loop's Selection Measure, Noise Floor, Arms and five-fold confirmation),
-`metadata["model_form"]` and the evaluation report's `earlier_versions` block. Nothing is
-recomputed and no test-year figure is read beyond the report.
+`metadata["model_form"]`, `metadata["round_scaling"]` and the evaluation report's
+`earlier_versions` and `event_backtest` blocks. Nothing is recomputed and no test-year figure is
+read beyond the report. The model card (`governance`) and the notebook (`reporting`) read the
+same functions, so they cannot state different figures.
 """
 
-from exportspredictor.prediction import ModelForm
+from exportspredictor.loop import served_configuration
+from exportspredictor.prediction import MODEL_ALONE, ModelForm
+from exportspredictor.wording import number_text
 
+CHOSEN_ON_DEVIANCE = "Tweedie deviance (the hyperparameter search)"
+CHOSEN_ON_SELECTION_MEASURE = "Selection Measure"
 NOT_RECORDED = "No experiment results are recorded for this version, so how its Model Form was chosen cannot be shown."
 
 
@@ -15,16 +21,67 @@ def how_chosen(metadata: dict, report: dict) -> dict:
     """The Selection Measure, the Model Form, the Win Threshold, every experiment, the confirmation
     and the test-year ranking beside earlier versions, JSON-ready. `recorded` is False (and the
     experiment fields empty) when the artefact records no experiment results."""
-    form = ModelForm.from_dict(metadata.get("model_form") or {"form": "model alone", "naive_weight": 0.0})
+    form = served_model_form(metadata)
     summary = ranking_summary(metadata.get("ranking_experiments"))
     return {
         "recorded": summary is not None,
-        "model_form": {**form.to_dict(), "text": form.text},
+        "model_form": model_form_summary(metadata),
         **(summary or {"experiments": []}),
         "text": _text(summary, form),
-        "test_year": report.get("earlier_versions"),
+        "test_year_ranking": report.get("earlier_versions"),
         "traded_away": traded_away(report.get("earlier_versions")),
     }
+
+
+def served_model_form(metadata: dict) -> ModelForm:
+    """The served Model Form (ADR 0008); the model alone where none is recorded."""
+    form = metadata.get("model_form")
+    return ModelForm.from_dict(form) if form else MODEL_ALONE
+
+
+def model_form_summary(metadata: dict) -> dict:
+    """The served Model Form, JSON-ready, with its plain-words text."""
+    form = served_model_form(metadata)
+    return {**form.to_dict(), "text": form.text}
+
+
+def primary_event_backtest(report: dict) -> dict | None:
+    """The primary Event Backtest of an evaluation report (its `role` is "primary"), or None where none was run."""
+    events = (report.get("event_backtest") or {}).get("events") or []
+    return next((event for event in events if event.get("role") == "primary"), None)
+
+
+def round_count(metadata: dict) -> dict:
+    """How many boosting rounds the served fold models trained (`rounds`), what chose them (`chosen_by`,
+    `rounds_chosen`, read from `round_scaling`) and the count the next rebuild takes (`next_rounds`, from
+    `loop.served_configuration`, None without experiment results), with the model card's sentence.
+
+    The pipeline records `selected_rounds` since #77 (chosen by the Selection Measure). An artefact
+    recording the search's `tuned_rounds` was trained at v2's count, which early stopping on Tweedie
+    deviance chose; both are scaled by the ratio of training rows."""
+    scaling, rounds = metadata.get("round_scaling") or {}, metadata.get("rounds")
+    record = metadata.get("ranking_experiments") or {}
+    next_rounds = served_configuration(record).rounds if record.get("best") else None
+    ratio = number_text(scaling.get("ratio"), ".4f")
+    if "selected_rounds" in scaling:
+        chosen = scaling["selected_rounds"]
+        return {"chosen_by": CHOSEN_ON_SELECTION_MEASURE, "rounds_chosen": chosen, "rounds": rounds,
+                "next_rounds": next_rounds, "text": (
+            f"The {number_text(rounds, ',')} rounds were chosen by the Selection Measure ({scaling['rule']}: "
+            f"{number_text(chosen, ',')}), scaled by the ratio of training rows ({ratio}). Deviance chose none of it.")}
+    if "tuned_rounds" in scaling:
+        chosen = scaling["tuned_rounds"]
+        then = (f"the median of the five-fold confirmation's rounds ({number_text(next_rounds, ',')}, each chosen "
+                "by the Selection Measure), scaled the same way" if record.get("confirmation") and next_rounds
+                else "the Selection Measure's count")
+        return {"chosen_by": CHOSEN_ON_DEVIANCE, "rounds_chosen": chosen, "rounds": rounds,
+                "next_rounds": next_rounds, "text": (
+            f"Disclosed deviation: the served models were trained for {number_text(rounds, ',')} rounds, the "
+            f"hyperparameter search's {number_text(chosen, ',')} (early stopping on Tweedie deviance, v2's count) "
+            f"scaled by the ratio of training rows ({ratio}). Under ADR 0008 deviance should choose nothing. The "
+            f"artefact was not rebuilt, so that the test year stays read once; the next rebuild uses {then}.")}
+    return {"chosen_by": None, "rounds_chosen": None, "rounds": rounds, "next_rounds": next_rounds,
+            "text": "How the round count was chosen is not recorded for this version."}
 
 
 def traded_away(block: dict | None) -> dict | None:
@@ -63,18 +120,17 @@ def event_backtest_note(metadata: dict, report: dict) -> dict | None:
     """When a Blend is served: the Event Backtests measured the model alone, and a served Scenario
     Effect is the model's effect scaled by the model's weight on the log scale, so it is smaller.
     Gives the primary Event Backtest's pooled predicted effect both ways. None for the model alone."""
-    form = metadata.get("model_form")
-    if not form or not ModelForm.from_dict(form).naive_weight:
+    form = served_model_form(metadata)
+    if not form.naive_weight:
         return None
-    model_form = ModelForm.from_dict(form)
-    weight = 1 - model_form.naive_weight
-    events = (report.get("event_backtest") or {}).get("events") or []
-    model_effect = events[0]["directions"][0]["pooled"]["predicted"] if events else None
-    served = model_form.served_effect(model_effect) if model_effect is not None else None
+    weight = 1 - form.naive_weight
+    primary = primary_event_backtest(report)
+    model_effect = primary["directions"][0]["pooled"]["predicted"] if primary else None
+    served = form.served_effect(model_effect) if model_effect is not None else None
     example = (
-        f" In the primary Event Backtest ({events[0]['title']}), the model's {model_effect:+.0%} would be served as "
+        f" In the primary Event Backtest ({primary['title']}), the model's {model_effect:+.0%} would be served as "
         f"{served:+.0%}."
-        if served is not None else ""
+        if primary is not None and model_effect is not None and served is not None else ""
     )
     return {
         "model_weight": weight,
@@ -128,16 +184,23 @@ def _confirmation(confirmation: dict | None) -> dict | None:
     )
 
 
+def selection_rule_text(summary: dict) -> str:
+    """How the experiment loop chose (`ranking_summary`): one Selection Measure, kept only above the Win Threshold."""
+    return (
+        f"Every choice was made on one Selection Measure, on {summary['validation_year']} only: "
+        f"{summary['selection_measure']}. An Arm was kept only if it beat the best so far by more than the Win "
+        f"Threshold, {number_text(summary['win_threshold'], '.4f')} (twice the Noise Floor's standard deviation, "
+        "three seeds of one configuration)."
+    )
+
+
 def _text(summary: dict | None, form: ModelForm) -> str:
     """The section's lead sentence; without experiment results it says so and names the served form."""
     if summary is None:
         return f"{NOT_RECORDED} {form.text}"
     kept = [e["name"] for e in summary["experiments"] if e["kept"]]
     return (
-        f"Every choice was made on one Selection Measure, on {summary['validation_year']} only: "
-        f"{summary['selection_measure']}. An Arm was kept only if it beat the best so far by more than the Win "
-        f"Threshold, {summary['win_threshold']:.4f} (twice the Noise Floor's standard deviation). "
-        f"Of {len(summary['experiments'])} experiments, {len(kept)} kept a change"
+        f"{selection_rule_text(summary)} Of {len(summary['experiments'])} experiments, {len(kept)} kept a change"
         + (f" ({', '.join(kept)})" if kept else "")
         + "."
     )
