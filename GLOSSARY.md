@@ -89,7 +89,7 @@ The range within which Actual Exports fall 80% of the time for Product–Market 
 _Avoid_: confidence interval, error bars, margin
 
 **Uncertain Opportunity**:
-An Opportunity whose Actual Exports lie inside its Potential Range, so its Export Gap is within the variation normally seen among comparable pairs. It is still ranked, with a caveat.
+An Opportunity whose Actual Exports lie inside its Potential Range, so its Export Gap is within the variation normally seen among comparable pairs. It is still ranked. The term is reported as a share of all Opportunities (on the Model Evaluation page, in the notebook and in the model card), not shown as a badge on each row, because it covers most of them (ADR 0007).
 _Avoid_: weak lead, low-confidence opportunity, false positive
 
 **Blocked Opportunity**:
