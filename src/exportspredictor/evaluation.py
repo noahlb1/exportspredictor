@@ -232,10 +232,16 @@ def result_limitations(metadata: dict, report: dict) -> list[dict]:
                        f"times each Market's imports: on the headline measure it does not beat that naive rule. Its "
                        f"value is in the size of Export Potential (a much lower deviance), not in the order of Markets."})
     elif headline:
+        blend = bool((metadata.get("model_form") or {}).get("naive_weight"))
+        trade_off = (
+            "The Blend was chosen on this ranking, not on the size of Export Potential: read it as where to look "
+            "first, and treat dollar values with more caution than rankings."
+            if blend else "Its value is mostly in the size of Export Potential, not its order."
+        )
         limits.append({"title": "Only slightly better than a naive ranking for UK pairs",
                        "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
                        f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share times "
-                       f"each Market's imports. Its value is mostly in the size of Export Potential, not its order."})
+                       f"each Market's imports. {trade_off}"})
     lift = report.get("lift")
     if lift:
         limits.append({"title": "Large Export Gaps mostly mark large pairs",
@@ -270,8 +276,8 @@ def range_limitations(bands: pl.DataFrame) -> list[dict]:
         f"pair in the top band, from {format_usd(top['min_export_potential_usd'])} of Export Potential upwards, gets "
         f"the same range, {format_usd(width)} wide, whatever its size. For a large pair that range is a sliver, and "
         f"it is an Uncertain Opportunity only when its Export Gap is under the band's lower offset, "
-        f"{format_usd(-top['low_offset_usd'])}. Read the badge on large pairs as \"a small gap for its size\", "
-        f"not as a measure of how sure the model is. A relative (log-scale) range is a candidate for a later version.",
+        f"{format_usd(-top['low_offset_usd'])}: for a large pair that means \"a small gap for its size\", not that "
+        f"the model is unsure of it. A relative (log-scale) range is a candidate for a later version.",
     }]
 
 

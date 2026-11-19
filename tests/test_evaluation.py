@@ -370,3 +370,38 @@ def test_the_served_report_leaves_out_the_v1_comparison_and_words_the_potential_
     assert served["potential_range"]["text"] != "Worded when saved."
     assert f"{saved['potential_range']['uncertain_opportunity_share']:.0%}" in served["potential_range"]["text"]
     assert saved["potential_range"]["text"] == "Worded when saved."  # the saved report is not changed
+
+
+# --- Known limitations, worded for the served Model Form (spec #66 stories 41 and 48) ---------
+
+
+def _headline_report(model=0.555, naive=0.523):
+    return {"headline": {"model": model, "naive": naive, "beats_naive": model > naive}}
+
+
+def test_a_blend_s_ranking_limitation_says_dollar_values_deserve_more_caution_than_rankings():
+    limits = evaluation.result_limitations({"model_form": {"form": "blend", "naive_weight": 0.3}}, _headline_report())
+
+    text = next(x["text"] for x in limits if x["title"] == "Only slightly better than a naive ranking for UK pairs")
+    assert "0.56" in text and "0.52" in text
+    assert "mostly in the size" not in text  # the Blend ranks better and sizes worse, not the other way round
+    assert "dollar values with more caution than rankings" in text
+
+
+def test_the_model_alone_s_ranking_limitation_still_says_its_value_is_in_the_size():
+    limits = evaluation.result_limitations({}, _headline_report())
+
+    text = next(x["text"] for x in limits if x["title"] == "Only slightly better than a naive ranking for UK pairs")
+    assert "size of Export Potential" in text
+
+
+def test_the_potential_range_limitation_refers_to_no_badge():
+    bands = pl.DataFrame({
+        "band": [0, 1], "min_export_potential_usd": [0.0, 2_000_000.0], "rows": [10, 10],
+        "low_offset_usd": [-500.0, -8_200_000.0], "high_offset_usd": [800.0, 15_600_000.0],
+    })
+
+    (limit,) = evaluation.range_limitations(bands)
+
+    assert "badge" not in limit["text"]  # the ranking pages carry none since spec #66 story 41
+    assert "a small gap for its size" in limit["text"]
