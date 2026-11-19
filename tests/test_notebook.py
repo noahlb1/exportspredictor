@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import re
 from pathlib import Path
 
 import nbformat
@@ -250,3 +251,29 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
     kinds = {kind for cell in notebook.cells if cell.cell_type == "code" for o in cell.outputs for kind in o.get("data", {})}
     assert "image/svg+xml" in kinds
     assert not any("vega" in kind or "javascript" in kind for kind in kinds), kinds
+
+
+def _provenance_versions(notebook) -> list[tuple[str, str]]:
+    """(version, source) of every provenance line in the saved outputs (`reporting.provenance`)."""
+    printed = " ".join(
+        output.get("text", "") for cell in notebook.cells if cell.cell_type == "code" for output in cell.outputs
+    )
+    return re.findall(r"Outputs below come from artefact version (\S+) \(source: ([^;)]+)", printed)
+
+
+def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
+    # Read as saved; never executed here. `scripts/rebuild.py --only notebook` refreshes these outputs (#92).
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+    code = [cell for cell in notebook.cells if cell.cell_type == "code"]
+
+    imports_only = [all(isinstance(node, (ast.Import, ast.ImportFrom)) for node in ast.parse(cell.source).body) for cell in code]
+    silent = [cell.source[:60] for cell, quiet in zip(code, imports_only, strict=True) if not cell.outputs and not quiet]
+    assert not silent, f"Code cells without outputs; refresh with scripts/rebuild.py --only notebook: {silent}"
+    assert not [o for cell in code for o in cell.outputs if o.output_type == "error"]
+    kinds = {kind for cell in code for o in cell.outputs for kind in o.get("data", {})}
+    assert "image/svg+xml" in kinds
+    provenance = _provenance_versions(notebook)
+    assert provenance, "the outputs must name the artefact version they come from"
+    for version, source in provenance:
+        assert re.fullmatch(r"\d{8}T\d{6}Z", version), version
+        assert source != "fixture", "the committed outputs come from the fixture, not real data"
