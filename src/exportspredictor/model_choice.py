@@ -8,10 +8,12 @@ read beyond the report. The model card (`governance`) and the notebook (`reporti
 same functions, so they cannot state different figures.
 """
 
-
+from exportspredictor.loop import served_configuration
 from exportspredictor.prediction import MODEL_ALONE, ModelForm
 from exportspredictor.wording import number_text
 
+CHOSEN_ON_DEVIANCE = "Tweedie deviance (the hyperparameter search)"
+CHOSEN_ON_SELECTION_MEASURE = "Selection Measure"
 NOT_RECORDED = "No experiment results are recorded for this version, so how its Model Form was chosen cannot be shown."
 
 
@@ -47,6 +49,39 @@ def primary_event_backtest(report: dict) -> dict | None:
     """The primary Event Backtest of an evaluation report (its `role` is "primary"), or None where none was run."""
     events = (report.get("event_backtest") or {}).get("events") or []
     return next((event for event in events if event.get("role") == "primary"), None)
+
+
+def round_count(metadata: dict) -> dict:
+    """How many boosting rounds the served fold models trained (`rounds`), what chose them (`chosen_by`,
+    `rounds_chosen`, read from `round_scaling`) and the count the next rebuild takes (`next_rounds`, from
+    `loop.served_configuration`, None without experiment results), with the model card's sentence.
+
+    The pipeline records `selected_rounds` since #77 (chosen by the Selection Measure). An artefact
+    recording the search's `tuned_rounds` was trained at v2's count, which early stopping on Tweedie
+    deviance chose; both are scaled by the ratio of training rows."""
+    scaling, rounds = metadata.get("round_scaling") or {}, metadata.get("rounds")
+    record = metadata.get("ranking_experiments") or {}
+    next_rounds = served_configuration(record).rounds if record.get("best") else None
+    ratio = number_text(scaling.get("ratio"), ".4f")
+    if "selected_rounds" in scaling:
+        chosen = scaling["selected_rounds"]
+        return {"chosen_by": CHOSEN_ON_SELECTION_MEASURE, "rounds_chosen": chosen, "rounds": rounds,
+                "next_rounds": next_rounds, "text": (
+            f"The {number_text(rounds, ',')} rounds were chosen by the Selection Measure ({scaling['rule']}: "
+            f"{number_text(chosen, ',')}), scaled by the ratio of training rows ({ratio}). Deviance chose none of it.")}
+    if "tuned_rounds" in scaling:
+        chosen = scaling["tuned_rounds"]
+        then = (f"the median of the five-fold confirmation's rounds ({number_text(next_rounds, ',')}, each chosen "
+                "by the Selection Measure), scaled the same way" if record.get("confirmation") and next_rounds
+                else "the Selection Measure's count")
+        return {"chosen_by": CHOSEN_ON_DEVIANCE, "rounds_chosen": chosen, "rounds": rounds,
+                "next_rounds": next_rounds, "text": (
+            f"Disclosed deviation: the served models were trained for {number_text(rounds, ',')} rounds, the "
+            f"hyperparameter search's {number_text(chosen, ',')} (early stopping on Tweedie deviance, v2's count) "
+            f"scaled by the ratio of training rows ({ratio}). Under ADR 0008 deviance should choose nothing. The "
+            f"artefact was not rebuilt, so that the test year stays read once; the next rebuild uses {then}.")}
+    return {"chosen_by": None, "rounds_chosen": None, "rounds": rounds, "next_rounds": next_rounds,
+            "text": "How the round count was chosen is not recorded for this version."}
 
 
 def traded_away(block: dict | None) -> dict | None:

@@ -13,7 +13,6 @@
 
 import hashlib
 import math
-import statistics
 from pathlib import Path
 
 import polars as pl
@@ -30,6 +29,7 @@ from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
     model_form_summary,
     ranking_summary,
+    round_count,
     selection_rule_text,
     traded_away,
 )
@@ -184,7 +184,7 @@ def model_card(artefacts: Artefacts) -> dict:
         "owner": OWNER,
         "model": _model_summary(metadata),
         "model_form": model_form_summary(metadata),
-        "round_count": _round_count(metadata),
+        "round_count": round_count(metadata),
         "illustrative": scenario_note(artefacts),
         "intended_use": INTENDED_USE,
         "out_of_scope": OUT_OF_SCOPE,
@@ -218,33 +218,6 @@ def _model_summary(metadata: dict) -> str:
         f"out-of-fold models trained on {years_text(metadata.get('training_years'))}, scoring the "
         f"{metadata.get('baseline_year', '?')} Baseline. Source: {metadata.get('source', '?')}."
     )
-
-
-def _round_count(metadata: dict) -> dict:
-    """Where the served round count came from, read from `round_scaling`. The pipeline records
-    `selected_rounds` since #77 (chosen by the Selection Measure); an artefact recording the search's
-    `tuned_rounds` was trained at v2's deviance-chosen count, and the next rebuild takes the median of
-    the five-fold confirmation's rounds (`loop.served_configuration`) instead."""
-    scaling, rounds = metadata.get("round_scaling") or {}, metadata.get("rounds")
-    confirmation = (metadata.get("ranking_experiments") or {}).get("confirmation") or {}
-    fold_rounds = (confirmation.get("winner") or {}).get("rounds")
-    next_rounds = statistics.median_low(fold_rounds) if fold_rounds else None
-    if "selected_rounds" in scaling:
-        return {"chosen_by": "Selection Measure", "rounds": rounds, "next_rounds": None, "text": (
-            f"The {number_text(rounds, ',')} rounds were chosen by the Selection Measure ({scaling['rule']}: "
-            f"{number_text(scaling['selected_rounds'], ',')}), scaled by the ratio of training rows "
-            f"({number_text(scaling.get('ratio'), '.4f')}). Deviance chose none of it.")}
-    if "tuned_rounds" in scaling:
-        then = (f"the median of the five-fold confirmation's rounds ({number_text(next_rounds, ',')}, each chosen "
-                "by the Selection Measure), scaled the same way" if next_rounds else "the Selection Measure's count")
-        return {"chosen_by": "Tweedie deviance", "rounds": rounds, "next_rounds": next_rounds, "text": (
-            f"Disclosed deviation: the served models were trained for {number_text(rounds, ',')} rounds, the "
-            f"hyperparameter search's {number_text(scaling['tuned_rounds'], ',')} (early stopping on Tweedie "
-            f"deviance, v2's count) scaled by the ratio of training rows ({number_text(scaling.get('ratio'), '.4f')}). "
-            "Under ADR 0008 deviance should choose nothing. The artefact was not rebuilt, so that the test year "
-            f"stays read once; the next rebuild uses {then}.")}
-    return {"chosen_by": None, "rounds": rounds, "next_rounds": None,
-            "text": "How the round count was chosen is not recorded for this version."}
 
 
 def _headline_lines(card: dict) -> list[str]:
