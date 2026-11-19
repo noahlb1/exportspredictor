@@ -76,6 +76,7 @@ from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.lookups import search_products
+from exportspredictor.model_choice import event_backtest_note, how_chosen
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
     BLOCKED,
@@ -224,6 +225,8 @@ def create_app(
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
             limitations=known_limitations(artefacts),
+            model_choice=how_chosen(artefacts.metadata, artefacts.evaluation),
+            event_backtest_note=event_backtest_note(artefacts.metadata, artefacts.evaluation),
             not_run=parts_not_run(artefacts.evaluation),
         )
 

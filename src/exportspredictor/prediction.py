@@ -75,6 +75,11 @@ class ModelForm:
             f"(weight {self.naive_weight:g}) on the log scale."
         )
 
+    def served_effect(self, model_effect: float) -> float:
+        """A Scenario Effect of the model (a relative change) as this form serves it: the Naive Baseline
+        has no policy features, so only the model's share, 1 − w on the log scale, moves."""
+        return (1 + model_effect) ** (1 - self.naive_weight) - 1
+
     def to_dict(self) -> dict:
         return {"form": self.name, "naive_weight": self.naive_weight}
 
