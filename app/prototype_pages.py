@@ -174,7 +174,7 @@ B_DEFAULTS = {
     "b_flagged": False, "b_hubs": False, "b_all": False,
 }
 B_WIDE = [
-    "Product", "Market", "Blocked Opportunity value", "Export Potential", "Actual Exports", "Export Gap", "Caveats",
+    "Product", "Market", "Blocked Opportunity value", "Applied Tariff", "Export Potential", "Actual Exports", "Export Gap", "Caveats",
 ]
 B_MONEY = ["Blocked Opportunity value", "Export Potential", "Actual Exports", "Export Gap"]
 
@@ -237,24 +237,13 @@ def blocked_filters(rows: list[dict]) -> tuple[list[dict], list[str]]:
     return kept, active
 
 
-def market_tariffs(iso3: str) -> dict[str, float]:
-    """Applied Tariff by HS6 for one Market. Prototype shortcut: the Blocked Opportunities read carries no
-    tariff, so this reads it from a Scenario run, which returns at most the Market's 1,000 most affected pairs."""
-    body = {"add_agreements": [iso3], "market": iso3, "limit": 1000}
-    try:
-        result = run_scenario(json.dumps(body, sort_keys=True), client.api_url())
-    except (client.InvalidRequest, client.ApiUnavailable):
-        return {}
-    return {row["hs6"]: row["baseline_tariff_pct"] for row in result["top_pairs"]}
-
-
 def blocked_frame(rows: list[dict]) -> pd.DataFrame:
     raw = pd.DataFrame(rows)
     return pd.DataFrame({
         "Product": raw["description"],
         "Market": raw["market"],
         "Blocked Opportunity value": raw["blocked_opportunity_value_usd"] / 1e6,
-        "Applied Tariff": [row.get("tariff_pct") for row in rows],
+        "Applied Tariff": [row.get("applied_tariff_pct") for row in rows],
         "Export Potential": raw["export_potential_usd"] / 1e6,
         "Actual Exports": raw["actual_exports_usd"] / 1e6,
         "Export Gap": raw["export_gap_usd"] / 1e6,
@@ -395,8 +384,7 @@ def blocked_page() -> None:
                 config={"Total value": money(f"Total Blocked Opportunity value, {word}.")},
             )
         group = groups.iloc[at]
-        tariffs = market_tariffs(group["iso3"])
-        mine = [r | {"tariff_pct": tariffs.get(r["hs6"])} for r in rows if r["iso3"] == group["iso3"]]
+        mine = [r for r in rows if r["iso3"] == group["iso3"]]
         with products_side:
             st.markdown(
                 f"**{group['market']}**: {group['count']:,} Blocked Opportunities, with a total Blocked "
@@ -913,19 +901,26 @@ def evaluation_page() -> None:
 # ---------------------------------------------------------------- the app
 
 
-SHIP = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'>
-<defs><clipPath id='c'><rect width='120' height='120' rx='24'/></clipPath></defs>
-<g clip-path='url(#c)'><rect width='120' height='120' fill='#2a78d6'/>
-<g fill='#fff'><animateTransform attributeName='transform' type='translate' values='0 2;0 -7;0 2' dur='1.6s'
- repeatCount='indefinite'/>
-<g><animateTransform attributeName='transform' type='rotate' values='-4 60 70;4 60 70;-4 60 70' dur='1.6s'
- begin='-0.4s' repeatCount='indefinite'/>
-<path d='M22 66h76l-8 16H32z'/><rect x='30' y='52' width='14' height='12'/><rect x='46' y='52' width='14' height='12'/>
-<rect x='62' y='52' width='14' height='12'/><rect x='38' y='38' width='14' height='12'/>
-<rect x='54' y='38' width='14' height='12'/><rect x='82' y='40' width='10' height='24'/></g></g>
-<path fill='#a9cdf3' d='M-40 84q10-8 20 0t20 0 20 0 20 0 20 0 20 0 20 0 20 0 20 0V120H-40z'>
-<animateTransform attributeName='transform' type='translate' values='0 0;40 0' dur='1.6s' repeatCount='indefinite'/>
-</path></g></svg>"""
+SHIP = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+    "<defs><clipPath id='c'><rect width='64' height='64' rx='14'/></clipPath></defs>"
+    "<g clip-path='url(#c)'><rect width='64' height='64' fill='#2a78d6'/><g transform='translate(0 -3)'>"
+    # The logo's ship (#97), unchanged, riding up and down and rocking a little.
+    "<g><animateTransform attributeName='transform' type='translate' values='0 1.5;0 -3;0 1.5' dur='1.8s' "
+    "repeatCount='indefinite'/><g><animateTransform attributeName='transform' type='rotate' "
+    "values='-3 32 46;3 32 46;-3 32 46' dur='1.8s' begin='-0.45s' repeatCount='indefinite'/>"
+    "<path d='M7 42h50l-7 10H13z' fill='#fff' stroke='#fff' stroke-width='3' stroke-linejoin='round'/>"
+    "<path d='M9 38V26.5a1.5 1.5 0 0 1 1.5-1.5h5a1.5 1.5 0 0 1 1.5 1.5V38z' fill='#fff'/>"
+    "<g fill='#fff' opacity='.55'><rect x='21' y='30' width='9.5' height='7.5' rx='1.5'/>"
+    "<rect x='32.5' y='30' width='9.5' height='7.5' rx='1.5'/><rect x='44' y='30' width='9.5' height='7.5' rx='1.5'/>"
+    "<rect x='21' y='20.5' width='9.5' height='7.5' rx='1.5'/></g>"
+    "<rect x='32.5' y='20.5' width='9.5' height='7.5' rx='1.5' fill='#fff'/></g></g>"
+    # The logo's wave line, lengthened and sliding one wavelength per loop.
+    "<path d='M-26.2 60q4-3 8.3 0t8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0' fill='none' "
+    "stroke='#fff' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.5' opacity='.5'>"
+    "<animateTransform attributeName='transform' type='translate' values='0 0;16.6 0' dur='1.2s' "
+    "repeatCount='indefinite'/></path></g></g></svg>"
+)
 
 
 def loader() -> None:
@@ -935,7 +930,7 @@ def loader() -> None:
         f"""<style>
         .stApp[data-test-script-state="running"]::after {{
             content: ""; position: fixed; left: 50%; top: 45%; width: 120px; height: 120px; margin: -60px 0 0 -60px;
-            background: url("{prototype_logo.data_uri(SHIP)}") center / contain no-repeat; border-radius: 24px;
+            background: url("{prototype_logo.data_uri(SHIP)}") center / contain no-repeat; border-radius: 26px;
             box-shadow: 0 6px 28px rgba(0, 0, 0, 0.35); z-index: 999999; pointer-events: none;
             opacity: 0; animation: ship-in 0.2s ease 0.4s forwards;
         }}

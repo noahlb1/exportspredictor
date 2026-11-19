@@ -52,8 +52,8 @@ SMALL_RULES = ["0.0", "<0.1", "Second decimal"]
 # The split view's wide table: everything except Type, Potential Range, HS6, Sector and Region,
 # which stay one click away in the table's Show/hide columns menu.
 WIDE_COLUMNS = [
-    "Product", "Market", "Export Gap", "Export Potential", "Actual Exports", "Relative Export Gap",
-    "UK Trade Agreement", "Blocked Opportunity value", "Blocked Opportunity", "Caveats",
+    "Product", "Market", "Export Gap", "Export Potential", "Actual Exports", "Applied Tariff",
+    "Relative Export Gap", "UK Trade Agreement", "Blocked Opportunity value", "Blocked Opportunity", "Caveats",
 ]
 
 # HS 2012 chapter names, shortened.
@@ -229,6 +229,7 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
         "Export Gap": millions(raw["export_gap_usd"], rule),
         "Export Potential": millions(raw["export_potential_usd"], rule),
         "Actual Exports": millions(raw["actual_exports_usd"], rule),
+        "Applied Tariff": [row.get("applied_tariff_pct") for row in rows],
         "Opportunity Type": raw["opportunity_type"],
         "Caveats": [caveat_badges(row) for row in rows],
         "Relative Export Gap": raw["relative_export_gap"],
@@ -246,6 +247,9 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
     config = {
         "Product": st.column_config.TextColumn(width="large", pinned=True),
         "Opportunity Type": st.column_config.TextColumn("Type", help=OPPORTUNITY_TYPE_HELP),
+        "Applied Tariff": st.column_config.NumberColumn(
+            "Applied Tariff %", width="small", help="The tariff this Market charges on this Product from the UK."
+        ),
         "Relative Export Gap": st.column_config.NumberColumn("Relative gap", format="percent"),
         "Potential Range": st.column_config.TextColumn(
             help="Where Actual Exports fall 80% of the time for comparable pairs"
@@ -273,7 +277,7 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
     styled = table.style.apply(lambda r: [tint if r.name == at else ""] * len(r), axis=1)
     if rule != "<0.1":
         styled = styled.format({heading: "{:,." + number[2] + "f}" for heading in money})
-    styled = styled.format({"Relative Export Gap": "{:.0%}"}, na_rep="n/a")
+    styled = styled.format({"Relative Export Gap": "{:.0%}", "Applied Tariff": "{:.1f}"}, na_rep="n/a")
     st.dataframe(
         styled, hide_index=True, height=height, column_order=columns, column_config=config,
         on_select="rerun", selection_mode="single-cell", key=key,
@@ -328,14 +332,16 @@ def detail(row: dict, barrier_first: bool = False) -> None:
     )
     actual.metric("Actual Exports", format_usd(body["actual_exports_usd"]), help=TERM_HELP.get("Actual Exports"))
     gap.metric("Export Gap", format_usd(body["export_gap_usd"]), help=TERM_HELP.get("Export Gap"))
+    rate = row.get("applied_tariff_pct")
     facts = {
+        "Applied Tariff": "n/a" if rate is None else f"{rate:.1f}%",
+        "UK Trade Agreement in force": "Yes" if row["trade_agreement"] else "No",
+        "Blocked Opportunity value": format_usd(row["blocked_opportunity_value_usd"]),
         "Opportunity Type": body["opportunity_type"],
         "Relative Export Gap": "n/a" if body["relative_export_gap"] is None else f"{body['relative_export_gap']:.0%}",
         "Potential Range": (
             f"{format_usd(body['potential_range_low_usd'])} to {format_usd(body['potential_range_high_usd'])}"
         ),
-        "UK Trade Agreement in force": "Yes" if row["trade_agreement"] else "No",
-        "Blocked Opportunity value": format_usd(row["blocked_opportunity_value_usd"]),
     }
     st.dataframe(pd.DataFrame({"": list(facts), " ": list(facts.values())}), hide_index=True)
     st.caption(OPPORTUNITY_TYPE_HELP)

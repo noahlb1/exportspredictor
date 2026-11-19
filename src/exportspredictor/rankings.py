@@ -110,7 +110,11 @@ def rank_opportunities(
     if opportunity_type is not None and opportunity_type not in OPPORTUNITY_TYPES:
         raise ValueError(f"Unknown Opportunity Type: {opportunity_type}")
     rows = artefacts.baseline
-    policy = artefacts.baseline_features.select("hs6", "iso3", pl.col("trade_agreement") == 1)
+    policy = artefacts.baseline_features.select(
+        "hs6", "iso3", pl.col("trade_agreement") == 1,
+        # PROTOTYPE (#100): the Applied Tariff in percent, from its ln(1 + t) feature (null where unknown)
+        applied_tariff_pct=(pl.col("log_applied_tariff").cast(pl.Float64).exp() - 1) * 100,
+    )
     if hs6 is not None:
         rows, policy = (t.filter(pl.col("hs6") == hs6) for t in (rows, policy))
     if iso3 is not None:

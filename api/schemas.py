@@ -136,6 +136,7 @@ class _Values(BaseModel):
     relative_export_gap: float | None  # Export Gap / Export Potential; missing where Export Potential is 0
     opportunity_type: OpportunityType  # how far the UK already trades the pair over the Gap Period
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
+    applied_tariff_pct: float | None = None  # PROTOTYPE (#100): the Applied Tariff (percent) in the Baseline
     blocked_opportunity_value_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
     blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
     flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)

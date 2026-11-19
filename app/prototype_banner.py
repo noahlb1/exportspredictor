@@ -231,7 +231,8 @@ def page() -> None:
                 row = pl.ranking_table(
                     body, columns=["Product", "Market", "Export Gap"], rule="0.0", height=700, key="table_c", first=True
                 )
-            with detail_side, st.container(border=True, height=780):
+            # PROTOTYPE (#100): a new key per pair makes the panel a new element, so it starts from the top
+            with detail_side, st.container(border=True, height=780, key=f"lb_panel_{row['hs6']}_{row['iso3']}"):
                 pl.detail(row)
     if banner == "D":
         st.divider()
