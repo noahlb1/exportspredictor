@@ -1,10 +1,11 @@
-"""The PPML gravity benchmark of the Trade Agreement Scenario Effect (decision #33): never served."""
+"""The PPML gravity benchmark of the Trade Agreement Scenario Effect (decision #33), saved with the artefact."""
 
 import numpy as np
 import polars as pl
 import pytest
 
-from exportspredictor import ppml
+from exportspredictor import artefacts as store
+from exportspredictor import governance, ppml, prediction, scenarios
 
 
 def _panel(seed=0, beta=0.4, n_exporters=6, n_importers=6, n_sectors=2, years=(2012, 2015, 2018, 2021)):
@@ -171,3 +172,62 @@ def test_the_benchmark_runs_on_the_fixture_world(fixture_world):
     assert panel["trade_agreement"].n_unique() == 2
     assert fit.converged
     assert np.isfinite(fit.coefficient) and fit.std_error > 0
+
+
+# --- The saved benchmark: fitted once by a package command, carried with the artefact (spec #66) ---
+
+
+def _fixture_panel(world):
+    return ppml.sector_flows(world.flows, world.sources.agreements, years=(2021, 2022, 2023, 2024))
+
+
+@pytest.fixture(scope="module")
+def derived(fixture_default_artefacts, fixture_world, tmp_path_factory):
+    """A root holding a version without the benchmark and the version `add_benchmark` derived from it."""
+    root = tmp_path_factory.mktemp("benchmark_artefacts")
+    source = store.save(fixture_default_artefacts, root)
+    target = ppml.add_benchmark(root, panel=_fixture_panel(fixture_world), version="fixture-default-ppml")
+    return source, target
+
+
+def test_the_benchmark_command_derives_a_newer_version_holding_the_benchmark(derived):
+    source, target = derived
+
+    assert target.name > source.name
+    assert store.latest_folder(target.parent) == target
+    bundle = store.load(target)
+    assert bundle.metadata["ppml_benchmark_from"] == source.name
+    benchmark = bundle.ppml_benchmark
+    assert benchmark is not None
+    fit = benchmark["ppml"]
+    assert fit["converged"] and fit["effect_low_pct"] < fit["effect_pct"] < fit["effect_high_pct"]
+    # The published range it is compared with: Yotov et al. (2016) without pair effects (+21%) to a doubling.
+    assert benchmark["published_range"]["low_pct"] == pytest.approx(21.0, abs=0.1)
+    assert benchmark["published_range"]["high_pct"] == pytest.approx(100.0, abs=0.1)
+    assert benchmark["level"] == "Sector"
+
+
+def test_the_derived_version_carries_the_models_tables_and_evaluation_over_unchanged(derived):
+    source, target = derived
+
+    for path in source.rglob("*"):
+        if path.is_file() and path.name not in (store.METADATA_FILE, governance.MODEL_CARD_FILE):
+            assert (target / path.relative_to(source)).read_bytes() == path.read_bytes(), path.name
+    before, after = store.load(source), store.load(target)
+    assert after.evaluation == before.evaluation
+    assert after.metadata["rounds"] == before.metadata["rounds"]
+
+
+def test_the_models_agreement_association_is_computed_on_the_served_model_form(derived, fixture_default_artefacts):
+    _, target = derived
+    bundle = store.load(target)
+    model = bundle.ppml_benchmark["model"]
+    assert model["model_form"] == fixture_default_artefacts.model_form.to_dict()
+
+    # Independently: add a Trade Agreement to every UK pair without one and re-predict on the served form.
+    rows = bundle.baseline_features.filter(pl.col("trade_agreement") == 0)
+    added = scenarios.apply(rows, scenarios.Scenario(add_agreements=tuple(rows["iso3"].unique().sort())))
+    with_agreement = float(prediction.export_potential(added, bundle.fold_models, form=bundle.model_form).sum())
+    without = float(prediction.export_potential(rows, bundle.fold_models, form=bundle.model_form).sum())
+    assert model["effect_pct"] == pytest.approx((with_agreement / without - 1) * 100, rel=1e-6)
+    assert model["effect_pct"] >= 0  # the monotone constraints: an agreement never lowers Export Potential

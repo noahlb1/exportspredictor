@@ -27,7 +27,7 @@ def trained(derived_data_root, v1_frozen, ranking):
         derived_data_root, version="real-test", search_results=_tiny_search(derived_data_root), device="cpu",
         non_uk_rate=0.5, ranking_results=ranking,
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
-        ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(),
+        ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(), ppml_years=[2021, 2022, 2023, 2024],
     )
 
 
@@ -206,7 +206,7 @@ def test_the_real_run_caches_its_fold_models_so_a_rerun_does_not_retrain(
         derived_data_root, version="real-test-again", search_results=trained.metadata["search"], device="cpu",
         non_uk_rate=0.5, ranking_results=trained.metadata["ranking_experiments"],
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
-        ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(),
+        ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(), ppml_years=[2021, 2022, 2023, 2024],
     )
 
     assert again.baseline.equals(trained.baseline)
@@ -245,3 +245,9 @@ def test_the_v1_comparison_is_added_to_the_newest_artefact_as_a_new_version(
     assert result.evaluation["headline"] == trained.evaluation["headline"]
     # The source version is never changed.
     assert {p.name: p.read_bytes() for p in source.iterdir() if p.is_file()} == before
+
+
+def test_the_real_run_with_every_part_saves_the_ppml_benchmark_on_its_served_form(trained):
+    benchmark = trained.ppml_benchmark
+    assert benchmark is not None and benchmark["years"] == [2021, 2022, 2023, 2024]
+    assert benchmark["model"]["model_form"] == trained.model_form.to_dict()

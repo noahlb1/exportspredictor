@@ -26,7 +26,6 @@ from exportspredictor.evaluation import (
 )
 from exportspredictor.model_choice import ranking_summary
 from exportspredictor.paths import data_dir
-from exportspredictor.ppml import LITERATURE
 from exportspredictor.prediction import ModelForm
 from exportspredictor.wording import number_text, rate_text, years_text
 
@@ -121,8 +120,8 @@ DECISIONS = [
      "worse beyond its interval. The rule was fixed before 2023 was read; a gain ladder splits the change.")),
     ("A PPML gravity benchmark for the Trade Agreement Scenario Effect",
      ("A 3-way fixed-effects Poisson pseudo-maximum-likelihood gravity model, at Sector level on the same Flows and "
-     "scope, gives an independent estimate of what a Trade Agreement is associated with. It is reported in the "
-     "notebook and never served.")),
+     "scope, gives an independent estimate of what a Trade Agreement is associated with. It is fitted once and "
+     "saved with the artefact (`python -m exportspredictor.ppml`), beside the model's own association.")),
     ("Values in nominal US dollars",
      ("Every value is in nominal USD, BACI's unit, so figures match international trade sources and need no "
      "conversion. The Bank of England's annual averages (XUAAUSS) only convert HMRC's £ for the cross-check.")),
@@ -168,11 +167,9 @@ _RAW_SOURCES = {
 # --- Model card ----------------------------------------------------------------------------
 
 
-def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -> dict:
-    """The model card of one artefact version, built from its metadata and evaluation report.
-
-    `gravity_benchmark` is the notebook's PPML benchmark, which is never saved in an artefact:
-    {"ppml": `ppml.PpmlFit.as_dict()`, "model": `ppml.model_agreement_effect(...)`}.
+def model_card(artefacts: Artefacts) -> dict:
+    """The model card of one artefact version, built from its metadata, evaluation report and
+    saved PPML benchmark (`Artefacts.ppml_benchmark`; listed under the parts not run where absent).
     """
     metadata, report = artefacts.metadata, artefacts.evaluation or {}
     return {
@@ -186,13 +183,13 @@ def model_card(artefacts: Artefacts, *, gravity_benchmark: dict | None = None) -
         "dropped_features": _dropped_features(metadata),
         "excluded_products": _excluded_products(artefacts.excluded_products),
         "metrics": _metrics(report),
-        "not_run": parts_not_run(report) if report else [],
+        "not_run": parts_not_run(report, artefacts.ppml_benchmark) if report else [],
         "v1_comparison": _comparison_summary(report.get("v1_comparison")),
         "earlier_versions": report.get("earlier_versions"),
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
         "limitations": [
-            *result_limitations(metadata, report), *_benchmark_limitations(gravity_benchmark),
+            *result_limitations(metadata, report), *_benchmark_limitations(artefacts.ppml_benchmark),
             *range_limitations(artefacts.potential_range_bands), *LIMITATIONS,
         ],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
@@ -453,15 +450,15 @@ def _some(names: list[str], limit: int = 10) -> str:
 def _benchmark_limitations(benchmark: dict | None) -> list[dict]:
     if not benchmark:
         return []
-    ppml, model = benchmark["ppml"], benchmark["model"]
-    published = [math.expm1(row["coefficient"]) for row in LITERATURE]
+    ppml, model, published = benchmark["ppml"], benchmark["model"], benchmark["published_range"]
+    low, high = published["low_pct"] / 100, published["high_pct"] / 100
     return [{
         "title": "Scenario Effects are far above a gravity benchmark",
         "text": f"Over the UK pairs with no Trade Agreement, the model associates adding one (with its tariff "
         f"removed) with {model['effect_pct']:+.1f}% Export Potential, Baseline-weighted. A 3-way fixed-effects PPML "
         f"gravity model on the same Flows associates a Trade Agreement with {ppml['effect_pct']:+.1f}% (95% interval "
         f"{_signed_pct(ppml['effect_low_pct'])} to {_signed_pct(ppml['effect_high_pct'])}). Published estimates span "
-        f"about {min(published):+.0%} to {max(published):+.0%}, but the Event Backtests point the same way as the benchmark: the model overstates the "
+        f"about {low:+.0%} to {high:+.0%}, but the Event Backtests point the same way as the benchmark: the model overstates the "
         f"association. Read Scenario Effects as an upper end.",
     }]
 
@@ -542,10 +539,10 @@ def _number(value, percent: bool = False) -> str:
     return number_text(value, ",.0f" if value is not None and abs(value) >= 100 else ".2f")
 
 
-def write_model_card(artefacts: Artefacts, folder: Path, *, gravity_benchmark: dict | None = None) -> Path:
+def write_model_card(artefacts: Artefacts, folder: Path) -> Path:
     """Write `model_card.md` into an artefact folder, next to the models it describes."""
     path = Path(folder) / MODEL_CARD_FILE
-    path.write_text(render_model_card(model_card(artefacts, gravity_benchmark=gravity_benchmark)), encoding="utf-8")
+    path.write_text(render_model_card(model_card(artefacts)), encoding="utf-8")
     return path
 
 

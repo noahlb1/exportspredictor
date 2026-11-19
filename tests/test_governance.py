@@ -147,16 +147,27 @@ def test_model_card_says_plainly_when_the_model_does_not_beat_the_naive_ranking(
     assert "Only slightly better than a naive ranking for UK pairs" not in titles
 
 
-def test_model_card_compares_scenario_effects_with_the_gravity_benchmark_when_given(card, fixture_artefacts):
+def test_model_card_compares_scenario_effects_with_the_saved_gravity_benchmark(fixture_default_artefacts):
+    from dataclasses import replace
+
     benchmark = {"ppml": {"effect_pct": 5.1, "effect_low_pct": -0.4, "effect_high_pct": 11.0},
+                 "published_range": {"low_pct": 21.0, "high_pct": 100.0},
                  "model": {"effect_pct": 58.1, "pairs": 678_216}}
 
-    with_benchmark = governance.model_card(fixture_artefacts, gravity_benchmark=benchmark)
+    card = governance.model_card(replace(fixture_default_artefacts, ppml_benchmark=benchmark))
 
-    limit = next(x for x in with_benchmark["limitations"] if x["title"] == "Scenario Effects are far above a gravity benchmark")
+    limit = next(x for x in card["limitations"] if x["title"] == "Scenario Effects are far above a gravity benchmark")
     assert "+5.1%" in limit["text"] and "+58.1%" in limit["text"] and "−0.4% to +11.0%" in limit["text"]
+    assert "+21%" in limit["text"] and "+100%" in limit["text"]
     assert "associates" in limit["text"]
+    assert "PPML benchmark" not in [part["title"] for part in card["not_run"]]
+
+
+def test_model_card_says_the_gravity_benchmark_was_not_run_for_a_version_without_it(fixture_default_artefacts):
+    card = governance.model_card(fixture_default_artefacts)
+
     assert "gravity benchmark" not in " ".join(x["title"] for x in card["limitations"])
+    assert "PPML benchmark: not run for this version" in governance.render_model_card(card)
 
 
 _RANGE_REPORT = {

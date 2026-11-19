@@ -227,7 +227,7 @@ def create_app(
             limitations=known_limitations(artefacts),
             model_choice=how_chosen(artefacts.metadata, artefacts.evaluation),
             event_backtest_note=event_backtest_note(artefacts.metadata, artefacts.evaluation),
-            not_run=parts_not_run(artefacts.evaluation),
+            not_run=parts_not_run(artefacts.evaluation, artefacts.ppml_benchmark),
         )
 
     @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)
