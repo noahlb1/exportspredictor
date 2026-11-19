@@ -18,11 +18,22 @@ from app.ui import (
     show_leaderboard,
 )
 
-st.set_page_config(page_title="UK Exports Predictor", layout="wide")
-st.title("UK Exports Predictor")
-from app import prototype_leaderboard  # PROTOTYPE (#95): never merge
+import os
 
-if banner() is not None and not prototype_leaderboard.render():
+from app import prototype_leaderboard, prototype_logo  # PROTOTYPE (#95, #97): never merge
+
+PROTOTYPE = bool(os.environ.get("EXPORTSPREDICTOR_PROTOTYPE"))  # off unless asked for, so the app tests see today's page
+if PROTOTYPE:
+    prototype_logo.page_setup()
+else:
+    st.set_page_config(page_title="UK Exports Predictor", layout="wide")
+    st.title("UK Exports Predictor")
+
+if banner() is None:
+    pass
+elif PROTOTYPE:  # the split view settled in #95, under the logo being chosen
+    prototype_leaderboard.variant_c(None, "0.0")
+else:
     st.header("Leaderboard")
     st.markdown(
         "Every UK Product–Market pair, ranked by how far UK goods exports fall short of what the UK's "
@@ -44,3 +55,6 @@ if banner() is not None and not prototype_leaderboard.render():
             format_usd(summary["positive_export_gap_usd"]),
         )
         show_leaderboard(body, file_name="leaderboard")
+
+if PROTOTYPE:
+    prototype_logo.bar()

@@ -1,0 +1,6 @@
+# PROTOTYPE (#97): the accent under each theme, so the app still follows the browser's light or dark mode.
+[theme.light]
+primaryColor = "#2a78d6"
+
+[theme.dark]
+primaryColor = "#2a78d6"
