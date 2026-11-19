@@ -20,7 +20,9 @@ from app.ui import (
 
 st.set_page_config(page_title="UK Exports Predictor", layout="wide")
 st.title("UK Exports Predictor")
-if banner() is not None:
+from app import prototype_leaderboard  # PROTOTYPE (#95): never merge
+
+if banner() is not None and not prototype_leaderboard.render():
     st.header("Leaderboard")
     st.markdown(
         "Every UK Product–Market pair, ranked by how far UK goods exports fall short of what the UK's "
