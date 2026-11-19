@@ -11,7 +11,7 @@ Event Backtest's predicted and observed change, and, for a Blend, what the Event
 from typing import TYPE_CHECKING
 
 from exportspredictor.evaluation import NOT_RUN
-from exportspredictor.model_choice import event_backtest_note
+from exportspredictor.model_choice import event_backtest_note, primary_event_backtest
 
 if TYPE_CHECKING:
     from exportspredictor.artefacts import Artefacts
@@ -83,8 +83,7 @@ def _model_association(saved: dict | None) -> dict:
 
 
 def _event_backtest(report: dict) -> dict:
-    events = (report.get("event_backtest") or {}).get("events") or []
-    primary = next((event for event in events if event.get("role") == "primary"), None)
+    primary = primary_event_backtest(report)
     if primary is None:
         return {"run": False, "text": f"Event Backtest: {NOT_RUN}."}
     direction = primary["directions"][0]

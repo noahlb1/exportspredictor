@@ -893,6 +893,22 @@ def test_the_note_says_a_scenario_moves_only_the_models_share_of_the_blend(clien
     assert "model alone" in blend["text"]
 
 
+def test_the_blend_note_and_the_event_backtest_part_read_the_same_primary_event_backtest(fixture_artefacts, tmp_path):
+    backtest = fixture_artefacts.evaluation["event_backtest"]
+    primary = next(e for e in backtest["events"] if e["role"] == "primary")
+    direction = primary["directions"][0]
+    secondary = {**primary, "role": "secondary", "title": "A secondary check", "directions": [
+        {**direction, "pooled": {**direction["pooled"], "predicted": direction["pooled"]["predicted"] + 0.5}},
+    ]}
+    report = {**fixture_artefacts.evaluation, "event_backtest": {**backtest, "events": [secondary, primary]}}
+
+    note = _note(replace(fixture_artefacts, evaluation=report), tmp_path)
+
+    assert note["event_backtest"]["title"] == primary["title"]
+    assert note["blend"]["model_effect"] == pytest.approx(primary["directions"][0]["pooled"]["predicted"])
+    assert primary["title"] in note["blend"]["text"]
+
+
 def test_with_no_saved_benchmark_the_note_keeps_the_label_and_says_the_benchmark_was_not_run(fixture_artefacts, tmp_path):
     note = _note(replace(fixture_artefacts, ppml_benchmark=None), tmp_path)
 

@@ -27,9 +27,13 @@ from exportspredictor.evaluation import (
     result_limitations,
 )
 from exportspredictor.illustrative import scenario_note
-from exportspredictor.model_choice import ranking_summary, traded_away
+from exportspredictor.model_choice import (
+    model_form_summary,
+    ranking_summary,
+    selection_rule_text,
+    traded_away,
+)
 from exportspredictor.paths import data_dir
-from exportspredictor.prediction import ModelForm
 from exportspredictor.wording import number_text, rate_text, years_text
 
 OWNER = "UNASSIGNED"
@@ -179,7 +183,7 @@ def model_card(artefacts: Artefacts) -> dict:
         "version": artefacts.version,
         "owner": OWNER,
         "model": _model_summary(metadata),
-        "model_form": _model_form(metadata),
+        "model_form": model_form_summary(metadata),
         "round_count": _round_count(metadata),
         "illustrative": scenario_note(artefacts),
         "intended_use": INTENDED_USE,
@@ -214,12 +218,6 @@ def _model_summary(metadata: dict) -> str:
         f"out-of-fold models trained on {years_text(metadata.get('training_years'))}, scoring the "
         f"{metadata.get('baseline_year', '?')} Baseline. Source: {metadata.get('source', '?')}."
     )
-
-
-def _model_form(metadata: dict) -> dict:
-    """The served Model Form (ADR 0008) with its plain-words text; the model alone where none is recorded."""
-    form = ModelForm.from_dict(metadata.get("model_form") or {"form": "model alone", "naive_weight": 0.0})
-    return {**form.to_dict(), "text": form.text}
 
 
 def _round_count(metadata: dict) -> dict:
@@ -267,10 +265,7 @@ def _ranking_lines(summary: dict | None) -> list[str]:
     if summary is None:
         return ["No experiment loop is recorded for this version."]
     lines = [
-        (f"Every choice was made on one Selection Measure, on {summary['validation_year']} only: "
-        f"{summary['selection_measure']}. An Arm was kept only if it beat the best so far by more than the Win "
-        f"Threshold, {number_text(summary['win_threshold'], '.4f')} (twice the Noise Floor's standard deviation, "
-        "three seeds of one configuration)."),
+        selection_rule_text(summary),
         "",
         "| Experiment | Best Arm | Selection Measure | Change on the best so far | Kept |",
         "| --- | --- | --- | --- | --- |",
