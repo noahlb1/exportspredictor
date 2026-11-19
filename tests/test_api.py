@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
-from exportspredictor import conformal
+from exportspredictor import conformal, illustrative
 from exportspredictor.fixture import PRODUCTS
 from exportspredictor.pipeline import build_artefacts
 
@@ -881,9 +881,17 @@ def test_the_note_carries_the_primary_event_backtests_predicted_and_observed_cha
     assert [backtest["observed_low"], backtest["observed_high"]] == pytest.approx(pooled["observed_ci"])
 
 
+def test_the_note_says_the_event_backtest_and_the_models_association_cover_different_populations(client):
+    # Spec #66 story 29: the Blend's association over every UK pair is not to be compared with one agreement's backtest
+    backtest = client.post("/scenarios", json=SCENARIO).json()["note"]["event_backtest"]
+
+    assert illustrative.DIFFERENT_POPULATIONS in backtest["text"]
+
+
 def test_the_note_says_a_scenario_moves_only_the_models_share_of_the_blend(client, fixture_artefacts):
     weight = 1 - fixture_artefacts.metadata["model_form"]["naive_weight"]
-    predicted = fixture_artefacts.evaluation["event_backtest"]["events"][0]["directions"][0]["pooled"]["predicted"]
+    primary = next(e for e in fixture_artefacts.evaluation["event_backtest"]["events"] if e["role"] == "primary")
+    predicted = primary["directions"][0]["pooled"]["predicted"]
 
     blend = client.post("/scenarios", json=SCENARIO).json()["note"]["blend"]
 

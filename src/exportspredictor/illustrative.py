@@ -23,6 +23,14 @@ ILLUSTRATIVE_TEXT = (
     "on them."
 )
 
+# Spec #66 story 29: the primary Event Backtest is one agreement's Markets, scored by the model alone; the model's
+# association is every UK pair without a Trade Agreement, on the served Model Form.
+DIFFERENT_POPULATIONS = (
+    "It covers one agreement's Markets and the model alone, while the model's association above covers every UK pair "
+    "without a Trade Agreement on the served Model Form, so the two figures describe different populations and are "
+    "not compared directly."
+)
+
 
 def scenario_note(artefacts: "Artefacts") -> dict:
     """The Scenario note for an artefact, JSON-ready: the Illustrative `label` and its `text`, then the
@@ -102,7 +110,7 @@ def _event_backtest(report: dict) -> dict:
         "text": (
             f"In the primary Event Backtest ({primary['title']}), the model alone associated the agreement with "
             f"{_share(predicted)} for {direction['label']}; the observed change against Control Markets was "
-            f"{_share(observed)}{interval}."
+            f"{_share(observed)}{interval}. {DIFFERENT_POPULATIONS}"
         ),
     }
 
