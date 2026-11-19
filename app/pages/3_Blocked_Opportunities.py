@@ -15,6 +15,7 @@ from app.ui import (
     excluded_products_list,
     fetch,
     ranking_filters,
+    scenario_note,
     show_leaderboard,
 )
 
@@ -39,6 +40,7 @@ if banner() is not None:
         pairs_column.metric("Product–Market pairs", f"{summary['pairs']:,}")
         count_column.metric("Blocked Opportunities", f"{summary['blocked_opportunities']:,}")
         value_column.metric("Total Blocked Opportunity value", format_usd(summary["blocked_opportunity_value_usd"]))
+        scenario_note(body["note"])
         st.caption(
             f"The Blocked Opportunity value is the change in {body['baseline_year']} Export Potential the model "
             "associates with adding a UK Trade Agreement and removing the tariff where no agreement is in force; "

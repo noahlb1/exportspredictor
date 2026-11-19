@@ -7,6 +7,7 @@ import io
 import re
 from pathlib import Path
 
+import httpx
 import pandas as pd
 import pytest
 import streamlit
@@ -97,7 +98,7 @@ def test_every_caption_uses_associational_language(monkeypatch, fixture_api_url)
     texts = [element.value for element in [*page.caption, *page.markdown, *page.info]]
     assert not [text for text in texts if CAUSAL.search(text)]
     about_value = [text for text in texts if "Blocked Opportunity value" in text]
-    assert about_value and all("associate" in text for text in about_value)
+    assert about_value and all("associat" in text for text in about_value)  # associates, associations
 
 
 def test_the_leaderboard_no_longer_offers_a_blocked_ranking(monkeypatch, fixture_api_url):
@@ -107,3 +108,20 @@ def test_the_leaderboard_no_longer_offers_a_blocked_ranking(monkeypatch, fixture
 
     assert home.radio(key="rank_by").options == ["Export Gap", "Relative Export Gap"]
 
+
+
+def _page_text(page: AppTest) -> str:
+    return " ".join(element.value for element in [*page.markdown, *page.caption, *page.info])
+
+
+def test_the_page_shows_the_apis_scenario_note_beside_its_totals(monkeypatch, fixture_api_url):
+    note = httpx.get(f"{fixture_api_url}/opportunities/blocked").json()["note"]
+
+    page = _page(monkeypatch, fixture_api_url)
+
+    assert not page.exception
+    text = _page_text(page)
+    assert note["label"] in text and note["text"] in text
+    for part in ("benchmark", "model_association", "event_backtest"):
+        assert note[part]["text"] in text
+    assert note["blend"]["text"] in text
