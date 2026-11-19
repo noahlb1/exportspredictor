@@ -5,6 +5,7 @@ The fixture Baseline has UK Trade Agreements with Japan and Canada, none with In
 
 import io
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -12,6 +13,8 @@ import pandas as pd
 import pytest
 import streamlit
 from streamlit.testing.v1 import AppTest
+
+from exportspredictor import artefacts as store
 
 PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "3_Blocked_Opportunities.py"
 VALUE = "Blocked Opportunity value, illustrative (USD, nominal)"
@@ -138,3 +141,21 @@ def test_the_value_heading_metric_and_csv_export_say_illustrative(monkeypatch, f
     assert headings and all(word in heading for heading in headings)
     assert exported == headings
     assert all(word in metric.label for metric in page.metric if "Blocked Opportunity value" in metric.label)
+
+
+def test_with_no_benchmark_or_event_backtests_the_page_keeps_the_label_and_says_they_were_not_run(
+    monkeypatch, fixture_artefacts, tmp_path, live_api
+):
+    report = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "event_backtest"}
+    store.save(replace(fixture_artefacts, ppml_benchmark=None, evaluation=report), tmp_path)
+
+    with live_api(tmp_path) as api_url:
+        note = httpx.get(f"{api_url}/opportunities/blocked").json()["note"]
+        page = _page(monkeypatch, api_url)
+
+    assert not page.exception
+    text = _page_text(page)
+    assert note["label"] in text and note["text"] in text
+    for part in ("benchmark", "model_association", "event_backtest"):
+        assert note[part]["run"] is False and note[part]["text"] in text
+    assert page.dataframe[0].value[VALUE].max() > 0
