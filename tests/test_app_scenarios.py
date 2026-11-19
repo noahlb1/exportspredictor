@@ -6,7 +6,6 @@ The fixture Baseline (2024) has UK Trade Agreements with Japan and Canada, none 
 from pathlib import Path
 
 import httpx
-
 import pytest
 import streamlit
 from streamlit.testing.v1 import AppTest

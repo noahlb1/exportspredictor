@@ -40,7 +40,7 @@ def test_the_note_carries_the_saved_ppml_benchmark_with_its_interval(client, fix
     assert benchmark["effect_pct"] == pytest.approx(saved["effect_pct"])
     assert benchmark["low_pct"] == pytest.approx(saved["effect_low_pct"])
     assert benchmark["high_pct"] == pytest.approx(saved["effect_high_pct"])
-    assert f"{saved['effect_pct']:+.0f}%" in benchmark["text"]
+    assert f"{saved['effect_pct']:+.1f}%" in benchmark["text"]
 
 
 def test_the_note_carries_the_models_own_trade_agreement_association_on_the_served_form(client, fixture_artefacts):

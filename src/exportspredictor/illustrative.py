@@ -40,7 +40,7 @@ def scenario_note(artefacts: "Artefacts") -> dict:
 
 
 def _pct(value: float) -> str:
-    return f"{value:+.0f}%"
+    return f"{value:+.1f}%"
 
 
 def _benchmark(saved: dict | None) -> dict:
@@ -75,7 +75,7 @@ def _model_association(saved: dict | None) -> dict:
         "pairs": model["pairs"],
         "model_form": model["model_form"]["form"],
         "text": (
-            f"On the served Model Form ({model['model_form']['form']}), the model associates adding a Trade Agreement with "
+            f"On the served Model Form ({model['model_form']['form'].capitalize()}), the model associates adding a Trade Agreement with "
             f"{_pct(model['effect_pct'])} in Export Potential over the {model['pairs']:,} UK pairs without one "
             "(weighted by Baseline Export Potential)."
         ),

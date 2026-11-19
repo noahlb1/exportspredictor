@@ -7,7 +7,16 @@ import streamlit as st
 
 from app import client
 from app.format import format_change
-from app.ui import SECTORS, banner, fetch, illustrative, labels, run_scenario, scenario_note, usd_unit
+from app.ui import (
+    SECTORS,
+    banner,
+    fetch,
+    illustrative,
+    labels,
+    run_scenario,
+    scenario_note,
+    usd_unit,
+)
 
 st.title("Scenarios")
 
