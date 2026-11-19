@@ -1,6 +1,6 @@
 """Response models: the API contract the app and the contract tests rely on."""
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,8 +66,15 @@ class MarketOut(BaseModel):
     region: str
 
 
-RankBy = Literal[tuple(RANK_BY)]  # the ranking orders of `exportspredictor.rankings.RANK_BY`
-OpportunityType = Literal[OPPORTUNITY_TYPES]  # Expand, New Market or New Product (GLOSSARY.md)
+# Each choice set is built from the package's own constant, so it is defined once. Pydantic validates
+# and documents the Literal; pyright cannot evaluate a Literal built at runtime, so it reads a str.
+if TYPE_CHECKING:
+    RankBy = OpportunityType = PresetName = BlockedRankBy = str
+else:
+    RankBy = Literal[tuple(RANK_BY)]  # the ranking orders of `exportspredictor.rankings.RANK_BY`
+    OpportunityType = Literal[OPPORTUNITY_TYPES]  # Expand, New Market or New Product (GLOSSARY.md)
+    PresetName = Literal[tuple(PRESETS)]  # the presets of `exportspredictor.scenarios.PRESETS`
+    BlockedRankBy = Literal[BLOCKED.name]  # the Blocked Opportunities order, the only one its page uses
 
 
 class RankOrderOut(BaseModel):
@@ -117,7 +124,7 @@ class LeaderboardQuery(RankingQuery):
 class BlockedQuery(LeaderboardQuery):
     """The Leaderboard's filters for the Blocked Opportunities page, which has one fixed order."""
 
-    rank_by: Literal[BLOCKED.name] = Field(BLOCKED.name, description=f"Always {BLOCKED.name}: {BLOCKED.title}")
+    rank_by: BlockedRankBy = Field(BLOCKED.name, description=f"Always {BLOCKED.name}: {BLOCKED.title}")
 
 
 class _Values(BaseModel):
@@ -186,7 +193,7 @@ class BlockedSummary(LeaderboardSummary):
 class BlockedOpportunities(Leaderboard):
     """The Blocked Opportunities page: every UK pair ranked by Blocked Opportunity value."""
 
-    rank_by: Literal[BLOCKED.name]
+    rank_by: BlockedRankBy
     order: RankOrderOut  # the order's title and (associational) description, for the page caption
     summary: BlockedSummary
     # Blocked Opportunity values are Illustrative: the same note as the Scenario response, defined below
@@ -472,9 +479,6 @@ class PresetOut(BaseModel):
     name: str
     title: str
     description: str
-
-
-PresetName = Literal[tuple(PRESETS)]  # the presets of `exportspredictor.scenarios.PRESETS`
 
 
 class TariffIn(BaseModel):

@@ -60,3 +60,4 @@ extraPaths = ["src", "."]
 pythonVersion = "3.12"
 typeCheckingMode = "off"
 reportAttributeAccessIssue = "error"
+reportInvalidTypeForm = "error"
