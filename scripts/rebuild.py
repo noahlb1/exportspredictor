@@ -25,6 +25,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PY = sys.executable
+NOTEBOOK = "notebooks/exports_predictor.ipynb"
+NOTEBOOK_STEP = "The notebook (reads the saved artefact)"
 
 
 @dataclass(frozen=True)
@@ -64,9 +66,11 @@ STEPS = [
     # The notebook runs on real data here (it defaults to fixture mode, as the tests run it), reads
     # the newest artefact and saves its outputs into the committed file: the one way to refresh them.
     Step(
-        "The notebook (reads the saved artefact)",
-        [PY, "-m", "jupyter", "execute", "--inplace", "notebooks/exports_predictor.ipynb"],
-        env={"EXPORTSPREDICTOR_FIXTURE_MODE": "0"},
+        NOTEBOOK_STEP,
+        [PY, "-m", "jupyter", "execute", "--inplace", NOTEBOOK],
+        # PYTHONUTF8: `jupyter execute` opens the notebook in the locale's encoding (cp1252 on
+        # Windows) and saves it as UTF-8, which garbles every non-ASCII character of the prose.
+        env={"EXPORTSPREDICTOR_FIXTURE_MODE": "0", "PYTHONUTF8": "1"},
     ),
 ]
 

@@ -87,6 +87,17 @@ def _prose() -> list[str]:
     return [cell.source for cell in notebook.cells if cell.cell_type == "markdown"]
 
 
+# UTF-8 read as cp1252: an en dash becomes "â€“", an accented letter "Ã" plus another.
+MOJIBAKE = ("â€", "Ã")
+
+
+def test_no_cell_source_is_mojibake():
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+
+    garbled = [cell.source[:80] for cell in notebook.cells if any(sign in cell.source for sign in MOJIBAKE)]
+    assert not garbled, f"UTF-8 read in the wrong encoding; restore these cells: {garbled}"
+
+
 def test_the_sections_are_in_the_argument_s_order():
     assert [heading for heading, _ in _sections()] == SECTIONS
 
