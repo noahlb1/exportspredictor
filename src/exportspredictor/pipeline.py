@@ -63,6 +63,7 @@ from exportspredictor import (
     experiments,
     fixture,
     freeze,
+    governance,
     loop,
     ppml,
     search,
@@ -1144,7 +1145,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     bundle = build_real_artefacts(parts=parse_parts(argv))
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}
     print(json.dumps(summary), flush=True)
-    print(artefacts.save(bundle, artefacts_dir()), flush=True)
+    folder = artefacts.save(bundle, artefacts_dir())
+    print(folder, flush=True)
+    # The notebook reads the model card and writes none (#88), so the run that saves the version writes it.
+    print(governance.write_model_card(bundle, folder), flush=True)
 
 
 if __name__ == "__main__":
