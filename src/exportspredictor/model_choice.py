@@ -28,7 +28,7 @@ def how_chosen(metadata: dict, report: dict) -> dict:
         "model_form": model_form_summary(metadata),
         **(summary or {"experiments": []}),
         "text": _text(summary, form),
-        "test_year": report.get("earlier_versions"),
+        "test_year_ranking": report.get("earlier_versions"),
         "traded_away": traded_away(report.get("earlier_versions")),
     }
 

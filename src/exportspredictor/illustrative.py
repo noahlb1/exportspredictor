@@ -39,7 +39,7 @@ def scenario_note(artefacts: "Artefacts") -> dict:
     }
 
 
-def _pct(value: float) -> str:
+def _signed_percent(value: float) -> str:
     return f"{value:+.1f}%"
 
 
@@ -58,9 +58,9 @@ def _benchmark(saved: dict | None) -> dict:
         "published_high_pct": published["high_pct"],
         "text": (
             f"A PPML gravity benchmark ({saved['level']} level, {years[0]}–{years[-1]}) associates a Trade Agreement "
-            f"with {_pct(fit['effect_pct'])} in Flows ({saved['ci_level']:.0%} interval {_pct(fit['effect_low_pct'])} "
-            f"to {_pct(fit['effect_high_pct'])}); published estimates range from {_pct(published['low_pct'])} to "
-            f"{_pct(published['high_pct'])}."
+            f"with {_signed_percent(fit['effect_pct'])} in Flows ({saved['ci_level']:.0%} interval {_signed_percent(fit['effect_low_pct'])} "
+            f"to {_signed_percent(fit['effect_high_pct'])}); published estimates range from {_signed_percent(published['low_pct'])} to "
+            f"{_signed_percent(published['high_pct'])}."
         ),
     }
 
@@ -76,7 +76,7 @@ def _model_association(saved: dict | None) -> dict:
         "model_form": model["model_form"]["form"],
         "text": (
             f"On the served Model Form ({model['model_form']['form'].capitalize()}), the model associates adding a Trade Agreement with "
-            f"{_pct(model['effect_pct'])} in Export Potential over the {model['pairs']:,} UK pairs without one "
+            f"{_signed_percent(model['effect_pct'])} in Export Potential over the {model['pairs']:,} UK pairs without one "
             "(weighted by Baseline Export Potential)."
         ),
     }

@@ -1054,12 +1054,12 @@ def test_evaluation_serves_the_test_year_ranking_beside_the_naive_baseline_and_e
     artefacts = _with_v2(fixture_artefacts)
     block = artefacts.evaluation["earlier_versions"]
 
-    test_year = _served(artefacts, tmp_path)["model_choice"]["test_year"]
+    ranking = _served(artefacts, tmp_path)["model_choice"]["test_year_ranking"]
 
-    assert test_year["test_year"] == block["test_year"]
-    assert [(r["name"], r["uk_ranking"]) for r in test_year["rows"]] == [(r["name"], r["uk_ranking"]) for r in block["rows"]]
-    assert [r["uk_ranking"] for r in test_year["naive"]] == [r["uk_ranking"] for r in block["naive"]]
-    assert test_year["beats_naive"] == block["beats_naive"] and test_year["text"] == block["text"]
+    assert ranking["test_year"] == block["test_year"]
+    assert [(r["name"], r["uk_ranking"]) for r in ranking["rows"]] == [(r["name"], r["uk_ranking"]) for r in block["rows"]]
+    assert [r["uk_ranking"] for r in ranking["naive"]] == [r["uk_ranking"] for r in block["naive"]]
+    assert ranking["beats_naive"] == block["beats_naive"] and ranking["text"] == block["text"]
 
 
 def test_evaluation_says_what_the_blend_traded_away_with_the_deviance_read_from_the_artefact(

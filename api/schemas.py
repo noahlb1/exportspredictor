@@ -372,7 +372,9 @@ class Confirmation(BaseModel):
     folds: list[ConfirmationFold]
 
 
-class EarlierVersion(BaseModel):
+class VersionResult(BaseModel):
+    """One version's test-year figures: this version or an earlier one (v2, v1)."""
+
     model_config = ConfigDict(extra="allow")  # v2's artefact version
 
     name: str
@@ -383,12 +385,19 @@ class EarlierVersion(BaseModel):
     tweedie_deviance_uk: float | None = None
 
 
+class NaiveBaselineResult(BaseModel):
+    """The Naive Baseline's test-year UK ranking, from this run or as reported for v2."""
+
+    name: str
+    uk_ranking: float | None = None
+
+
 class TestYearRanking(BaseModel):
     """The test year's UK ranking beside the Naive Baseline and earlier versions' headline figures."""
 
     test_year: int
-    rows: list[EarlierVersion]  # this version first
-    naive: list[EarlierVersion]
+    rows: list[VersionResult]  # this version first, then earlier versions
+    naive: list[NaiveBaselineResult]
     beats_naive: bool
     text: str
 
@@ -425,7 +434,7 @@ class ModelChoice(BaseModel):
     experiments: list[ExperimentOut]
     confirmation: Confirmation | None = None
     text: str
-    test_year: TestYearRanking | None = None
+    test_year_ranking: TestYearRanking | None = None
     traded_away: TradedAway | None = None
 
 

@@ -488,13 +488,13 @@ def _benchmark_limitations(benchmark: dict | None) -> list[dict]:
         "text": f"Over the UK pairs with no Trade Agreement, the model associates adding one (with its tariff "
         f"removed) with {model['effect_pct']:+.1f}% Export Potential, Baseline-weighted. A 3-way fixed-effects PPML "
         f"gravity model on the same Flows associates a Trade Agreement with {ppml['effect_pct']:+.1f}% (95% interval "
-        f"{_signed_pct(ppml['effect_low_pct'])} to {_signed_pct(ppml['effect_high_pct'])}). Published estimates span "
+        f"{_signed_percent_with_minus_sign(ppml['effect_low_pct'])} to {_signed_percent_with_minus_sign(ppml['effect_high_pct'])}). Published estimates span "
         f"about {low:+.0%} to {high:+.0%}, but the Event Backtests point the same way as the benchmark: the model overstates the "
         f"association. Read Scenario Effects as an upper end.",
     }]
 
 
-def _signed_pct(value: float) -> str:
+def _signed_percent_with_minus_sign(value: float) -> str:
     return f"{value:+.1f}%".replace("-", "−")
 
 

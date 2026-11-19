@@ -73,7 +73,7 @@ def test_page_shows_every_experiment_and_whether_it_was_kept(served):
 
 def test_page_shows_the_test_year_ranking_beside_the_naive_baseline_and_earlier_versions(served):
     page, body = served
-    block = body["model_choice"]["test_year"]
+    block = body["model_choice"]["test_year_ranking"]
     table = next(t for t in _tables(page) if "UK ranking" in t.columns and "Version" in t.columns)
 
     expected = [*block["rows"], *block["naive"]]
