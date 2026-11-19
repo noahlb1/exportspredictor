@@ -93,7 +93,7 @@ An Opportunity whose Actual Exports lie inside its Potential Range, so its Expor
 _Avoid_: weak lead, low-confidence opportunity, false positive
 
 **Blocked Opportunity**:
-A UK Product–Market pair whose Export Potential rises materially in a Scenario that removes a Barrier. It is distinct from an Opportunity, because the Barrier already holds Export Potential down, so it shows no Export Gap.
+A UK Product–Market pair whose Export Potential rises materially in a Scenario that removes a Barrier. It is measured apart from the Export Gap, because the Barrier already holds Export Potential down: a pair can be an Opportunity, a Blocked Opportunity, both or neither.
 _Avoid_: hidden opportunity, latent demand
 
 **Blocked Opportunity value**:
