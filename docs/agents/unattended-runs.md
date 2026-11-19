@@ -11,9 +11,12 @@ Record each decision in the **decision log**: `DECISIONS.md` in the run's shared
 ```
 ## <ticket number, or "orchestrator">: <the question>
 - Options: ...
-- Chose: ...
-- Why: ...
+- Chose: <one sentence>
+- Why: <one sentence>
+- Detail: ... (optional: lists, figures, file names)
 ```
+
+A **record** (a real run's command, duration and output size) is not a decision: head it `## <ticket>: record: <what ran>` and put its facts under `- Detail:`. The final report lists records apart from decisions.
 
 Subagents append their own entries and list them in their report.
 

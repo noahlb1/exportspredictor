@@ -6,7 +6,7 @@ Gotchas of this machine that the code and config don't reveal. Add one when a ru
 
 - **uv** comes from winget. Shells started before the install don't have it on PATH. `scripts/wt.ps1` finds it either way; elsewhere, use the full path `%LOCALAPPDATA%\Microsoft\WinGet\Packages\astral-sh.uv_*\uv.exe`.
 - **Python** comes only through uv. A bare `python` in Git Bash hits the Windows Store stub and hangs until timeout: always go through `uv run`.
-- **Printing non-ASCII** (accented Market names, `£`) crashes on cp1252: run Python with `-X utf8`. `python -I` ignores `PYTHONIOENCODING`.
+- **Encoding**: Windows defaults to cp1252, which crashes on printing `£` or accented Market names and garbles UTF-8 files a tool opens without an encoding. `scripts/wt.ps1` sets `PYTHONUTF8=1`, which subprocesses inherit; `-X utf8` alone does not reach a subprocess such as `jupyter execute`. `tests/test_encoding.py` catches garbled text in any tracked file.
 - **`gh` bodies**: PowerShell 5.1 splits a multi-line `--body` into separate arguments. Write the body to a file in the scratchpad and pass `--body-file`.
 - **podman** runs in a WSL2 VM, with `docker-compose` as its compose provider. If `podman compose` can't connect after a reboot, run `podman machine start`. `podman compose up -d --build` serves the API on :8000 and the app on :8501; `podman compose down` stops them.
 
@@ -16,7 +16,7 @@ Gotchas of this machine that the code and config don't reveal. Add one when a ru
 - **Run everything through `scripts/wt.ps1`** (`& <worktree>\scripts\wt.ps1 pytest -q`). It uses the main checkout's `.venv`, so a worktree builds none, and removing it is quick.
 - **Merging into the integration branch**: after each merge, run `scripts/wt.ps1 ruff check .` and `scripts/wt.ps1 pytest -q` in the merged checkout, and get them green before the next merge. A file that exists on disk but is gitignored passes in a worktree and fails everywhere else, so check `git status --ignored` for test data.
 - **Pushes are gated** by `.githooks/pre-push` (ruff, pyright, then the full suite, about 4 minutes). It needs `git config core.hooksPath .githooks` once per clone.
-- **Adding a dependency**: `uv add --no-sync <pkg>` in the worktree updates `pyproject.toml` and `uv.lock`; then install it into the shared env with `uv pip install --python C:\CodingProjectsC\exportspredictor\.venv <pkg>`.
+- **Adding a dependency**: from the main checkout, `powershell -File scripts/add-dep.ps1 <worktree> <pkg>` records it in that worktree's `pyproject.toml` and `uv.lock` and installs it into the shared `.venv`. `.claude/settings.json` allows exactly this form, so it runs without a permission prompt; a bare `uv add` or `uv pip install` can be refused.
 
 ## Shared data and artefacts
 

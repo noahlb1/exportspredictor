@@ -34,6 +34,8 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
    At the end of the run, check that no subagent's background process is left (see `docs/agents/environment.md`, "Stop what you start").
 
+   When tickets run in parallel, look for a **shared figure**: a domain value or selection both will compute (a round count, "the primary Event Backtest"). Name one ticket its owner in both briefs, and tell the other to call the owner's function once it merges. Two tickets that each write their own version drift apart, and the outputs disagree only on data the fixture doesn't cover.
+
 5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**.
 
 6. If this changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. This allows for maximum concurrency.
