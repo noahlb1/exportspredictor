@@ -14,6 +14,9 @@ $main = (git -C $checkout worktree list --porcelain)[0] -replace '^worktree ', '
 $env:UV_PROJECT_ENVIRONMENT = Join-Path $main '.venv'
 $env:UV_NO_SYNC = '1'
 $env:PYTHONPATH = "$checkout\src;$checkout"
+# UTF-8 for every Python process, subprocesses included (`jupyter execute`, the notebook kernel):
+# a file opened without an encoding is otherwise read as cp1252 and saved back garbled.
+$env:PYTHONUTF8 = '1'
 # Data and artefacts are gitignored, so a worktree has none: share the main checkout's.
 if (-not $env:EXPORTSPREDICTOR_DATA_DIR) { $env:EXPORTSPREDICTOR_DATA_DIR = Join-Path $main 'data' }
 if (-not $env:EXPORTSPREDICTOR_ARTEFACTS_DIR) { $env:EXPORTSPREDICTOR_ARTEFACTS_DIR = Join-Path $main 'artefacts' }

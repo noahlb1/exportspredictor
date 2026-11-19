@@ -6,7 +6,7 @@ Gotchas of this machine that the code and config don't reveal. Add one when a ru
 
 - **uv** comes from winget. Shells started before the install don't have it on PATH. `scripts/wt.ps1` finds it either way; elsewhere, use the full path `%LOCALAPPDATA%\Microsoft\WinGet\Packages\astral-sh.uv_*\uv.exe`.
 - **Python** comes only through uv. A bare `python` in Git Bash hits the Windows Store stub and hangs until timeout: always go through `uv run`.
-- **Printing non-ASCII** (accented Market names, `£`) crashes on cp1252: run Python with `-X utf8`. `python -I` ignores `PYTHONIOENCODING`.
+- **Encoding**: Windows defaults to cp1252, which crashes on printing `£` or accented Market names and garbles UTF-8 files a tool opens without an encoding. `scripts/wt.ps1` sets `PYTHONUTF8=1`, which subprocesses inherit; `-X utf8` alone does not reach a subprocess such as `jupyter execute`. `tests/test_encoding.py` catches garbled text in any tracked file.
 - **`gh` bodies**: PowerShell 5.1 splits a multi-line `--body` into separate arguments. Write the body to a file in the scratchpad and pass `--body-file`.
 - **podman** runs in a WSL2 VM, with `docker-compose` as its compose provider. If `podman compose` can't connect after a reboot, run `podman machine start`. `podman compose up -d --build` serves the API on :8000 and the app on :8501; `podman compose down` stops them.
 
