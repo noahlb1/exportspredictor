@@ -62,3 +62,19 @@ def test_rebuild_table_names_every_step_of_the_rebuild_script():
 
 def test_rebuild_section_gives_the_pipeline_command():
     assert "python -m exportspredictor.pipeline" in _rebuild_section()
+
+
+def _opening() -> str:
+    return README.read_text(encoding="utf-8").split("\n## ", 1)[0]
+
+
+def test_the_opening_describes_the_served_blend_chosen_on_the_selection_measure():
+    opening = _opening()
+    assert "Blend" in opening and "Selection Measure" in opening
+    assert "This is **v2**" not in opening
+
+
+def test_the_rebuild_table_says_the_notebook_reads_saved_results_and_how_long_it_takes():
+    row = next(line for line in _rebuild_section().splitlines() if "notebooks/exports_predictor.ipynb" in line)
+    assert "saved results" in row and "minutes" in row
+    assert "fits" not in row and "rebuilds" not in row  # it builds no table and fits no benchmark

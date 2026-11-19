@@ -4,7 +4,9 @@ A model that learns from global HS6 goods trade to estimate the UK's **Export Po
 
 Results are associations the model has learned, not causes.
 
-This is **v2**. It trains on the top 100 Exporters into every Market, leaves out Excluded Products, adds the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. Under a comparison rule fixed before the 2023 test year was read, v2 does **not** beat v1 on the headline UK ranking measure (0.511 against 0.540, and below the naive baseline's 0.523), though it estimates the size of Flows better; the notebook and the model card give the detail. Spec #65 then chose the model on that ranking alone (ADR 0008): the served Export Potential blends the v2 model with the naive baseline, and on 2023, read once, it ranks UK Markets at 0.555, above the naive baseline (0.523), v2 and v1, at the cost of a higher Tweedie deviance ([research note](docs/research/opportunity-ranking-experiments.md)).
+The served model is the **Blend**: Export Potential blends an XGBoost model (weight 0.7) with the Naive Baseline (weight 0.3) on the log scale. It was chosen on one measure, the **Selection Measure** (how well it ranks Markets for each Product on held-out UK pairs in 2022), by an experiment loop in which a change was kept only if it beat the Win Threshold (ADR 0008, [research note](docs/research/opportunity-ranking-experiments.md)). On 2023, read once, it ranks UK Markets at 0.555, above the Naive Baseline (0.523), v2 (0.511) and v1 (0.540). The cost is accuracy on size: its Tweedie deviance is higher than v2's, so dollar values deserve more caution than rankings. Scenario Effects and Blocked Opportunity values are **Illustrative**: upper-end associations shown beside a PPML gravity benchmark and the Event Backtests, never forecasts.
+
+The model underneath is v2's: it trains on the top 100 Exporters into every Market, leaves out Excluded Products, uses the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. The notebook and the model card (`model_card.md` in the artefact folder) give the detail.
 
 ## Run the app (one command)
 
@@ -16,7 +18,7 @@ podman compose up --build
 
 Then open <http://localhost:8501>.
 
-- The API starts first, on <http://localhost:8000>. It reports healthy only once it has loaded the artefacts: up to a minute for the real v2 artefact, whose five fold models take 1.7 GB. `/health` names the artefact version, its format (2) and the Gap Period.
+- The API starts first, on <http://localhost:8000>. It reports healthy only once it has loaded the artefacts: up to a minute for the real artefact, whose five fold models take 1.7 GB. `/health` names the artefact version, its format (3) and the Gap Period.
 - The app starts only after the API is healthy.
 - `./artefacts` is mounted read-only into the API container, so a new artefact version needs only `podman compose restart api`, not a rebuild.
 - Stop with `Ctrl+C`, or run `podman compose down`.
@@ -39,7 +41,7 @@ Settings are environment variables:
 | Variable | Default | Used by |
 | --- | --- | --- |
 | `EXPORTSPREDICTOR_DATA_DIR` | `<repo>/data` | data download and build steps, notebook |
-| `EXPORTSPREDICTOR_ARTEFACTS_DIR` | `<repo>/artefacts` | pipeline (writes), notebook (fixture artefacts and the model card), API (reads) |
+| `EXPORTSPREDICTOR_ARTEFACTS_DIR` | `<repo>/artefacts` | pipeline (writes the artefacts and the model card), notebook (reads; writes only its own fixture artefacts), API (reads) |
 | `EXPORTSPREDICTOR_API_URL` | `http://localhost:8000` | app |
 
 The layout:
@@ -57,7 +59,7 @@ uv run python scripts/rebuild.py --list   # show the steps
 uv run python scripts/rebuild.py          # run them all, in order
 ```
 
-The script downloads every source and builds the derived Parquet in `EXPORTSPREDICTOR_DATA_DIR`. It then makes every modelling choice on the 2022 validation year (the feature ablation, the learning curve and the hyperparameter search), and `python -m exportspredictor.pipeline` trains the v2 fold models, evaluates them on 2023 and saves a new artefact version (format 3), serving the model form the experiment loop chose (`python -m exportspredictor.loop`, whose saved results it reads and records) in `EXPORTSPREDICTOR_ARTEFACTS_DIR`. Last, it runs the notebook on the real data: the notebook reads the newest artefact and trains nothing, and it writes `model_card.md` into that artefact's folder. The script stops at the first step that fails. Long steps cache their results under `data/derived/`, so a re-run resumes rather than starting again.
+The script downloads every source and builds the derived Parquet in `EXPORTSPREDICTOR_DATA_DIR`. It then makes every modelling choice on the 2022 validation year (the feature ablation, the learning curve and the hyperparameter search), and `python -m exportspredictor.pipeline` trains the v2 fold models, evaluates them on 2023 and saves a new artefact version (format 3), serving the model form the experiment loop chose (`python -m exportspredictor.loop`, whose saved results it reads and records) in `EXPORTSPREDICTOR_ARTEFACTS_DIR`. The pipeline writes `model_card.md` into the new artefact's folder; To add the PPML gravity benchmark, which the script does not run, `python -m exportspredictor.ppml` derives a new version from the newest one with the benchmark saved beside it and its model card rewritten (about 25 minutes on the CPU, no training, the 2023 Flows not read). Last, it runs the notebook on the real data: the notebook reads the newest artefact and saved results, and trains, fits and builds nothing. The script stops at the first step that fails. Long steps cache their results under `data/derived/`, so a re-run resumes rather than starting again.
 
 The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild.py). The times are from an RTX 3080 (10 GB) with a Ryzen 7 5800X and 32 GB of RAM.
 
@@ -82,7 +84,7 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 | Experiment loop on 2022: constraints (GPU, resumable) | `python -m exportspredictor.loop constraints`; the best Arm without the monotone constraints (one model); every Arm is judged on the Selection Measure, results in `derived/loop_V202601/results.json`, models cached |
 | Five-fold confirmation of the loop's best form on 2022 (GPU, resumable, about 1 h) | `python -m exportspredictor.loop confirm`; the best Arm against v2 on every held-out UK pair of five folds; the pipeline serves the form the loop chose and records these results in the artefact |
 | Train the fold and test-year models, evaluate and save the artefacts (GPU, about 2.5 h) | `python -m exportspredictor.pipeline`; trains the five fold models (about 75 minutes), scores the 2022–2024 Gap Period and the Potential Range, trains and evaluates the 2023 test-year models (about 75 minutes), reads the v1 comparison's primary metric from the frozen v1 tables (no training), and saves a new artefact version. The Event Backtests (Lift included), the monotone-constraint comparison and the gain ladder each run only when asked for: `--event-backtests`, `--constraint-comparison`, `--gain-ladder`, or `--every-part` for all three (together about two more hours). The evaluation, the Model Evaluation page and the model card show a skipped part as not run for this version. Fold, test-year, backtest and ladder models are cached under `data/derived/`, so a re-run only scores. `python -m exportspredictor.pipeline compare` adds the v1 comparison with its gain ladder to a copy of the newest version, which must hold the Event Backtests |
-| The notebook (reads the saved artefact) | runs `notebooks/exports_predictor.ipynb` with `EXPORTSPREDICTOR_FIXTURE_MODE=0`. It reads the newest artefact and trains nothing; it rebuilds the gravity, policy and feature tables (about 15 minutes, 14 GB), fits the PPML gravity benchmark (about 30 minutes on the CPU) and writes `model_card.md` into the newest artefact folder |
+| The notebook (reads the saved artefact) | runs `notebooks/exports_predictor.ipynb` with `EXPORTSPREDICTOR_FIXTURE_MODE=0`. It reads saved results only (the newest artefact, its model card and PPML benchmark, and the experiment loop's results) and trains nothing; about 2 minutes on the CPU |
 
 ## Manual UI checklist
 
