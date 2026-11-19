@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -288,3 +289,17 @@ def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
     for version, source in provenance:
         assert re.fullmatch(r"\d{8}T\d{6}Z", version), version
         assert source != pipeline.FIXTURE_SOURCE, "the committed outputs come from the fixture, not real data"
+
+
+# "Outputs stay small" (spec #66): the largest single output, a table or an SVG chart, stays under this.
+OUTPUT_LIMIT_BYTES = 15_000
+
+
+def test_no_committed_output_is_large():
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+
+    sizes = [
+        (len(json.dumps(output)), cell.source[:60])
+        for cell in notebook.cells if cell.cell_type == "code" for output in cell.outputs
+    ]
+    assert not [size for size in sizes if size[0] > OUTPUT_LIMIT_BYTES], max(sizes)
