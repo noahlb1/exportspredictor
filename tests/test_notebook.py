@@ -49,6 +49,54 @@ def _sections():
     return [(heading, cells) for heading, cells in sections if heading != "## Parameters"]
 
 
+# The argument's sections, in order (spec #66, "Section order"). #89 wrote 1-7; the sections after
+# them are still the old ones, unnumbered, until #90 numbers them and adds them here.
+SECTIONS = [
+    "## 1. The question and the headline",
+    "## 2. The data: Flows, Zero Cells and policy features",
+    "## 3. Features and the leakage rules",
+    "## 4. The model and how it is scored out-of-fold",
+    "## 5. What v2 showed",
+    "## 6. Re-choosing the model on the Selection Measure",
+    "## 7. The 2023 result and what it cost",
+]
+# No prose cell runs over about this many words (spec #66, "Length"); longer detail is linked.
+WORD_LIMIT = 300
+
+
+def _words(source: str) -> int:
+    """Words of prose: whitespace-separated tokens with a letter or digit, so table pipes and rules do not count."""
+    return sum(any(character.isalnum() for character in token) for token in source.split())
+
+
+def test_the_numbered_sections_are_in_the_argument_s_order():
+    numbered = [heading for heading, _ in _sections() if heading[3:4].isdigit()]
+
+    assert numbered == SECTIONS
+
+
+def test_no_prose_cell_in_the_rewritten_sections_runs_over_the_word_limit():
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+    first = next(i for i, cell in enumerate(notebook.cells) if cell.source.startswith(SECTIONS[0]))
+    preamble = [cell for cell in notebook.cells[:first] if cell.cell_type == "markdown"]
+    rewritten = [cell for heading, cells in _sections() if heading in SECTIONS for cell in cells]
+
+    for cell in preamble + rewritten:
+        if cell.cell_type == "markdown":
+            assert _words(cell.source) <= WORD_LIMIT, f"{_words(cell.source)} words: {cell.source[:200]}"
+
+
+def test_the_word_count_reads_whitespace_separated_words():
+    assert _words("**Conclusion.** The model\nbeats the | Naive Baseline |") == 7
+
+
+def test_each_rewritten_section_links_its_choices_to_the_course():
+    for heading, cells in _sections():
+        if heading in SECTIONS:
+            prose = " ".join(cell.source for cell in cells if cell.cell_type == "markdown")
+            assert "Course:" in prose or "course:" in prose, f"{heading} names no course concept"
+
+
 def test_every_section_is_introduced_and_concluded():
     for heading, cells in _sections():
         intro = cells[0].source.split("\n", 1)[-1].strip()
@@ -129,7 +177,7 @@ def test_the_notebook_shows_each_main_result_from_the_reporting_module():
 
     for result in (
         "provenance", "ranking_by_version", "experiments", "experiments_chart", "confirmation", "lift_by_tenth",
-        "event_backtests",
+        "event_backtests", "round_count",
     ):
         assert f"reporting.{result}(bundle)" in source, result
 
