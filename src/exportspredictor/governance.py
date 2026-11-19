@@ -119,8 +119,8 @@ DECISIONS = [
      "worse beyond its interval. The rule was fixed before 2023 was read; a gain ladder splits the change.")),
     ("A PPML gravity benchmark for the Trade Agreement Scenario Effect",
      ("A 3-way fixed-effects Poisson pseudo-maximum-likelihood gravity model, at Sector level on the same Flows and "
-     "scope, gives an independent estimate of what a Trade Agreement is associated with. It is reported in the "
-     "notebook and never served.")),
+     "scope, gives an independent estimate of what a Trade Agreement is associated with. It is fitted once and "
+     "saved with the artefact (`python -m exportspredictor.ppml`), beside the model's own association.")),
     ("Values in nominal US dollars",
      ("Every value is in nominal USD, BACI's unit, so figures match international trade sources and need no "
      "conversion. The Bank of England's annual averages (XUAAUSS) only convert HMRC's £ for the cross-check.")),
