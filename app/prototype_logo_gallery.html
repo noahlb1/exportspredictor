@@ -1,0 +1,126 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway (wayfinder ticket #97): never merge. Double-click to open; left and right arrow keys flick through the marks. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Logo marks: UK Exports Predictor</title>
+<style>
+  :root { --blue: #2a78d6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 "Segoe UI", Arial, sans-serif; background: #eceef2; color: #1f2430; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 24px; }
+  header h1 { font-size: 20px; margin: 0; flex: 1; }
+  header h1 small { font-weight: 400; color: #5b6272; font-size: 14px; margin-left: 10px; }
+  button { font: inherit; border: 1px solid #b9bfcc; background: #fff; border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+  button:hover { border-color: var(--blue); }
+  .count { color: #5b6272; min-width: 56px; text-align: center; }
+  .stage { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 0 24px; border-radius: 14px; overflow: hidden; border: 1px solid #c9cedb; }
+  .panel { padding: 28px 32px 32px; }
+  .light { background: #ffffff; color: #1f2430; }
+  .dark { background: #171614; color: #f4f5f7; }
+  .panel h2 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; opacity: .6; margin: 0 0 18px; }
+  .big { display: flex; gap: 28px; align-items: center; }
+  .row { display: flex; gap: 18px; align-items: center; margin-top: 24px; flex-wrap: wrap; }
+  .label { font-size: 12px; opacity: .6; width: 92px; }
+  .tile { background: var(--blue); color: #fff; border-radius: 22%; display: inline-flex; }
+  .bare { color: var(--blue); display: inline-flex; }
+  .dark .bare { color: #5b9dea; } /* the blue, lightened so a bare mark stays readable on dark */
+  svg { display: block; width: 100%; height: 100%; }
+  .wordmark { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 600; }
+  .tab { display: inline-flex; align-items: center; gap: 8px; border: 1px solid #8885; border-bottom: 0; border-radius: 9px 9px 0 0; padding: 6px 14px; font-size: 13px; }
+  .strip { display: flex; gap: 10px; padding: 18px 24px 8px; flex-wrap: wrap; }
+  .thumb { width: 64px; height: 64px; padding: 0; border: 3px solid transparent; border-radius: 16px; background: none; }
+  .thumb.on { border-color: #1f2430; }
+  .thumb .tile { width: 100%; height: 100%; }
+  .idea { padding: 4px 24px 0; color: #454b59; min-height: 26px; }
+  footer { padding: 8px 24px 24px; color: #5b6272; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span id="name"></span><small id="key"></small></h1>
+  <button id="prev" aria-label="Previous mark">←</button>
+  <span class="count" id="count"></span>
+  <button id="next" aria-label="Next mark">→</button>
+</header>
+<div class="idea" id="idea"></div>
+<div class="strip" id="strip"></div>
+<div class="stage">
+  <div class="panel light"></div>
+  <div class="panel dark"></div>
+</div>
+<footer>Blue <code>#2a78d6</code>. "Tile" is a white mark on a blue square; "bare" is the mark alone. Use ← and → or click a thumbnail. The address keeps the mark (<code>#3</code>), so a reload stays put.</footer>
+
+<script>
+// Each mark is drawn on a 64 x 64 canvas in one ink (currentColor); o=".45" parts are the same ink, fainter.
+const S = 'fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"';
+const LENS = `<circle cx="27" cy="27" r="16" ${S} stroke-width="5"/><path d="M40 40l14 14" ${S} stroke-width="7"/>`;
+const MARKS = [
+  { name: "Lens on the bars", idea: "Searching + potential: a magnifying glass over rising bars.",
+    svg: `${LENS}<rect x="18" y="28" width="5" height="8" rx="1" fill="currentColor" opacity=".55"/><rect x="24.5" y="23" width="5" height="13" rx="1" fill="currentColor" opacity=".8"/><rect x="31" y="17" width="5" height="19" rx="1" fill="currentColor"/>` },
+  { name: "Lens on the globe", idea: "Searching the world's Markets: a magnifying glass whose lens is a globe.",
+    svg: `${LENS}<ellipse cx="27" cy="27" rx="7" ry="14" ${S} stroke-width="3" opacity=".6"/><path d="M13 27h28" ${S} stroke-width="3" opacity=".6"/>` },
+  { name: "Lens with a spark", idea: "Finding: a magnifying glass that has caught something bright.",
+    svg: `${LENS}<path d="M27 16.500c1.300 6.200 3.300 8.200 9.500 9.500-6.200 1.300-8.200 3.300-9.500 9.500-1.300-6.200-3.300-8.200-9.500-9.500 6.200-1.300 8.200-3.300 9.500-9.500z" fill="currentColor"/>` },
+  { name: "Lens with an arrow", idea: "Searching + growth: an arrow climbing inside the lens.",
+    svg: `${LENS}<path d="M20 34l13-13M24 20h10v10" ${S} stroke-width="4.500"/>` },
+  { name: "Globe, arrow leaving", idea: "Exports: a globe with an arrow heading out and up.",
+    svg: `<circle cx="27" cy="37" r="18" ${S} stroke-width="5" opacity=".5"/><ellipse cx="27" cy="37" rx="7.500" ry="18" ${S} stroke-width="3.500" opacity=".5"/><path d="M9 37h36" ${S} stroke-width="3.500" opacity=".5"/><path d="M32 32l22-22M41 10h13v13" ${S} stroke-width="6"/>` },
+  { name: "Globe with a pin", idea: "Finding a Market: one point marked on the globe.",
+    svg: `<circle cx="29" cy="35" r="19" ${S} stroke-width="5" opacity=".5"/><ellipse cx="29" cy="35" rx="8" ry="19" ${S} stroke-width="3.500" opacity=".5"/><path d="M10 35h38" ${S} stroke-width="3.500" opacity=".5"/><circle cx="46" cy="17" r="8.500" fill="currentColor"/>` },
+  { name: "Container, on its way", idea: "Goods trade: a shipping container with an arrow carrying it off.",
+    svg: `<rect x="8" y="26" width="48" height="28" rx="3.500" ${S} stroke-width="5"/><path d="M20 33v14M32 33v14M44 33v14" ${S} stroke-width="3.500" opacity=".55"/><path d="M14 13h34M40 6l8 7-8 7" ${S} stroke-width="5"/>` },
+  { name: "Container ship", idea: "Goods trade: a ship with its stack, one container picked out.",
+    svg: `<path d="M5 43h54l-7 13H13z" fill="currentColor"/><rect x="14" y="31" width="10.500" height="9" rx="1.500" fill="currentColor" opacity=".5"/><rect x="26.750" y="31" width="10.500" height="9" rx="1.500" fill="currentColor" opacity=".5"/><rect x="39.500" y="31" width="10.500" height="9" rx="1.500" fill="currentColor" opacity=".5"/><rect x="20.500" y="19.500" width="10.500" height="9" rx="1.500" fill="currentColor" opacity=".5"/><rect x="33.250" y="19.500" width="10.500" height="9" rx="1.500" fill="currentColor"/><path d="M38.500 15V8" ${S} stroke-width="3.500"/>` },
+  { name: "Arrows moving away", idea: "Exports fanning out: three arrows leaving one point, one of them the Opportunity.",
+    svg: `<circle cx="14" cy="50" r="5.500" fill="currentColor"/><path d="M13 38V12M6 19l7-7 7 7" ${S} stroke-width="4.500" opacity=".5"/><path d="M26 51h26M45 44l7 7-7 7" ${S} stroke-width="4.500" opacity=".5"/><path d="M23 41l25-25M36 16h12v12" ${S} stroke-width="5.500"/>` },
+  { name: "Compass", idea: "Exploring: a compass whose needle points up and out.",
+    svg: `<circle cx="32" cy="32" r="23" ${S} stroke-width="5" opacity=".5"/><path d="M45 19L36 36 28 28z" fill="currentColor"/><path d="M19 45l17-9-8-8z" fill="currentColor" opacity=".5"/>` },
+  { name: "Rising over the horizon", idea: "Potential: something half risen, with more to come.",
+    svg: `<path d="M17 44a15 15 0 0 1 30 0z" fill="currentColor"/><path d="M8 44h48" ${S} stroke-width="5"/><path d="M32 11v8M13 21l5.500 5.500M51 21l-5.500 5.500" ${S} stroke-width="4.500" opacity=".6"/><path d="M22 54h20" ${S} stroke-width="4.500" opacity=".5"/>` },
+  { name: "Pin", idea: "Found it: a map pin, the plainest sign for a place worth going.",
+    svg: `<path fill-rule="evenodd" d="M32 58C19 43 13 34 13 26a19 19 0 0 1 38 0c0 8-6 17-19 32zM32 18a8 8 0 1 0 0 16 8 8 0 0 0 0-16z" fill="currentColor"/>` },
+  { name: "Gap bars in the lens", idea: "The Export Gap, found: a short bar and a tall one, the tall one's extra height fainter.",
+    svg: `${LENS}<rect x="18" y="29" width="7" height="8" rx="1" fill="currentColor"/><rect x="29" y="29" width="7" height="8" fill="currentColor"/><path d="M29 29V18.500a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1V29z" fill="currentColor" opacity=".5"/>` },
+  { name: "Telescope", idea: "Exploring further out: a telescope raised toward a point of light.",
+    svg: `<path d="M11 40l28-15" ${S} stroke-width="11"/><path d="M39 25l9-5" ${S} stroke-width="6"/><path d="M24 40l-7 16M26 40l8 16" ${S} stroke-width="4" opacity=".55"/><path d="M53 6c.700 3.300 1.700 4.300 5 5-3.300.700-4.300 1.700-5 5-.700-3.300-1.700-4.300-5-5 3.300-.700 4.300-1.700 5-5z" fill="currentColor"/>` },
+];
+
+const svg = (m) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">${m.svg}</svg>`;
+const box = (m, cls, px) => `<span class="${cls}" style="width:${px}px;height:${px}px" title="${px}px">${svg(m)}</span>`;
+const panel = (m, title) => `
+  <h2>${title}</h2>
+  <div class="big">${box(m, "tile", 160)}${box(m, "bare", 160)}</div>
+  <div class="row"><span class="label">Tile, small</span>${[64, 32, 24, 16].map((px) => box(m, "tile", px)).join("")}</div>
+  <div class="row"><span class="label">Bare, small</span>${[64, 32, 24, 16].map((px) => box(m, "bare", px)).join("")}</div>
+  <div class="row"><span class="label">With the name</span><span class="wordmark">${box(m, "tile", 34)}UK Exports Predictor</span></div>
+  <div class="row"><span class="label"></span><span class="wordmark">${box(m, "bare", 34)}UK Exports Predictor</span></div>
+  <div class="row"><span class="label">Browser tab</span><span class="tab">${box(m, "tile", 16)}UK Exports Predictor</span><span class="tab">${box(m, "bare", 16)}UK Exports Predictor</span></div>`;
+
+let at = Math.min(Math.max((parseInt(location.hash.slice(1), 10) || 1) - 1, 0), MARKS.length - 1);
+const strip = document.getElementById("strip");
+strip.innerHTML = MARKS.map((m, i) => `<button class="thumb" data-i="${i}" title="${i + 1}. ${m.name}"><span class="tile">${svg(m)}</span></button>`).join("");
+
+function show(i) {
+  at = (i + MARKS.length) % MARKS.length;
+  const m = MARKS[at];
+  document.getElementById("name").textContent = m.name;
+  document.getElementById("key").textContent = `mark ${at + 1}`;
+  document.getElementById("idea").textContent = m.idea;
+  document.getElementById("count").textContent = `${at + 1} of ${MARKS.length}`;
+  document.querySelector(".light").innerHTML = panel(m, "Light");
+  document.querySelector(".dark").innerHTML = panel(m, "Dark");
+  strip.querySelectorAll(".thumb").forEach((t, n) => t.classList.toggle("on", n === at));
+  history.replaceState(null, "", `#${at + 1}`);
+}
+document.getElementById("prev").onclick = () => show(at - 1);
+document.getElementById("next").onclick = () => show(at + 1);
+strip.onclick = (e) => { const t = e.target.closest(".thumb"); if (t) show(+t.dataset.i); };
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowLeft") show(at - 1);
+  if (e.key === "ArrowRight") show(at + 1);
+});
+show(at);
+</script>
+</body>
+</html>
