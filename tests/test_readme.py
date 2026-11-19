@@ -78,3 +78,7 @@ def test_the_rebuild_table_says_the_notebook_reads_saved_results_and_how_long_it
     row = next(line for line in _rebuild_section().splitlines() if "notebooks/exports_predictor.ipynb" in line)
     assert "saved results" in row and "minutes" in row
     assert "fits" not in row and "rebuilds" not in row  # it builds no table and fits no benchmark
+
+
+def test_the_rebuild_section_names_the_command_that_refreshes_the_notebook_s_outputs():
+    assert "uv run python scripts/rebuild.py --only notebook" in _rebuild_section()

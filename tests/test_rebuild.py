@@ -73,3 +73,33 @@ def test_the_real_build_trains_once_before_the_notebook_reads_it():
         (m for m in modules if m in order), key=order.index
     )
     assert modules.index("exportspredictor.pipeline") == len(modules) - 2
+
+
+def test_the_notebook_step_saves_its_outputs_in_place():
+    # The committed notebook carries real-data outputs (#92); this step is how they are refreshed.
+    rebuild = _load_script()
+    command = rebuild.STEPS[-1].command
+
+    assert "notebooks/exports_predictor.ipynb" in command
+    assert "--inplace" in command
+
+
+def test_only_selects_the_notebook_step_alone_without_training():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--list", "--only", "notebook"],
+        capture_output=True, text=True, timeout=60, cwd=REPO, check=False,
+    )
+
+    assert result.returncode == 0
+    lines = result.stdout.strip().splitlines()
+    assert len(lines) == 1
+    assert "notebook" in lines[0].lower()
+
+
+def test_only_with_no_matching_step_fails():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--list", "--only", "no such step"],
+        capture_output=True, text=True, timeout=60, cwd=REPO, check=False,
+    )
+
+    assert result.returncode != 0
