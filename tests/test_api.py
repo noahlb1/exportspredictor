@@ -44,7 +44,6 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     assert {field: caveat["badge"] for field, caveat in body["caveats"].items()} == {
         "flagged_product": "Flagged Product",
         "reexport_hub": "Re-export Hub",
-        "uncertain_opportunity": "Uncertain Opportunity",
     }
     assert all(caveat["text"].startswith(caveat["badge"]) for caveat in body["caveats"].values())
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
@@ -780,28 +779,10 @@ def test_every_ranking_row_has_a_potential_range_from_zero_up_and_flags_uncertai
 @pytest.mark.parametrize(
     "path", ["/opportunities/top", f"/opportunities/by-product/{FIXTURE_HS6}", "/opportunities/by-market/JPN"]
 )
-def test_hide_uncertain_is_off_by_default_and_removes_exactly_the_uncertain_rows_keeping_the_order(client, path):
-    def rows(**params):
-        body = client.get(path, params=params)
-        assert body.status_code == 200, body.text
-        return body.json()["opportunities"]
-
-    everything = rows()
-    assert everything == rows(hide_uncertain=False)
-    for rank_by in ("gap", "relative"):
-        ranked = rows(rank_by=rank_by, min_potential_usd=0)
-        assert rows(rank_by=rank_by, min_potential_usd=0, hide_uncertain=True) == [
-            row for row in ranked if not row["uncertain_opportunity"]
-        ]
-
-
-def test_hide_uncertain_removes_uncertain_opportunities_from_the_leaderboard_summary(client):
-    everything, shown = _top(client), _top(client, hide_uncertain=True)
-
-    assert shown["summary"]["pairs"] == everything["summary"]["pairs"] - sum(
-        row["uncertain_opportunity"] for row in everything["opportunities"]
-    )
-    assert shown["summary"]["pairs"] < everything["summary"]["pairs"]
+def test_the_ranking_query_no_longer_accepts_a_filter_for_uncertain_opportunities(client, path):
+    # The Uncertain Opportunity is reported as a share on the Model Evaluation page, not filtered per row (spec #66)
+    assert client.get(path).status_code == 200
+    assert client.get(path, params={"hide_uncertain": True}).status_code == 422
 
 
 def test_an_explanation_carries_the_pairs_potential_range_as_its_ranking_row_does(client):

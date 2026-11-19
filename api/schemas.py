@@ -97,9 +97,6 @@ class RankingQuery(BaseModel):
     )
     hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
     hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
-    hide_uncertain: bool = Field(
-        False, description="Leave out Uncertain Opportunities (Actual Exports inside the Potential Range)"
-    )
     min_potential_usd: float | None = Field(
         None,
         ge=0,

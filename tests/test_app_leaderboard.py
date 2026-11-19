@@ -106,7 +106,7 @@ def test_the_excluded_products_list_is_reachable_from_the_leaderboard(monkeypatc
     assert any("Excluded Products" in expander.label for expander in page.expander)
 
 
-def test_the_leaderboard_shows_each_potential_range_badges_uncertain_opportunities_and_can_hide_them(
+def test_the_leaderboard_shows_each_potential_range_but_no_uncertain_opportunity_badge_or_filter(
     monkeypatch, fixture_api_url
 ):
     page = _home(monkeypatch, fixture_api_url)
@@ -114,11 +114,8 @@ def test_the_leaderboard_shows_each_potential_range_badges_uncertain_opportuniti
     table = page.dataframe[0].value
     ranges = list(table[RANGE])
     assert all(re.fullmatch(r"\$[0-9.,]+(bn|m|k)?–\$[0-9.,]+(bn|m|k)?", text) for text in ranges)
-    uncertain = table["Caveats"].str.contains("Uncertain Opportunity")
-    assert 0 < uncertain.sum() < len(table)
-    assert any("Uncertain Opportunit" in caption.value for caption in page.caption)
-
-    page.checkbox(key="hide_uncertain").check().run()
-    shown = page.dataframe[0].value
-    assert list(shown["HS6"] + shown["Market"]) == list((table["HS6"] + table["Market"])[~uncertain])
-    assert _metrics(page)["Product–Market pairs"] == str(len(table) - uncertain.sum())
+    # The fixture has Uncertain Opportunities among these rows; the badge marked almost every row, so it is gone
+    assert not table["Caveats"].str.contains("Uncertain Opportunity").any()
+    assert not any("Uncertain Opportunit" in caption.value for caption in page.caption)
+    assert not any("Uncertain" in checkbox.label for checkbox in page.checkbox)
+    assert {checkbox.label for checkbox in page.checkbox} >= {"Hide Flagged Products", "Hide Re-export Hubs"}

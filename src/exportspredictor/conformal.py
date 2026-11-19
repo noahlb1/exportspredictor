@@ -72,13 +72,6 @@ def score_calibration(
     ).with_columns(residual_usd=pl.col("actual_exports_usd") - pl.col("export_potential_usd"))
 
 
-UNCERTAIN_OPPORTUNITY_CAVEAT = (
-    "Uncertain Opportunity: UK Actual Exports lie inside the Potential Range, where comparable pairs' Actual "
-    "Exports fall 80% of the time, so this Export Gap is within the variation normally seen. It is still "
-    "ranked; treat it as a weaker lead."
-)
-
-
 def potential_range_text(low_usd: float, high_usd: float, actual_exports_usd: float, *, uncertain: bool) -> str:
     """One pair's Potential Range in plain words, for its detail view (never a confidence interval)."""
     text = (
