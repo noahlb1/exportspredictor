@@ -33,7 +33,6 @@ from app.ui import (
     labels,
     rank_orders,
     show_caveats,
-    why_link,
 )
 
 VARIANTS = {

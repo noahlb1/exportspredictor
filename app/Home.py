@@ -11,10 +11,9 @@ import streamlit as st
 
 from app import (  # PROTOTYPE (#95, #97): never merge
     client,
-    prototype_banner,
-    prototype_pages,
     prototype_leaderboard,
     prototype_logo,
+    prototype_pages,
 )
 from app.format import format_usd
 from app.ui import (
