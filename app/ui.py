@@ -54,6 +54,21 @@ def usd_unit() -> str:
     return labels()["usd_unit"]
 
 
+def illustrative() -> str:
+    """The word every Scenario Effect and Blocked Opportunity value heading carries, e.g. "illustrative"."""
+    return labels()["illustrative"]["badge"].lower()
+
+
+def scenario_note(note: dict) -> None:
+    """The API's Scenario note beside a Scenario Effect: the Illustrative label, then each benchmark
+    (or that it was not run for this version) and, for a Blend, what a Scenario moves."""
+    st.info(f"**{note['label']}.** {note['text']}")
+    parts = [note[part]["text"] for part in ("benchmark", "model_association", "event_backtest")]
+    if note.get("blend"):
+        parts.append(note["blend"]["text"])
+    st.markdown("\n".join(f"- {text}" for text in parts))
+
+
 def caveats() -> dict[str, tuple[str, str]]:
     """Caveat badges (ADR 0005): the row field that sets each, its badge and what it means."""
     return {field: (caveat["badge"], caveat["text"]) for field, caveat in labels()["caveats"].items()}
