@@ -10,6 +10,7 @@ Event Backtest's predicted and observed change, and, for a Blend, what the Event
 
 from typing import TYPE_CHECKING
 
+from exportspredictor.evaluation import NOT_RUN
 from exportspredictor.model_choice import event_backtest_note
 
 if TYPE_CHECKING:
@@ -21,7 +22,6 @@ ILLUSTRATIVE_TEXT = (
     "learned from past trade, shown beside their benchmarks. They are not forecasts, and the model was not chosen "
     "on them."
 )
-NOT_RUN = "not run for this version"
 
 
 def scenario_note(artefacts: "Artefacts") -> dict:
