@@ -208,7 +208,7 @@ def millions(usd: pd.Series, rule: str):
     return [("<0.1" if 0 < v < 0.05 else f"{v:,.1f}") for v in value]
 
 
-def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: int, key: str):
+def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: int, key: str, first: bool = False):
     """The narrow table. Returns the selected row (a dict) or None."""
     rows = body["opportunities"]
     raw = pd.DataFrame(rows)
@@ -267,7 +267,7 @@ def ranking_table(body: dict, *, columns: list[str] | None, rule: str, height: i
     if cells and cells[0][0] < len(rows):
         st.session_state[f"{key}_pair"] = pairs[cells[0][0]]
     chosen = st.session_state.get(f"{key}_pair")
-    at = pairs.index(chosen) if chosen in pairs else None
+    at = pairs.index(chosen) if chosen in pairs else (0 if first else None)  # `first`: open on the top row
     tint = "background-color: rgba(42, 120, 214, 0.28); font-weight: 600"
     styled = table.style.apply(lambda r: [tint if r.name == at else ""] * len(r), axis=1)
     if rule != "<0.1":
@@ -479,14 +479,14 @@ def variant_c(columns, rule) -> dict:
     if view == "Wide table":
         # The same table key as the split view, so a selected row survives the swap.
         del columns  # the wide table has its own settled set
-        row = ranking_table(body, columns=WIDE_COLUMNS, rule=rule, height=390, key="table_c")
+        row = ranking_table(body, columns=WIDE_COLUMNS, rule=rule, height=390, key="table_c", first=True)
         if row:
             with st.container(border=True):
                 detail(row)
         return params
     table_side, detail_side = st.columns([5, 4], gap="large")
     with table_side:
-        row = ranking_table(body, columns=["Product", "Market", "Export Gap"], rule=rule, height=700, key="table_c")
+        row = ranking_table(body, columns=["Product", "Market", "Export Gap"], rule=rule, height=700, key="table_c", first=True)
     with detail_side, st.container(border=True, height=780):  # longer than the page: it scrolls on its own
         if row is None:
             st.markdown(
