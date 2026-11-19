@@ -8,7 +8,12 @@ read beyond the report. The model card (`governance`) and the notebook (`reporti
 same functions, so they cannot state different figures.
 """
 
-from exportspredictor.loop import served_configuration
+from exportspredictor.evaluation import relabelled
+from exportspredictor.loop import (
+    count_experiments,
+    experiment_label,
+    served_configuration,
+)
 from exportspredictor.prediction import MODEL_ALONE, ModelForm
 from exportspredictor.wording import number_text
 
@@ -23,6 +28,7 @@ def how_chosen(metadata: dict, report: dict) -> dict:
     experiment fields empty) when the artefact records no experiment results."""
     form = served_model_form(metadata)
     summary = ranking_summary(metadata.get("ranking_experiments"))
+    report = relabelled(report)  # today's names for a report saved earlier
     return {
         "recorded": summary is not None,
         "model_form": model_form_summary(metadata),
@@ -146,16 +152,20 @@ def event_backtest_note(metadata: dict, report: dict) -> dict | None:
 
 def ranking_summary(record: dict | None) -> dict | None:
     """How the experiment loop chose the served form: the Selection Measure, the Noise Floor's Win
-    Threshold, each experiment's best Arm and whether it was kept, and the five-fold confirmation
-    fold by fold (None where not run). None when nothing is recorded."""
+    Threshold, each recorded decision's best Arm, whether it was kept and its label (the research
+    note's experiment number and the Glossary's name), the number of experiments those decisions
+    cover (`n_experiments`; the loop records nine decisions for seven) and the five-fold
+    confirmation fold by fold (None where not run). None when nothing is recorded."""
     if not record:
         return None
     floor = record.get("noise_floor") or {}
-    experiments = []
+    experiments, decisions = [], {}
     for name, section in (record.get("experiments") or {}).items():
         best = next((row for row in section.get("arms", []) if row.get("best")), None)
+        decisions[name] = [row["arm"] for row in section.get("arms", [])]
         experiments.append({
             "name": name,
+            "label": experiment_label(name, decisions[name]),
             "kept": section.get("kept"),
             "best_arm": best["arm"] if best else None,
             "selection_measure": best["selection_measure"] if best else None,
@@ -167,6 +177,7 @@ def ranking_summary(record: dict | None) -> dict | None:
         "noise_floor_sd": floor.get("sd"),
         "win_threshold": floor.get("win_threshold"),
         "experiments": experiments,
+        "n_experiments": count_experiments(decisions),
         "confirmation": _confirmation(record.get("confirmation")),
     }
 
@@ -198,9 +209,11 @@ def _text(summary: dict | None, form: ModelForm) -> str:
     """The section's lead sentence; without experiment results it says so and names the served form."""
     if summary is None:
         return f"{NOT_RECORDED} {form.text}"
-    kept = [e["name"] for e in summary["experiments"] if e["kept"]]
+    kept = [f"{e['label']}: {e['kept']}" for e in summary["experiments"] if e["kept"]]
+    count, decisions = summary["n_experiments"], len(summary["experiments"])
+    steps = f", decided in {decisions} steps" if decisions != count else ""
     return (
-        f"{selection_rule_text(summary)} Of {len(summary['experiments'])} experiments, {len(kept)} kept a change"
+        f"{selection_rule_text(summary)} Of {count} experiment{'s' if count != 1 else ''}{steps}, {len(kept)} kept a change"
         + (f" ({', '.join(kept)})" if kept else "")
         + "."
     )

@@ -182,6 +182,8 @@ class Parts:
 # The fixture's stand-in for v1's frozen held-out Lift Exporters: MEX is outside the fixture's
 # Exporter scope, so the Lift model holds out FRA alone.
 FIXTURE_V1_LIFT_EXPORTERS = ("FRA", "MEX")
+# The `source` an artefact built from the fixture world records; real artefacts name the BACI release.
+FIXTURE_SOURCE = "fixture"
 # The synthetic frozen v1's manifest fields (`freeze.write` adds the tables' checksums).
 FIXTURE_V1_MANIFEST = {
     "tag": "fixture",
@@ -229,7 +231,7 @@ def build_artefacts(
     baseline_year: int | None = None,
     n_folds: int = N_FOLDS,
     device: str = "cpu",
-    source: str = "fixture",
+    source: str = FIXTURE_SOURCE,
     zero_sampling_rate: float = FIXTURE_ZERO_SAMPLING_RATE,
     search_plan: search.SearchPlan = search.FIXTURE_SEARCH,
     seed: int = 0,
@@ -934,6 +936,7 @@ def _v1_comparison(
         uk=UK,
         test_year=test_year,
         seed=seed,
+        name=comparison.version_name(report),
         ladder=ladder,
         ladder_plan=v1.ladder,
     )

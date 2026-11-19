@@ -222,6 +222,44 @@ def constraint_arms(weights: Sequence[float] = BLEND_WEIGHTS) -> list[Arm]:
     return [Arm("constraints on", {"monotone": True}, grid), Arm("constraints off", {"monotone": False}, grid)]
 
 
+# The research note numbers the seven experiments (docs/research/opportunity-ranking-experiments.md).
+# The loop records nine decisions of the rule: experiments 1 and 2 share one, and experiments 5 and 6
+# decide each Arm on its own. These map a recorded decision and its Arms back to the numbers.
+EXPERIMENT_NUMBERS = {
+    SELECT_EXPERIMENT: 3, TWO_PART_EXPERIMENT: 4, UK_ZEROS_EXPERIMENT: 5, ZERO_RATE_EXPERIMENT: 5,
+    CONSTRAINTS_EXPERIMENT: 7,
+}
+NAIVE_ARM_NUMBERS = {BLEND: 1, STARTING_POINT: 2}
+# What a decision is called where it is shown, where its recorded name is not the Glossary's.
+EXPERIMENT_DISPLAY_NAMES = {NAIVE_EXPERIMENT: "Naive Baseline"}
+
+
+def experiment_numbers(name: str, arms: Sequence[str]) -> tuple[int, ...]:
+    """The research note's numbers for a recorded decision with these Arms; () for a decision it does not number."""
+    if name == NAIVE_EXPERIMENT:
+        return tuple(sorted({NAIVE_ARM_NUMBERS[arm] for arm in arms if arm in NAIVE_ARM_NUMBERS}))
+    if name.startswith(product_detail_experiment("")):
+        return (6,)
+    return (EXPERIMENT_NUMBERS[name],) if name in EXPERIMENT_NUMBERS else ()
+
+
+def experiment_label(name: str, arms: Sequence[str]) -> str:
+    """A recorded decision as shown: its experiment number(s), then its name in the Glossary's words ("1–2. Naive Baseline")."""
+    numbers = experiment_numbers(name, arms)
+    shown = EXPERIMENT_DISPLAY_NAMES.get(name, name)
+    if not numbers:
+        return shown
+    span = str(numbers[0]) if len(numbers) == 1 else f"{numbers[0]}–{numbers[-1]}"
+    return f"{span}. {shown}"
+
+
+def count_experiments(decisions: Mapping[str, Sequence[str]]) -> int:
+    """How many of the research note's experiments these recorded decisions (name -> Arms) cover.
+    A decision the note does not number counts as one experiment."""
+    numbered = [experiment_numbers(name, arms) for name, arms in decisions.items()]
+    return len({n for numbers in numbered for n in numbers}) + sum(not numbers for numbers in numbered)
+
+
 def models_trained_by(settings: Mapping) -> int:
     """How many models an arm with these settings trains: two for a two-part model, else one."""
     return 2 if settings.get("two_part") else 1

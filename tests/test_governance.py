@@ -463,3 +463,17 @@ def test_the_headline_says_what_choosing_on_the_ranking_cost_in_deviance(fixture
     section = _section(governance.render_model_card(card), "## Headline")
     assert card["traded_away"]["deviance"] == deviance
     assert section.count(f"{deviance:,.1f}") == 2  # in the table and in the cost sentence
+
+
+def test_the_frozen_v1_comparison_names_the_blend_it_compared_even_when_saved_as_v2(fixture_artefacts):
+    from dataclasses import replace
+
+    report = fixture_artefacts.evaluation
+    stale = {**report["v1_comparison"], "verdict": {**report["v1_comparison"]["verdict"], "text": "v2's words, saved earlier."}}
+    card = governance.model_card(replace(fixture_artefacts, evaluation={**report, "v1_comparison": stale}))
+
+    section = governance.render_model_card(card).split("### Comparison with v1", 1)[1]
+    assert "the Blend's Export Potential ranks Markets" in section
+    assert ", the Blend " in section and "the Blend − v1" in section
+    # The gain ladder's steps still name v2's configuration, which the Blend kept.
+    assert "v2's Export Potential" not in section and "v2 − v1" not in section and "for v2 " not in section

@@ -10,14 +10,17 @@ Charts are SVG so that they render as images on GitHub without a plotting depend
 """
 
 import math
+import re
 from dataclasses import dataclass
 from html import escape
+from pathlib import Path
 
 import polars as pl
 
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.evaluation import NOT_RUN
+from exportspredictor.evaluation import NOT_RUN, relabelled
+from exportspredictor.loop import experiment_label
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
 NEUTRAL = "#8a8984"
@@ -55,21 +58,49 @@ class NotRun:
         return f"*{self!r}*"
 
 
+PROVENANCE_PREFIX = "Outputs below come from artefact version"
+_PROVENANCE = re.compile(re.escape(PROVENANCE_PREFIX) + r" (\S+) \(source: ([^;)]+)")
+
+
 def provenance(bundle: Artefacts) -> str:
     """Which artefact version the outputs come from, and whether it is real data or the fixture."""
     metadata = bundle.metadata
     derived = metadata.get("ppml_benchmark_from") or metadata.get("copied_from")
     return (
-        f"Outputs below come from artefact version {bundle.version} (source: {metadata.get('source')}; "
+        f"{PROVENANCE_PREFIX} {bundle.version} (source: {metadata.get('source')}; "
         f"Model Form: {bundle.model_form.text.rstrip('.')}"
         + (f"; derived from version {derived}" if derived else "")
         + ")."
     )
 
 
+def provenance_versions(printed: str) -> list[tuple[str, str]]:
+    """(version, source) of every `provenance` line in some printed output, in order."""
+    return _PROVENANCE.findall(printed)
+
+
+def model_card_excerpt(path: Path) -> str:
+    """A saved model card in brief, as Markdown: its title, its Headline section and the names of its other
+    sections, with where the whole card is. The whole card runs to tens of kilobytes; the notebook shows this."""
+    card = Path(path).read_text(encoding="utf-8")
+    title, _, rest = card.partition("\n")
+    sections = re.split(r"^## ", rest, flags=re.MULTILINE)[1:]
+    headline = next((section for section in sections if section.startswith("Headline\n")), None)
+    names = [section.split("\n", 1)[0] for section in sections]
+    lines = [
+        f"**{title.removeprefix('# ')}**", "",
+        (f"An excerpt. The whole card is `{Path(path).parent.name}/{Path(path).name}` in the artefacts directory, "
+         "written with the artefact."), "",
+    ]
+    if headline is not None:
+        lines += [f"## {headline.strip()}", ""]
+    lines += [f"**Its sections:** {'; '.join(names)}."]
+    return "\n".join(lines)
+
+
 def ranking_by_version(bundle: Artefacts) -> Chart | NotRun:
     """The test year's UK ranking for this version beside the Naive Baseline and earlier versions."""
-    block = (bundle.evaluation or {}).get("earlier_versions")
+    block = relabelled(bundle.evaluation or {}).get("earlier_versions")
     if not block:
         return NotRun("UK ranking by version")
     rows = [{**_pick(row, "name", "uk_ranking"), "kind": "this version" if i == 0 else "earlier version"}
@@ -91,14 +122,15 @@ EARLY_STOP_ROUNDS = 50
 
 
 def experiments(bundle: Artefacts) -> pl.DataFrame | NotRun:
-    """Every Arm of every experiment the loop ran: its Selection Measure, its change on the best so far,
-    its best round, whether it was kept, and whether it stopped within its first `EARLY_STOP_ROUNDS` rounds."""
+    """Every Arm of every experiment the loop ran: its experiment (`loop.experiment_label`), its Selection
+    Measure, its change on the best so far, its best round, whether it was kept, and whether it stopped
+    within its first `EARLY_STOP_ROUNDS` rounds."""
     record = bundle.metadata.get("ranking_experiments")
     if not record or not record.get("experiments"):
         return NotRun("The experiment loop")
     rows = [
         {
-            "experiment": name,
+            "experiment": experiment_label(name, [arm["arm"] for arm in section.get("arms", [])]),
             "arm": row["arm"],
             "selection_measure": row.get("selection_measure"),
             "change": row.get("change"),

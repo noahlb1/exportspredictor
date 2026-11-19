@@ -17,6 +17,7 @@ from pathlib import Path
 
 import polars as pl
 
+from exportspredictor import comparison
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.conformal import coverage_text
 from exportspredictor.evaluation import (
@@ -67,7 +68,7 @@ DECISIONS = [
      ("UK Product–Market pairs are split into five folds by a hash of the pair, all years together. Each pair's "
      "Export Potential, Scenario Effect and explanation come from the fold model that never saw it, so the "
      "Export Gap is not shrunk by memorisation. UK supply features leave the target Market out.")),
-    ("One monotone-constrained XGBoost model, blended with the naive baseline (ADR 0002, ADR 0008)",
+    ("One monotone-constrained XGBoost model, blended with the Naive Baseline (ADR 0002, ADR 0008)",
      ("A Tweedie-loss gradient-boosted model serves Opportunities and Scenarios. Every Trade Agreement and "
      "Trading Bloc feature has a +1 monotone constraint and the Applied Tariff a −1 constraint, so adding an "
      "agreement or cutting a tariff never lowers Export Potential; it does not make the size of the effect right. "
@@ -123,7 +124,7 @@ DECISIONS = [
      "Markets with no agreement, with the tariff zeroed when the agreement is on.")),
     ("A pre-registered comparison with v1",
      ("v2 is said to beat v1 only if, on the same 2023 UK rows, its within-Product rank correlation is higher with a "
-     "paired-bootstrap interval above 0, it beats the naive baseline by more than v1 did, and no secondary metric is "
+     "paired-bootstrap interval above 0, it beats the Naive Baseline by more than v1 did, and no secondary metric is "
      "worse beyond its interval. The rule was fixed before 2023 was read; a gain ladder splits the change.")),
     ("A PPML gravity benchmark for the Trade Agreement Scenario Effect",
      ("A 3-way fixed-effects Poisson pseudo-maximum-likelihood gravity model, at Sector level on the same Flows and "
@@ -178,7 +179,8 @@ def model_card(artefacts: Artefacts) -> dict:
     """The model card of one artefact version, built from its metadata, evaluation report and
     saved PPML benchmark (`Artefacts.ppml_benchmark`; listed under the parts not run where absent).
     """
-    metadata, report = artefacts.metadata, artefacts.evaluation or {}
+    # Read in today's words: the saved report's names and the v1 comparison's, which predate the Blend.
+    metadata, report = artefacts.metadata, comparison.relabelled(artefacts.evaluation or {})
     return {
         "version": artefacts.version,
         "owner": OWNER,
@@ -194,7 +196,7 @@ def model_card(artefacts: Artefacts) -> dict:
         "excluded_products": _excluded_products(artefacts.excluded_products),
         "metrics": _metrics(report),
         "not_run": parts_not_run(report, artefacts.ppml_benchmark) if report else [],
-        "v1_comparison": _comparison_summary(report.get("v1_comparison")),
+        "v1_comparison": _comparison_summary(report.get("v1_comparison"), comparison.version_name(report)),
         "earlier_versions": report.get("earlier_versions"),
         "traded_away": traded_away(report.get("earlier_versions")),
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
@@ -240,10 +242,14 @@ def _ranking_lines(summary: dict | None) -> list[str]:
     lines = [
         selection_rule_text(summary),
         "",
+        (f"Each row is one decision of the rule, labelled with its experiment's number in "
+         f"docs/research/opportunity-ranking-experiments.md: {len(summary['experiments'])} decisions for "
+         f"{summary['n_experiments']} experiments."),
+        "",
         "| Experiment | Best Arm | Selection Measure | Change on the best so far | Kept |",
         "| --- | --- | --- | --- | --- |",
         *[
-            f"| {e['name']} | {e['best_arm'] or 'n/a'} | {number_text(e['selection_measure'], '.4f')} | "
+            f"| {e['label']} | {e['best_arm'] or 'n/a'} | {number_text(e['selection_measure'], '.4f')} | "
             f"{number_text(e['change'], '+.4f')} | {e['kept'] or 'no'} |"
             for e in summary["experiments"]
         ],
@@ -377,13 +383,15 @@ def _metrics(report: dict) -> list[dict]:
     return rows
 
 
-def _comparison_summary(block: dict | None) -> dict | None:
-    """The pre-registered v1 comparison in brief: the verdict, the primary metric and the gain ladder."""
+def _comparison_summary(block: dict | None, name: str) -> dict | None:
+    """The pre-registered v1 comparison in brief: the verdict, the primary metric and the gain ladder;
+    `name` is what the words call the version compared with v1 (`comparison.version_name`)."""
     if not block:
         return None
     primary = block["primary"]
     ladder = block.get("ladder")
     return {
+        "name": name,
         "verdict": block["verdict"]["text"],
         "v2_beats_v1": block["verdict"]["v2_beats_v1"],
         "primary": {key: primary[key] for key in ("label", "v1", "v2", "naive", "difference", "ci")},
@@ -553,13 +561,13 @@ def render_model_card(card: dict) -> str:
 def _comparison_lines(summary: dict | None) -> list[str]:
     if summary is None:
         return ["The pre-registered comparison with v1 has not been run for this version."]
-    primary = summary["primary"]
+    primary, name = summary["primary"], summary["name"]
     lines = [
         f"**Verdict.** {summary['verdict']}",
         "",
         (
-            f"Primary metric ({primary['label']}): v1 {number_text(primary['v1'], '.3f')}, v2 {number_text(primary['v2'], '.3f')}, "
-            f"naive {number_text(primary['naive'], '.3f')}; v2 − v1 {number_text(primary['difference'], '+.3f')} (95% interval "
+            f"Primary metric ({primary['label']}): v1 {number_text(primary['v1'], '.3f')}, {name} {number_text(primary['v2'], '.3f')}, "
+            f"Naive Baseline {number_text(primary['naive'], '.3f')}; {name} − v1 {number_text(primary['difference'], '+.3f')} (95% interval "
             f"{number_text(primary['ci'][0], '+.3f')} to {number_text(primary['ci'][1], '+.3f')})."
         ),
     ]

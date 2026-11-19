@@ -178,7 +178,7 @@ def _show_model_choice(choice: dict) -> None:
             pd.DataFrame(
                 [
                     {
-                        "Experiment": e["name"],
+                        "Experiment": e.get("label") or e["name"],
                         "Best Arm": e["best_arm"] or "n/a",
                         "Selection Measure": e["selection_measure"],
                         "Change on the best so far": e["change"],

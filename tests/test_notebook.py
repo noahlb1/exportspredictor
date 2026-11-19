@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import pytest
 from nbclient import NotebookClient
 
 from exportspredictor import artefacts as store
-from exportspredictor import illustrative
+from exportspredictor import illustrative, pipeline, reporting
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "exports_predictor.ipynb"
 
@@ -85,6 +86,17 @@ def _words(source: str) -> int:
 def _prose() -> list[str]:
     notebook = nbformat.read(NOTEBOOK, as_version=4)
     return [cell.source for cell in notebook.cells if cell.cell_type == "markdown"]
+
+
+# UTF-8 read as cp1252: an en dash becomes "â€“", an accented letter "Ã" plus another.
+MOJIBAKE = ("â€", "Ã")
+
+
+def test_no_cell_source_is_mojibake():
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+
+    garbled = [cell.source[:80] for cell in notebook.cells if any(sign in cell.source for sign in MOJIBAKE)]
+    assert not garbled, f"UTF-8 read in the wrong encoding; restore these cells: {garbled}"
 
 
 def test_the_sections_are_in_the_argument_s_order():
@@ -221,7 +233,7 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
     assert hashlib.sha256(NOTEBOOK.read_bytes()).hexdigest() == committed
 
     loaded = store.load_latest(tmp_path)
-    assert loaded.metadata["source"] == "fixture"
+    assert loaded.metadata["source"] == pipeline.FIXTURE_SOURCE
     assert loaded.baseline.height == 20
     # The feature ablation and the learning curve travel with the artefact, measured on 2022 only.
     experiments = loaded.metadata["experiments"]
@@ -246,7 +258,7 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
     # The pre-registered v1 comparison section runs on the fixture's synthetic frozen v1.
     assert loaded.evaluation["v1_comparison"]["verdict"]["text"] in printed
     # The outputs name the artefact version they come from.
-    assert f"artefact version {loaded.version} (source: fixture" in printed
+    assert (loaded.version, pipeline.FIXTURE_SOURCE) in reporting.provenance_versions(printed)
     # Charts are static images: SVG, never an interactive chart that GitHub cannot render.
     kinds = {kind for cell in notebook.cells if cell.cell_type == "code" for o in cell.outputs for kind in o.get("data", {})}
     assert "image/svg+xml" in kinds
@@ -258,7 +270,7 @@ def _provenance_versions(notebook) -> list[tuple[str, str]]:
     printed = " ".join(
         output.get("text", "") for cell in notebook.cells if cell.cell_type == "code" for output in cell.outputs
     )
-    return re.findall(r"Outputs below come from artefact version (\S+) \(source: ([^;)]+)", printed)
+    return reporting.provenance_versions(printed)
 
 
 def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
@@ -276,4 +288,18 @@ def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
     assert provenance, "the outputs must name the artefact version they come from"
     for version, source in provenance:
         assert re.fullmatch(r"\d{8}T\d{6}Z", version), version
-        assert source != "fixture", "the committed outputs come from the fixture, not real data"
+        assert source != pipeline.FIXTURE_SOURCE, "the committed outputs come from the fixture, not real data"
+
+
+# "Outputs stay small" (spec #66): the largest single output, a table or an SVG chart, stays under this.
+OUTPUT_LIMIT_BYTES = 15_000
+
+
+def test_no_committed_output_is_large():
+    notebook = nbformat.read(NOTEBOOK, as_version=4)
+
+    sizes = [
+        (len(json.dumps(output)), cell.source[:60])
+        for cell in notebook.cells if cell.cell_type == "code" for output in cell.outputs
+    ]
+    assert not [size for size in sizes if size[0] > OUTPUT_LIMIT_BYTES], max(sizes)
