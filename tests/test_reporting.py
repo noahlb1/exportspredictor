@@ -189,3 +189,27 @@ def test_a_version_trained_at_the_searchs_round_count_discloses_that_deviance_ch
          "rounds_trained": 1453},
         {"model": "next rebuild", "chosen_on": "Selection Measure", "rounds_chosen": 1097, "rounds_trained": None},
     ]
+
+
+def test_provenance_lines_are_read_back_from_printed_outputs(fixture_artefacts):
+    printed = f"other output\n{reporting.provenance(fixture_artefacts)}\nmore output"
+
+    assert reporting.provenance_versions(printed) == [(fixture_artefacts.version, fixture_artefacts.metadata["source"])]
+    assert reporting.provenance_versions("no provenance here") == []
+
+
+def test_the_model_card_excerpt_is_its_headline_and_its_contents_with_a_link_to_the_whole(fixture_artefacts, tmp_path):
+    from exportspredictor import governance
+
+    path = governance.write_model_card(fixture_artefacts, tmp_path)
+    card = path.read_text(encoding="utf-8")
+
+    excerpt = reporting.model_card_excerpt(path)
+
+    headings = [line for line in card.splitlines() if line.startswith("## ")]
+    assert len(excerpt) < 4_000 < len(card)  # "Outputs stay small" (spec #66)
+    assert "## Headline" in excerpt and card.split("## Headline", 1)[1].split("\n## ", 1)[0].strip() in excerpt
+    for heading in headings:
+        assert heading[3:] in excerpt, heading
+    assert str(path.name) in excerpt
+    assert "## Limitations" not in excerpt  # later sections are listed, not shown

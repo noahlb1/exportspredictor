@@ -9,7 +9,11 @@ same functions, so they cannot state different figures.
 """
 
 from exportspredictor.evaluation import relabelled
-from exportspredictor.loop import count_experiments, experiment_label, served_configuration
+from exportspredictor.loop import (
+    count_experiments,
+    experiment_label,
+    served_configuration,
+)
 from exportspredictor.prediction import MODEL_ALONE, ModelForm
 from exportspredictor.wording import number_text
 
