@@ -145,3 +145,17 @@ def test_page_shows_the_event_backtest_predicted_against_observed_with_its_contr
     assert list(effects["Year"]) == ["2022", "2023", "2022–2023"]
     assert "India" in _text(page)  # the control Market, by name
     assert backtest["caveat"] in _text(page)
+
+
+def test_page_states_the_share_of_opportunities_inside_their_potential_range(page, fixture_artefacts):
+    # Read from the evaluation report through the API (spec #66): the share replaces a badge on almost every row
+    coverage = fixture_artefacts.evaluation["potential_range"]
+    share = f"{coverage['uncertain_opportunities']:,} of the {coverage['opportunities']:,} Opportunities"
+
+    assert 0 < coverage["uncertain_opportunities"] <= coverage["opportunities"]
+    stated = [element.value for element in page.markdown if share in element.value]
+    assert stated, "the share is not on the page"
+    assert any(
+        f"({coverage['uncertain_opportunity_share']:.0%})" in text and "inside their Potential Range" in text.split(share)[1]
+        for text in stated
+    )

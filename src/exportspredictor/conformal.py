@@ -250,10 +250,15 @@ def _weighted_quantiles(values: np.ndarray, weights: np.ndarray, quantiles) -> l
 
 
 def coverage_text(report: dict) -> str:
-    """The Potential Range's held-out coverage and the share of Uncertain Opportunities, in one paragraph."""
+    """The Potential Range's held-out coverage and the share of Uncertain Opportunities, in one paragraph.
+
+    The Uncertain Opportunity is reported only as this share, never as a badge per row (ADR 0007).
+    """
     return (
         f"On a held-out half of the calibration rows ({report['held_out_rows']:,} other Exporters' rows), "
         f"{report['coverage']:.0%} of their Actual Exports fell inside their Potential Range, against a target of "
         f"{report['target']:.0%}. {report['uncertain_opportunities']:,} of the {report['opportunities']:,} "
-        f"Opportunities ({report['uncertain_opportunity_share']:.0%}) are Uncertain Opportunities."
+        f"Opportunities ({report['uncertain_opportunity_share']:.0%}) have UK Actual Exports inside their "
+        "Potential Range (Uncertain Opportunities): most Export Gaps are within the variation normally seen among "
+        "comparable pairs, so an Export Gap ranks a lead rather than proving one."
     )

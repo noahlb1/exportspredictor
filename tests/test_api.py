@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
+from exportspredictor import conformal
 from exportspredictor.fixture import PRODUCTS
 from exportspredictor.pipeline import build_artefacts
 
@@ -814,3 +815,12 @@ def test_evaluation_never_serves_the_v1_comparison(client, fixture_artefacts):
     body = client.get("/evaluation").json()
 
     assert "v1_comparison" not in body
+
+
+def test_evaluation_states_the_share_of_opportunities_inside_their_potential_range(client, fixture_artefacts):
+    saved = fixture_artefacts.evaluation["potential_range"]
+    served = client.get("/evaluation").json()["potential_range"]
+
+    # Worded by the package at serve time, so a version saved before the badge was removed reads the same
+    assert served["text"] == conformal.coverage_text(saved)
+    assert served["uncertain_opportunity_share"] == saved["uncertain_opportunity_share"]
