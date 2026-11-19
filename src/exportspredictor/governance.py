@@ -512,7 +512,7 @@ def render_model_card(card: dict) -> str:
     lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
     lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
         "text", "The artefact records no Potential Range coverage for this version."), ""]
-    lines += ["## Metrics", "", "| Metric | Model | Reference (naive baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
+    lines += ["## Metrics", "", "| Metric | Model | Reference (Naive Baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
     lines += [
         f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
         f"{_number(m['naive'], m.get('percent', False))} | {m['text']} |"

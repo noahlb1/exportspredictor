@@ -304,7 +304,7 @@ def published_range(literature: Sequence[dict] = LITERATURE) -> dict:
 
 
 def model_agreement_association(bundle: "Artefacts") -> dict:
-    """The model's Trade Agreement association for UK pairs, on the artefact's served model form.
+    """The model's Trade Agreement association for UK pairs, on the artefact's served Model Form.
 
     Every UK pair without a Trade Agreement is re-predicted with one added (its tariff removed,
     ADR 0006) through `prediction.export_potential` with `bundle.model_form`, each pair by the
@@ -323,7 +323,7 @@ def benchmark(panel: pl.DataFrame, bundle: "Artefacts") -> dict:
 
     `ppml` is the fit on the Sector `panel` (`PpmlFit.as_dict`: the effect and its interval),
     `published_range` the published estimates it is compared with, and `model` the model's own
-    Trade Agreement association on the served model form (`model_agreement_association`).
+    Trade Agreement association on the served Model Form (`model_agreement_association`).
     """
     years = sorted(int(y) for y in panel["year"].unique())
     return {

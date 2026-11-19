@@ -12,7 +12,7 @@ Layout of `<root>/<version>/`:
                        the Blocked Opportunity value; its Flagged Product and Re-export Hub
                        flags (ADR 0005); its Potential Range and Uncertain Opportunity flag (ADR 0007);
                        whether its Baseline-year Applied Tariff is carried forward from 2021 (ADR 0006)
-    baseline_features.parquet  the same pairs' Baseline-year model inputs, fold and naive baseline
+    baseline_features.parquet  the same pairs' Baseline-year model inputs, fold and Naive Baseline
                        (`naive_usd`), for Scenarios and explanations
     history.parquet    per pair and year, last six years: UK Actual Exports (non-zero only before
                        the Gap Period) and, in Gap Period years, Export Potential and Export Gap;
@@ -24,9 +24,9 @@ Layout of `<root>/<version>/`:
     evaluation.json    accuracy on the test year, stability and later checks (optional)
     ppml_benchmark.json  the PPML benchmark (`ppml.benchmark`): the fit's effect and interval, the
                        published range and the model's Trade Agreement association on the served
-                       model form (optional: a version without it loads and serves)
+                       Model Form (optional: a version without it loads and serves)
 
-`artefact_format` is 3: format 2 served the model alone and recorded no model form (spec
+`artefact_format` is 3: format 2 served the model alone and recorded no Model Form (spec
 #65 made the served form a choice). `load` refuses any other format, including v1 folders
 (which carry none), and a folder missing any table above, so the API never serves a bundle
 it cannot read.
@@ -86,7 +86,7 @@ class Artefacts:
     # potential_range_low_usd, potential_range_high_usd, uncertain_opportunity, tariff_imputed
     baseline: pl.DataFrame
     # hs6, iso3, fold, FEATURES (transformed, as the models saw them), mfn_tariff (percent, the 2021 MFN rate),
-    # naive_usd (the naive baseline a blend takes)
+    # naive_usd (the Naive Baseline a Blend takes)
     baseline_features: pl.DataFrame
     history: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd, tariff_imputed
     products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
