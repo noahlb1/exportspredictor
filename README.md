@@ -126,6 +126,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Open Blocked Opportunities from the sidebar: every UK pair is ranked by Blocked Opportunity value, largest first, with no "Rank by" toggle; the Leaderboard and ranking pages no longer offer that order.
 - [ ] Pairs with a Market that has a UK Trade Agreement in force (e.g. Japan) have a value of 0; rows clearing 20% and $1M are marked as Blocked Opportunities.
 - [ ] The summary shows the number of pairs, the number of Blocked Opportunities and the total value of those Blocked Opportunities (not of every pair); all three change with the filters. No pair has a negative value: an added agreement never lowers Export Potential.
+- [ ] The summary's total and the table's Blocked Opportunity value column are headed "illustrative" (e.g. "Blocked Opportunity value, illustrative (USD, nominal)"), and an Illustrative note under the summary gives the PPML gravity benchmark, the model's association and the Event Backtest, or says one was not run for this version.
 - [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
 - [ ] Every caption describes the value as what the model associates with adding a Trade Agreement, not as a cause or a forecast.
 - [ ] Export the table to CSV and open it: the columns and rows match the table on screen.
