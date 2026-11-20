@@ -5,8 +5,8 @@ The Leaderboard shows the whole panel with `show(row)`, in order:
 
 1. `opening(row, body)`: the pair, its caveats and the tariff-carried-forward warning.
 2. `figures(body)`: Export Potential, Actual Exports and Export Gap, each with its term tooltip.
-3. `from_facts(row, body)`: the rest, from the facts table on: the facts, the Barrier (only for a pair with no UK
-   Trade Agreement), the factors and the year-by-year history.
+3. `from_facts(row, body)`: the rest, from the facts table on: the facts, the Market's Market Reach, the Barrier
+   (only for a pair with no UK Trade Agreement), the factors and the year-by-year history.
 
 A page with another opening (Blocked Opportunities leads with the Barrier, then its own three figures) reads the
 explanation with `explanation(row)`, draws `barrier(row, body, note=..., titled=True)` (the box headed by the pair),
@@ -32,6 +32,11 @@ RAISED, LOWERED = "#2a78d6", "#e34948"  # the factor bars (spec #103, "Theme and
 TEXT = {"light": "#1b1915", "dark": "#f5f2ec"}  # chart value labels take the mode's text colour
 # The Factor column has a fixed width, so the value and association beside it stay in view in a narrow panel.
 FACTOR_WIDTHS = {"Factor": st.column_config.TextColumn("Factor", width="medium")}
+MARKET_REACH_HELP = (
+    "How widely the UK sends its Products to this Market, against how widely it does across Markets. The model "
+    "associates broad UK reach into a Market with higher Export Potential there, for every Product alike, so a "
+    "Market-wide shortfall shows here, not in any one Product's figures."
+)
 FACTOR_COLUMNS = {
     "label": "Factor",
     "value_text": "Value for this pair",
@@ -96,6 +101,7 @@ def from_facts(row: dict, body: dict, *, with_barrier: bool = True, with_gap: bo
     year-by-year history. `with_gap=False` leaves out the Export Gap figures (the Relative Export Gap and each year's
     Export Gap), for a page that shows Baseline-year figures only."""
     facts(row, body, with_gap=with_gap)
+    market_reach(body)
     if with_barrier:
         barrier(row, body)
     factors(body)
@@ -145,6 +151,12 @@ def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
     with st.container(border=True):
         for name, text, tip in lines:
             st.markdown(f"**{name}:** {text}", help=tip)
+
+
+def market_reach(body: dict) -> None:
+    """The Market's Market Reach in one sentence (ADR 0010), where the API serves one."""
+    if body.get("market_reach"):
+        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
 
 
 def barrier(row: dict, body: dict, note: str | None = None, *, titled: bool = False) -> None:

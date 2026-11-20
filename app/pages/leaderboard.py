@@ -16,6 +16,7 @@ from app import client, panel
 from app.filters import leaderboard_filters, show_all
 from app.format import format_usd
 from app.frame import page
+from app.panel import MARKET_REACH_HELP
 from app.tables import (
     LEADERBOARD_FORMATS,
     LEADERBOARD_NARROW,
@@ -136,6 +137,8 @@ with page(
         )
         order = rank_orders()[body["rank_by"]]
         st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']}")
+        if body.get("market_reach"):  # a Market filter: the Market-wide shortfall beside its Products' (ADR 0010)
+            st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
         st.caption(labels()["totals_note"]["text"])  # beside the summed Export Gap (spec #113)
         if not rows:
             st.info("No Opportunities match these filters.")

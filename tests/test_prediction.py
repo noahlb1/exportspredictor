@@ -9,6 +9,7 @@ import pytest
 
 from exportspredictor.features import FEATURES
 from exportspredictor.prediction import (
+    MarketReach,
     ModelForm,
     blend,
     export_potential,
@@ -119,3 +120,77 @@ def test_blended_export_potential_is_in_dollars_and_positive_for_every_pair():
     # Geometric means in dollars, each side floored at $1: sqrt(1 × 10,000), sqrt(100 × 1), sqrt(400 × 100).
     assert blended.tolist() == pytest.approx([100.0, 10.0, 200.0])
     assert (blended > 0).all()
+
+
+def _reach_form(rows: pl.DataFrame, *, beta: float, constant: float, naive_weight: float = 0.0) -> ModelForm:
+    """A Model Form with Market Reach whose table gives each (fold, Market) of `rows` the offset 0.1 × (fold + 1),
+    except the first row's Market, which has none."""
+    pairs = rows.select("fold", importer="iso3").unique().filter(pl.col("importer") != rows["iso3"][0])
+    table = pairs.with_columns(
+        pl.col("fold").cast(pl.Int8),
+        products_sent=pl.lit(1), products_imported=pl.lit(2), products_expected=pl.lit(1.0),
+        offset=0.1 * (pl.col("fold").cast(pl.Float64) + 1),
+    )
+    reach = MarketReach(
+        beta=beta, form="share", pseudo_count=5.0, lag_years=1, reference_year=2023, constant=constant, table=table
+    )
+    return ModelForm(naive_weight=naive_weight, market_reach=reach)
+
+
+def test_market_reach_multiplies_a_uk_rows_export_potential_by_its_folds_market_offset_and_the_constant(
+    fixture_artefacts,
+):
+    rows = fixture_artefacts.baseline_features
+    models = fixture_artefacts.fold_models
+    form = _reach_form(rows, beta=2.0, constant=0.5, naive_weight=0.3)
+
+    reached = export_potential(rows, models, form=form).to_numpy()
+
+    blended = export_potential(rows, models, form=ModelForm(naive_weight=0.3)).to_numpy()
+    offset = np.where(rows["iso3"] == rows["iso3"][0], 0.0, 0.1 * (rows["fold"].to_numpy() + 1))
+    assert reached == pytest.approx(blended * np.exp(2.0 * offset) * 0.5, rel=1e-6)
+
+
+def test_other_exporters_rows_get_no_market_reach_offset_only_the_constant(fixture_artefacts):
+    rows = fixture_artefacts.baseline_features
+    models = fixture_artefacts.fold_models
+    form = _reach_form(rows, beta=2.0, constant=0.5)
+    others = rows.with_columns(exporter=pl.lit("FRA"))
+
+    reached = export_potential(others, models, form=form).to_numpy()
+
+    assert reached == pytest.approx(export_potential(others, models).to_numpy() * 0.5, rel=1e-6)
+
+
+def test_market_reach_without_its_table_refuses_to_predict(fixture_artefacts):
+    rows = fixture_artefacts.baseline_features
+    form = ModelForm.from_dict(_reach_form(rows, beta=2.0, constant=0.5).to_dict())
+
+    with pytest.raises(ValueError, match="Market Reach table"):
+        export_potential(rows, fixture_artefacts.fold_models, form=form)
+
+
+def test_a_model_form_with_market_reach_round_trips_its_settings_but_not_its_table(fixture_artefacts):
+    form = _reach_form(fixture_artefacts.baseline_features, beta=4.0, constant=0.8, naive_weight=0.3)
+
+    saved = form.to_dict()
+
+    assert saved["market_reach"] == {
+        "form": "share", "beta": 4.0, "pseudo_count": 5.0, "lag_years": 1, "reference_year": 2023, "constant": 0.8
+    }
+    assert ModelForm.from_dict(saved).market_reach.table is None
+    assert ModelForm.from_dict(saved) == form
+    assert "Market Reach" in form.text
+    assert ModelForm(naive_weight=0.3).to_dict() == {"form": "blend", "naive_weight": 0.3}  # older forms unchanged
+
+
+def test_log_contributions_add_up_to_export_potential_with_market_reach_in_the_base_value(fixture_artefacts):
+    rows = fixture_artefacts.baseline_features
+    models = fixture_artefacts.fold_models
+    form = _reach_form(rows, beta=2.0, constant=0.5, naive_weight=0.3)
+
+    contributions, log_potential = log_contributions(rows, models, form=form)
+    without, _ = log_contributions(rows, models, form=ModelForm(naive_weight=0.3))
+
+    assert np.exp(log_potential) == pytest.approx(export_potential(rows, models, form=form).to_numpy(), rel=1e-4)
+    assert contributions[:, :-1] == pytest.approx(without[:, :-1], abs=1e-6)

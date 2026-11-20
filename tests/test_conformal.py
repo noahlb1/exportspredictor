@@ -268,3 +268,16 @@ def test_a_size_group_with_no_held_out_rows_reports_no_coverage(scored):
     by_size = {row["size"]: row for row in report["by_size"]}
     assert by_size["over $100m"]["rows"] == 0
     assert by_size["over $100m"]["coverage"] is None
+
+
+def test_pair_coverage_is_the_share_of_pairs_whose_actual_exports_lie_inside_their_range():
+    baseline = pl.DataFrame(
+        {
+            "actual_exports_usd": [5.0, 10.0, 0.0, 40.0],
+            "potential_range_low_usd": [1.0, 10.0, 1.0, 10.0],
+            "potential_range_high_usd": [9.0, 20.0, 9.0, 20.0],
+        }
+    )
+
+    assert conformal.pair_coverage(baseline) == 0.5  # inside, on the edge; below, above
+    assert conformal.pair_coverage(baseline.head(0)) is None

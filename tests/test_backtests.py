@@ -569,8 +569,9 @@ def test_a_blend_needs_the_years_flows_for_its_lift_rows(fixture_world):
         backtests.lift_rows(chunks, settings, model, form=ModelForm(0.3))
 
 
-def test_lift_is_measured_on_the_served_model_form(report, fixture_artefacts):
-    assert report["lift"]["model_form"] == fixture_artefacts.metadata["model_form"]
+def test_lift_is_measured_on_the_served_model_form_without_market_reach(report, fixture_artefacts):
+    # Lift spans other years than the Baseline's Market Reach table covers, so it scores the Blend alone (ADR 0010).
+    assert report["lift"]["model_form"] == fixture_artefacts.model_form.without_market_reach().to_dict()
     assert report["lift"]["model_form"]["form"] == "blend"
 
 

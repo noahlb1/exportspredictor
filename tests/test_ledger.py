@@ -124,3 +124,29 @@ def test_the_notebook_shows_the_ledger_from_the_ledger_file_alone(tmp_path):
     assert shown.columns == ["date", "version", "fingerprint", "read", "command", "override"]
     assert shown.row(0, named=True)["version"] == "v-a"
     assert reporting.test_year_ledger().height == ledger.read_ledger().height
+
+REACH = {"form": "share", "beta": 4.0, "pseudo_count": 5.0, "lag_years": 1}
+FITTED = {**REACH, "reference_year": 2023, "constant": 0.81}
+
+
+def test_market_reach_settings_are_part_of_the_configuration_fingerprint():
+    reached = {**METADATA, "market_reach": REACH, "model_form": {**METADATA["model_form"], "market_reach": FITTED}}
+
+    assert "market_reach" in ledger.FINGERPRINT_KEYS
+    assert ledger.fingerprint(reached) != ledger.fingerprint(METADATA)
+    for setting, other in (("form", "rank"), ("beta", 2.0), ("pseudo_count", 1.0), ("lag_years", 2)):
+        changed = {**reached, "market_reach": {**REACH, setting: other}}
+        assert ledger.fingerprint(changed) != ledger.fingerprint(reached), setting
+
+
+def test_market_reachs_fitted_constant_does_not_change_the_fingerprint():
+    reached = {**METADATA, "market_reach": REACH, "model_form": {**METADATA["model_form"], "market_reach": FITTED}}
+    refitted = {**FITTED, "constant": 0.8100000001}
+    rebuilt = {**reached, "model_form": {**METADATA["model_form"], "market_reach": refitted}}
+
+    assert ledger.fingerprint(rebuilt) == ledger.fingerprint(reached)
+
+
+def test_a_configuration_without_market_reach_keeps_its_fingerprint():
+    # The fingerprint of METADATA as the ledger computed it before Market Reach existed (ticket #122's form).
+    assert ledger.fingerprint({**METADATA, "market_reach": None}) == ledger.fingerprint(METADATA)

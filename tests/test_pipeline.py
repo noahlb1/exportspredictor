@@ -6,6 +6,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from exportspredictor import market_reach
 from exportspredictor.evaluation import naive_potential
 from exportspredictor.features import (
     FEATURES,
@@ -123,10 +124,21 @@ def test_each_gap_years_uk_score_comes_from_the_fold_model_that_held_the_pair_ou
             model = artefacts.fold_models[fold]
             assert model.attr("held_out_fold") == str(fold)
             # The pair's fold model never trained on any of the pair's years (ADR 0001); the
-            # served blend takes its Export Potential with the year's naive baseline.
+            # served blend takes its Export Potential with the year's naive baseline, then the year's
+            # Market Reach scales every pair of one fold and Market alike (ADR 0010).
             model_alone = model.inplace_predict(rows.select(FEATURES).to_numpy().astype(np.float32))
             expected = blend(model_alone, rows["naive_usd"].to_numpy(), weight)
-            assert rows["export_potential_usd"].to_list() == pytest.approx(expected.tolist(), rel=1e-5)
+            ratios = rows.select("iso3", reach=rows["export_potential_usd"] / pl.Series(expected))
+            assert ratios.group_by("iso3").agg(spread=pl.col("reach").max() / pl.col("reach").min())[
+                "spread"
+            ].to_list() == pytest.approx([1.0] * ratios["iso3"].n_unique(), rel=1e-5)
+            if year == artefacts.baseline_year:
+                reach = artefacts.model_form.market_reach
+                offsets = rows.select("iso3").join(
+                    reach.table.filter(pl.col("fold") == fold), left_on="iso3", right_on="importer", how="left"
+                )["offset"].fill_null(0.0).to_numpy()
+                multiplier = np.exp(reach.beta * offsets) * reach.constant
+                assert ratios["reach"].to_list() == pytest.approx(multiplier.tolist(), rel=1e-5)
 
 
 def test_export_gap_is_potential_minus_actual(artefacts):
@@ -217,10 +229,12 @@ def test_metadata_records_the_device_and_the_search_and_training_time(artefacts)
 def test_the_artefact_serves_the_form_the_ranking_experiments_chose_and_records_them(artefacts):
     ranking = artefacts.metadata["ranking_experiments"]
 
-    assert artefacts.metadata["model_form"] == {
+    served = artefacts.metadata["model_form"]
+    assert {key: served[key] for key in ("form", "naive_weight")} == {
         "form": "blend",
         "naive_weight": ranking["best"]["settings"]["naive_weight"],
     }
+    assert served["market_reach"]["beta"] == market_reach.CHOSEN_BETA  # adopted on 2022 (#124, ADR 0010)
     assert ranking["selection_measure"] == SELECTION_MEASURE_TEXT
     assert {"selection_measures", "mean", "sd", "win_threshold"} <= set(ranking["noise_floor"])
     assert ranking["best"]["experiment"] == NAIVE_EXPERIMENT

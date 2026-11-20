@@ -328,3 +328,18 @@ def coverage_text(report: dict) -> str:
         "Potential Range (Uncertain Opportunities): most Export Gaps are within the variation normally seen among "
         "comparable pairs, so an Export Gap ranks a lead rather than proving one."
     )
+
+
+def pair_coverage(baseline: pl.DataFrame) -> float | None:
+    """The share of Baseline pairs whose Gap Period mean Actual Exports lie inside their Potential Range.
+
+    For UK pairs this is not the range's coverage (UK rows are never calibration rows, and a UK residual is its
+    Export Gap): it is a check that a change to UK Export Potential, such as Market Reach (ADR 0010), does not move
+    the range away from comparable UK-like pairs. None for an empty Baseline.
+    """
+    if baseline.is_empty():
+        return None
+    inside = (pl.col("actual_exports_usd") >= pl.col("potential_range_low_usd")) & (
+        pl.col("actual_exports_usd") <= pl.col("potential_range_high_usd")
+    )
+    return float(baseline.select(inside.mean()).item())

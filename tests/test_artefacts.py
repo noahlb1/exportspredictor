@@ -91,18 +91,24 @@ def test_a_folder_without_an_evaluation_still_loads(fixture_artefacts, tmp_path)
     assert store.load(folder).evaluation is None
 
 
-def test_fixture_artefacts_are_saved_as_format_3_with_the_model_form_they_serve(fixture_artefacts, tmp_path):
+def test_fixture_artefacts_are_saved_as_format_4_with_the_model_form_and_market_reach_they_serve(
+    fixture_artefacts, tmp_path
+):
     folder = store.save(fixture_artefacts, tmp_path)
     loaded = store.load(folder)
 
-    assert json.loads((folder / "metadata.json").read_text())["artefact_format"] == 3
+    assert json.loads((folder / "metadata.json").read_text())["artefact_format"] == 4
     assert loaded.model_form == fixture_artefacts.model_form
+    assert loaded.market_reach is not None and loaded.market_reach.equals(fixture_artefacts.market_reach)
+    assert loaded.model_form.market_reach is not None
+    assert loaded.model_form.market_reach.table is not None
     assert loaded.model_form.name == "blend"
     assert 0 < loaded.model_form.naive_weight < 1
 
 
 @pytest.mark.parametrize(
-    ("artefact_format", "named"), [(2, "artefact format 2"), (1, "format 1"), (None, "no artefact_format")]
+    ("artefact_format", "named"),
+    [(3, "artefact format 3"), (2, "artefact format 2"), (1, "format 1"), (None, "no artefact_format")],
 )
 def test_load_refuses_folders_of_another_format(fixture_artefacts, tmp_path, artefact_format, named):
     metadata = {k: v for k, v in fixture_artefacts.metadata.items() if k != "artefact_format"}
@@ -135,13 +141,13 @@ def test_round_trip_keeps_the_ppml_benchmark_of_a_full_run(fixture_artefacts, tm
     assert store.load(folder).ppml_benchmark == fixture_artefacts.ppml_benchmark
 
 
-def test_a_format_3_folder_without_the_ppml_benchmark_still_loads(fixture_default_artefacts, tmp_path):
+def test_a_format_4_folder_without_the_ppml_benchmark_still_loads(fixture_default_artefacts, tmp_path):
     folder = store.save(fixture_default_artefacts, tmp_path)
 
     assert not (folder / store.PPML_BENCHMARK_FILE).exists()
     bundle = store.load(folder)
     assert bundle.ppml_benchmark is None
-    assert bundle.metadata["artefact_format"] == 3
+    assert bundle.metadata["artefact_format"] == 4
 
 
 def test_a_copied_version_keeps_the_sources_optional_results_unless_given_new_ones(fixture_artefacts, tmp_path):

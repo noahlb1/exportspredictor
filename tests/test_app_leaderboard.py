@@ -201,6 +201,16 @@ def test_the_market_filter_ranks_that_markets_products(monkeypatch, fixture_api_
     assert gaps == sorted(gaps, reverse=True)
 
 
+def test_the_market_filter_shows_the_markets_reach_in_one_sentence(monkeypatch, fixture_api_url):
+    reach = httpx.get(f"{fixture_api_url}/opportunities/by-market/JPN").json()["market_reach"]
+    page = _home(monkeypatch, fixture_api_url)
+    assert not any(reach["text"] in text for text in _texts(page))
+
+    page.sidebar.selectbox(key="market").set_value("JPN").run()
+
+    assert any(reach["text"] in text for text in _texts(page))
+
+
 def test_the_region_filter_narrows_the_market_choice(monkeypatch, fixture_api_url):
     page = _home(monkeypatch, fixture_api_url)
 

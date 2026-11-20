@@ -46,6 +46,8 @@ from api.schemas import (
     LeaderboardQuery,
     LeaderboardSummary,
     MarketOut,
+    MarketReachOut,
+    PairMarketReachOut,
     PresetOut,
     ProductMatch,
     ProductOut,
@@ -61,7 +63,7 @@ from api.schemas import (
     tiered,
 )
 from exportspredictor import artefacts as store
-from exportspredictor import scenarios
+from exportspredictor import market_reach, scenarios
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
@@ -287,7 +289,9 @@ def create_app(
         """Products ranked for one Market."""
         market = _market(artefacts, iso3)
         return models.MarketOpportunities(
-            **_ranking(artefacts, query, models.ProductOpportunity, tiers, iso3=iso3), market=market
+            **_ranking(artefacts, query, models.ProductOpportunity, tiers, iso3=iso3),
+            market=market,
+            market_reach=_market_reach(artefacts, market),
         )
 
     @app.get("/evaluation", response_model=Evaluation)
@@ -358,6 +362,7 @@ def create_app(
             ],
             history=[HistoryOut(**vars(h)) for h in explanation.history],
             tariff_caveat=explanation.tariff_caveat,
+            market_reach=_pair_market_reach(artefacts, market, explanation.fold),
         )
 
     @app.get("/scenarios/presets", response_model=list[PresetOut])
@@ -450,16 +455,41 @@ def _filters(query: RankingQuery, tiers: tuple[CaveatTier, ...]) -> dict:
     }
 
 
+def _market_reach(artefacts: store.Artefacts, market: MarketOut) -> MarketReachOut | None:
+    """A Market's Market Reach for the Market view (ADR 0010); None where the artefact has none for it."""
+    reach = artefacts.model_form.market_reach
+    if reach is None or reach.table is None:
+        return None
+    figures = market_reach.market_figures(
+        reach.table, market.iso3, market=market.name, year=reach.reference_year, n_folds=len(artefacts.fold_models)
+    )
+    return None if figures is None else MarketReachOut(**figures)
+
+
+def _pair_market_reach(artefacts: store.Artefacts, market: MarketOut, fold: int) -> PairMarketReachOut | None:
+    """`_market_reach` with the offset the pair's own fold applies, for the pair detail."""
+    reach = artefacts.model_form.market_reach
+    if reach is None or reach.table is None:
+        return None
+    figures = market_reach.pair_figures(
+        reach.table, market.iso3, fold, market=market.name, year=reach.reference_year, beta=reach.beta,
+        n_folds=len(artefacts.fold_models),
+    )
+    return None if figures is None else PairMarketReachOut(**figures)
+
+
 def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, models: Tiered, tiers: tuple[CaveatTier, ...]) -> dict:
-    """The Leaderboard's fields: metadata, summary and top rows."""
+    """The Leaderboard's fields: metadata, summary and top rows, and the filtered Market's reach."""
+    reach = None
     if query.market is not None:
-        _market(artefacts, query.market)
+        reach = _market_reach(artefacts, _market(artefacts, query.market))
     _check_product(artefacts, query.product)
     ranked = ranking(artefacts, hs6=query.product, iso3=query.market, limit=query.limit, **_filters(query, tiers))
     return {
         **_metadata(artefacts),
         "summary": LeaderboardSummary(**ranked.summary),
         "opportunities": [_pick(models.LeaderboardOpportunity, row) for row in ranked.rows.iter_rows(named=True)],
+        "market_reach": reach,
     }
 
 
