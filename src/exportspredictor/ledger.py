@@ -48,7 +48,10 @@ FINGERPRINT_KEYS = (
     "zero_sampling_rate",
     "uk_zero_sampling_rate",
     "zero_sampling_seed",
+    "feature_set",
 )
+# Keys added after versions were read: hashed only when set, so an earlier version keeps its fingerprint.
+LATER_KEYS = ("feature_set",)
 
 
 class TestYearAlreadyRead(RuntimeError):
@@ -74,7 +77,9 @@ class Ledger:
 def fingerprint(metadata: Mapping) -> str:
     """A short hash of the configuration in `metadata` (`FINGERPRINT_KEYS`); version names and timings are left out."""
     seed = (metadata.get("model_params") or {}).get("seed")
-    config = {key: metadata.get(key) for key in FINGERPRINT_KEYS} | {"seed": seed}
+    config = {
+        key: metadata.get(key) for key in FINGERPRINT_KEYS if key not in LATER_KEYS or metadata.get(key)
+    } | {"seed": seed}
     return hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 

@@ -124,3 +124,12 @@ def test_the_notebook_shows_the_ledger_from_the_ledger_file_alone(tmp_path):
     assert shown.columns == ["date", "version", "fingerprint", "read", "command", "override"]
     assert shown.row(0, named=True)["version"] == "v-a"
     assert reporting.test_year_ledger().height == ledger.read_ledger().height
+
+def test_rebuilt_feature_files_are_a_new_version_and_the_original_files_keep_their_fingerprint():
+    """#127: the gravity fill changes the features' values, not their names, so the feature set is fingerprinted."""
+    metadata = {"source": "BACI", "test_year": 2023, "features": ["a"], "model_params": {"seed": 0}}
+
+    original = ledger.fingerprint({**metadata, "feature_set": ""})
+
+    assert original == ledger.fingerprint(metadata)  # versions recorded before the key existed
+    assert ledger.fingerprint({**metadata, "feature_set": "exporter_count"}) != original
