@@ -12,6 +12,8 @@ import pytest
 
 from exportspredictor import reporting
 from exportspredictor.caveats import CaveatContext, with_caveat_columns
+from exportspredictor.exclusions import SECTOR_71_REASON
+from exportspredictor.volatility import ONE_OFF_REASON, VOLATILE_REASON
 
 
 def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlier_versions(fixture_artefacts):
@@ -243,3 +245,22 @@ def test_each_caveat_tier_s_reach_counts_its_opportunities_overall_and_in_the_to
         ("Sanctioned Market", 2, 0, 2),
         ("Restricted Pair", 1, 1, 1),
     ]
+
+
+def test_flagged_products_are_counted_by_reason(fixture_artefacts):
+    baseline = pl.DataFrame({
+        "hs6": ["711319", "711319", "300490", "300490", "880230", "870323"],
+        "iso3": ["HKG", "JPN", "HKG", "JPN", "QAT", "JPN"],
+        "export_gap_usd": [-50.0, 10.0, 100.0, 200.0, 300.0, 400.0],
+    })
+    reasons = {"300490": VOLATILE_REASON, "880230": ONE_OFF_REASON}
+    marked = with_caveat_columns(baseline, CaveatContext(baseline_year=2024, flagged_product_reasons=reasons))
+
+    counts = reporting.flagged_products_by_reason(replace(fixture_artefacts, baseline=marked))
+
+    assert counts.rows() == [
+        (VOLATILE_REASON, 1, 2),
+        (SECTOR_71_REASON, 1, 1),
+        (ONE_OFF_REASON, 1, 1),
+    ]
+    assert counts.columns == ["Reason", "Products", "Opportunities"]
