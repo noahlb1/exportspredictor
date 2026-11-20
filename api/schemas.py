@@ -578,6 +578,7 @@ class PairEffect(BaseModel):
     effect_share: float
     baseline_tariff_pct: float | None  # the Applied Tariff (percent) in the Baseline; None where unknown
     scenario_tariff_pct: float | None  # and under the Scenario (clipped to the training range)
+    baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
     blocked_opportunity: bool
 
 
