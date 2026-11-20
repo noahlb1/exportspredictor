@@ -41,7 +41,6 @@ import polars as pl
 
 from exportspredictor import backtests, experiments, freeze
 from exportspredictor.evaluation import (
-    MIN_RANKED_ROWS,
     naive_potential,
     tweedie_unit_deviance,
 )
@@ -56,6 +55,7 @@ from exportspredictor.features import (
     Sources,
     build_features,
 )
+from exportspredictor.selection_measure import within_product_correlations
 from exportspredictor.wording import number_text
 
 SEED = 0
@@ -240,12 +240,13 @@ def _by_product(frame: pl.DataFrame, predictors: Sequence[str]) -> pl.DataFrame:
             .sum()
             for p in predictors
         },
-        **{f"{p}_rho": pl.corr(p, "value_usd", method="spearman") for p in predictors},
     )
-    ranked = pl.col("_rows") >= MIN_RANKED_ROWS
-    return sums.with_columns(
-        pl.when(ranked & pl.col(f"{p}_rho").is_not_nan()).then(pl.col(f"{p}_rho")).alias(f"{p}_rho") for p in predictors
-    ).sort("hs6")
+    # Pre-registered on the measure of its day (average ranks for ties), so it keeps the legacy measure: a
+    # continuity table of the 2023 reads already made, not a choice (ticket #115).
+    for p in predictors:
+        rho = within_product_correlations(frame, p, tie_proof=False).select("hs6", pl.col("rho").alias(f"{p}_rho"))
+        sums = sums.join(rho, on="hs6", how="left")
+    return sums.sort("hs6")
 
 
 def _metrics(products: pl.DataFrame, predictor: str, rows: int) -> dict:

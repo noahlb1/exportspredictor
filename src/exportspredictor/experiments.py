@@ -47,7 +47,7 @@ from xgboost.callback import TrainingCallback
 
 from exportspredictor import baci, scope
 from exportspredictor.downloads import write_parquet
-from exportspredictor.evaluation import MIN_RANKED_ROWS, TWEEDIE_POWER, tweedie_deviance
+from exportspredictor.evaluation import TWEEDIE_POWER, tweedie_deviance
 from exportspredictor.features import (
     ALL_FEATURES,
     FEATURES,
@@ -70,6 +70,7 @@ from exportspredictor.fixture import World
 from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import export_potential
+from exportspredictor.selection_measure import selection_measure
 from exportspredictor.training import (
     SECTOR_SUBSET,
     SELECTION_METRIC,
@@ -410,7 +411,7 @@ class _Fitter:
             "validation_rows": scored.height,
             "validation_deviance": float(scored.select(tweedie_deviance("prediction", power=TWEEDIE_POWER)).item()),
             "uk_pairs": grid.height,
-            "uk_spearman": spearman_within_product(grid, "prediction"),
+            "uk_spearman": selection_measure(grid, "prediction"),
             "seconds": round(time.perf_counter() - started, 1),
         }
 
@@ -418,17 +419,6 @@ class _Fitter:
 def _predict(model: xgb.Booster, table: pl.DataFrame, features: Sequence[str], rounds: int, device: str) -> pl.Series:
     """The first `rounds` trees' predictions, on the device the model trained on."""
     return export_potential(table, model, features=features, rounds=rounds, device=device)
-
-
-def spearman_within_product(rows: pl.DataFrame, prediction: str) -> float | None:
-    """Mean over Products (with at least MIN_RANKED_ROWS rows) of the Spearman correlation of `prediction` and `value_usd`."""
-    within = (
-        rows.group_by("hs6")
-        .agg(_n=pl.len(), _rho=pl.corr(prediction, "value_usd", method="spearman"))
-        .filter((pl.col("_n") >= MIN_RANKED_ROWS) & pl.col("_rho").is_not_nan())
-    )
-    value = within["_rho"].mean() if within.height else None
-    return None if value is None else float(value)
 
 
 def _in_sectors(sectors: Sequence[str] | None) -> pl.Expr:
