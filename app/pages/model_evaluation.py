@@ -284,8 +284,9 @@ def _show_scorecard(report: dict) -> None:
     )
 
 
-def _show_excluded_products(excluded: list[dict]) -> None:
-    """Why some Products are never ranked: the reasons with their counts, and the full list folded below."""
+def _show_excluded_products(excluded: list[dict], reasons: list[dict]) -> None:
+    """Why some Products are never ranked: the reasons with their counts (counted by the API), and the full list
+    folded below."""
     st.markdown(
         f"{len(excluded):,} Products are left out of training, scoring and every ranking, because their recorded "
         "trade follows bullion-market, pipeline or grid geography the model cannot see, or is unreliable; their "
@@ -299,9 +300,11 @@ def _show_excluded_products(excluded: list[dict]) -> None:
             "Reason": [row["reason"] for row in excluded],
         }
     )
-    reasons = full.groupby("Reason", sort=False).size().reset_index(name="Products")
     st.dataframe(
-        reasons.sort_values("Products", ascending=False, kind="stable")[["Reason", "Products"]], hide_index=True
+        pd.DataFrame(
+            {"Reason": [row["reason"] for row in reasons], "Products": [row["products"] for row in reasons]}
+        ),
+        hide_index=True,
     )
     with st.expander(f"All {len(full):,} Excluded Products"):
         st.dataframe(full, hide_index=True)
@@ -402,7 +405,9 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
                     st.markdown(part["text"])
 
         with _section("Excluded Products"):
-            _show_excluded_products(fetch("/products/excluded", client.api_url()))
+            _show_excluded_products(
+                fetch("/products/excluded", client.api_url()), fetch("/products/excluded/reasons", client.api_url())
+            )
 
         with _section("Known limitations"):
             for limitation in report["limitations"]:
