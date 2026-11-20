@@ -54,7 +54,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor import artefacts as store
-from exportspredictor import baci, ledger
+from exportspredictor import baci, ledger, market_reach
 from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
@@ -797,6 +797,7 @@ def evaluate(
     settings: dict,
     flows: pl.DataFrame | None = None,
     form: ModelForm = MODEL_ALONE,
+    reach_source: pl.DataFrame | None = None,
 ) -> dict:
     """The evaluation report for the test year.
 
@@ -806,7 +807,10 @@ def evaluate(
     `baseline_transform` the models that scored them, used for the stability check. `settings` (validation year, params, sampling rates, ...)
     is recorded in the report. `flows` are the test year's Flows the naive baseline is computed
     from (default: the non-zero Flows among `test_rows`); `form` is the model form the test-year
-    models are scored in (a blend takes that naive baseline).
+    models are scored in (a blend takes that naive baseline). A form with Market Reach is fitted
+    again for the test year (ADR 0010): its table from `reach_source`, the UK grid of the year
+    before the test year, and its rescale constant on `test_grid`, for the test-year models and,
+    for the stability check, for the Baseline models.
     """
     year = test_models.test_year
     if set(test_rows["year"].unique().to_list()) != {year} or set(test_grid["year"].unique().to_list()) != {year}:
@@ -818,6 +822,21 @@ def evaluate(
         flows = test_rows.filter(pl.col("value_usd") > 0)
     flows = flows.select("exporter", "importer", "hs6", "value_usd")
     test_rows, test_grid = naive_potential(test_rows, flows), naive_potential(test_grid, flows)
+    previous_form = form
+    if form.market_reach is not None:
+        if reach_source is None:
+            raise ValueError("A Model Form with Market Reach needs the UK grid of the year before the test year")
+        beta = form.market_reach.beta
+        fitted = {
+            name: market_reach.fit(
+                form, models, transform.apply(test_grid), reach_source, scored_year=year, uk=uk, beta=beta
+            )
+            for name, models, transform in (
+                ("test", test_models.models, test_models.transform),
+                ("previous", baseline_models, baseline_transform),
+            )
+        }
+        form, previous_form = fitted["test"], fitted["previous"]
     scored_rows = score_rows(test_rows, test_models.models, test_models.transform, uk, form=form)
     scored_grid = score_rows(test_grid, test_models.models, test_models.transform, uk, form=form)
     accuracy_by_scope = {
@@ -826,7 +845,7 @@ def evaluate(
     }
 
     previous = _uk_table(
-        score_out_of_fold(baseline_transform.apply(test_grid), list(baseline_models), uk=uk, form=form)
+        score_out_of_fold(baseline_transform.apply(test_grid), list(baseline_models), uk=uk, form=previous_form)
     )
     baseline_year = year + 1
     stable = stability(baseline, previous)
@@ -935,6 +954,7 @@ def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) 
         settings=report_settings(artefacts.metadata),
         flows=load_year_flows(year, load_sources(root)[1], root),
         form=artefacts.model_form,
+        reach_source=pl.read_parquet(folder / f"uk_grid_{year - market_reach.LAG_YEARS}.parquet"),
     )
 
 

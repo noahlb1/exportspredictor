@@ -38,10 +38,16 @@ The model associates broad UK reach into a Market with higher Export Potential t
 does not say that reach causes exports.
 """
 
+from collections.abc import Sequence
+from dataclasses import replace
+
 import numpy as np
 import polars as pl
+import xgboost as xgb
 
-from exportspredictor.folds import N_FOLDS
+from exportspredictor.features import FEATURES
+from exportspredictor.folds import N_FOLDS, assign_folds, score_out_of_fold
+from exportspredictor.prediction import MarketReach, ModelForm
 
 FORM = "share"  # the open review's share form (its rank-expectation form is the alternative not taken)
 BETA_GRID = (0.0, 0.5, 1.0, 2.0, 4.0)
@@ -114,3 +120,105 @@ def _multiplier(rows: pl.DataFrame, table: pl.DataFrame, beta: float) -> np.ndar
         .to_numpy()
     )
     return np.exp(beta * offsets)
+
+
+def settings(beta: float = CHOSEN_BETA) -> dict:
+    """Market Reach's configuration as the artefact metadata records it (a test-year fingerprint key, ADR 0009)."""
+    return {"form": FORM, "beta": beta, "pseudo_count": PSEUDO_COUNT, "lag_years": LAG_YEARS}
+
+
+def fit(
+    form: ModelForm,
+    models: Sequence[xgb.Booster],
+    grid: pl.DataFrame,
+    source: pl.DataFrame,
+    *,
+    scored_year: int,
+    uk: str,
+    beta: float = CHOSEN_BETA,
+    features: Sequence[str] = FEATURES,
+) -> ModelForm:
+    """`form` with Market Reach fitted for `scored_year`: its table and its rescale constant.
+
+    `grid` is the scored year's UK grid as the models see it (transformed, with `naive_usd` for a
+    blend); `source` is the UK grid of the reference year, `scored_year` − `LAG_YEARS` (untransformed:
+    `year`, `hs6`, `importer`, `value_usd`, `log_demand_loo`). Folds are the pairs' hash folds, so a
+    pair's own Flows never reach the offsets of its own fold. c is computed once, on `grid` scored by
+    `form` without Market Reach, so the UK's summed Export Potential over the grid is unchanged; every
+    Scenario then reuses the same c.
+    """
+    sourced = assign_folds(source.rename({"importer": "iso3"}), len(models)).rename({"iso3": "importer"})
+    table = reach_table(sourced, scored_year, n_folds=len(models))
+    plain = form.without_market_reach()
+    scored = score_out_of_fold(grid, list(models), uk, inputs=features, form=plain)
+    rows = scored.select("fold", importer=pl.col("importer").cast(pl.String))
+    constant = rescale_constant(scored["export_potential_usd"].to_numpy(), rows, table, beta=beta)
+    reach = MarketReach(
+        beta=beta, form=FORM, pseudo_count=PSEUDO_COUNT, lag_years=LAG_YEARS,
+        reference_year=scored_year - LAG_YEARS, constant=constant, table=table,
+    )
+    return replace(plain, market_reach=reach)
+
+
+def by_market(table: pl.DataFrame, n_folds: int = N_FOLDS) -> pl.DataFrame:
+    """Each Market's reach over every UK pair, from its per-fold rows: importer, products_sent,
+    products_imported, products_expected and offset (the mean of its folds' offsets).
+
+    Each fold's counts come from the pairs outside it, so each pair is counted in all folds but its
+    own; dividing the sums by (folds − 1) gives the counts over every pair.
+    """
+    others = max(n_folds - 1, 1)
+    return (
+        table.group_by("importer")
+        .agg(
+            products_sent=(pl.col("products_sent").sum() / others).round().cast(pl.Int64),
+            products_imported=(pl.col("products_imported").sum() / others).round().cast(pl.Int64),
+            products_expected=pl.col("products_expected").sum() / others,
+            offset=pl.col("offset").mean(),
+        )
+        .sort("importer")
+    )
+
+
+def market_figures(
+    table: pl.DataFrame, iso3: str, *, market: str, year: int, n_folds: int = N_FOLDS
+) -> dict | None:
+    """One Market's reach as Advisors see it (`by_market`), with its sentence; None for a Market without one.
+
+    Returns year (the reference year), products_sent, products_imported, products_expected, offset and text.
+    """
+    found = by_market(table.filter(pl.col("importer") == iso3), n_folds)
+    if found.is_empty():
+        return None
+    row = found.row(0, named=True)
+    return {
+        "year": year,
+        "products_sent": row["products_sent"],
+        "products_imported": row["products_imported"],
+        "products_expected": row["products_expected"],
+        "offset": row["offset"],
+        "text": reach_text(row["products_sent"], row["products_imported"], row["products_expected"], market, year),
+    }
+
+
+def pair_figures(
+    table: pl.DataFrame, iso3: str, fold: int, *, market: str, year: int, beta: float, n_folds: int = N_FOLDS
+) -> dict | None:
+    """`market_figures` with the offset applied to a pair of `fold` (`pair_offset`) and its multiplier
+    exp(β · offset) (`pair_multiplier`, before the rescale constant); None for a Market without a reach."""
+    figures = market_figures(table, iso3, market=market, year=year, n_folds=n_folds)
+    if figures is None:
+        return None
+    applied = table.filter((pl.col("fold") == fold) & (pl.col("importer") == iso3))["offset"]
+    offset = float(applied.item()) if applied.len() else 0.0
+    return {**figures, "pair_offset": offset, "pair_multiplier": float(np.exp(beta * offset))}
+
+
+def reach_text(sent: int, imported: int, expected: float, market: str, year: int) -> str:
+    """A Market's reach in one sentence, so a Market-wide shortfall stays visible beside Product-level Export Gaps.
+
+    The UK can send Products the Market imports from no other Exporter, so `sent` may exceed `imported`."""
+    return (
+        f"In {year} the UK sent {sent:,} Products to {market}, which imported {imported:,} from other Exporters; "
+        f"at the UK's usual reach across Markets, about {expected:,.0f} were expected."
+    )

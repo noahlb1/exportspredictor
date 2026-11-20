@@ -73,7 +73,7 @@ The observed value of a UK Flow in a given year.
 _Avoid_: real exports, historic trade
 
 **Export Gap**:
-The mean, over the Gap Period, of Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals.
+The mean, over the Gap Period, of Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals. With Market Reach in the Model Form, it is a Product-specific shortfall within a Market; a Market-wide shortfall shows in the Market's reach.
 _Avoid_: untapped potential, headroom, shortfall
 
 **Gap Period**:
@@ -151,8 +151,12 @@ A market-share estimate of a Flow with no model: the Exporter's share of the Pro
 _Avoid_: benchmark (the PPML benchmark is another thing), naive model
 
 **Model Form**:
-How Export Potential is made from the fold models. The served form is a **Blend**: the model's Export Potential and the Naive Baseline combined on the log scale with fixed weights (the Naive Baseline's weight chosen on the Selection Measure). The Naive Baseline has no policy features, so a Scenario moves only the model's share.
+How Export Potential is made from the fold models. The served form is a **Blend**: the model's Export Potential and the Naive Baseline combined on the log scale with fixed weights (the Naive Baseline's weight chosen on the Selection Measure), then scaled by each Market's Market Reach. The Naive Baseline has no policy features, so a Scenario moves only the model's share; Market Reach scales a pair with and without the Scenario alike.
 _Avoid_: ensemble, model type
+
+**Market Reach**:
+How widely the UK sends its Products to a Market, against how widely the ranking expects it to, learned from the UK's other Products. It scales the Export Potential of every UK pair in the Market alike, learned from other folds' pairs in the year before (ADR 0010).
+_Avoid_: market penetration, market share, UK presence
 
 **Configuration Fingerprint**:
 A short hash of the settings that decide a version's test-year models and how they are scored (features, Model Form, hyperparameters, round count, sampling, data source). Rebuilding the same configuration under a new version name keeps the fingerprint (ADR 0009).

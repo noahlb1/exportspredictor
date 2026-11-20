@@ -49,9 +49,10 @@ FINGERPRINT_KEYS = (
     "uk_zero_sampling_rate",
     "zero_sampling_seed",
     "feature_set",
+    "market_reach",  # Market Reach's form, β, pseudo-count and lag (`market_reach.settings`, ADR 0010)
 )
 # Keys added after versions were read: hashed only when set, so an earlier version keeps its fingerprint.
-LATER_KEYS = ("feature_set",)
+LATER_KEYS = ("feature_set", "market_reach")
 
 
 class TestYearAlreadyRead(RuntimeError):
@@ -80,6 +81,11 @@ def fingerprint(metadata: Mapping) -> str:
     config = {
         key: metadata.get(key) for key in FINGERPRINT_KEYS if key not in LATER_KEYS or metadata.get(key)
     } | {"seed": seed}
+    # The Model Form's fitted Market Reach (its reference year and rescale constant) is computed from the data and
+    # the models, so a rebuild of the same configuration could differ in the last digits; its settings are hashed
+    # through `market_reach` instead.
+    if isinstance(config.get("model_form"), Mapping):
+        config["model_form"] = {k: v for k, v in config["model_form"].items() if k != "market_reach"}
     return hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 

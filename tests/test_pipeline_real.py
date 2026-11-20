@@ -173,7 +173,9 @@ def test_the_real_run_without_saved_loop_results_is_refused(derived_data_root):
 
 
 def test_the_real_run_serves_the_blend_its_loop_chose_with_the_naive_baseline_of_every_exporter(trained, ranking):
-    assert trained.metadata["model_form"] == {"form": "blend", "naive_weight": 0.3}
+    served = trained.metadata["model_form"]
+    assert {key: served[key] for key in ("form", "naive_weight")} == {"form": "blend", "naive_weight": 0.3}
+    assert served["market_reach"]["reference_year"] == 2023
     assert trained.metadata["ranking_experiments"]["best"] == ranking["best"]
     assert (trained.baseline_features["naive_usd"] > 0).any()
 

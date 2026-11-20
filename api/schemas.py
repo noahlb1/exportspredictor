@@ -113,6 +113,22 @@ class MarketOut(BaseModel):
     region: str
 
 
+class MarketReachOut(BaseModel):
+    """A Market's Market Reach (ADR 0010): how widely the UK sends its Products there against how widely expected."""
+
+    year: int  # the reference year whose UK Flows it is learned from (the Baseline year − 1)
+    products_sent: int  # the Market's Products with a UK Flow that year
+    products_imported: int  # the Market's Products imported from other Exporters that year
+    products_expected: float  # products_imported × the UK's share across every Market
+    offset: float  # log of the Market's UK share against that share, shrunk (mean over the fold tables)
+    text: str  # the one sentence the app shows
+
+
+class PairMarketReachOut(MarketReachOut):
+    pair_offset: float  # the offset of the pair's own fold table, the one its Export Potential takes
+    pair_multiplier: float  # exp(β · pair_offset), before the rescale constant that keeps the UK's total
+
+
 # Each choice set is built from the package's own constant, so it is defined once. Pydantic validates
 # and documents the Literal; pyright cannot evaluate a Literal built at runtime, so it reads a str.
 if TYPE_CHECKING:
@@ -245,6 +261,7 @@ class _Ranking(BaseModel):
 
 class Leaderboard(_Ranking):
     summary: LeaderboardSummary
+    market_reach: MarketReachOut | None = None  # the filtered Market's reach; None without a Market filter
     opportunities: list[LeaderboardOpportunity]  # UK Product–Market pairs, sorted by `rank_by`, largest first
 
 
@@ -294,6 +311,7 @@ class ProductOpportunities(_Ranking):
 
 class MarketOpportunities(_Ranking):
     market: MarketOut
+    market_reach: MarketReachOut | None  # None only for a Market with no UK grid pairs in the reference year
     opportunities: list[ProductOpportunity]  # Products, sorted by `rank_by`, largest first
 
 
@@ -770,6 +788,7 @@ class Explanation(BaseModel):
     uncertain_opportunity: bool  # an Uncertain Opportunity
     potential_range_text: str  # the Potential Range in plain words, for the pair's detail view
     tariff_caveat: str | None  # set when the Baseline year's Applied Tariff is carried forward (ADR 0006)
+    market_reach: PairMarketReachOut | None  # the Market's reach, shown apart from the Product's factors
     factors: list[FactorOut]  # largest absolute contribution first
     # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
     # years with UK Actual Exports only

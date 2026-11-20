@@ -134,17 +134,18 @@ def test_the_chosen_markets_products_have_the_stated_columns_in_baseline_year_fi
 def test_a_row_whose_actual_exports_exceed_export_potential_shows_an_uplift_not_a_dollar_level(
     monkeypatch, blocked_api_url
 ):
-    # India: whisky ($38.1m exported, below its $40.6m Export Potential) and jewellery ($26.1m exported, above $22.4m).
+    # Hong Kong: jewellery ($18.3m exported, below its $18.8m Export Potential) and cars ($9.8m exported, above $4.3m).
     page = _page(monkeypatch, blocked_api_url)
-    page.session_state["blocked_market"] = "IND"
+    page.session_state["blocked_market"] = "HKG"
     page.run()
 
     products = _products(page).set_index("Product")
-    whisky, jewellery = products.loc["Whiskies"], products.drop(index="Whiskies").iloc[0]
-    assert whisky["Potential with agreement"] == pytest.approx(52.8, abs=0.05)
-    assert pd.isna(whisky["Uplift %"])
-    assert pd.isna(jewellery["Potential with agreement"])
-    assert jewellery["Uplift %"] == pytest.approx(25.1, abs=0.05)  # $5.6m on $22.4m of Export Potential
+    [cars_label] = [name for name in products.index if name.startswith("Motor cars")]
+    jewellery, cars = products.drop(index=cars_label).iloc[0], products.loc[cars_label]
+    assert jewellery["Potential with agreement"] == pytest.approx(23.9, abs=0.05)  # $18.8m + $5.1m
+    assert pd.isna(jewellery["Uplift %"])
+    assert pd.isna(cars["Potential with agreement"])
+    assert cars["Uplift %"] == pytest.approx(25.1, abs=0.05)  # $1.1m on $4.3m of Export Potential
 
 
 @pytest.mark.parametrize(("hs6", "iso3"), BLOCKED_PAIRS)
@@ -161,17 +162,17 @@ def test_the_panel_leads_with_the_barrier_then_three_baseline_year_figures(monke
     assert any("The Barrier" in box.value for box in page.warning)
     labels = [metric.label for metric in page.metric]
     assert labels == ["Baseline Export Potential", "Export Potential with a Trade Agreement", "Actual Exports"]
-    # Whisky in India, 2024: $40.6m Export Potential, $12.2m Blocked Opportunity value, $38.1m exported.
-    assert [metric.value for metric in page.metric] == ["$40.6m", "$52.8m", "$38.1m"]
+    # Whisky in India, 2024: $61.6m Export Potential, $18.5m Blocked Opportunity value, $38.1m exported.
+    assert [metric.value for metric in page.metric] == ["$61.6m", "$80.0m", "$38.1m"]
 
 
 def test_where_actual_exports_exceed_export_potential_the_panel_shows_the_uplift_and_why(monkeypatch, blocked_api_url):
     page = _choose(_page(monkeypatch, blocked_api_url), CARS, "HKG")
 
-    # Cars in Hong Kong, 2024: $4.6m Export Potential, $1.1m Blocked Opportunity value (+25%), $9.8m exported.
+    # Cars in Hong Kong, 2024: $4.3m Export Potential, $1.1m Blocked Opportunity value (+25%), $9.8m exported.
     labels = [metric.label for metric in page.metric]
     assert labels == ["Baseline Export Potential", "Uplift with a Trade Agreement", "Actual Exports"]
-    assert [metric.value for metric in page.metric] == ["$4.6m", "+25%", "$9.8m"]
+    assert [metric.value for metric in page.metric] == ["$4.3m", "+25%", "$9.8m"]
     [barrier] = [box.value for box in page.warning if "The Barrier" in box.value]
     assert "+25%" in barrier and UPLIFT_EXPLANATION in barrier
     assert not [text for text in _texts(page) if "Export Potential with a Trade Agreement is" in text]
@@ -184,16 +185,16 @@ def test_the_uplift_explanation_shows_only_where_actual_exports_exceed_export_po
     page = _choose(_page(monkeypatch, blocked_api_url), hs6, iso3)
 
     [barrier] = [box.value for box in page.warning if "The Barrier" in box.value]
-    # Whisky in India is the one below its Export Potential ($38.1m against $40.6m); the others are above.
-    assert (UPLIFT_EXPLANATION in barrier) == ((hs6, iso3) != (WHISKY, "IND"))
+    # Cars in Hong Kong is the one above its Export Potential ($9.8m against $4.3m); the others are below.
+    assert (UPLIFT_EXPLANATION in barrier) == ((hs6, iso3) == (CARS, "HKG"))
 
 
 def test_the_active_filters_line_states_the_count_and_the_illustrative_total(monkeypatch, blocked_api_url):
     page = _page(monkeypatch, blocked_api_url)
 
     line = next(element.value for element in page.markdown if "No filters" in element.value)
-    # 12.2 + 5.6 + 4.9 + 1.1 = $23.8m
-    assert "4 Blocked Opportunities" in line and "illustrative" in line and "$23.8m" in line
+    # 18.5 + 7.1 + 5.1 + 1.1 = $31.8m
+    assert "4 Blocked Opportunities" in line and "illustrative" in line and "$31.8m" in line
     caption = " ".join(element.value for element in page.caption)
     assert "$ millions" in caption and "2024" in caption and "Scenarios page" in caption
     assert "20%" in caption and "$1.0m" in caption
@@ -233,7 +234,7 @@ def test_a_product_search_keeps_that_products_blocked_opportunities(monkeypatch,
 
 
 def test_url_parameters_set_the_filters(monkeypatch, blocked_api_url):
-    page = _page(monkeypatch, blocked_api_url, region="South Asia", min_value_usd="6000000")
+    page = _page(monkeypatch, blocked_api_url, region="South Asia", min_value_usd="10000000")
 
     assert list(_markets(page)["Market"]) == ["India"]
     assert list(_products(page)["Product"]) == ["Whiskies"]

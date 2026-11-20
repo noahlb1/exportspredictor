@@ -1026,7 +1026,7 @@ def add_to_latest(
         lift_held_out=lift_exporters(
             freeze.lift_held_out_exporters(v1_frozen or freeze.v1_folder(artefacts_root)), scope=metadata["exporter_scope"], uk=baci.UK
         ),
-        form=bundle.model_form,
+        form=bundle.model_form.without_market_reach(),  # other years than the Baseline's table covers
         year_flows=lambda year: load_year_flows(year, load_sources(root)[1], root),
     )
     report = {**bundle.evaluation, **result}

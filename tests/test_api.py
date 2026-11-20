@@ -39,7 +39,7 @@ def test_health_reports_version_format_baseline_year_and_gap_period_once_loaded(
     assert response.json() == {
         "ready": True,
         "artefact_version": "fixture-test",
-        "artefact_format": 3,
+        "artefact_format": 4,
         "baseline_year": 2024,
         "gap_years": [2022, 2024],
         "gap_period_label": "2022–2024 average",
@@ -463,6 +463,7 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "potential_range_text",
         "gap_period_label",
         "tariff_caveat",
+        "market_reach",
         "factors",
         "history",
     }
@@ -1359,3 +1360,43 @@ def test_excluded_product_reasons_are_counted_most_products_first(fixture_artefa
         reasons = constructed.get("/products/excluded/reasons").json()
 
     assert reasons == [{"reason": fuels, "products": 2}, {"reason": bullion, "products": 1}]
+
+
+def _jpn_counts(world, year: int) -> tuple[int, int]:
+    """The UK's Products sent to Japan in `year`, and those Japan imported from other Exporters, from the Flows."""
+    from exportspredictor.exclusions import drop_excluded
+    from exportspredictor.fixture import UK
+
+    flows = drop_excluded(world.flows.filter((pl.col("year") == year) & (pl.col("importer") == "JPN")))
+    flowing = flows.filter(pl.col("value_usd") > 0)
+    return (
+        flowing.filter(pl.col("exporter") == UK)["hs6"].n_unique(),
+        flowing.filter(pl.col("exporter") != UK)["hs6"].n_unique(),
+    )
+
+
+def test_the_market_view_serves_the_markets_reach_in_the_reference_year(client, fixture_world, fixture_artefacts):
+    year = fixture_artefacts.model_form.market_reach.reference_year
+    sent, imported = _jpn_counts(fixture_world, year)
+
+    for read in ("/opportunities/by-market/JPN", "/opportunities/top?market=JPN"):
+        reach = client.get(read).json()["market_reach"]
+        assert reach["year"] == year
+        assert (reach["products_sent"], reach["products_imported"]) == (sent, imported)
+        assert 0 < reach["products_expected"] <= imported
+        assert reach["text"].startswith(
+            f"In {year} the UK sent {sent:,} Products to Japan, which imported {imported:,} from other Exporters"
+        )
+        assert f"about {reach['products_expected']:,.0f} were expected" in reach["text"]
+    assert client.get("/opportunities/top").json()["market_reach"] is None
+
+
+def test_the_pair_detail_serves_its_markets_reach_and_the_offset_applied_to_it(client, fixture_artefacts):
+    body = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
+    market = client.get("/opportunities/by-market/JPN").json()["market_reach"]
+    reach = fixture_artefacts.model_form.market_reach
+    applied = reach.table.filter((pl.col("fold") == body["fold"]) & (pl.col("importer") == "JPN"))["offset"].item()
+
+    assert {k: body["market_reach"][k] for k in market} == market
+    assert body["market_reach"]["pair_offset"] == pytest.approx(applied)
+    assert body["market_reach"]["pair_multiplier"] == pytest.approx(math.exp(reach.beta * applied))

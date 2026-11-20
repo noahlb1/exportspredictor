@@ -23,15 +23,19 @@ Layout of `<root>/<version>/`:
     markets.parquet    Market lookup (iso3, name, region)
     excluded_products.parquet  Excluded Products (hs6, description, sector, reason), ADR 0005
     potential_range_bands.parquet  the Potential Range's band offsets (ADR 0007, `conformal.fit_bands`)
+    market_reach.parquet  the Baseline year's Market Reach table, one row per fold and Market (ADR 0010,
+                       `market_reach.TABLE_COLUMNS`); the served Model Form applies it
     evaluation.json    accuracy on the test year, stability and later checks (optional)
     ppml_benchmark.json  the PPML benchmark (`ppml.benchmark`): the fit's effect and interval, the
                        published range and the model's Trade Agreement association on the served
                        Model Form (optional: a version without it loads and serves)
 
-`artefact_format` is 3: format 2 served the model alone and recorded no Model Form (spec
-#65 made the served form a choice). `load` refuses any other format, including v1 folders
-(which carry none), and a folder missing any table above, so the API never serves a bundle
-it cannot read.
+`artefact_format` is 4: format 3 had no Market Reach (spec #113, ADR 0010), and format 2
+served the model alone and recorded no Model Form (spec #65 made the served form a choice).
+`load` refuses any other format, including v1 folders (which carry none), and a folder missing
+any table above, so the API never serves a bundle it cannot read. Only `pipeline.rereach`, which
+turns a format-3 folder into a format-4 one from its own fold models, reads format 3
+(`load_format_3`).
 
 Version names sort chronologically (default: a UTC timestamp), so the newest folder is
 the lexically greatest one that holds a metadata file.
@@ -54,7 +58,7 @@ EVALUATION_FILE = "evaluation.json"
 PPML_BENCHMARK_FILE = "ppml_benchmark.json"
 # The optional JSON results, by `Artefacts` field: each is None where its file is absent.
 _OPTIONAL_JSON = {"evaluation": EVALUATION_FILE, "ppml_benchmark": PPML_BENCHMARK_FILE}
-ARTEFACT_FORMAT = 3
+ARTEFACT_FORMAT = 4
 _TABLES = (
     "baseline",
     "baseline_features",
@@ -63,7 +67,9 @@ _TABLES = (
     "markets",
     "excluded_products",
     "potential_range_bands",
+    "market_reach",
 )
+_FORMAT_3_TABLES = tuple(name for name in _TABLES if name != "market_reach")
 # Baseline columns renamed after the first format-2 folders were written (code review of
 # spec #39): `load` reads an older folder under the current names.
 _RENAMED_BASELINE_COLUMNS = {
@@ -98,6 +104,9 @@ class Artefacts:
     # band, min_export_potential_usd, rows, low_offset_log, high_offset_log (`conformal.fit_bands`;
     # versions before ADR 0007's log-scale amendment hold low_offset_usd, high_offset_usd)
     potential_range_bands: pl.DataFrame
+    # fold, importer, products_sent, products_imported, products_expected, offset: the Baseline year's Market Reach
+    # (`market_reach.reach_table`, ADR 0010); None only in a format-3 folder read by `load_format_3`.
+    market_reach: pl.DataFrame | None = None
     # The evaluation report (`exportspredictor.evaluation`), JSON-ready; None if not evaluated.
     evaluation: dict | None = None
     # The PPML benchmark (`ppml.benchmark`), JSON-ready; None where it was not run for this version.
@@ -110,7 +119,7 @@ class Artefacts:
     @property
     def model_form(self) -> ModelForm:
         """How Export Potential is made from the fold models: pass it to every `prediction` call."""
-        return ModelForm.from_dict(self.metadata["model_form"])
+        return ModelForm.from_dict(self.metadata["model_form"], self.market_reach)
 
     @property
     def baseline_year(self) -> int:
@@ -144,7 +153,10 @@ def save(artefacts: Artefacts, root: Path) -> Path:
     for k, model in enumerate(artefacts.fold_models):
         model.save_model(folder / "models" / f"fold_{k}.ubj")
     for name in _TABLES:
-        getattr(artefacts, name).write_parquet(folder / f"{name}.parquet")
+        table = getattr(artefacts, name)
+        if table is None:
+            raise ValueError(f"Artefact format {ARTEFACT_FORMAT} needs the table {name}")
+        table.write_parquet(folder / f"{name}.parquet")
     _write_optional_json(folder, {field: getattr(artefacts, field) for field in _OPTIONAL_JSON})
     # Metadata goes last: its presence marks the folder as complete.
     (folder / METADATA_FILE).write_text(json.dumps(artefacts.metadata, indent=2), encoding="utf-8")
@@ -152,17 +164,27 @@ def save(artefacts: Artefacts, root: Path) -> Path:
 
 
 def load(folder: Path) -> Artefacts:
-    """Load one artefact folder; `UnreadableArtefacts` if it is not a complete format-3 folder."""
+    """Load one artefact folder; `UnreadableArtefacts` if it is not a complete format-4 folder."""
+    return _load(folder, ARTEFACT_FORMAT, _TABLES)
+
+
+def load_format_3(folder: Path) -> Artefacts:
+    """Load a complete format-3 folder (no Market Reach), only for `pipeline.rereach` to upgrade it."""
+    return _load(folder, 3, _FORMAT_3_TABLES)
+
+
+def _load(folder: Path, artefact_format: int, names: tuple[str, ...]) -> Artefacts:
     folder = Path(folder)
     metadata = json.loads((folder / METADATA_FILE).read_text(encoding="utf-8"))
     found = metadata.get("artefact_format")
-    if found != ARTEFACT_FORMAT:
+    if found != artefact_format:
         named = "no artefact_format" if found is None else f"artefact format {found}"
         raise UnreadableArtefacts(
-            f"{folder} has {named}; this code reads only artefact format {ARTEFACT_FORMAT}, which records the "
-            "model form it serves. Rebuild it with `python -m exportspredictor.pipeline`"
+            f"{folder} has {named}; this code reads only artefact format {artefact_format}, which records the "
+            "model form it serves and its Market Reach. Rebuild it with `python -m exportspredictor.pipeline`, or "
+            "upgrade a format-3 folder with `python -m exportspredictor.pipeline rereach`"
         )
-    missing = [name for name in _TABLES if not (folder / f"{name}.parquet").exists()]
+    missing = [name for name in names if not (folder / f"{name}.parquet").exists()]
     if missing:
         raise UnreadableArtefacts(f"{folder} is missing the table(s) {', '.join(missing)}")
     models = []
@@ -170,7 +192,7 @@ def load(folder: Path) -> Artefacts:
         model = xgb.Booster()
         model.load_model(folder / "models" / f"fold_{k}.ubj")
         models.append(model)
-    tables = {name: pl.read_parquet(folder / f"{name}.parquet") for name in _TABLES}
+    tables = {name: pl.read_parquet(folder / f"{name}.parquet") for name in names}
     tables["baseline"] = tables["baseline"].rename(_RENAMED_BASELINE_COLUMNS, strict=False)
     return Artefacts(
         metadata=metadata,

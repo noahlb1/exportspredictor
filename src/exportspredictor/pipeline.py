@@ -68,6 +68,7 @@ from exportspredictor import (
     governance,
     ledger,
     loop,
+    market_reach,
     ppml,
     search,
     volatility,
@@ -234,6 +235,7 @@ class _Trained:
     potential_range_bands: pl.DataFrame
     potential_range_report: dict  # held-out coverage and the share of Opportunities that are uncertain
     metadata: dict
+    market_reach: pl.DataFrame  # the Baseline year's Market Reach table (`market_reach.TABLE_COLUMNS`)
 
 
 def build_artefacts(
@@ -278,21 +280,10 @@ def build_artefacts(
         world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed, exporters=scope
     )
 
-    def flows_of_year(year: int) -> pl.DataFrame:
-        """Every Exporter's Flows of one year."""
-        return flows.filter(pl.col("year") == year)
-
-    # Every Gap Period year is scored over the union of the Gap Period's grids, as `features.build` writes them.
-    # `build_features` gets every year's Flows: Market import growth reads year t-3.
-    gap_flows = {year: flows_of_year(year) for year in gap_years(baseline_year)}
-    pairs = grid_pairs(uk_grid(f, UK) for f in gap_flows.values())
-    grids = {year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in gap_flows.items()}
-    # The Potential Range's calibration rows: the Baseline year's training rows (ADR 0007).
-    calibration = build_features(
-        training_rows(gap_flows[baseline_year], rate=zero_sampling_rate, seed=seed, uk=UK, exporters=scope),
-        flows,
-        sources,
+    inputs = fixture_scoring_inputs(
+        world, baseline_year=baseline_year, zero_sampling_rate=zero_sampling_rate, seed=seed, exporters=scope
     )
+    grids, calibration, flows_of_year = inputs.grids, inputs.calibration, inputs.year_flows
     if row_budget is not None:  # refuse before the search trains anything
         check_row_budget(count_rows(list(training.values()), uk=UK), 1.0, row_budget)
     validation_year = baseline_year - 2
@@ -334,7 +325,8 @@ def build_artefacts(
     )
     report = _evaluate(
         training, grids[baseline_year - 1], trained, metadata, markets=world.markets, device=device, non_uk_rate=1.0,
-        test_flows=gap_flows[baseline_year - 1],
+        test_flows=flows_of_year(baseline_year - 1),
+        reach_grid=grids[baseline_year - 1 - market_reach.LAG_YEARS],
         seed=seed, backtest_plan=FIXTURE_BACKTESTS, high_income=world.high_income,
         constraint_plan=constraints.FIXTURE_PLAN,
         lift_held_out=backtests.lift_exporters(frozen.lift_held_out_exporters, scope=scope, uk=UK),
@@ -352,6 +344,7 @@ def build_artefacts(
         markets=world.markets,
         excluded_products=excluded_products(world.products),
         potential_range_bands=trained.potential_range_bands,
+        market_reach=trained.market_reach,
         evaluation=report,
     )
     if not parts.ppml_benchmark:
@@ -367,6 +360,61 @@ def _timed_benchmark(panel: pl.DataFrame, bundle: Artefacts) -> dict:
     benchmark = ppml.benchmark(panel, bundle)
     print(f"PPML benchmark in {time.perf_counter() - started:.0f} s", flush=True)
     return {**benchmark, "seconds": round(time.perf_counter() - started, 2)}
+
+
+@dataclass(frozen=True)
+class ScoringInputs:
+    """What scoring the Gap Period from fold models reads (`_score_gap_period`, `rereach`)."""
+
+    grids: dict[int, Chunk]  # each Gap Period year's UK grid, and that of the year before the first (Market Reach)
+    calibration: Chunk  # the Baseline year's training rows: the Potential Range's calibration rows (ADR 0007)
+    year_flows: Callable[[int], pl.DataFrame]  # every Exporter's Flows of a year, for the naive baseline
+
+
+def fixture_scoring_inputs(
+    world: World,
+    *,
+    baseline_year: int,
+    zero_sampling_rate: float = FIXTURE_ZERO_SAMPLING_RATE,
+    seed: int = 0,
+    exporters: Sequence[str] | None = None,
+) -> ScoringInputs:
+    """The fixture world's UK grids, calibration rows and Flows, as `features.build` writes them for real data."""
+    flows, sources = world.flows, world.sources
+
+    def flows_of_year(year: int) -> pl.DataFrame:
+        """Every Exporter's Flows of one year."""
+        return flows.filter(pl.col("year") == year)
+
+    # Every Gap Period year is scored over the union of the Gap Period's grids, as `features.build` writes them.
+    # `build_features` gets every year's Flows: Market import growth reads year t-3.
+    gap_flows = {year: flows_of_year(year) for year in gap_years(baseline_year)}
+    pairs = grid_pairs(uk_grid(f, UK) for f in gap_flows.values())
+    grids: dict[int, Chunk] = {
+        year: build_features(uk_grid(f, UK, pairs=pairs), flows, sources) for year, f in gap_flows.items()
+    }
+    # Market Reach for the first Gap Period year is learned from the UK grid of the year before (ADR 0010).
+    first = min(gap_flows) - market_reach.LAG_YEARS
+    grids[first] = build_features(uk_grid(flows_of_year(first), UK), flows, sources)
+    # The Potential Range's calibration rows: the Baseline year's training rows (ADR 0007).
+    calibration = build_features(
+        training_rows(gap_flows[baseline_year], rate=zero_sampling_rate, seed=seed, uk=UK, exporters=exporters),
+        flows,
+        sources,
+    )
+    return ScoringInputs(grids=grids, calibration=calibration, year_flows=flows_of_year)
+
+
+def real_scoring_inputs(root: Path, baseline_year: int) -> ScoringInputs:
+    """The real per-year feature files' UK grids and calibration rows, and the BACI Flows, for `baseline_year`."""
+    folder = features_dir(root)
+    to_iso3 = load_sources(root)[1]
+    first = gap_years(baseline_year)[0] - market_reach.LAG_YEARS
+    return ScoringInputs(
+        grids={y: folder / f"uk_grid_{y}.parquet" for y in [first, *gap_years(baseline_year)]},
+        calibration=folder / f"training_{baseline_year}.parquet",
+        year_flows=lambda year: load_year_flows(year, to_iso3, root),
+    )
 
 
 def fixture_training(
@@ -461,18 +509,14 @@ def build_real_artefacts(
         if not (loop.loop_dir(root) / loop.RESULTS_FILE).exists():
             raise ValueError(f"No experiment loop results in {loop.loop_dir(root)}; run `python -m exportspredictor.loop`")
         ranking_results = loop.load(root)
-    to_iso3 = load_sources(root)[1]
-
-    def flows_of_year(year: int) -> pl.DataFrame:
-        """Every Exporter's Flows of one year, read from its own file."""
-        return load_year_flows(year, to_iso3, root)
-
+    inputs = real_scoring_inputs(root, baseline_year)
+    flows_of_year = inputs.year_flows
     training = {y: folder / f"training_{y}.parquet" for y in settings["years"] if y < baseline_year}
-    grids = {y: folder / f"uk_grid_{y}.parquet" for y in gap_years(baseline_year)}
+    grids = inputs.grids
     trained = _train_and_score(
         training, grids, baseline_year=baseline_year, search_results=search_results,
         n_folds=n_folds, device=device, non_uk_rate=non_uk_rate, seed=seed, row_budget=row_budget,
-        calibration=folder / f"training_{baseline_year}.parquet", min_band_rows=min_band_rows,
+        calibration=inputs.calibration, min_band_rows=min_band_rows,
         cache=features_dir(root).parent / "fold_models" / _file_key(folder / "features.json"),
         ranking_results=ranking_results, year_flows=flows_of_year,
     )
@@ -509,6 +553,7 @@ def build_real_artefacts(
     report = _evaluate(
         training, test_grid, trained, metadata, markets=evaluation.markets_with_income(markets, root),
         test_flows=flows_of_year(baseline_year - 1),
+        reach_grid=folder / f"uk_grid_{baseline_year - 1 - market_reach.LAG_YEARS}.parquet",
         device=device, non_uk_rate=trained.metadata["non_uk_sampling_rate"], seed=seed,
         backtest_plan=backtest_plan,
         backtest_chunks={y: folder / f"training_{y}.parquet" for y in settings["years"]},
@@ -539,6 +584,7 @@ def build_real_artefacts(
         markets=markets,
         excluded_products=excluded_products(baci.products(root)),
         potential_range_bands=trained.potential_range_bands,
+        market_reach=trained.market_reach,
         evaluation=report,
     )
     if not parts.ppml_benchmark:
@@ -643,68 +689,21 @@ def _train_and_score(
             (cached / _TRAINING_FILE).write_text(json.dumps({"training_seconds": training_seconds}), encoding="utf-8")
             evaluation.TestModels(baseline_year, training_years, models, transform).save(cached)
 
-    # 3. Score every Gap Period year's UK grid out-of-fold, each with that year's features.
-    scored = {
-        year: _score_grid(evaluation.naive_potential(read_chunk(grids[year]), year_flows(year)), transform, models, form)
-        for year in gap_years(baseline_year)
-    }
-    pairs = scored[baseline_year].select("hs6", "iso3")
-    if any(not table.select("hs6", "iso3").equals(pairs) for table in scored.values()):
-        raise ValueError("Every Gap Period year must score the same UK pairs (the union of the years' grids)")
-    yearly = pl.concat(
-        [
-            table.select(
-                "hs6",
-                "iso3",
-                year=pl.lit(year, pl.Int16),
-                actual_exports_usd="value_usd",
-                export_potential_usd="export_potential_usd",
-                tariff_imputed="tariff_imputed",
-            )
-            for year, table in scored.items()
-        ]
-    ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
-    # Volatile Flagged Products (ADR 0005): read from the UK's exports in the training years only.
+    # Volatile Flagged Products (ADR 0005): read from the UK's exports in the training years only, for the Products
+    # of the Baseline year's UK grid.
+    products = read_chunk(grids[baseline_year]).select(pl.col("hs6").cast(pl.String).unique())["hs6"].to_list()
     volatile_products = volatility.volatile_products(
-        year_flows, training, baseline_year=baseline_year, products=pairs["hs6"].unique().to_list()
+        year_flows, training, baseline_year=baseline_year, products=products
     )
-    baseline = (
-        export_gaps(yearly)
-        .join(
-            scored[baseline_year].select(
-                "hs6", "iso3", "tariff_imputed", baseline_export_potential_usd="export_potential_usd"
-            ),
-            on=["hs6", "iso3"],
-        )
-        .pipe(with_caveat_columns, CaveatContext(baseline_year, volatile_products.reasons))
-        .pipe(with_opportunity_columns)
+    # 3–4. Score the Gap Period with Market Reach, the Potential Range and the Blocked Opportunity values.
+    scored = _score_gap_period(
+        grids, models, transform, form, baseline_year=baseline_year, year_flows=year_flows,
+        calibration=calibration, min_band_rows=min_band_rows,
+        caveats=lambda table: with_caveat_columns(table, CaveatContext(baseline_year, volatile_products.reasons)),
     )
-    # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
-    # `mfn_tariff` (not a feature) is the rate a Scenario restores when it removes a Trade Agreement (ADR 0006).
-    # `naive_usd` (not a feature) is the naive baseline a blend takes; a Scenario leaves it unchanged.
-    baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES, "mfn_tariff", "naive_usd")
-    # The Potential Range (ADR 0007): other Exporters' Baseline-year rows, never the UK's.
-    started = time.perf_counter()
-    scored_calibration = conformal.score_calibration(
-        evaluation.naive_potential(read_chunk(calibration), year_flows(baseline_year)), models, transform, uk=UK,
-        form=form,
-    )
-    bands = conformal.fit_bands(scored_calibration, min_rows=min_band_rows)
-    baseline = conformal.with_potential_range(baseline, bands)
-    potential_range_report = {
-        **conformal.coverage_report(scored_calibration, min_rows=min_band_rows),
-        **conformal.uncertain_share(baseline),
-    }
-    potential_range_seconds = time.perf_counter() - started
-    print(
-        f"Potential Range from {scored_calibration.height:,} calibration rows in {potential_range_seconds:.0f} s: "
-        f"{bands.height} bands, held-out coverage {potential_range_report['coverage']:.1%}",
-        flush=True,
-    )
-    # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
-    baseline = with_blocked_opportunity_values(
-        baseline, blocked_opportunity_values(baseline_features, baseline, models, form=form)
-    )
+    form, baseline, bands = scored.form, scored.baseline, scored.potential_range_bands
+    reach = form.market_reach
+    assert reach is not None and reach.table is not None
     metadata = {
         "artefact_format": ARTEFACT_FORMAT,
         "baseline_year": baseline_year,
@@ -717,8 +716,11 @@ def _train_and_score(
         "features": FEATURES,
         "feature_set": selected.feature_set,  # the feature files read ("" is the original build; #127)
         "monotone_constraints": MONOTONE_CONSTRAINTS,
-        # The served form and the experiments that chose it (spec #65, ADR 0008).
+        # The served form and the experiments that chose it (spec #65, ADR 0008), with Market Reach (ADR 0010):
+        # its settings, and each Gap Period year's reference year and rescale constant.
         "model_form": form.to_dict(),
+        "market_reach": market_reach.settings(reach.beta),
+        "market_reach_fits": _reach_fits(scored.forms),
         "ranking_experiments": loop.ranking_record(ranking_results),
         "non_uk_sampling_rate": non_uk_rate,
         "non_uk_sampling_rate_derived": derived,
@@ -752,9 +754,9 @@ def _train_and_score(
             "min_band_rows": min_band_rows,
             "bands": bands.height,
             "calibration_year": baseline_year,
-            "calibration_rows": scored_calibration.height,
-            "calibration_exporters": scored_calibration["exporter"].n_unique(),
-            "seconds": round(potential_range_seconds, 2),
+            "calibration_rows": scored.calibration_rows,
+            "calibration_exporters": scored.calibration_exporters,
+            "seconds": round(scored.potential_range_seconds, 2),
         },
         # The defaults the tables were built and are ranked with (spec #39 *Artefacts*).
         "thresholds": {
@@ -774,12 +776,147 @@ def _train_and_score(
     return _Trained(
         models=models,
         baseline=baseline,
+        baseline_features=scored.baseline_features,
+        yearly=scored.yearly,
+        potential_range_bands=bands,
+        potential_range_report=scored.potential_range_report,
+        metadata=metadata,
+        market_reach=reach.table,
+    )
+
+
+@dataclass(frozen=True)
+class _Scored:
+    """Steps 3–4 of the module docstring, from fold models: what `_score_gap_period` returns."""
+
+    form: ModelForm  # the Baseline year's, with its Market Reach: the served Model Form
+    forms: dict[int, ModelForm]  # each Gap Period year's, with that year's Market Reach
+    baseline: pl.DataFrame
+    baseline_features: pl.DataFrame
+    yearly: pl.DataFrame  # hs6, iso3, year, actual_exports_usd, export_potential_usd, export_gap_usd, tariff_imputed
+    potential_range_bands: pl.DataFrame
+    potential_range_report: dict
+    calibration_rows: int
+    calibration_exporters: int
+    potential_range_seconds: float
+
+
+def _score_gap_period(
+    grids: Mapping[int, Chunk],
+    models: list[xgb.Booster],
+    transform: FeatureTransform,
+    form: ModelForm,
+    *,
+    baseline_year: int,
+    year_flows: Callable[[int], pl.DataFrame],
+    calibration: Chunk,
+    min_band_rows: int,
+    caveats: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
+    beta: float = market_reach.CHOSEN_BETA,
+) -> _Scored:
+    """Score every Gap Period year's UK grid with the fold models, in `form` with each year's Market Reach, and build
+    the Baseline, its Potential Range and its Blocked Opportunity values (steps 3–4).
+
+    `grids` hold each Gap Period year's UK grid and that of the year before the first (Market Reach's source).
+    `caveats` marks the Baseline's Caveat Tiers (default: `with_caveat_columns` for the Baseline year). `beta` is
+    Market Reach's β.
+    """
+    # 3. Score every Gap Period year's UK grid out-of-fold, each with that year's features and its Market Reach,
+    # learned from the UK grid of the year before (ADR 0010). The Baseline year's form is the one served.
+    scored, forms = {}, {}
+    for year in gap_years(baseline_year):
+        grid = evaluation.naive_potential(read_chunk(grids[year]), year_flows(year))
+        forms[year] = market_reach.fit(
+            form, models, transform.apply(grid), reach_source(grids, year), scored_year=year, uk=UK, beta=beta
+        )
+        scored[year] = _score_grid(grid, transform, models, forms[year])
+    form = forms[baseline_year]
+    reach = form.market_reach
+    assert reach is not None
+    print(f"Market Reach from {reach.reference_year}: c = {reach.constant:.4f}", flush=True)
+    pairs = scored[baseline_year].select("hs6", "iso3")
+    if any(not table.select("hs6", "iso3").equals(pairs) for table in scored.values()):
+        raise ValueError("Every Gap Period year must score the same UK pairs (the union of the years' grids)")
+    yearly = pl.concat(
+        [
+            table.select(
+                "hs6",
+                "iso3",
+                year=pl.lit(year, pl.Int16),
+                actual_exports_usd="value_usd",
+                export_potential_usd="export_potential_usd",
+                tariff_imputed="tariff_imputed",
+            )
+            for year, table in scored.items()
+        ]
+    ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
+    baseline = (
+        export_gaps(yearly)
+        .join(
+            scored[baseline_year].select(
+                "hs6", "iso3", "tariff_imputed", baseline_export_potential_usd="export_potential_usd"
+            ),
+            on=["hs6", "iso3"],
+        )
+        .pipe(caveats or (lambda table: with_caveat_columns(table, CaveatContext(baseline_year))))
+        .pipe(with_opportunity_columns)
+    )
+    # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
+    # `mfn_tariff` (not a feature) is the rate a Scenario restores when it removes a Trade Agreement (ADR 0006).
+    # `naive_usd` (not a feature) is the naive baseline a blend takes; a Scenario leaves it unchanged.
+    baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES, "mfn_tariff", "naive_usd")
+    # The Potential Range (ADR 0007): other Exporters' Baseline-year rows, never the UK's. They take no Market Reach
+    # (`prediction`, ADR 0010).
+    started = time.perf_counter()
+    scored_calibration = conformal.score_calibration(
+        evaluation.naive_potential(read_chunk(calibration), year_flows(baseline_year)), models, transform, uk=UK,
+        form=form,
+    )
+    bands = conformal.fit_bands(scored_calibration, min_rows=min_band_rows)
+    baseline = conformal.with_potential_range(baseline, bands)
+    potential_range_report = {
+        **conformal.coverage_report(scored_calibration, min_rows=min_band_rows),
+        **conformal.uncertain_share(baseline),
+    }
+    potential_range_seconds = time.perf_counter() - started
+    print(
+        f"Potential Range from {scored_calibration.height:,} calibration rows in {potential_range_seconds:.0f} s: "
+        f"{bands.height} bands, held-out coverage {potential_range_report['coverage']:.1%}",
+        flush=True,
+    )
+    # 4. Blocked Opportunity values: the Scenario Effect of adding a Trade Agreement where none exists.
+    baseline = with_blocked_opportunity_values(
+        baseline, blocked_opportunity_values(baseline_features, baseline, models, form=form)
+    )
+    return _Scored(
+        form=form,
+        forms=forms,
+        baseline=baseline,
         baseline_features=baseline_features,
         yearly=yearly.sort("hs6", "iso3", "year"),
         potential_range_bands=bands,
         potential_range_report=potential_range_report,
-        metadata=metadata,
+        calibration_rows=scored_calibration.height,
+        calibration_exporters=scored_calibration["exporter"].n_unique(),
+        potential_range_seconds=potential_range_seconds,
     )
+
+
+def reach_source(grids: Mapping[int, Chunk], year: int) -> pl.DataFrame:
+    """The UK grid Market Reach for `year` is learned from: that of year − `market_reach.LAG_YEARS` (ADR 0010)."""
+    reference = year - market_reach.LAG_YEARS
+    if reference not in grids:
+        raise ValueError(f"Market Reach for {year} needs the UK grid of {reference}")
+    return read_chunk(grids[reference]).select("year", "hs6", "importer", "value_usd", market_reach.DEMAND)
+
+
+def _reach_fits(forms: Mapping[int, ModelForm]) -> dict:
+    """Each scored year's Market Reach reference year and rescale constant, for the metadata."""
+    fits = {}
+    for year, fitted in forms.items():
+        assert fitted.market_reach is not None
+        fits[str(year)] = {"reference_year": fitted.market_reach.reference_year, "constant": fitted.market_reach.constant}
+    return fits
 
 
 _TRAINING_FILE = "training.json"
@@ -832,6 +969,7 @@ def _evaluate(
     year_flows: Callable[[int], pl.DataFrame] | None = None,
     earlier_v2: dict | None = None,
     test_year_ledger: ledger.Ledger | None = None,
+    reach_grid: Chunk | None = None,
 ) -> dict:
     """Evaluate on the test year; with `parts`, run Lift and the Event Backtests (`backtests`)
     and compare the monotone-constrained model with an unconstrained one (`constraints`).
@@ -849,6 +987,10 @@ def _evaluate(
     each Gap Period year's naive baseline from `year_flows(year)`, every Exporter's Flows of that
     year). The other opt-in parts measure the model alone (the blend's naive side has no policy
     features: it would scale their effects by 1 − w).
+
+    `reach_grid` is the UK grid of the year before the test year, which the test year's Market Reach is learned
+    from (ADR 0010). The opt-in parts and the v1 comparison score without Market Reach: Lift and the Event Backtests
+    span other years, whose own tables they do not build, and the v1 comparison is pre-registered on the Blend.
 
     Callers record the read in the test-year ledger (`_record_test_year_read`) before they load
     anything of the test year for it.
@@ -886,6 +1028,7 @@ def _evaluate(
         settings=evaluation.report_settings(metadata),
         flows=test_flows,
         form=form,
+        reach_source=None if reach_grid is None else reach_source({test_year - market_reach.LAG_YEARS: reach_grid}, test_year),
     )
     report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
     print(f"Evaluated on {test_year} in {report['evaluation_seconds']:.0f} s", flush=True)
@@ -893,7 +1036,7 @@ def _evaluate(
         report |= backtests.run(
             backtest_chunks or training, backtest_plan, uk=UK, params=metadata["params"], rounds=metadata["rounds"],
             device=device, non_uk_rate=non_uk_rate, seed=seed, high_income=high_income, test_models=test_models,
-            cache=backtest_cache, lift_held_out=lift_held_out, form=form, year_flows=year_flows,
+            cache=backtest_cache, lift_held_out=lift_held_out, form=form.without_market_reach(), year_flows=year_flows,
         )
         print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
     if parts.constraint_comparison:
@@ -971,7 +1114,7 @@ def _v1_comparison(
             )
             ladder[name] = evaluation.score_rows(v1.rows["uk"], rung.models, rung.transform, UK, features=rung.features)
     started = time.perf_counter()
-    form = ModelForm.from_dict(metadata["model_form"])
+    form = ModelForm.from_dict(metadata["model_form"]).without_market_reach()  # pre-registered on the Blend
     test_flows = v1.flows.filter(pl.col("year") == test_year) if "year" in v1.flows.columns else v1.flows
     block = comparison.compare(
         v1.frozen,
@@ -1271,6 +1414,94 @@ def _rerange_latest(root: Path | None = None) -> Path:
     return saved
 
 
+def rereach(
+    bundle: Artefacts, inputs: ScoringInputs, *, version: str | None = None, beta: float = market_reach.CHOSEN_BETA
+) -> Artefacts:
+    """A format-4 version of a saved bundle with Market Reach (ADR 0010), from its own fold models; no retraining.
+
+    Every Gap Period year is scored again from `inputs` with the bundle's fold models and feature transform, in its
+    Model Form with each year's Market Reach at `beta`; the Baseline, the history's Gap Period years, the Potential
+    Range and the Blocked Opportunity values follow, as a training run builds them (`_score_gap_period`). Caveat Tier
+    columns are kept as the bundle marked them. The evaluation report keeps its test-year figures (measured without
+    Market Reach, as its own `model_form` records) with the Potential Range's report replaced. The metadata records
+    the Potential Range's coverage of the UK pairs' own Actual Exports before and after (`conformal.pair_coverage`).
+    """
+    metadata = bundle.metadata
+    marks = [c for tier in TIERS for c in tier.columns if c in bundle.baseline.columns]
+    marked = bundle.baseline.select("hs6", "iso3", *marks)
+    min_rows = metadata["potential_range"]["min_band_rows"]
+    scored = _score_gap_period(
+        inputs.grids, bundle.fold_models, FeatureTransform.from_dict(metadata["feature_transform"]),
+        bundle.model_form.without_market_reach(), baseline_year=bundle.baseline_year, year_flows=inputs.year_flows,
+        calibration=inputs.calibration, min_band_rows=min_rows,
+        caveats=lambda table: table.join(marked, on=["hs6", "iso3"], how="left"), beta=beta,
+    )
+    missing = [c for c in bundle.baseline.columns if c not in scored.baseline.columns]
+    if missing:
+        raise ValueError(f"Scoring version {bundle.version} again does not rebuild its Baseline columns {missing}")
+    baseline = scored.baseline.select(bundle.baseline.columns)
+    earlier = bundle.history.select("hs6", importer="iso3", year="year", value_usd="actual_exports_usd")
+    history = _history(earlier, scored.yearly).select(bundle.history.columns)
+    reach = scored.form.market_reach
+    assert reach is not None
+    coverage = {"before": conformal.pair_coverage(bundle.baseline), "after": conformal.pair_coverage(baseline)}
+    print(f"Potential Range coverage of UK pairs' Actual Exports: {coverage}", flush=True)
+    range_metadata = {
+        **metadata["potential_range"],
+        "bands": scored.potential_range_bands.height,
+        "calibration_rows": scored.calibration_rows,
+        "calibration_exporters": scored.calibration_exporters,
+        "seconds": round(scored.potential_range_seconds, 2),
+    }
+    report = scored.potential_range_report
+    new = {
+        **metadata,
+        "artefact_format": ARTEFACT_FORMAT,
+        "version": version or new_version(),
+        "refreshed_from": bundle.version,
+        "model_form": scored.form.to_dict(),
+        "market_reach": market_reach.settings(reach.beta),
+        "market_reach_fits": _reach_fits(scored.forms),
+        "market_reach_pair_coverage": coverage,
+        "potential_range": range_metadata,
+        "potential_share_of_actual_exports": potential_share_of_actual_exports(baseline),
+    }
+    return replace(
+        bundle,
+        metadata=new,
+        baseline=baseline,
+        baseline_features=scored.baseline_features.select(bundle.baseline_features.columns),
+        history=history,
+        potential_range_bands=scored.potential_range_bands,
+        market_reach=reach.table,
+        evaluation=None if bundle.evaluation is None else {
+            **bundle.evaluation, "potential_range": {**report, "text": conformal.coverage_text(report)}
+        },
+    )
+
+
+def _rereach_latest(root: Path | None = None) -> Path:
+    """Save `rereach` of the newest real bundle (format 3, or 4 to refit it), with its model card."""
+    from exportspredictor import artefacts
+    from exportspredictor.paths import artefacts_dir
+
+    root = Path(root or data_dir())
+    folder = artefacts.latest_folder(artefacts_dir())
+    try:
+        bundle = artefacts.load(folder)
+    except artefacts.UnreadableArtefacts:
+        bundle = artefacts.load_format_3(folder)
+    settings = json.loads((features_dir(root) / "features.json").read_text(encoding="utf-8"))
+    if settings.get("features") != bundle.metadata["features"]:
+        raise ValueError(f"The feature files in {features_dir(root)} hold other features than version {bundle.version}")
+    started = time.perf_counter()
+    reached = rereach(bundle, real_scoring_inputs(root, bundle.baseline_year))
+    print(f"Scored with Market Reach in {time.perf_counter() - started:.0f} s", flush=True)
+    saved = artefacts.save(reached, artefacts_dir())
+    governance.write_model_card(reached, saved)
+    return saved
+
+
 def parse_parts(argv: Sequence[str]) -> Parts:
     """The opt-in parts a command line asks for: `--event-backtests`, `--constraint-comparison`,
     `--gain-ladder`, `--ppml-benchmark`, or `--every-part` for all four. None of them: the default run."""
@@ -1283,6 +1514,7 @@ def parse_parts(argv: Sequence[str]) -> Parts:
             "commands that copy the newest saved version instead of training:\n"
             "  python -m exportspredictor.pipeline refresh   fresh metadata, in seconds\n"
             "  python -m exportspredictor.pipeline rerange   Potential Range recomputed, a few minutes on the CPU\n"
+            "  python -m exportspredictor.pipeline rereach   Market Reach applied (format 4), about 10 minutes on the CPU\n"
             "  python -m exportspredictor.pipeline compare   v1 comparison and gain ladder added"
         ),
     )
@@ -1314,7 +1546,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     copy of the newest bundle with its Potential Range recomputed (`rerange`), in a few minutes
     on the CPU. `python -m exportspredictor.pipeline recaveat` saves a copy whose Baseline is marked again with
     the declared Caveat Tiers (`recaveat`), its volatile Flagged Products recomputed from the training years'
-    BACI Flows (`real_volatile_products`). `python -m exportspredictor.pipeline compare` saves a
+    BACI Flows (`real_volatile_products`). `python -m exportspredictor.pipeline rereach` saves a format-4 copy
+    with Market Reach, scored again from its fold models (`rereach`). `python -m exportspredictor.pipeline compare` saves a
     copy of the newest bundle with the v1 comparison and gain ladder added (`add_v1_comparison`).
 
     The training run and `compare` read the test year: each records the read in the test-year
@@ -1339,6 +1572,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if list(argv) == ["rerange"]:
         print(_rerange_latest(), flush=True)
+        return
+    if list(argv) == ["rereach"]:
+        print(_rereach_latest(), flush=True)
         return
     if list(argv) == ["recaveat"]:
         bundle = artefacts.load(artefacts.latest_folder(artefacts_dir()))
