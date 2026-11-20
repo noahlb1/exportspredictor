@@ -23,7 +23,11 @@ from matplotlib.figure import Figure
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.caveats import TIERS, CaveatTier
-from exportspredictor.evaluation import NOT_RUN, large_markets_beside_earlier, relabelled
+from exportspredictor.evaluation import (
+    NOT_RUN,
+    large_markets_beside_earlier,
+    relabelled,
+)
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
 

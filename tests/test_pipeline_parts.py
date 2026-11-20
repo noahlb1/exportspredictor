@@ -9,7 +9,12 @@ import math
 import pytest
 import xgboost
 
-from exportspredictor.pipeline import Parts, build_artefacts, fixture_rescore, parse_parts
+from exportspredictor.pipeline import (
+    Parts,
+    build_artefacts,
+    fixture_rescore,
+    parse_parts,
+)
 
 
 @pytest.fixture(scope="module")
