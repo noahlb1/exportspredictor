@@ -109,7 +109,7 @@ A UK Product–Market pair whose Export Potential rises materially in a Scenario
 _Avoid_: hidden opportunity, latent demand
 
 **Blocked Opportunity value**:
-The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). The Blocked Opportunities page lists the Blocked Opportunities grouped by Market, ranked by it, apart from the Leaderboard, in Baseline-year figures; there, Baseline Export Potential plus the value is shown as Export Potential with a Trade Agreement, also Illustrative.
+The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). The Blocked Opportunities page lists the Blocked Opportunities grouped by Market, ranked by it, apart from the Leaderboard, in Baseline-year figures; there, Baseline Export Potential plus the value is shown as Export Potential with a Trade Agreement, also Illustrative. Where Baseline-year Actual Exports exceed Export Potential, the value is shown instead as a percentage uplift on Export Potential, so no dollar level with a Trade Agreement sits below what the UK already sells.
 _Avoid_: blocked gap, unlock value
 
 **Barrier**:

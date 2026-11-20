@@ -259,7 +259,7 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
 
     st.caption(
         f"Amounts in {millions_unit()}, for the Baseline year {year}. Scenario Effects are {word}. "
-        "Click any value to select its row."
+        f"Click any value to select its row. {labels()['totals_note']['text']}"
     )
 
     st.subheader("Change per Market")

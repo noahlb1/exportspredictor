@@ -105,6 +105,7 @@ from exportspredictor.gap_period import (
     export_gaps,
     gap_period,
     gap_years,
+    potential_share_of_actual_exports,
     with_opportunity_columns,
 )
 from exportspredictor.lookups import market_lookup
@@ -751,6 +752,8 @@ def _train_and_score(
             "potential_range_bands": conformal.N_BANDS,
             "potential_range_min_band_rows": min_band_rows,
         },
+        # What every summed figure is read against (spec #113, "Totals understate").
+        "potential_share_of_actual_exports": potential_share_of_actual_exports(baseline),
         "created_at": datetime.now(UTC).isoformat(),
     }
     return _Trained(
@@ -1136,6 +1139,7 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
         "version": version or new_version(),
         "refreshed_from": bundle.version,
         "sources": source_versions(data_root),
+        "potential_share_of_actual_exports": potential_share_of_actual_exports(bundle.baseline),
     }
     return replace(bundle, metadata=metadata)
 

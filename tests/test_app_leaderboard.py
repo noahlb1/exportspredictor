@@ -116,6 +116,17 @@ def test_the_active_filters_line_states_the_counts_and_the_total_positive_export
     assert "Market: Japan" in line and "5 pairs shown of 5" in line
 
 
+def test_the_summed_export_gap_carries_the_totals_note_with_the_artefacts_share(monkeypatch, fixture_api_url):
+    # Spec #113 "Totals understate": the note sits beside the summary, its share read from the artefact.
+    note = httpx.get(f"{fixture_api_url}/labels").json()["totals_note"]
+
+    page = _home(monkeypatch, fixture_api_url)
+
+    assert note["potential_share_of_actual_exports"] is not None
+    assert f"about {note['potential_share_of_actual_exports']:.0%} of Actual Exports" in note["text"]
+    assert note["text"] in [element.value for element in page.caption]
+
+
 def test_the_active_filters_line_says_pair_for_one_pair(monkeypatch, fixture_api_url):
     page = _home(monkeypatch, fixture_api_url, product="220830", market="JPN")
 

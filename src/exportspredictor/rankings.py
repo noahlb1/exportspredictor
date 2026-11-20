@@ -196,9 +196,11 @@ def blocked_opportunities(
 ) -> BlockedRanking:
     """The Blocked Opportunities at the default thresholds, ranked by Blocked Opportunity value, in Baseline-year figures.
 
-    Each row is a `rank_opportunities` row plus two Baseline-year figures: `baseline_actual_exports_usd` (UK Actual
+    Each row is a `rank_opportunities` row plus Baseline-year figures: `baseline_actual_exports_usd` (UK Actual
     Exports in the Baseline year, from the yearly history, 0 where there is no Flow) and `potential_with_agreement_usd`,
-    Export Potential with a Trade Agreement (Baseline Export Potential plus the Blocked Opportunity value). Filters keep
+    Export Potential with a Trade Agreement (Baseline Export Potential plus the Blocked Opportunity value). Where Actual
+    Exports exceed Baseline Export Potential, `potential_with_agreement_usd` is null and `blocked_opportunity_uplift`
+    holds the value as a share of Baseline Export Potential instead (null elsewhere; spec #113). Filters keep
     one Product (`hs6`), one Sector, one Market region, a Blocked Opportunity value of at least `min_value_usd`, and drop
     the rows of the Caveat Tiers named in `hide`. The summary and the per-Market totals cover every
     filtered Blocked Opportunity; `limit` then keeps the top rows. Presentation only: the definition and thresholds are
@@ -222,7 +224,12 @@ def blocked_opportunities(
     )
     summary = {"blocked_opportunities": rows.height, "blocked_opportunity_value_usd": float(rows["blocked_opportunity_value_usd"].sum())}
     shown = rows if limit is None else rows.head(limit)
+    potential = pl.col("baseline_export_potential_usd")
+    # Where the UK already exports more than its Export Potential, a dollar level "with a Trade Agreement" can sit
+    # below Actual Exports; the value is read as an uplift on Export Potential instead (spec #113).
+    above = (pl.col("baseline_actual_exports_usd") > potential) & (potential > 0)
     shown = with_baseline_actual_exports(shown, artefacts.history, artefacts.baseline_year).with_columns(
-        potential_with_agreement_usd=pl.col("baseline_export_potential_usd") + value
+        potential_with_agreement_usd=pl.when(above).then(None).otherwise(potential + value),
+        blocked_opportunity_uplift=pl.when(above).then(value / potential).otherwise(None),
     )
     return BlockedRanking(rows=shown, summary=summary, markets=markets)
