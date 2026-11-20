@@ -60,6 +60,7 @@ from api.schemas import (
     ScenarioIn,
     ScenarioRequest,
     ScenarioResponse,
+    SectorOut,
     Thresholds,
 )
 from exportspredictor import artefacts as store
@@ -87,6 +88,8 @@ from exportspredictor.rankings import (
     rank_opportunities,
     ranking,
 )
+from exportspredictor.sectors import sectors as sectors_of
+from exportspredictor.sectors import with_sector_names
 from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
 from exportspredictor.wording import CAUTION
 
@@ -162,13 +165,21 @@ def create_app(
 
         Excluded Products are listed too, marked `excluded` with their `exclusion_reason`.
         """
-        found = search_products(artefacts.products, q, limit=limit, excluded=artefacts.excluded_products)
+        found = with_sector_names(
+            search_products(artefacts.products, q, limit=limit, excluded=artefacts.excluded_products)
+        )
         return [_pick(ProductMatch, row) for row in found.iter_rows(named=True)]
 
     @app.get("/products/excluded", response_model=list[ExcludedProductOut])
     def excluded_products(artefacts: store.Artefacts = Depends(loaded)):
         """The Excluded Products (ADR 0005), each with the reason it is left out, by HS6 code."""
-        return [_pick(ExcludedProductOut, row) for row in artefacts.excluded_products.iter_rows(named=True)]
+        excluded = with_sector_names(artefacts.excluded_products)
+        return [_pick(ExcludedProductOut, row) for row in excluded.iter_rows(named=True)]
+
+    @app.get("/sectors", response_model=list[SectorOut])
+    def sectors(artefacts: store.Artefacts = Depends(loaded)):
+        """Each Sector that has Products in the artefact, by code (HS2 chapter) and name, in code order."""
+        return [SectorOut(code=row["sector"], name=row["sector_name"]) for row in sectors_of(artefacts.products).iter_rows(named=True)]
 
     @app.get("/markets", response_model=list[MarketOut])
     def markets(artefacts: store.Artefacts = Depends(loaded)):
@@ -189,7 +200,8 @@ def create_app(
 
     @app.get("/opportunities/top", response_model=Leaderboard)
     def top(query: Annotated[LeaderboardQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
-        """The Leaderboard: every UK Product–Market pair ranked, with a summary of the filtered pairs."""
+        """The Leaderboard: every UK Product–Market pair ranked (or one Market's, or one Product's), with a summary of
+        the filtered pairs. An unknown Market or Product answers 404, as does an Excluded Product, with its reason."""
         return Leaderboard(**_leaderboard(artefacts, query, LeaderboardSummary), rank_by=query.rank_by)
 
     @app.get("/opportunities/blocked", response_model=BlockedOpportunities)
@@ -329,7 +341,7 @@ def _product(artefacts: store.Artefacts, hs6: str) -> ProductOut:
     reason = not_ranked_message(artefacts.excluded_products, hs6)
     if reason is not None:
         raise HTTPException(status_code=404, detail=reason)
-    return _pick(ProductOut, found.row(0, named=True))
+    return _pick(ProductOut, with_sector_names(found).row(0, named=True))
 
 
 def _market(artefacts: store.Artefacts, iso3: str) -> MarketOut:
@@ -369,7 +381,9 @@ def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, summary_mo
     """The fields the Leaderboard and the Blocked Opportunities page share: metadata, summary and top rows."""
     if query.market is not None:
         _market(artefacts, query.market)
-    ranked = ranking(artefacts, iso3=query.market, limit=query.limit, **_filters(query))
+    if query.product is not None:
+        _product(artefacts, query.product)
+    ranked = ranking(artefacts, hs6=query.product, iso3=query.market, limit=query.limit, **_filters(query))
     return {
         **_metadata(artefacts),
         "summary": summary_model(**ranked.summary),

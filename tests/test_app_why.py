@@ -15,8 +15,6 @@ from streamlit.testing.v1 import AppTest
 from api.main import create_app
 
 WHY = "pages/why.py"
-PRODUCT_TO_MARKETS = "pages/product_to_markets.py"
-MARKET_TO_PRODUCTS = "pages/market_to_products.py"
 
 
 @pytest.fixture(scope="module")
@@ -99,7 +97,7 @@ def test_why_page_phrases_results_as_associations(monkeypatch, api_url):
 
 def test_why_page_without_a_pair_lets_the_advisor_pick_one(monkeypatch, api_url):
     page = _why(monkeypatch, api_url)
-    page.text_input(key="product_query").input("220830").run()
+    page.text_input(key="why_product_query").input("220830").run()
     page.selectbox(key="why_market").select("JPN").run()
 
     assert not page.exception
@@ -113,32 +111,18 @@ def test_why_page_unknown_pair_shows_a_message(monkeypatch, api_url):
     assert any("999999" in w.value for w in page.warning)
 
 
-def test_product_to_markets_rows_link_to_why(monkeypatch, api_url):
+@pytest.mark.parametrize("query", [{"product": "220830"}, {"market": "JPN"}], ids=["one-product", "one-market"])
+def test_leaderboard_rows_link_to_why(monkeypatch, api_url, query):
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = run_page(PRODUCT_TO_MARKETS)
-    page.text_input(key="product_query").input("220830").run()
+    page = run_page(query=query)
 
     table = page.dataframe[0].value
     links = {}
-    for market, link in zip(table["Market"], table["Why?"]):
+    for hs6, market, link in zip(table["HS6"], table["Market"], table["Why?"], strict=True):
         url = urlparse(link)
         assert url.path.endswith("Why")
-        links[market] = parse_qs(url.query)
-    assert links["Japan"] == {"hs6": ["220830"], "iso3": ["JPN"]}
-
-
-def test_market_to_products_rows_link_to_why(monkeypatch, api_url):
-    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = run_page(MARKET_TO_PRODUCTS)
-    page.selectbox(key="iso3").set_value("JPN").run()
-
-    table = page.dataframe[0].value
-    links = {}
-    for hs6, link in zip(table["HS6"], table["Why?"]):
-        url = urlparse(link)
-        assert url.path.endswith("Why")
-        links[hs6] = parse_qs(url.query)
-    assert links["220830"] == {"hs6": ["220830"], "iso3": ["JPN"]}
+        links[hs6, market] = parse_qs(url.query)
+    assert links["220830", "Japan"] == {"hs6": ["220830"], "iso3": ["JPN"]}
 
 
 def test_why_page_writes_values_in_dollars(monkeypatch, api_url):

@@ -29,6 +29,12 @@ class ProductOut(BaseModel):
     hs6: str
     description: str
     sector: str
+    sector_name: str  # the Sector's HS 2012 chapter title, shortened (`exportspredictor.sectors`)
+
+
+class SectorOut(BaseModel):
+    code: str  # the HS2 chapter, e.g. 22: the value of the ranking reads' `sector` filter
+    name: str  # its HS 2012 chapter title, shortened, e.g. "Beverages, spirits and vinegar"
 
 
 class ProductMatch(ProductOut):
@@ -117,9 +123,12 @@ class RankingQuery(BaseModel):
 
 
 class LeaderboardQuery(RankingQuery):
-    """The ranking filters plus one Market, for the Leaderboard over every UK pair."""
+    """The ranking filters plus one Market and one Product, for the Leaderboard over every UK pair."""
 
     market: str | None = Field(None, description="One Market, by ISO3 code, e.g. JPN")
+    product: str | None = Field(
+        None, description="One Product, by HS6 code (2012 edition), e.g. 220830; 404 if unknown or Excluded"
+    )
 
 
 class BlockedQuery(LeaderboardQuery):
@@ -157,12 +166,14 @@ class ProductOpportunity(_Values):
     hs6: str
     description: str
     sector: str
+    sector_name: str
 
 
 class LeaderboardOpportunity(_Values):
     hs6: str
     description: str
     sector: str
+    sector_name: str
     iso3: str
     market: str
     region: str

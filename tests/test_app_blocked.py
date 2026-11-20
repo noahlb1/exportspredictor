@@ -71,16 +71,16 @@ def test_the_page_ranks_every_uk_pair_by_blocked_opportunity_value(monkeypatch, 
 def test_filters_change_the_rows_and_the_summary(monkeypatch, fixture_api_url):
     page = _page(monkeypatch, fixture_api_url)
 
-    page.selectbox(key="market").set_value("IND").run()
+    page.selectbox(key="blocked_market").set_value("IND").run()
     assert set(page.dataframe[0].value["Market"]) == {"India"}
     assert _metrics(page)["Product–Market pairs"] == "5"
 
-    page.selectbox(key="market").set_value(None).run()
-    page.selectbox(key="trade_agreement").set_value(False).run()
-    page.checkbox(key="hide_hubs").check().run()
+    page.selectbox(key="blocked_market").set_value(None).run()
+    page.selectbox(key="blocked_trade_agreement").set_value(False).run()
+    page.checkbox(key="blocked_hide_hubs").check().run()
     assert set(page.dataframe[0].value["Market"]) == {"India"}
 
-    page.selectbox(key="opportunity_type").set_value("New Product").run()
+    page.selectbox(key="blocked_opportunity_type").set_value("New Product").run()
     assert not page.dataframe
     assert any("No Opportunities" in element.value for element in page.info)
 

@@ -15,6 +15,7 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, is_blocked
+from exportspredictor.sectors import with_sector_names
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,7 @@ def rank_opportunities(
 ) -> pl.DataFrame:
     """The Baseline's UK Product–Market pairs (all, or one Product's or one Market's), ordered by `rank_by`.
 
-    Each row names its Product (hs6, description, sector) and Market (iso3, market, region),
+    Each row names its Product (hs6, description, sector and its `sector_name`) and Market (iso3, market, region),
     says whether a UK Trade Agreement with the Market is in force in the Baseline year
     (`trade_agreement`, the policy feature the model saw), gives Export Potential, Actual
     Exports and Export Gap as Gap Period means with the Relative Export Gap and the
@@ -138,7 +139,7 @@ def rank_opportunities(
     if limit is not None:
         rows = rows.head(limit)
     return (
-        rows.join(artefacts.products, on="hs6", how="left", maintain_order="left")
+        rows.join(with_sector_names(artefacts.products), on="hs6", how="left", maintain_order="left")
         .join(artefacts.markets.rename({"name": "market"}), on="iso3", how="left", maintain_order="left")
         .with_columns(blocked_opportunity=is_blocked("blocked_opportunity_value_usd", "baseline_export_potential_usd"))
     )

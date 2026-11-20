@@ -11,14 +11,6 @@ from streamlit.testing.v1 import AppTest
 USD_CAPTION = "Values are nominal US dollars, as reported by BACI"
 
 
-def _product_to_markets(page: AppTest) -> None:
-    page.text_input(key="product_query").input("220830").run()
-
-
-def _market_to_products(page: AppTest) -> None:
-    page.selectbox(key="iso3").set_value("JPN").run()
-
-
 def _scenarios(page: AppTest) -> None:
     page.selectbox(key="preset").set_value("cptpp").run()
     page.button(key="run").click().run()
@@ -31,8 +23,8 @@ def _shown(page: AppTest) -> None:
 # Each page, the URL parameters it opens with, and how to bring its main content on screen.
 SHOW = {
     "leaderboard": (None, {}, _shown),
-    "product_to_markets": ("pages/product_to_markets.py", {}, _product_to_markets),
-    "market_to_products": ("pages/market_to_products.py", {}, _market_to_products),
+    "leaderboard_one_product": (None, {"product": "220830"}, _shown),
+    "leaderboard_one_market": (None, {"market": "JPN"}, _shown),
     "blocked_opportunities": ("pages/blocked_opportunities.py", {}, _shown),
     "scenarios": ("pages/scenarios.py", {}, _scenarios),
     "why": ("pages/why.py", {"hs6": "220830", "iso3": "JPN"}, _shown),
