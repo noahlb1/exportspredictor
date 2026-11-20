@@ -124,13 +124,16 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] The first visit shows three steps (Read the ranking, Open a row, Narrow it down) above the table; **Got it** closes them, and **What is this?** beside the heading brings them back.
 
 **Blocked Opportunities**
-- [ ] Open Blocked Opportunities from the sidebar: every UK pair is ranked by Blocked Opportunity value, largest first, with no "Rank by" toggle; the Leaderboard does not offer that order.
-- [ ] Pairs with a Market that has a UK Trade Agreement in force (e.g. Japan) have a value of 0; rows clearing 20% and $1M are marked as Blocked Opportunities.
-- [ ] The summary shows the number of pairs, the number of Blocked Opportunities and the total value of those Blocked Opportunities (not of every pair); all three change with the filters. No pair has a negative value: an added agreement never lowers Export Potential.
-- [ ] The summary's total and the table's Blocked Opportunity value column are headed "illustrative" (e.g. "Blocked Opportunity value, illustrative (USD, nominal)"), and an Illustrative note under the summary gives the PPML gravity benchmark, the model's association and the Event Backtest, or says one was not run for this version.
-- [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
+- [ ] Open Blocked Opportunities from the sidebar: it lists only Blocked Opportunities (about 3,800, not every pair), with no "Rank by" toggle; the Leaderboard does not offer that order.
+- [ ] The line above the tables gives the filters in force, the number of Blocked Opportunities and their total value, labelled illustrative; one caption gives the unit ($ millions), the Baseline year, the thresholds (20% and $1M) and that other thresholds are on the Scenarios page.
+- [ ] Left, the Markets table (Market, Blocked Opportunities, Total value) is largest total first, with the top Market chosen. Click any value of another Market: its row is tinted, and its line and Products table replace the first.
+- [ ] The Products table (Product, Blocked Opportunity value, Applied Tariff %, Potential with agreement, Actual Exports) lists every Blocked Opportunity of the Market, largest first, with the top one chosen. The Potential with agreement tooltip names Export Potential with a Trade Agreement and says it is illustrative; the Applied Tariff tooltip says a 0 means the value rests on the Trade Agreement alone, and a blank that it is not known.
+- [ ] The panel under it opens with the Barrier, then Baseline Export Potential, Export Potential with a Trade Agreement and Actual Exports, then the facts, factors and years. Where Actual Exports are above Export Potential with a Trade Agreement (several of the largest), the Barrier box adds that the UK already exports more there; elsewhere it does not.
+- [ ] The Export Gap appears nowhere on the page, apart from the footer every page shares.
+- [ ] The Sector, region, minimum value and hide filters, and a Product search, each narrow the Markets, the line and the CSV; Reset filters restores them, and they are kept apart from the Leaderboard's filters. There is no Market, Opportunity Type or Trade Agreement filter.
+- [ ] The Illustrative note sits in an expander under the tables, with the PPML gravity benchmark, the model's association and the Event Backtest, or says one was not run for this version.
 - [ ] Every caption describes the value as what the model associates with adding a Trade Agreement, not as a cause or a forecast.
-- [ ] Export the table to CSV and open it: the columns and rows match the table on screen.
+- [ ] Export the CSV and open it: every filtered Blocked Opportunity, across all Markets, in full dollars.
 
 **Scenarios**
 - [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds, and the summary shows the total change, the change per Market and the top Products gaining, phrased as associations.

@@ -1,7 +1,5 @@
 """The one ranking query both Opportunity views use: filters, order, limit and flags."""
 
-import polars as pl
-import pytest
 
 from exportspredictor import rankings
 
@@ -44,30 +42,10 @@ def test_rows_carry_the_blocked_opportunity_flag(fixture_artefacts):
     assert rows["blocked_opportunity"].to_list() == [False] * rows.height
 
 
-def test_blocked_summary_counts_blocked_opportunities_and_totals_their_value(fixture_artefacts):
-    ranked = rankings.rank_opportunities(fixture_artefacts, rank_by="blocked")
-    # The fixture's values are too small for the $1M threshold, so flag the two largest as Blocked.
-    rows = ranked.with_columns(blocked_opportunity=pl.int_range(pl.len()) < 2)
-
-    summary = rankings.summarise_blocked(rows)
-
-    assert summary["pairs"] == 20
-    blocked = rows.filter("blocked_opportunity")
-    unblocked = rows.filter(~pl.col("blocked_opportunity"))
-    # Only Blocked Opportunities count towards the total, not every pair with a value.
-    assert (unblocked["blocked_opportunity_value_usd"] > 0).any()
-    assert summary["blocked_opportunity_value_usd"] == pytest.approx(blocked["blocked_opportunity_value_usd"].sum())
-    assert summary["blocked_opportunity_value_usd"] > 0
-    assert summary["blocked_opportunities"] == blocked.height
-
-
 def test_a_ranking_summarises_every_filtered_pair_before_its_limit(fixture_artefacts):
     everything = rankings.rank_opportunities(fixture_artefacts)
 
     top = rankings.ranking(fixture_artefacts, limit=3)
-    blocked = rankings.ranking(fixture_artefacts, rank_by="blocked", limit=3)
 
     assert top.rows["hs6"].to_list() == everything.head(3)["hs6"].to_list()
     assert top.summary == rankings.summarise(everything)
-    assert blocked.rows.height == 3
-    assert blocked.summary["pairs"] == 20 and "blocked_opportunities" in blocked.summary

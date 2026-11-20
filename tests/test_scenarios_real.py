@@ -51,6 +51,6 @@ def test_no_pair_has_a_negative_blocked_opportunity_value_and_the_summary_totals
     summary = client.get("/opportunities/blocked", params={"limit": 1}).json()["summary"]
 
     assert values.min() >= -1e-3  # float noise only
-    assert 0 < summary["blocked_opportunities"] < summary["pairs"]
+    assert 0 < summary["blocked_opportunities"] < values.len()
     # The total is over the Blocked Opportunities only, well under the sum over every pair.
     assert 0 < summary["blocked_opportunity_value_usd"] < values.sum()
