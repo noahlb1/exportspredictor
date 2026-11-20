@@ -5,6 +5,10 @@
 # sections, never under [theme]: a colour there makes a custom theme that stops following the
 # computer's light or dark mode. tests/test_app_theme.py checks this.
 
+[theme]
+# Smaller than the default 2.25rem, so the detail panel's three figures fit their columns at 1280 px.
+metricValueFontSize = "1.5rem"
+
 [theme.light]
 primaryColor = "#2a78d6"
 backgroundColor = "#fbf9f4"

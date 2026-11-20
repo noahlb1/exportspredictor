@@ -62,7 +62,7 @@ def _three_steps() -> None:
     """Three bordered steps telling a first-time visitor how to read the page, with Got it to close them."""
     if not st.session_state.get(STEPS, True):
         return
-    columns = st.columns([4, 4, 4, 1], vertical_alignment="center")
+    columns = st.columns([4, 4, 4, 1.5], vertical_alignment="center")  # room for "Got it" at 1280 px
     for column, (title, text) in zip(columns, STEP_TEXTS, strict=False):
         with column.container(border=True):
             st.markdown(f"**{title}** {text}")
@@ -128,7 +128,7 @@ with page(
         if pairs > READ_LIMIT:
             shown = f"Top {len(rows):,} of {pairs:,} pairs: narrow them down with the filters to show them all."
         else:
-            shown = f"{len(rows):,} pairs shown of {pairs:,}."
+            shown = f"{len(rows):,} pair{'' if len(rows) == 1 else 's'} shown of {pairs:,}."
         line.markdown(
             f"**{in_force}.** {shown} "
             f"Total positive Export Gap, {body['gap_period_label']}: {format_usd(summary['positive_export_gap_usd'])}."

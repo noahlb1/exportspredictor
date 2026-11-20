@@ -66,7 +66,7 @@ def test_every_page_has_the_caution_line_under_its_heading_and_the_footer_last(o
     footer = captions[-1]
     assert f"Baseline year {health['baseline_year']} (provisional data)." in footer
     assert health["gap_period_label"] in footer
-    assert _labels(fixture_api_url)["usd_caption"] in footer
+    assert _labels(fixture_api_url)["usd_caption"].rstrip(".") + ". Model version" in footer  # a sentence each
     assert f"Model version {health['artefact_version']}." in footer
 
 

@@ -28,6 +28,8 @@ from app.ui import fetch, labels, show_caveats, term
 TOP_FACTORS = 8
 RAISED, LOWERED = "#2a78d6", "#e34948"  # the factor bars (spec #103, "Theme and logo")
 TEXT = {"light": "#1b1915", "dark": "#f5f2ec"}  # chart value labels take the mode's text colour
+# The Factor column has a fixed width, so the value and association beside it stay in view in a narrow panel.
+FACTOR_WIDTHS = {"Factor": st.column_config.TextColumn("Factor", width="medium")}
 FACTOR_COLUMNS = {
     "label": "Factor",
     "value_text": "Value for this pair",
@@ -176,6 +178,7 @@ def factors(body: dict) -> None:
                     "type": "quantitative",
                     "scale": {"type": "log"},
                     "title": "Association with Export Potential (×1 = no effect)",
+                    "axis": {"titleAnchor": "end"},  # a centred title runs off the right of a narrow panel
                 },
                 "tooltip": [
                     {"field": "label", "title": "Factor"},
@@ -205,9 +208,9 @@ def factors(body: dict) -> None:
         },
         width="stretch",
     )
-    st.dataframe(_factor_table(top), hide_index=True)
+    st.dataframe(_factor_table(top), hide_index=True, column_config=FACTOR_WIDTHS)
     with st.expander("All factors"):
-        st.dataframe(_factor_table(every), hide_index=True)
+        st.dataframe(_factor_table(every), hide_index=True, column_config=FACTOR_WIDTHS)
     st.caption(
         "×1.50 means the model associates this factor with 1.5 times the Export Potential it expects on average "
         "(SHAP values); ×0.70 means 30% lower. The factors multiply together into the Export Potential. "

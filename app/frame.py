@@ -90,6 +90,6 @@ def footer() -> None:
     st.caption(
         f"Baseline year {health['baseline_year']} (provisional data). "
         f"Export Gaps are {health['gap_period_label']}s. "
-        f"{labels()['usd_caption']} "
+        f"{labels()['usd_caption'].rstrip('.')}. "
         f"Model version {health['artefact_version']}."
     )

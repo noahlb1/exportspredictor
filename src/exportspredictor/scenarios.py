@@ -259,7 +259,7 @@ class ScenarioResult:
         return (
             f"The model associates this Scenario with a change of {format_change(total['effect_usd'])} "
             f"({total['effect_share']:+.1%}) in UK Export Potential "
-            f"across {markets} {market_word}, against the {year} Baseline, with {blocked} {blocked_word}. "
+            f"across {markets:,} {market_word}, against the {year} Baseline, with {blocked:,} {blocked_word}. "
             "This is a learned association, not a forecast."
         )
 

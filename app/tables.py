@@ -22,6 +22,9 @@ from app.ui import caveat_badges, illustrative, term, usd_unit
 MILLION = 1_000_000
 # The chosen row's tint, the same in light and dark mode (spec #103, "Theme and logo").
 TINT = {"background-color": "rgba(42, 120, 214, 0.28)", "font-weight": "600"}
+# Pixels: a long Product name otherwise widens its column until the columns after it scroll out of sight.
+PRODUCT_WIDTH = 200
+MARKET_WIDTH = 90  # px, in the narrow Markets table of Blocked Opportunities
 ONE_DECIMAL = "{:.1f}"  # how a $ millions or percent column reads in a `pick_row` table, as `money_column` does
 
 
@@ -71,6 +74,11 @@ def _remember(key: str, remembered: str) -> Callable[[], None]:
             st.session_state[remembered] = ids[cells[0][0]]
 
     return remember
+
+
+def product_column() -> "st.column_config.TextColumn":
+    """Every table's Product column: a fixed width, so the columns after it stay in view."""
+    return st.column_config.TextColumn("Product", help="The Product (HS6, 2012 edition).", width=PRODUCT_WIDTH)
 
 
 def millions(values: Iterable[float | None]) -> pd.Series:
@@ -163,7 +171,7 @@ def leaderboard_columns(body: dict) -> dict:
     """The column config of `leaderboard_frame`: a tooltip on every heading, the four terms in the API's wording."""
     year, averaged = body["baseline_year"], body["gap_period_label"]
     return {
-        "Product": st.column_config.TextColumn("Product", help="The Product (HS6, 2012 edition)."),
+        "Product": product_column(),
         "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to."),
         "Export Gap": money_column("Export Gap", term("export_gap")),
         "Export Potential": money_column("Export Potential", term("export_potential")),
@@ -258,9 +266,11 @@ def blocked_markets_frame(markets: list[dict]) -> pd.DataFrame:
 def blocked_markets_columns(body: dict) -> dict:
     """The column config of `blocked_markets_frame`, with a tooltip on every heading."""
     return {
-        "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to."),
+        "Market": st.column_config.TextColumn(
+            "Market", help="The Market the UK exports to.", width=MARKET_WIDTH
+        ),
         "Blocked Opportunities": st.column_config.NumberColumn(
-            "Blocked Opportunities", help="The Market's Blocked Opportunities under the filters."
+            "Blocked Opportunities", help="The Market's Blocked Opportunities under the filters.", width="small"
         ),
         "Total value": money_column(
             "Total value",
@@ -288,7 +298,7 @@ def blocked_products_columns(body: dict) -> dict:
     """The column config of `blocked_products_frame`: a tooltip on every heading, each naming the Baseline year."""
     year, word = body["baseline_year"], illustrative().capitalize()
     return {
-        "Product": st.column_config.TextColumn("Product", help="The Product (HS6, 2012 edition)."),
+        "Product": product_column(),
         "Blocked Opportunity value": money_column(
             "Blocked Opportunity value",
             f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement and removing "

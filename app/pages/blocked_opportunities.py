@@ -71,7 +71,7 @@ def _explain(row: dict) -> None:
 def _markets_and_products(body: dict, rows: list[dict]) -> None:
     """The Markets table, and beside it the chosen Market's line, its Products table and the chosen Product's panel."""
     markets = body["markets"]
-    left, right = st.columns([2, 5], gap="large")
+    left, right = st.columns([1, 2], gap="large")
     with left:
         at = pick_row(
             blocked_markets_frame(markets), [market["iso3"] for market in markets], key="blocked_markets",

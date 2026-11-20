@@ -89,7 +89,7 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 
 ## Manual UI checklist
 
-Run this before a release, against `podman compose up` with real artefacts. Tick each item.
+Run this before a release, against `podman compose up` with real artefacts, in a browser window 1280 px wide or wider (the app is designed for 1280 px and wider; phones are unsupported). Each item names its page and what to click. Tick each item.
 
 **UK Exports Predictor (every page)**
 - [ ] The menu lists four pages, Leaderboard, Blocked Opportunities, Scenarios and Model Evaluation, with no group headings, and the app opens on the Leaderboard.
@@ -98,6 +98,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Click something slow (e.g. a filter on the real Leaderboard): after a short delay the logo's ship rides the waves in the middle of the page until the app is done.
 - [ ] Every page shows, under its heading and introduction, the grey line "Figures are associations the model has learned, not causes or forecasts.", and, after a divider at the foot of the page, a grey footer stating the Baseline year (provisional data), that Export Gaps are 2022–2024 averages, "Values are nominal US dollars, as reported by BACI", and the model version. There is no blue banner, and no page shows a pound sign or a currency switch.
 - [ ] Stop the API (`podman compose stop api`) and reload: within a few seconds, every page shows a clear "API is unavailable" message instead of an error or a spinner. Start it again with `podman compose start api` and wait for <http://localhost:8000/health> to answer before reloading.
+- [ ] Narrow the browser window to about 700 px (half a laptop screen) and open each page: no page shows an error, though columns may stack or cut long names.
 
 **Leaderboard**
 - [ ] The Leaderboard opens without searching, listing UK Product–Market pairs by Export Gap, largest first, with no Excluded Product (e.g. no crude oil or gold) among them.
@@ -118,9 +119,10 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] **Reset filters** restores the full ranking and clears the filters from the URL.
 - [ ] Each Leaderboard row shows its Potential Range as "low–high". No ranking page (Leaderboard, Blocked Opportunities) shows an "Uncertain Opportunity" badge or a filter for it; the Flagged Product and Re-export Hub badges and their hide filters are unchanged.
 - [ ] Export the Leaderboard to CSV and open it, unfiltered and with one Product or one Market chosen: the columns and rows match the table on screen.
-- [ ] The page opens on **Table and detail**: a three-column table (Product, Market, Export Gap) beside a detail panel already explaining the top row. Click any value of another row: that whole row is tinted, and the panel explains its pair and starts from its top.
+- [ ] The page opens on **Table and detail**: a three-column table (Product, Market, Export Gap, all three in view at 1280 px) beside a detail panel already explaining the top row. Click any value of another row: that whole row is tinted, and the panel explains its pair and starts from its top.
 - [ ] Switch to **Wide table**: the table shows the wide columns (Applied Tariff % among them), the same pair stays selected and tinted, and its detail sits under the table. Switch back: still the same pair.
-- [ ] With Show all on (a filtered ranking of several thousand pairs), a row click answers in about a second.
+- [ ] Open `?product=902214&market=JPN` and switch to **Wide table**: Actual Exports of $18,882 show as `0.0` (a value under $50,000 rounds to 0.0 in $ millions), and the column still sorts as numbers.
+- [ ] Choose the Market USA (5,138 pairs) and turn on **Show all**: a row click answers in about a second.
 - [ ] The first visit shows three steps (Read the ranking, Open a row, Narrow it down) above the table; **Got it** closes them, and **What is this?** beside the heading brings them back.
 
 **Blocked Opportunities**
