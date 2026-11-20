@@ -100,6 +100,29 @@ def test_an_arm_inside_the_noise_is_recorded_as_dropped(data):
     assert floor["win_threshold"] == 2.0
 
 
+def test_after_the_recheck_the_loop_decides_on_the_recomputed_win_threshold(data, tmp_path, monkeypatch):
+    # Without the recheck nothing is too small to win (minimum 0): the same arm is kept in
+    # `test_a_kept_arm_becomes_the_best_so_far_and_the_next_experiment_starts_from_it`.
+    plan = replace(loop.FIXTURE_LOOP, min_win_threshold=0.0)
+    lp = loop.Loop(data, plan, tmp_path)
+    lp.noise_floor()
+    rescored_best = {**lp.results["best"], "selection_measure": 0.25}
+    # #116: the noise floor's seeds re-scored under the tie-proof measure. Their SD is 1, so the
+    # recomputed threshold is 2: no change of a correlation can clear it.
+    loop.save_recheck(tmp_path, loop.recheck_results(lp.results, [-0.5, 0.5, 1.5], best=rescored_best))
+    _no_training(monkeypatch)
+
+    results = loop.Loop(data, plan, tmp_path).run_experiment(
+        "blend", [loop.Arm("three quarters naive", {"naive_weight": 0.75})]
+    )
+
+    section = results["experiments"]["blend"]
+    assert section["win_threshold"] == pytest.approx(2.0)
+    assert section["kept"] is None
+    assert section["base"]["selection_measure"] == 0.25  # the best so far, re-scored
+    assert results["noise_floor"]["win_threshold"] == 0.0  # the original record stays as it was
+
+
 def _no_training(monkeypatch):
     def refuse(*args, **kwargs):
         raise AssertionError("a model was trained")

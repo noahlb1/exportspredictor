@@ -43,6 +43,7 @@ from exportspredictor.loop.data import (
     read_results,
     save_results,
 )
+from exportspredictor.loop.recheck import current_win_threshold
 from exportspredictor.loop.selection import (
     SELECTION_MEASURE,
     SELECTION_MEASURE_TEXT,
@@ -161,7 +162,7 @@ class Loop:
             self._check_budget(name, section, arms, base)
         rows = self._run_arms(section, arms, base)
         if "decided" not in section:
-            threshold = self.results[NOISE_FLOOR]["win_threshold"]
+            threshold = current_win_threshold(self.results)
             section["arms"], kept = decide(rows, section["base"][SELECTION_MEASURE], threshold)
             section |= {"win_threshold": threshold, "kept": kept, "decided": True}
             if kept is not None:

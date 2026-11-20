@@ -19,7 +19,9 @@ choice is measured and when it counts as a win:
 - **The noise floor** (`Loop.noise_floor`) runs first: the current v2 configuration with
   `LoopPlan.noise_seeds`, each seed changing the non-UK hash sample and the XGBoost seed
   together. The win threshold is twice the standard deviation of the selection measure
-  over those seeds, and at least `MIN_WIN_THRESHOLD`.
+  over those seeds, and at least `MIN_WIN_THRESHOLD`. Ticket #116 re-scored the seeds under the
+  tie-proof measure (`recheck`); every decision since reads the threshold through
+  `current_win_threshold`, which prefers the re-checked one.
 - **The win rule** (`decide`): in an experiment, the arm with the highest selection
   measure is marked best; it is kept, and becomes the best so far, only if it beats the
   best so far by more than the win threshold. Every other arm is dropped.
@@ -51,6 +53,7 @@ The package, one module per concern; everything public is importable from `expor
 - `runner`: `Loop`, which runs and caches arms on one fold.
 - `confirmation`: the five-fold confirmation.
 - `served`: what the pipeline serves of the loop's choice.
+- `recheck`: the noise floor, Win Threshold and best so far re-scored under the tie-proof measure (#116).
 - `cli`: the commands above (`__main__` runs them).
 
 Working on the loop
@@ -69,7 +72,9 @@ most `MAX_TRAINED_MODELS`; a two-part arm counts as two.
 **Cache and results** live in `loop_dir()` (`data/derived/loop_V202601/`), shared by every
 worktree through `scripts/wt.ps1`. Models are `models/<training_key>.ubj` with a `.json` of
 their rounds; `results.json` holds the naive baseline, the noise floor, every experiment's
-rows and decision, `best` and `confirmation`. `load()` reads it. A re-run skips arms by
+rows and decision, `best` and `confirmation` (all measured with the old measure), and `recheck`
+(#116: the same decisions under the tie-proof measure, the recomputed noise floor and Win
+Threshold, and the re-scored best so far that `best` now holds). `load()` reads it. A re-run skips arms by
 name, so to re-run an arm, give it a new name; the file is written only by the loop.
 
 **Feature sets.** `real_data` reads the feature set `EXPORTSPREDICTOR_FEATURE_SET` names
@@ -160,6 +165,12 @@ from exportspredictor.loop.data import (
     save_results,
     world_products,
 )
+from exportspredictor.loop.recheck import (
+    RECHECK,
+    current_win_threshold,
+    recheck_results,
+    save_recheck,
+)
 from exportspredictor.loop.runner import (
     NO_MEASURE,
     Loop,
@@ -213,6 +224,7 @@ __all__ = [
     "NOISE_SEEDS",
     "NO_MEASURE",
     "PATIENCE",
+    "RECHECK",
     "RECORDED",
     "RESULTS_FILE",
     "ROUNDING",
@@ -248,6 +260,7 @@ __all__ = [
     "confirm_best",
     "constraint_arms",
     "count_experiments",
+    "current_win_threshold",
     "decide",
     "experiment_label",
     "fixture_data",
@@ -266,7 +279,9 @@ __all__ = [
     "ranking_record",
     "read_results",
     "real_data",
+    "recheck_results",
     "run_product_detail",
+    "save_recheck",
     "save_results",
     "select_arms",
     "served_configuration",
