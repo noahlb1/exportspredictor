@@ -49,7 +49,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor import artefacts as store
-from exportspredictor import baci
+from exportspredictor import baci, ledger
 from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
@@ -949,22 +949,35 @@ def markets_with_income(markets: pl.DataFrame, root: Path | None = None) -> pl.D
     return markets.join(income, on="iso3", how="left")
 
 
-def add_to_latest(root: Path | None = None, artefacts_root: Path | None = None, *, device: str = "cuda") -> Path:
+def add_to_latest(
+    root: Path | None = None,
+    artefacts_root: Path | None = None,
+    *,
+    device: str = "cuda",
+    test_year_ledger: ledger.Ledger | None,
+) -> Path:
     """Evaluate the newest artefact and save it again, with the report, as a new version.
 
     The Baseline models and tables are copied unchanged; only the test-year models are
-    trained (or read from the cache). Returns the new folder.
+    trained (or read from the cache). Returns the new folder. The read is recorded in
+    `test_year_ledger` first and refused if the newest version's configuration was read before
+    (ADR 0009); `None` only on synthetic data.
     """
     artefacts_root = Path(artefacts_root or artefacts_dir())
     source = store.latest_folder(artefacts_root)
     bundle = store.load(source)
+    metadata = {**bundle.metadata, "version": store.new_version(), "copied_from": bundle.version}
+    if test_year_ledger is not None:
+        ledger.record_read(test_year_ledger, metadata, read="test-year evaluation")
     started = time.perf_counter()
     test_models = real_test_models(bundle, root, device=device)
     report = evaluate_real(bundle, test_models, root)
     report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
-    metadata = {**bundle.metadata, "version": store.new_version(), "copied_from": bundle.version}
     return store.copy_version(source, artefacts_root, metadata=metadata, evaluation=report)
 
 
 if __name__ == "__main__":
-    print(add_to_latest(), flush=True)
+    import sys
+
+    command = ledger.Ledger.for_command("python -m exportspredictor.evaluation", sys.argv[1:])
+    print(add_to_latest(test_year_ledger=command), flush=True)

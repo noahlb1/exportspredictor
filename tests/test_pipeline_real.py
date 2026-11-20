@@ -28,6 +28,7 @@ def trained(derived_data_root, v1_frozen, ranking):
         non_uk_rate=0.5, ranking_results=ranking,
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
         ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(), ppml_years=[2021, 2022, 2023, 2024],
+        test_year_ledger=None,
     )
 
 
@@ -92,7 +93,7 @@ def test_an_existing_artefact_is_evaluated_into_a_new_version_with_its_models_co
     source = store.save(old, tmp_path)
     (source / "other_step.parquet").write_bytes(b"a table this code does not know")
 
-    folder = evaluation.add_to_latest(derived_data_root, tmp_path, device="cpu")
+    folder = evaluation.add_to_latest(derived_data_root, tmp_path, device="cpu", test_year_ledger=None)
 
     evaluated = store.load_latest(tmp_path)
     assert evaluated.version == folder.name != old.version
@@ -118,7 +119,8 @@ def test_backtests_are_added_to_the_newest_evaluated_artefact_with_cached_models
     store.save(old, tmp_path)
 
     folder = backtests.add_to_latest(
-        derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu", v1_frozen=v1_frozen
+        derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu", v1_frozen=v1_frozen,
+        test_year_ledger=None,
     )
 
     result = store.load_latest(tmp_path)
@@ -131,7 +133,7 @@ def test_backtests_are_added_to_the_newest_evaluated_artefact_with_cached_models
     again = store.load(
         backtests.add_to_latest(
             derived_data_root, tmp_path, plan=pipeline.FIXTURE_BACKTESTS, device="cpu", version="99990101T000000Z",
-            v1_frozen=v1_frozen,
+            v1_frozen=v1_frozen, test_year_ledger=None,
         )
     )
     assert again.evaluation["lift"]["lift"] == result.evaluation["lift"]["lift"]
@@ -149,7 +151,7 @@ def test_feature_files_built_without_the_exclusions_are_refused(derived_data_roo
     (folder / "features.json").write_text(json.dumps(settings))
 
     with pytest.raises(ValueError, match="rebuild"):
-        pipeline.build_real_artefacts(derived_data_root, device="cpu")
+        pipeline.build_real_artefacts(derived_data_root, device="cpu", test_year_ledger=None)
 
 
 def test_feature_files_built_without_the_gap_period_union_are_refused(derived_data_root):
@@ -159,14 +161,15 @@ def test_feature_files_built_without_the_gap_period_union_are_refused(derived_da
     (folder / "features.json").write_text(json.dumps(settings))
 
     with pytest.raises(ValueError, match="Gap Period"):
-        pipeline.build_real_artefacts(derived_data_root, device="cpu")
+        pipeline.build_real_artefacts(derived_data_root, device="cpu", test_year_ledger=None)
 
 
 def test_the_real_run_without_saved_loop_results_is_refused(derived_data_root):
     features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
 
     with pytest.raises(ValueError, match="exportspredictor.loop"):
-        pipeline.build_real_artefacts(derived_data_root, device="cpu", search_results=_tiny_search(derived_data_root))
+        pipeline.build_real_artefacts(derived_data_root, device="cpu", search_results=_tiny_search(derived_data_root), test_year_ledger=None
+        )
 
 
 def test_the_real_run_serves_the_blend_its_loop_chose_with_the_naive_baseline_of_every_exporter(trained, ranking):
@@ -186,7 +189,7 @@ def test_the_real_run_without_a_saved_search_is_refused(derived_data_root):
     features.build(derived_data_root, years=[2021, 2022, 2023, 2024], rate=1.0)
 
     with pytest.raises(ValueError, match="exportspredictor.search"):
-        pipeline.build_real_artefacts(derived_data_root, device="cpu")
+        pipeline.build_real_artefacts(derived_data_root, device="cpu", test_year_ledger=None)
 
 
 def test_the_real_run_caches_its_fold_models_so_a_rerun_does_not_retrain(
@@ -207,6 +210,7 @@ def test_the_real_run_caches_its_fold_models_so_a_rerun_does_not_retrain(
         non_uk_rate=0.5, ranking_results=trained.metadata["ranking_experiments"],
         backtest_plan=pipeline.FIXTURE_BACKTESTS, constraint_plan=constraints.FIXTURE_PLAN, v1_frozen=v1_frozen,
         ladder_plan=comparison.FIXTURE_LADDER, parts=pipeline.Parts.every(), ppml_years=[2021, 2022, 2023, 2024],
+        test_year_ledger=None,
     )
 
     assert again.baseline.equals(trained.baseline)
@@ -234,7 +238,7 @@ def test_the_v1_comparison_is_added_to_the_newest_artefact_as_a_new_version(
     monkeypatch.setattr(evaluation, "train_fold_models", no_training)
     folder = pipeline.add_v1_comparison(
         derived_data_root, tmp_path, device="cpu", v1_frozen=v1_frozen, ladder_plan=comparison.FIXTURE_LADDER,
-        backtest_plan=pipeline.FIXTURE_BACKTESTS,
+        backtest_plan=pipeline.FIXTURE_BACKTESTS, test_year_ledger=None,
     )
 
     result = store.load_latest(tmp_path)

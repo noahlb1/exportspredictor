@@ -66,6 +66,7 @@ from exportspredictor import (
     fixture,
     freeze,
     governance,
+    ledger,
     loop,
     ppml,
     search,
@@ -244,6 +245,7 @@ def build_artefacts(
     search_results: dict | None = None,
     parts: Parts = Parts(),
     ranking_results: dict | None = None,
+    test_year_ledger: ledger.Ledger | None = None,
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
@@ -256,7 +258,9 @@ def build_artefacts(
     synthetic one, `fixture_v1_frozen`). `search_results` skips the search and uses these
     (`metadata["search"]` of an earlier run). `parts` switches on the opt-in parts (`Parts`).
     `ranking_results` are the experiment loop's results whose chosen form is served (default:
-    the fixture's own tiny loop, `loop.fixture_ranking`).
+    the fixture's own tiny loop, `loop.fixture_ranking`). With `test_year_ledger`, the test-year
+    evaluation is recorded there first and refused if its configuration was read before (ADR 0009);
+    without it the fixture's test year is read unrecorded.
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
@@ -311,6 +315,7 @@ def build_artefacts(
         "zero_sampling_seed": seed,
         "experiments": experiment_results,
     }
+    _record_test_year_read(test_year_ledger, metadata, parts)
     frozen = v1_frozen or fixture_v1_frozen(world)
     v1 = comparison.Inputs(
         frozen=frozen,
@@ -395,6 +400,7 @@ def build_real_artefacts(
     parts: Parts = Parts(),
     ranking_results: dict | None = None,
     ppml_years: Sequence[int] = ppml.YEARS,
+    test_year_ledger: ledger.Ledger | None,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
@@ -409,7 +415,8 @@ def build_real_artefacts(
     constraint comparison and the gain ladder run only when switched on in `parts` (`Parts`).
     The model form served is the one the experiment loop chose, read from `ranking_results`,
     by default the saved loop results (`loop.load`). The PPML benchmark (`parts.ppml_benchmark`) is fitted
-    on the Flows of `ppml_years` only.
+    on the Flows of `ppml_years` only. The test-year read is recorded in `test_year_ledger` and refused
+    if its configuration was read before (ADR 0009); it must be given, as `None` only on synthetic data.
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -486,6 +493,8 @@ def build_real_artefacts(
         # The feature ablation and learning curve that chose the features and rates (2022 only).
         "experiments": experiments.load(root) if experiments.results_path(root).exists() else None,
     }
+    # Before anything of the test year is loaded for the evaluation (ADR 0009).
+    _record_test_year_read(test_year_ledger, metadata, parts)
     test_grid = folder / f"uk_grid_{baseline_year - 1}.parquet"
     v1_folder = v1_frozen or freeze.v1_folder()
     report = _evaluate(
@@ -799,6 +808,7 @@ def _evaluate(
     parts: Parts = Parts(),
     year_flows: Callable[[int], pl.DataFrame] | None = None,
     earlier_v2: dict | None = None,
+    test_year_ledger: ledger.Ledger | None = None,
 ) -> dict:
     """Evaluate on the test year; with `parts`, run Lift and the Event Backtests (`backtests`)
     and compare the monotone-constrained model with an unconstrained one (`constraints`).
@@ -816,9 +826,12 @@ def _evaluate(
     each Gap Period year's naive baseline from `year_flows(year)`, every Exporter's Flows of that
     year). The other opt-in parts measure the model alone (the blend's naive side has no policy
     features: it would scale their effects by 1 − w).
+
+    Callers record the read in the test-year ledger (`_record_test_year_read`) before they load
+    anything of the test year for it.
     """
     test_year = metadata["test_year"]
-    form = ModelForm.from_dict(metadata["model_form"])
+    form =ModelForm.from_dict(metadata["model_form"])
     started = time.perf_counter()
     if test_models_cache is not None and (test_models_cache / evaluation.TEST_MODELS_FILE).exists():
         test_models = evaluation.TestModels.load(test_models_cache)
@@ -888,6 +901,20 @@ def _evaluate(
     # The test year beside v2's reported figures (`earlier_v2`, real runs only) and v1's.
     report["earlier_versions"] = evaluation.earlier_versions(report, v2=earlier_v2)
     return report
+
+
+def _record_test_year_read(test_year_ledger: ledger.Ledger | None, metadata: dict, parts: Parts) -> None:
+    """Record a build's read of the test year in `test_year_ledger` (none: unrecorded), or refuse it (ADR 0009).
+
+    The ledger's "read" names the evaluation and every part of the run that reads the test year.
+    """
+    if test_year_ledger is None:
+        return
+    read = ["test-year evaluation"]
+    if parts.event_backtests:
+        read.append("Lift and Event Backtests")
+    read.append("v1 comparison" + (" with gain ladder" if parts.gain_ladder else ""))
+    ledger.record_read(test_year_ledger, metadata, read="; ".join(read))
 
 
 def _v1_comparison(
@@ -1025,12 +1052,15 @@ def add_v1_comparison(
     ladder_plan: comparison.LadderPlan = comparison.REAL_LADDER,
     backtest_plan: backtests.Plan = backtests.REAL_PLAN,
     version: str | None = None,
+    test_year_ledger: ledger.Ledger | None,
 ) -> Path:
     """Add the pre-registered `v1_comparison` to the newest artefact, saved as a new version.
 
     The source version is not changed: its models and tables are copied file for file, with the
     evaluation report gaining the block. v2's test-year models are read from the cache
     (`evaluation.real_test_models`); the ladder's rungs are read or trained (`ladder_dir`).
+    The comparison reads the test year, so it is recorded in `test_year_ledger` first and refused
+    if the newest version's configuration was read before (ADR 0009); `None` only on synthetic data.
     """
     from exportspredictor import artefacts as store
     from exportspredictor.paths import artefacts_dir
@@ -1042,6 +1072,9 @@ def add_v1_comparison(
     metadata, report = bundle.metadata, dict(bundle.evaluation or {})
     if "lift" not in report or "event_backtest" not in report:
         raise ValueError(f"The artefact {bundle.version} has no Lift or Event Backtest to compare with v1's")
+    copied = {**metadata, "version": version or new_version(), "copied_from": bundle.version}
+    if test_year_ledger is not None:
+        ledger.record_read(test_year_ledger, copied, read="v1 comparison with gain ladder")
     test_models = evaluation.real_test_models(bundle, root, device=device)
     folder = features_dir(root)
     years = json.loads((folder / "features.json").read_text(encoding="utf-8"))["years"]
@@ -1055,7 +1088,6 @@ def add_v1_comparison(
         lift_settings=backtest_plan.lift, device=device, non_uk_rate=metadata["non_uk_sampling_rate"],
         seed=metadata["model_params"].get("seed", 0), ladder_cache=ladder_dir(root),
     )
-    copied = {**metadata, "version": version or new_version(), "copied_from": bundle.version}
     return store.copy_version(source, artefacts_root, metadata=copied, evaluation=report)
 
 
@@ -1199,6 +1231,10 @@ def parse_parts(argv: Sequence[str]) -> Parts:
     parser.add_argument("--gain-ladder", action="store_true", help="also train the v1 comparison's gain ladder")
     parser.add_argument("--ppml-benchmark", action="store_true", help="also fit the PPML benchmark (CPU, no training)")
     parser.add_argument("--every-part", action="store_true", help="all four: the full run")
+    parser.add_argument(
+        ledger.OVERRIDE_FLAG, action="store_true",
+        help="read the test year although the ledger holds this configuration (ADR 0009); the override is logged",
+    )
     args = parser.parse_args(list(argv))
     if args.every_part:
         return Parts.every()
@@ -1218,15 +1254,19 @@ def main(argv: Sequence[str] | None = None) -> None:
     copy of the newest bundle with its Potential Range recomputed (`rerange`), in a few minutes
     on the CPU. `python -m exportspredictor.pipeline compare` saves a
     copy of the newest bundle with the v1 comparison and gain ladder added (`add_v1_comparison`).
+
+    The training run and `compare` read the test year: each records the read in the test-year
+    ledger first, and refuses a configuration already there unless `--read-test-year-again` is given (ADR 0009).
     """
     import sys
 
     from exportspredictor import artefacts
     from exportspredictor.paths import artefacts_dir
 
-    argv = sys.argv[1:] if argv is None else argv
-    if list(argv) == ["compare"]:
-        print(add_v1_comparison(), flush=True)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    test_year_ledger = ledger.Ledger.for_command("python -m exportspredictor.pipeline", argv)
+    if argv and argv[0] == "compare" and set(argv[1:]) <= {ledger.OVERRIDE_FLAG}:
+        print(add_v1_comparison(test_year_ledger=test_year_ledger), flush=True)
         return
     if list(argv) == ["refresh"]:
         source = artefacts.latest_folder(artefacts_dir())
@@ -1238,7 +1278,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if list(argv) == ["rerange"]:
         print(_rerange_latest(), flush=True)
         return
-    bundle = build_real_artefacts(parts=parse_parts(argv))
+    bundle = build_real_artefacts(parts=parse_parts(argv), test_year_ledger=test_year_ledger)
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}
     print(json.dumps(summary), flush=True)
     folder = artefacts.save(bundle, artefacts_dir())
