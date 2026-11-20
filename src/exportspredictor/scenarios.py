@@ -288,12 +288,12 @@ def run(
     """
     changed, clipped_pairs = _apply(baseline_features, scenario, tariff_range)
     pairs = (
-        changed.select("hs6", "iso3", scenario_tariff_pct=_percent(TARIFF))
+        changed.select("hs6", "iso3", scenario_tariff_pct=tariff_percent())
         .with_columns(scenario_potential_usd=export_potential(changed, models, form=form))
         .join(
             baseline.select("hs6", "iso3", baseline_potential_usd="baseline_export_potential_usd"), on=["hs6", "iso3"]
         )
-        .join(baseline_features.select("hs6", "iso3", baseline_tariff_pct=_percent(TARIFF)), on=["hs6", "iso3"])
+        .join(baseline_features.select("hs6", "iso3", baseline_tariff_pct=tariff_percent()), on=["hs6", "iso3"])
         .with_columns(effect_usd=pl.col("scenario_potential_usd") - pl.col("baseline_potential_usd"))
         .with_columns(effect_share=_share("effect_usd", "baseline_potential_usd"))
         .select(
@@ -349,9 +349,9 @@ def with_blocked_opportunity_values(baseline: pl.DataFrame, effects: pl.DataFram
     )
 
 
-def _percent(log_tariff: str) -> pl.Expr:
-    """The Applied Tariff in percent from its `ln(1 + t)` feature (null where unknown)."""
-    return (pl.col(log_tariff).cast(pl.Float64).exp() - 1) * 100
+def tariff_percent(log_tariff: str = TARIFF) -> pl.Expr:
+    """The Applied Tariff in percent from its `ln(1 + t)` feature (null where unknown, NaN included)."""
+    return (pl.col(log_tariff).cast(pl.Float64).fill_nan(None).exp() - 1) * 100
 
 
 def _share(numerator: str, denominator: str) -> pl.Expr:

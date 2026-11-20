@@ -131,6 +131,7 @@ def test_by_product_rows_have_the_documented_shape(client):
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",
+        "applied_tariff_pct",
     }
 
 
@@ -1195,3 +1196,74 @@ def test_the_leaderboard_product_filter_answers_404_for_an_unknown_or_excluded_p
     assert unknown.status_code == 404 and "999999" in unknown.json()["detail"]
     assert excluded.status_code == 404
     assert "Excluded Product" in excluded.json()["detail"] and "pipelines" in excluded.json()["detail"]
+
+
+# --- Row limit, Applied Tariff on ranking rows, term definitions (#106) ------------------------------
+
+RANKING_READS = [
+    "/opportunities/top",
+    "/opportunities/blocked",
+    f"/opportunities/by-product/{FIXTURE_HS6}",
+    "/opportunities/by-market/JPN",
+]
+
+
+@pytest.mark.parametrize("path", RANKING_READS)
+def test_every_ranking_read_accepts_a_limit_of_6000_and_refuses_6001(client, path):
+    assert client.get(path, params={"limit": 6000}).status_code == 200
+    assert client.get(path, params={"limit": 6001}).status_code == 422
+
+
+@pytest.mark.parametrize("path", RANKING_READS)
+def test_every_ranking_row_carries_the_baseline_applied_tariff_in_percent(client, path):
+    rows = client.get(path).json()["opportunities"]
+
+    assert rows and all("applied_tariff_pct" in row for row in rows)
+    # The fixture's tariffs: India charges 150% on whisky; Japan, with a UK Trade Agreement, charges nothing.
+    tariffs = {(row.get("hs6", FIXTURE_HS6), row.get("iso3", "JPN")): row["applied_tariff_pct"] for row in rows}
+    if (FIXTURE_HS6, "IND") in tariffs:
+        assert tariffs[(FIXTURE_HS6, "IND")] == pytest.approx(150.0, rel=1e-5)
+    if (FIXTURE_HS6, "JPN") in tariffs:
+        assert tariffs[(FIXTURE_HS6, "JPN")] == 0.0
+
+
+def test_the_applied_tariff_is_null_where_it_is_unknown(fixture_artefacts, tmp_path):
+    unknown = (pl.col("hs6") == FIXTURE_HS6) & (pl.col("iso3") == "CAN")
+    features = fixture_artefacts.baseline_features.with_columns(
+        log_applied_tariff=pl.when(unknown).then(None).otherwise(pl.col("log_applied_tariff"))
+    )
+    store.save(replace(fixture_artefacts, baseline_features=features), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as constructed:
+        for path in RANKING_READS:
+            rows = constructed.get(path).json()["opportunities"]
+            tariffs = {(row.get("hs6", FIXTURE_HS6), row.get("iso3", "JPN")): row["applied_tariff_pct"] for row in rows}
+            assert tariffs.get((FIXTURE_HS6, "CAN"), None) is None
+            assert any(tariff is not None for tariff in tariffs.values())
+
+
+def test_labels_carry_the_term_definitions_with_the_gap_period_from_the_artefact(client):
+    terms = client.get("/labels").json()["terms"]
+
+    assert set(terms) == {"export_potential", "actual_exports", "export_gap", "opportunity_type"}
+    assert terms["export_potential"] == (
+        "The value of UK exports of this Product to this Market that the model expects, given the fundamentals "
+        "of the UK, the Market and the Product."
+    )
+    assert terms["actual_exports"] == (
+        "What the UK actually exported of this Product to this Market (2022–2024 average)."
+    )
+    assert terms["export_gap"] == (
+        "Export Potential minus Actual Exports (2022–2024 average). Positive means the UK exports less than its "
+        "fundamentals suggest: an Opportunity."
+    )
+    assert terms["opportunity_type"].startswith("Expand: the UK already exports the Product to this Market.")
+
+
+def test_the_term_definitions_take_the_gap_period_label_from_the_artefact(fixture_artefacts, tmp_path):
+    store.save(replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "gap_years": [2021, 2023]}), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as constructed:
+        terms = constructed.get("/labels").json()["terms"]
+
+    assert "(2021–2023 average)" in terms["actual_exports"] and "(2021–2023 average)" in terms["export_gap"]
