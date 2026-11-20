@@ -29,15 +29,11 @@ def _metric_table(overall: dict, metrics: dict) -> pd.DataFrame:
     )
 
 
-LARGEST_MARKETS = (30, 60)
-
-
 def _largest_markets_table(headline: dict, large: dict | None) -> pd.DataFrame:
-    """The headline beside the same measure on the 30 and 60 largest importing Markets; "n/a" for a version
-    evaluated before they were reported."""
-    found = {row["markets"]: row for row in (large or {}).get("rows", [])}
+    """The headline beside the same measure on the largest importing Markets, one row per count the API reports
+    (30 and 60); the headline alone for a version evaluated before they were reported."""
     rows = [("Every Market (the headline)", headline)] + [
-        (f"{n} largest importers", found.get(n, {})) for n in LARGEST_MARKETS
+        (f"{row['markets']} largest importers", row) for row in (large or {}).get("rows", [])
     ]
     return pd.DataFrame(
         {
@@ -241,7 +237,8 @@ def _show_model_choice(choice: dict) -> None:
         (st.success if ranking["beats_naive"] else st.warning)(ranking["text"])
         st.dataframe(
             pd.DataFrame(
-                [{"Version": row["name"], "UK ranking": row["uk_ranking"]}
+                [{"Version": row["name"], "UK ranking, old measure": row["uk_ranking"],
+                  "UK ranking, tie-proof": row.get("uk_ranking_tie_proof")}
                  for row in [*ranking["rows"], *ranking["naive"]]]
             ),
             hide_index=True,

@@ -321,7 +321,7 @@ def test_model_card_shows_the_test_year_beside_earlier_versions_and_says_whether
         **fixture_artefacts.evaluation["headline"], "model": 0.55, "naive": 0.52, "beats_naive": True}}
     v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
           "tweedie_deviance_all_exporters": 355.5, "tweedie_deviance_uk": 568.6}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
     text = governance.render_model_card(governance.model_card(replace(fixture_artefacts, evaluation=report)))
 
     section = _section(text, "## Headline")
@@ -456,7 +456,7 @@ def test_the_headline_says_what_choosing_on_the_ranking_cost_in_deviance(fixture
     v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
           "tweedie_deviance_all_exporters": 0.5, "tweedie_deviance_uk": 568.6}  # below the fixture's deviance
     report = {**fixture_artefacts.evaluation}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
     card = governance.model_card(replace(fixture_artefacts, evaluation=report))
 
     deviance = report["earlier_versions"]["rows"][0]["tweedie_deviance_all_exporters"]

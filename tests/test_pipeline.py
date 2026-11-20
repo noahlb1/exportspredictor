@@ -345,7 +345,14 @@ def test_rerange_rebuilds_a_dollar_offset_range_as_the_pipeline_now_builds_it(wo
     assert ranged.fold_models is older.fold_models
     assert ranged.potential_range_bands.equals(artefacts.potential_range_bands)
     assert ranged.baseline.equals(artefacts.baseline)
-    assert ranged.evaluation["potential_range"] == artefacts.evaluation["potential_range"]
+    saved, rebuilt = artefacts.evaluation["potential_range"], ranged.evaluation["potential_range"]
+    assert {k: v for k, v in rebuilt.items() if k not in ("uk_pair_coverage", "text")} == {
+        k: v for k, v in saved.items() if k not in ("uk_pair_coverage", "text")
+    }
+    # UK pairs' coverage is measured again with the new bands; without Market Reach it needs every Gap Period year's
+    # Market Reach table, which a saved version does not hold.
+    assert rebuilt["uk_pair_coverage"]["with_market_reach"] == saved["uk_pair_coverage"]["with_market_reach"]
+    assert rebuilt["uk_pair_coverage"]["without_market_reach"] is None
 
 
 # --- Excluded Products (ADR 0005) -----------------------------------------------------------

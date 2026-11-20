@@ -64,6 +64,7 @@ def test_top_pairs_are_sorted_by_scenario_effect(client):
         "baseline_actual_exports_usd",
         "blocked_opportunity",
         *(column for tier in TIERS for column in tier.columns),  # each Caveat Tier's, as on ranking rows
+        "caveat_texts",  # the caveat text of each tier the pair is in, worded by the API
     }
 
 

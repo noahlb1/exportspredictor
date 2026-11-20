@@ -38,7 +38,7 @@ def served(monkeypatch, live_api, fixture_artefacts, tmp_path):
     deviance = report["accuracy"]["all_exporters"]["overall"]["model_tweedie_deviance"]
     v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
           "tweedie_deviance_all_exporters": deviance / 2, "tweedie_deviance_uk": 568.6}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
     store.save(replace(fixture_artefacts, evaluation=report), tmp_path)
     with live_api(tmp_path) as url:
         yield _run(monkeypatch, url), httpx.get(f"{url}/evaluation").json()
@@ -73,11 +73,15 @@ def test_page_shows_every_experiment_and_whether_it_was_kept(served):
 def test_page_shows_the_test_year_ranking_beside_the_naive_baseline_and_earlier_versions(served):
     page, body = served
     block = body["model_choice"]["test_year_ranking"]
-    table = next(t for t in _tables(page) if "UK ranking" in t.columns and "Version" in t.columns)
+    table = next(t for t in _tables(page) if "UK ranking, old measure" in t.columns and "Version" in t.columns)
 
     expected = [*block["rows"], *block["naive"]]
     assert list(table["Version"]) == [row["name"] for row in expected]
-    assert list(table["UK ranking"]) == pytest.approx([row["uk_ranking"] for row in expected])
+    assert list(table["UK ranking, old measure"]) == pytest.approx([row["uk_ranking"] for row in expected])
+    # This version's tie-proof figure is its headline; earlier versions' wait for re-scoring their saved scores.
+    assert table["UK ranking, tie-proof"][0] == pytest.approx(body["headline"]["model"])
+    assert block["rows"][0]["uk_ranking_tie_proof"] == pytest.approx(body["headline"]["model"])
+    assert block["naive"][0]["uk_ranking_tie_proof"] == pytest.approx(body["headline"]["naive"])
     assert block["text"] in _text(page)
     assert str(block["test_year"]) in _text(page)
 

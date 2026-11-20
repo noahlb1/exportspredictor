@@ -318,11 +318,20 @@ def test_limitations_drop_no_tariffs_and_cover_v2s_caveats():
 # --- The test year beside earlier versions --------------------------------------------------
 
 
-def _final_report(model, naive):
+REACH_FORM = {
+    "form": "blend", "naive_weight": 0.3,
+    "market_reach": {"form": "share", "beta": 4.0, "pseudo_count": 5.0, "lag_years": 1, "reference_year": 2022,
+                     "constant": 0.06},
+}
+
+
+def _final_report(model, naive, *, old=(0.58, 0.53), form=REACH_FORM):
+    """A new version's report: its headline on the tie-proof measure (`model`, `naive`) and the old measure (`old`)."""
     return {
         "test_year": 2023,
-        "model_form": {"form": "blend", "naive_weight": 0.3},
+        "model_form": form,
         "headline": {"model": model, "naive": naive, "beats_naive": model > naive},
+        "old_measure": {"model": old[0], "naive": old[1]},
         "accuracy": {
             "all_exporters": {"overall": {"model_tweedie_deviance": 400.0}},
             "uk_out_of_fold": {"overall": {"model_tweedie_deviance": 700.0}},
@@ -336,51 +345,102 @@ V2 = {
     "version": "20261118T100524Z", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
     "tweedie_deviance_all_exporters": 355.5, "tweedie_deviance_uk": 568.6,
 }
+BLEND = {
+    "version": "20261118T185910Z", "uk_ranking": 0.5552, "lift": 4.99, "size_matched_lift": 0.761,
+    "tweedie_deviance_all_exporters": 433.8, "tweedie_deviance_uk": 566.3,
+}
+THIS = "This version (Blend with Market Reach)"
 
 
-def test_the_test_year_is_reported_beside_v2_v1_and_both_naive_figures():
-    block = evaluation.earlier_versions(_final_report(0.55, 0.52), v2=V2)
+def test_the_new_version_is_shown_beside_the_blend_v2_and_v1_on_both_measures():
+    block = evaluation.earlier_versions(_final_report(0.55, 0.52), v2=V2, blend=BLEND)
 
+    assert [row["name"] for row in block["rows"]] == [THIS, "Blend", "v2", "v1"]
     rows = {row["name"]: row for row in block["rows"]}
-    assert rows["Blend"]["uk_ranking"] == 0.55
-    assert rows["Blend"]["size_matched_lift"] == 0.9
-    assert rows["Blend"]["tweedie_deviance_all_exporters"] == 400.0
+    # Every `uk_ranking` is the old measure, every `uk_ranking_tie_proof` the tie-proof one: never mixed.
+    assert (rows[THIS]["uk_ranking"], rows[THIS]["uk_ranking_tie_proof"]) == (0.58, 0.55)
+    assert rows[THIS]["size_matched_lift"] == 0.9 and rows[THIS]["tweedie_deviance_all_exporters"] == 400.0
+    assert rows["Blend"]["uk_ranking"] == 0.5552 and rows["Blend"]["size_matched_lift"] == 0.761
     assert rows["v2"]["uk_ranking"] == 0.5115 and rows["v2"]["size_matched_lift"] == 0.788
     assert rows["v1"]["uk_ranking"] == 0.5397
-    naive = {row["name"]: row["uk_ranking"] for row in block["naive"]}
-    assert naive == {"Naive Baseline, every Exporter's Flows (this run)": 0.52,
-                     "Naive Baseline as reported for v2 (training rows' Flows)": 0.5233}
+    # Earlier versions' tie-proof figures come from re-scoring their saved scores (#128), not yet done here.
+    assert all(rows[name]["uk_ranking_tie_proof"] is None for name in ("Blend", "v2", "v1"))
+    naive = {row["name"]: (row["uk_ranking"], row.get("uk_ranking_tie_proof")) for row in block["naive"]}
+    assert naive == {"Naive Baseline, every Exporter's Flows (this run)": (0.53, 0.52),
+                     "Naive Baseline as reported for v2 (training rows' Flows)": (0.5233, None)}
     assert block["beats_naive"] is True
     assert "beats the Naive Baseline" in block["text"] and "2023" in block["text"]
+    assert "tie-proof" in block["text"] and "old measure" in block["text"]
+    assert "not yet re-scored" in block["text"]
+
+
+def test_earlier_versions_tie_proof_figures_come_from_re_scoring_their_saved_scores():
+    rescored = {"Blend": {"uk_ranking": 0.5552, "uk_ranking_tie_proof": 0.541},
+                "v2": {"uk_ranking": 0.5115, "uk_ranking_tie_proof": 0.505},
+                "v1": {"uk_ranking": 0.5397, "uk_ranking_tie_proof": 0.522}}
+    report = evaluation.with_rescored_earlier_versions(
+        {**_final_report(0.55, 0.52), "earlier_versions": {"stale": True}}, rescored, v2=V2, blend=BLEND
+    )
+
+    rows = {row["name"]: row for row in report["earlier_versions"]["rows"]}
+    assert report["rescored_earlier_versions"] == rescored
+    assert {name: rows[name]["uk_ranking_tie_proof"] for name in ("Blend", "v2", "v1")} == {
+        "Blend": 0.541, "v2": 0.505, "v1": 0.522
+    }
+    assert rows["Blend"]["uk_ranking"] == 0.5552  # the old measure stays as reported
+    assert "not yet re-scored" not in report["earlier_versions"]["text"]
+    assert "0.541" in report["earlier_versions"]["text"]
+
+
+def test_re_scoring_saved_scores_gives_both_measures_and_ties_cannot_raise_the_fixed_one():
+    # One Product, five Markets; the saved scores tie the bottom four, which the old measure rewards.
+    saved = pl.DataFrame({
+        "hs6": ["010101"] * 5, "importer": ["AAA", "BBB", "CCC", "DDD", "EEE"],
+        "value_usd": [100.0, 0.0, 0.0, 0.0, 0.0], "export_potential_usd": [50.0, 1.0, 1.0, 1.0, 1.0],
+    })
+
+    figures = evaluation.rescore_saved({"v1": saved})["v1"]
+
+    assert figures["uk_ranking"] == pytest.approx(1.0)
+    assert figures["uk_ranking_tie_proof"] < figures["uk_ranking"]
 
 
 def test_a_model_that_does_not_beat_the_naive_baseline_is_said_so_plainly():
-    block = evaluation.earlier_versions(_final_report(0.515, 0.52), v2=V2)
+    block = evaluation.earlier_versions(_final_report(0.515, 0.52), v2=V2, blend=BLEND)
 
     assert block["beats_naive"] is False
     assert "does not beat the Naive Baseline" in block["text"]
 
 
-def test_without_v2_figures_only_this_version_and_v1_are_listed():
+def test_without_reported_figures_only_this_version_and_v1_are_listed():
     report = _final_report(0.55, 0.52)
     del report["lift"]
-    block = evaluation.earlier_versions(report, v2=None)
+    block = evaluation.earlier_versions(report, v2=None, blend=None)
 
-    assert [row["name"] for row in block["rows"]] == ["Blend", "v1"]
+    assert [row["name"] for row in block["rows"]] == [THIS, "v1"]
     assert block["rows"][0]["size_matched_lift"] is None
     assert [row["name"] for row in block["naive"]] == ["Naive Baseline, every Exporter's Flows (this run)"]
 
 
+def test_the_fixture_evaluation_reports_the_new_version_on_both_measures(report):
+    rows = report["earlier_versions"]["rows"]
+    assert rows[0]["uk_ranking_tie_proof"] == report["headline"]["model"]
+    assert rows[0]["uk_ranking"] == report["old_measure"]["model"] is not None
+    assert report["old_measure"]["naive"] == report["earlier_versions"]["naive"][0]["uk_ranking"]
+
+
 def test_a_report_saved_with_the_old_names_is_read_with_the_glossary_s(fixture_artefacts):
     # Artefact 20261119T001736Z saved "This version (blend)" and "Naive baseline, ..." before review2.
-    block = evaluation.earlier_versions(_final_report(0.555, 0.523), v2=V2)
+    report = _final_report(0.555, 0.523, form={"form": "blend", "naive_weight": 0.3})
+    del report["old_measure"]  # saved before the old and tie-proof measures were told apart: one figure per row
+    block = evaluation.earlier_versions(report, v2=V2, blend=None)
     saved_names = {"Blend": "This version (blend)",
                    evaluation.NAIVE_THIS_RUN: "Naive baseline, every Exporter's Flows (this run)",
                    evaluation.NAIVE_AS_REPORTED_FOR_V2: "Naive baseline as reported for v2 (training rows' Flows)"}
     saved = {**block, "rows": [{**row, "name": saved_names.get(row["name"], row["name"])} for row in block["rows"]],
              "naive": [{**row, "name": saved_names[row["name"]]} for row in block["naive"]],
              "text": block["text"].replace("Naive Baseline", "naive baseline")}
-    report = {**_final_report(0.555, 0.523), "earlier_versions": saved}
+    report = {**report, "earlier_versions": saved}
 
     assert evaluation.relabelled(report)["earlier_versions"] == block
     saved_headline = {"model": 0.555, "naive": 0.523, "beats_naive": True, "text": "... than the naive baseline ..."}
@@ -479,3 +539,64 @@ def test_no_size_limitation_when_every_size_group_is_near_the_target_or_has_no_r
     assert evaluation.size_coverage_limitations(_by_size(0.85, 0.75, 0.80, None)) == []
     assert evaluation.size_coverage_limitations({"target": 0.8}) == []
     assert evaluation.size_coverage_limitations(None) == []
+
+
+# --- UK pairs inside the Potential Range under Market Reach (spec #113 story 13) -----------------------------------
+
+
+def _uk_pairs(with_reach, without):
+    return {"target": 0.8, "uk_pair_coverage": {"with_market_reach": with_reach, "without_market_reach": without}}
+
+
+def test_uk_pair_coverage_more_than_five_points_below_the_target_is_a_known_limitation():
+    limits = evaluation.uk_pair_coverage_limitations({}, _uk_pairs(0.736, 0.809))
+
+    assert [x["title"] for x in limits] == ["The Potential Range holds fewer UK pairs than its target"]
+    assert "73.6%" in limits[0]["text"] and "80.9% without Market Reach" in limits[0]["text"]
+    assert "80%" in limits[0]["text"]
+
+
+def test_uk_pair_coverage_within_five_points_of_the_target_is_no_limitation():
+    assert evaluation.uk_pair_coverage_limitations({}, _uk_pairs(0.75, 0.81)) == []
+    assert evaluation.uk_pair_coverage_limitations({}, _uk_pairs(0.86, 0.81)) == []
+    assert evaluation.uk_pair_coverage_limitations({}, None) == []
+
+
+def test_a_version_upgraded_by_rereach_states_its_uk_pair_coverage_from_its_metadata():
+    metadata = {"market_reach_pair_coverage": {"before": 0.809, "after": 0.736}}
+
+    [limit] = evaluation.uk_pair_coverage_limitations(metadata, {"target": 0.8})
+
+    assert "73.6%" in limit["text"]
+
+
+def test_the_fixture_build_reports_uk_pair_coverage_with_the_coverage_by_size(fixture_artefacts):
+    from exportspredictor import conformal
+
+    report = fixture_artefacts.evaluation["potential_range"]
+    coverage = report["uk_pair_coverage"]
+
+    assert coverage["with_market_reach"] == pytest.approx(conformal.pair_coverage(fixture_artefacts.baseline))
+    assert 0 <= coverage["without_market_reach"] <= 1
+    assert fixture_artefacts.metadata["market_reach_pair_coverage"] == {
+        "before": coverage["without_market_reach"], "after": coverage["with_market_reach"]
+    }
+    assert report["by_size"]
+    assert f"{coverage['with_market_reach']:.0%} of UK pairs" in report["text"]
+    titles = [x["title"] for x in evaluation.known_limitations(fixture_artefacts)]
+    shortfall = coverage["with_market_reach"] < 0.75
+    assert ("The Potential Range holds fewer UK pairs than its target" in titles) == shortfall
+
+
+def test_the_kept_change_s_effect_on_the_ranking_is_reported_beside_the_served_form(report):
+    effect = report["market_reach_effect"]
+
+    assert effect["selection_measure"]["with"] == report["headline"]["model"]
+    assert effect["old_measure"]["with"] == report["old_measure"]["model"]
+    assert [row["markets"] for row in effect["large_markets"]] == [30, 60]
+    assert [row["with"] for row in effect["large_markets"]] == [row["model"] for row in report["large_markets"]["rows"]]
+    for figures in (effect["selection_measure"], effect["old_measure"], *effect["large_markets"]):
+        assert figures["without"] is not None
+    assert effect["uk_pair_coverage"]["with"] == report["potential_range"]["uk_pair_coverage"]["with_market_reach"]
+    assert "leaves Scenario Effects unchanged" in effect["text"] and "Event Backtests" in effect["text"]
+    assert "not a forecast" in effect["text"]

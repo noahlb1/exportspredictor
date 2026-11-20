@@ -77,6 +77,11 @@ CONDITIONS = {
 # ("v2", "v2_beats_v1") keep that name; the words name the version that was actually compared.
 NEW_VERSION = "v2"
 BLEND_VERSION = "the Blend"
+# Where the served form has Market Reach (ADR 0010): the comparison still scores the Blend without it, as pre-registered.
+WITHOUT_MARKET_REACH_NOTE = (
+    "This comparison scores the Blend without Market Reach, the form it was pre-registered on; the served form "
+    "scales the Blend by each Market's Market Reach. "
+)
 _PAIR = ["exporter", "importer", "hs6"]
 
 # --- The gain ladder (reporting only; it decides nothing) -------------------------------------------
@@ -608,9 +613,11 @@ def version_name(report: dict) -> str:
 
 
 def saved_verdict_text(block: dict, *, name: str) -> str:
-    """A saved `v1_comparison` block's verdict, worded again from its saved figures, the new version called `name`."""
+    """A saved `v1_comparison` block's verdict, worded again from its saved figures, the new version called `name`;
+    a block that scored the Blend without the served form's Market Reach says so first (`WITHOUT_MARKET_REACH_NOTE`)."""
     judged = verdict(block["primary"], block["secondary"], name=name)
-    return judged["text"] + _not_run_text(block.get("secondaries_not_run") or [])
+    note = WITHOUT_MARKET_REACH_NOTE if block.get("scored_without_market_reach") else ""
+    return note + judged["text"] + _not_run_text(block.get("secondaries_not_run") or [])
 
 
 def relabelled(report: dict) -> dict:

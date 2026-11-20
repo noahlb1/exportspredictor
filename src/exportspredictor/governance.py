@@ -275,18 +275,36 @@ def _earlier_lines(block: dict | None) -> list[str]:
     def cell(row, key, fmt):
         value = row.get(key)
         return "n/a" if value is None else number_text(value, fmt)
+    if "uk_ranking_tie_proof" not in block["rows"][0]:  # saved before the two measures were told apart
+        return [
+            f"**{block['text']}**",
+            "",
+            "| Version | UK ranking | Size-matched Lift | Lift | Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |",
+            "| --- | --- | --- | --- | --- | --- |",
+            *[
+                f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'size_matched_lift', '.2f')} | "
+                f"{cell(row, 'lift', '.2f')} | {cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | "
+                f"{cell(row, 'tweedie_deviance_uk', ',.1f')} |"
+                for row in block["rows"]
+            ],
+            *[f"| {row['name']} | {number_text(row['uk_ranking'], '.3f')} | | | | |" for row in block["naive"]],
+        ]
     return [
         f"**{block['text']}**",
         "",
-        "| Version | UK ranking | Size-matched Lift | Lift | Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |",
-        "| --- | --- | --- | --- | --- | --- |",
+        (
+            "| Version | UK ranking, old measure | UK ranking, tie-proof | Size-matched Lift | Lift | "
+            "Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |"
+        ),
+        "| --- | --- | --- | --- | --- | --- | --- |",
         *[
-            f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'size_matched_lift', '.2f')} | "
-            f"{cell(row, 'lift', '.2f')} | {cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | "
-            f"{cell(row, 'tweedie_deviance_uk', ',.1f')} |"
+            f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'uk_ranking_tie_proof', '.3f')} | "
+            f"{cell(row, 'size_matched_lift', '.2f')} | {cell(row, 'lift', '.2f')} | "
+            f"{cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | {cell(row, 'tweedie_deviance_uk', ',.1f')} |"
             for row in block["rows"]
         ],
-        *[f"| {row['name']} | {number_text(row['uk_ranking'], '.3f')} | | | | |" for row in block["naive"]],
+        *[f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'uk_ranking_tie_proof', '.3f')} | | | | |"
+          for row in block["naive"]],
     ]
 
 

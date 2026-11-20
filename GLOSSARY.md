@@ -73,7 +73,7 @@ The observed value of a UK Flow in a given year.
 _Avoid_: real exports, historic trade
 
 **Export Gap**:
-The mean, over the Gap Period, of Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals. With Market Reach in the Model Form, it is a Product-specific shortfall within a Market; a Market-wide shortfall shows in the Market's reach.
+The mean, over the Gap Period, of Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals. With Market Reach in the Model Form, it is specific to the Product within its Market; how widely the UK reaches the whole Market shows in the Market's reach.
 _Avoid_: untapped potential, headroom, shortfall
 
 **Gap Period**:
@@ -163,7 +163,7 @@ A short hash of the settings that decide a version's test-year models and how th
 _Avoid_: version hash, model ID
 
 **Test-year Ledger**:
-The record of every read of the test year: date, version, Configuration Fingerprint, what was read and the command. A fingerprint already in it is refused a second read unless overridden, and the override is recorded too (ADR 0009).
+The record of every read of the test year: date, version, Configuration Fingerprint, what was read, the command, its kind (an evaluation, or a re-score of earlier versions' saved scores under a new measure) and its status (started, then completed once its figures are saved). A fingerprint already completed in it is refused a second read unless overridden, and the override is recorded too (ADR 0009).
 _Avoid_: audit log, read log
 
 ### Scenarios

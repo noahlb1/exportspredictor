@@ -113,7 +113,9 @@ def ranking_by_version(bundle: Artefacts) -> Chart | NotRun:
     rows += [{**_pick(row, "name", "uk_ranking"), "kind": "naive"} for row in block["naive"]]
     data = pl.DataFrame(rows, schema={"name": pl.String, "uk_ranking": pl.Float64, "kind": pl.String})
     colours = {"this version": ACCENT, "earlier version": NEUTRAL, "naive": NEUTRAL}
-    title = f"UK within-Product rank correlation on {block['test_year']}, read once (higher is better)"
+    # Every version on the old measure, the one they all reported (`evaluation.earlier_versions`).
+    measure = ", old measure" if "uk_ranking_tie_proof" in block["rows"][0] else ""
+    title = f"UK within-Product rank correlation on {block['test_year']}, read once{measure} (higher is better)"
     return Chart(title, data, bar_svg(
         title,
         [Bar(r["name"], 0.0, r["uk_ranking"], colours[r["kind"]], f"{r['uk_ranking']:.3f}") for r in rows],

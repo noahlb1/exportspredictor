@@ -27,7 +27,7 @@ from app.tables import (
     millions_unit,
     pick_row,
 )
-from app.ui import caveats, fetch, illustrative, labels, read_limit, scenario_note
+from app.ui import caveat_tiers, fetch, illustrative, labels, read_limit, scenario_note
 
 MARKET = "blocked_market"  # the chosen Market, ISO3
 PAIR = "blocked_pair"  # the chosen Blocked Opportunity, (HS6, ISO3)
@@ -151,7 +151,7 @@ with page(
             st.info("No Blocked Opportunities match these filters.")
         else:
             _markets_and_products(body, rows)
-            flagged = [caveat for field, (_, caveat) in caveats().items() if any(row[field] for row in rows)]
+            flagged = [tier["text"] for tier in caveat_tiers() if any(row[tier["column"]] for row in rows)]
             if flagged:
                 st.caption(" ".join(flagged) + " Use the hide filters to leave them out.")
             if count > len(rows):

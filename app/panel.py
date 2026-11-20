@@ -34,8 +34,8 @@ TEXT = {"light": "#1b1915", "dark": "#f5f2ec"}  # chart value labels take the mo
 FACTOR_WIDTHS = {"Factor": st.column_config.TextColumn("Factor", width="medium")}
 MARKET_REACH_HELP = (
     "How widely the UK sends its Products to this Market, against how widely it does across Markets. The model "
-    "associates broad UK reach into a Market with higher Export Potential there, for every Product alike, so a "
-    "Market-wide shortfall shows here, not in any one Product's figures."
+    "associates broad UK reach into a Market with higher Export Potential there, for every Product alike, so where "
+    "the UK sends fewer Products to a whole Market than expected, it shows here, not in any one Product's figures."
 )
 FACTOR_COLUMNS = {
     "label": "Factor",

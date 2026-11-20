@@ -163,3 +163,31 @@ def test_a_copied_version_keeps_the_sources_optional_results_unless_given_new_on
 
     assert (kept.evaluation, kept.ppml_benchmark) == (fixture_artefacts.evaluation, fixture_artefacts.ppml_benchmark)
     assert (replaced.evaluation, replaced.ppml_benchmark) == (report, benchmark)
+
+
+def test_load_refuses_a_baseline_without_a_declared_tier_s_columns_and_names_recaveat(fixture_artefacts, tmp_path):
+    older = replace(fixture_artefacts, baseline=fixture_artefacts.baseline.drop("flagged_product_reason"))
+    folder = store.save(older, tmp_path)
+
+    with pytest.raises(store.UnreadableArtefacts, match="flagged_product_reason") as refused:
+        store.load(folder)
+    assert "python -m exportspredictor.pipeline recaveat" in str(refused.value)
+    # `recaveat` itself reads it, marking the Baseline again; no tier is required then.
+    assert store.load(folder, tiers=()).baseline.height == fixture_artefacts.baseline.height
+
+
+def test_the_api_refuses_a_baseline_without_a_declared_tier_s_columns_with_the_same_message(
+    fixture_artefacts, tmp_path
+):
+    from fastapi.testclient import TestClient
+
+    from api.main import create_app
+
+    store.save(replace(fixture_artefacts, baseline=fixture_artefacts.baseline.drop("flagged_product_reason")), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as client:
+        health = client.get("/health")
+        opportunities = client.get("/opportunities/top")
+
+    assert health.status_code == 503 and "recaveat" in health.json()["reason"]
+    assert opportunities.status_code == 503

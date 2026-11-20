@@ -159,7 +159,7 @@ def test_page_shows_the_measure_on_the_largest_importing_markets_beside_the_head
     assert report["large_markets"]["text"] in _text(page)
 
 
-def test_page_shows_n_a_for_an_artefact_without_the_largest_markets_measure(
+def test_page_shows_only_the_headline_for_an_artefact_without_the_largest_markets_measure(
     monkeypatch, live_api, fixture_artefacts, tmp_path
 ):
     older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
@@ -168,7 +168,8 @@ def test_page_shows_n_a_for_an_artefact_without_the_largest_markets_measure(
     with live_api(tmp_path) as url:
         table = _largest_markets_table(_run(monkeypatch, url))
 
-    assert list(table["Model"])[1:] == ["n/a", "n/a"] and list(table["Naive Baseline"])[1:] == ["n/a", "n/a"]
+    # The counts of Markets come from the API's rows, so a version without them shows the headline alone.
+    assert list(table["Markets measured"]) == ["Every Market (the headline)"]
 
 
 def test_page_says_so_when_the_artefact_has_no_evaluation(monkeypatch, live_api, fixture_artefacts, tmp_path):
@@ -198,7 +199,7 @@ def test_page_shows_size_matched_lift_next_to_raw_lift_and_explains_the_differen
     assert f"${lift['min_growth_usd']:,.0f}" in text  # the growth threshold, from the API
     assert "tendency" in text
     first, last = lift["gap_years"][0], lift["gap_years"][-1]
-    assert f"{first}–{last}" in text  # the Gap Period the Export Gaps are averaged over
+    assert (str(first) if first == last else f"{first}–{last}") in text  # the Gap Period the gaps are averaged over
 
 
 def test_page_shows_the_event_backtest_predicted_against_observed_with_its_control_group(page, fixture_artefacts):

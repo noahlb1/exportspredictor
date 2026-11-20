@@ -20,7 +20,7 @@ from exportspredictor.features import (
     FeatureTransform,
     subsample_zeros,
 )
-from exportspredictor.folds import assign_folds, outside_fold
+from exportspredictor.folds import outside_fold, with_folds
 from exportspredictor.loop.arms import (
     ANY_FLOW,
     ANY_FLOW_PARAMS,
@@ -155,7 +155,7 @@ class Loop:
         self._save()
 
     def _held_out(self, uk_rows: pl.DataFrame) -> pl.DataFrame:
-        folded = assign_folds(uk_rows.rename({"importer": "iso3"}), self.plan.n_folds).rename({"iso3": "importer"})
+        folded = with_folds(uk_rows, self.plan.n_folds)
         return folded.filter(pl.col("fold") == self.plan.fold).drop("fold")
 
     # --- Running arms --------------------------------------------------------------------------
@@ -557,15 +557,13 @@ class Loop:
                 raise ValueError("This loop's data has no UK grid of the year before, so no arm can use Market Reach")
             lag = self.data.validation_year - market_reach.LAG_YEARS
             source = self.data.reach_source().select(
-                pl.col("hs6").cast(pl.String), iso3=pl.col("importer").cast(pl.String), value_usd="value_usd",
+                pl.col("hs6").cast(pl.String), importer=pl.col("importer").cast(pl.String), value_usd="value_usd",
                 log_demand_loo=market_reach.DEMAND, year=pl.lit(lag),
             )
-            rows = assign_folds(source, self.plan.n_folds).rename({"iso3": "importer"})
+            rows = with_folds(source, self.plan.n_folds)
             self._reach = market_reach.reach_table(rows, self.data.validation_year, n_folds=self.plan.n_folds)
-        is_uk = pl.col("exporter").cast(pl.String) == self.plan.uk if "exporter" in table.columns else pl.lit(True)
-        rows = table.select(
-            fold=pl.when(is_uk).then(pl.lit(self.plan.fold, pl.Int8)), importer=pl.col("importer").cast(pl.String)
-        )
+        # Every row is held out by this fold; other Exporters' rows take no offset, only c (as #124 measured).
+        rows = market_reach.uk_keys(table, fold=pl.lit(self.plan.fold, pl.Int8), uk=self.plan.uk).drop("uk")
         constant = market_reach.rescale_constant(potential, rows, self._reach, beta=beta)
         return market_reach.apply(potential, rows, self._reach, beta=beta, constant=constant)
 

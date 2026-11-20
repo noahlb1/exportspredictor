@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from exportspredictor import scenarios
-from exportspredictor.caveats import TIERS, CaveatTier
+from exportspredictor.caveats import TIERS, CaveatTier, caveat_texts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.rankings import (
     BLOCKED,
@@ -94,7 +94,6 @@ class Labels(BaseModel):
     usd_caption: str  # every value's unit, said once per page
     usd_unit: str  # the unit in column headings, e.g. "Export Gap (USD, nominal)"
     opportunity_types: list[str]  # Expand, New Market, New Product (GLOSSARY.md)
-    caveats: dict[str, Caveat]  # by the boolean row field that sets each (ADR 0005, 0007)
     last_tariff_year: int  # tariff data end here; later years carry it forward, and Scenarios restore its MFN rate
     tariff_carried_forward: str  # the caveat of a carried-forward Applied Tariff (ADR 0006)
     # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
@@ -120,7 +119,9 @@ class MarketReachOut(BaseModel):
     products_sent: int  # the Market's Products with a UK Flow that year
     products_imported: int  # the Market's Products imported from other Exporters that year
     products_expected: float  # products_imported × the UK's share across every Market
-    offset: float  # log of the Market's UK share against that share, shrunk (mean over the fold tables)
+    # Log of the share of the Market's imported Products the UK sends, against that share across Markets, shrunk
+    # (mean over the fold tables).
+    offset: float
     text: str  # the one sentence the app shows
 
 
@@ -500,12 +501,13 @@ class Confirmation(BaseModel):
 
 
 class VersionResult(BaseModel):
-    """One version's test-year figures: this version or an earlier one (v2, v1)."""
+    """One version's test-year figures: this version or an earlier one (the Blend, v2, v1)."""
 
     model_config = ConfigDict(extra="allow")  # v2's artefact version
 
     name: str
-    uk_ranking: float | None = None
+    uk_ranking: float | None = None  # on the old measure (ties share their average rank), as every version reported
+    uk_ranking_tie_proof: float | None = None  # the Selection Measure; an earlier version's from its saved scores
     lift: float | None = None
     size_matched_lift: float | None = None
     tweedie_deviance_all_exporters: float | None = None
@@ -516,7 +518,8 @@ class NaiveBaselineResult(BaseModel):
     """The Naive Baseline's test-year UK ranking, from this run or as reported for v2."""
 
     name: str
-    uk_ranking: float | None = None
+    uk_ranking: float | None = None  # on the old measure
+    uk_ranking_tie_proof: float | None = None  # the Selection Measure, where measured
 
 
 class TestYearRanking(BaseModel):
@@ -824,18 +827,36 @@ class Tiered:
     ScenarioResponse: type[ScenarioResponse]
 
 
-def _rebuilt[M: BaseModel](model: type[M], *, after: str | None = None, added: dict | None = None, **replaced) -> type[M]:
+def _rebuilt[M: BaseModel](
+    model: type[M], *, after: str | None = None, added: dict | None = None, validators: dict | None = None, **replaced
+) -> type[M]:
     """`model` under its own name with `added` fields inserted after the field `after`, and `replaced` fields swapped
-    in place, so field order (and the OpenAPI document) reads as if they had been declared there."""
+    in place, so field order (and the OpenAPI document) reads as if they had been declared there. `validators` are
+    pydantic validators the built model runs."""
     fields: dict = {}
     for name, info in model.model_fields.items():
         fields[name] = (replaced[name], info) if name in replaced else (info.annotation, info)
         if name == after:
             fields.update(added or {})
     built = create_model(
-        model.__name__, __config__=model.model_config, __doc__=model.__doc__, __module__=model.__module__, **fields
+        model.__name__, __config__=model.model_config, __doc__=model.__doc__, __module__=model.__module__,
+        __validators__=validators, **fields,
     )
     return cast(type[M], built)
+
+
+def _caveat_texts_validator(tiers: tuple[CaveatTier, ...]) -> dict:
+    """A validator that fills a row's `caveat_texts` from its tier columns (`caveats.caveat_texts`), so every row the
+    API serves carries its caveats worded once, in the package."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def with_caveat_texts(cls, data):
+        if isinstance(data, dict) and "caveat_texts" not in data:
+            return {**data, "caveat_texts": caveat_texts(data, tiers)}
+        return data
+
+    return {"with_caveat_texts": with_caveat_texts}
 
 
 @cache
@@ -851,11 +872,14 @@ def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
         columns[tier.column] = (bool, ...)
         if tier.reason_column is not None:
             columns[tier.reason_column] = (str | None, ...)
+    # The caveat text of each tier the row is in, worded by the package (`caveats.caveat_texts`), in tier order.
+    columns["caveat_texts"] = (list[str], Field(default_factory=list))
+    texts = _caveat_texts_validator(tiers)
     market, product, leaderboard, blocked = (
-        _rebuilt(row, after="blocked_opportunity", added=columns)
+        _rebuilt(row, after="blocked_opportunity", added=columns, validators=texts)
         for row in (MarketOpportunity, ProductOpportunity, LeaderboardOpportunity, BlockedOpportunity)
     )
-    pair = _rebuilt(PairEffect, after="blocked_opportunity", added=columns)
+    pair = _rebuilt(PairEffect, after="blocked_opportunity", added=columns, validators=texts)
     return Tiered(
         RankingQuery=_rebuilt(RankingQuery, after="region", added=hides),
         LeaderboardQuery=_rebuilt(LeaderboardQuery, after="region", added=hides),
@@ -868,7 +892,7 @@ def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
         BlockedOpportunities=_rebuilt(BlockedOpportunities, opportunities=list[blocked]),
         ProductOpportunities=_rebuilt(ProductOpportunities, opportunities=list[market]),
         MarketOpportunities=_rebuilt(MarketOpportunities, opportunities=list[product]),
-        Explanation=_rebuilt(Explanation, after="opportunity_type", added=columns),
+        Explanation=_rebuilt(Explanation, after="opportunity_type", added=columns, validators=texts),
         PairEffect=pair,
         ScenarioResponse=_rebuilt(ScenarioResponse, top_pairs=list[pair], blocked_opportunities=list[pair]),
     )

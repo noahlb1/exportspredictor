@@ -548,12 +548,21 @@ def lift_rows(
     In a blend (`form`), each row's Export Potential blends the Lift model with the row's naive
     baseline (`evaluation.naive_potential`, kept as `naive_usd`), computed from every Exporter's
     Flows of the row's own year, `year_flows(year)`: the Lift model's own form of the served model.
+    A form with Market Reach then scales each held-out Exporter's rows by its own Market Reach, learned
+    from its own rows of the year before (`market_reach.exporter_reach`, at the form's beta), as the
+    served form scales UK pairs by the UK's; `training` must hold that year (ValueError otherwise).
     """
+    from exportspredictor import market_reach
     from exportspredictor.evaluation import naive_potential
 
     _check_lift_model(model, settings)
     if form.naive_weight and year_flows is None:
         raise ValueError("A blend's Lift rows need each Gap Period year's Flows for the naive baseline")
+    reach = form.market_reach
+    if reach is not None:
+        missing = [year - reach.lag_years for year in settings.gap_years if year - reach.lag_years not in training]
+        if missing:
+            raise ValueError(f"Lift with Market Reach needs the training rows of {missing}, the years before the Gap Period's")
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
     frames = []
     for year in settings.gap_years:
@@ -564,6 +573,12 @@ def lift_rows(
             rows = naive_potential(rows, year_flows(year))
             potential = blend(potential, rows[NAIVE_COLUMN].to_numpy(), form.naive_weight)
             kept.append(NAIVE_COLUMN)
+        if reach is not None:
+            source = _rows(training[year - reach.lag_years], is_held).select(
+                "exporter", "hs6", "importer", "value_usd", market_reach.DEMAND, "weight",
+                year=pl.lit(year - reach.lag_years),
+            )
+            potential = market_reach.exporter_reach(potential, rows, source, scored_year=year, beta=reach.beta)
         frames.append(
             rows.select(kept).with_columns(export_potential_usd=pl.Series(potential, dtype=pl.Float64))
         )
@@ -589,7 +604,8 @@ def lift_backtest(
 ) -> dict:
     """Raw and size-matched Lift of the held-out Exporters' top-decile Gap Period Export Gaps, by the outcome year.
 
-    The Export Potential is in the model form `form` (`lift_rows`); the result records it.
+    The Export Potential is in the model form `form` (`lift_rows`); the result records it (with Market Reach,
+    its settings: each held-out Exporter's tables and constants are fitted per year, `market_reach.exporter_reach`).
     """
     yearly = lift_rows(training, settings, model, form=form, year_flows=year_flows)
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
@@ -603,10 +619,18 @@ def lift_backtest(
         outcome_year=settings.outcome_year,
         min_growth_share=settings.min_growth_share,
         min_growth_usd=settings.min_growth_usd,
-        model_form=form.to_dict(),
+        model_form=_lift_form(form),
     )
     result["text"] = lift_text(result)
     return result
+
+
+def _lift_form(form: ModelForm) -> dict:
+    """The Model Form a Lift result records: with Market Reach, its settings, not one fitted table and constant."""
+    from exportspredictor import market_reach
+
+    plain = form.without_market_reach().to_dict()
+    return plain if form.market_reach is None else {**plain, "market_reach": market_reach.settings(form.market_reach.beta)}
 
 
 def lift_text(result: dict) -> str:
@@ -851,7 +875,9 @@ def run(
     """Train (or read from `cache`) the backtest models; return the report's `lift` and `event_backtest` keys.
 
     Lift is measured in the served model form `form` (a blend takes each Gap Period year's
-    naive baseline from `year_flows(year)`); the Event Backtests measure the model alone.
+    naive baseline from `year_flows(year)`); the Event Backtests measure the model alone. When `form`
+    has Market Reach, the same Lift model is also scored without it, under `lift_without_market_reach`:
+    the kept change's effect on Lift (and the Lift the pre-registered v1 comparison reads).
 
     `training` maps each year to its feature table (training rows) and must cover every
     year the plan reads. `lift_held_out` are the Exporters the Lift model never sees:
@@ -884,6 +910,12 @@ def run(
     lift_result = lift_backtest(
         training, plan.lift, lift_model, resamples=plan.resamples, seed=seed, form=form, year_flows=year_flows
     )
+    without = {}
+    if form.market_reach is not None:
+        without["lift_without_market_reach"] = lift_backtest(
+            training, plan.lift, lift_model, resamples=plan.resamples, seed=seed, form=form.without_market_reach(),
+            year_flows=year_flows,
+        )
     income = sorted(high_income) if plan.high_income_controls and high_income is not None else None
     event_model = model(plan.event.name, plan.event.training_years, plan.event.event_year)
     events = [
@@ -900,6 +932,7 @@ def run(
         events.append({"role": "secondary", **secondary})
     return {
         "lift": lift_result,
+        **without,
         "event_backtest": {
             "events": events,
             "text": events[0]["text"],
@@ -1026,11 +1059,14 @@ def add_to_latest(
         lift_held_out=lift_exporters(
             freeze.lift_held_out_exporters(v1_frozen or freeze.v1_folder(artefacts_root)), scope=metadata["exporter_scope"], uk=baci.UK
         ),
-        form=bundle.model_form.without_market_reach(),  # other years than the Baseline's table covers
+        form=bundle.model_form,  # each held-out Exporter's own Market Reach; also scored without it
         year_flows=lambda year: load_year_flows(year, load_sources(root)[1], root),
     )
     report = {**bundle.evaluation, **result}
-    return store.copy_version(source, artefacts_root, metadata=new, evaluation=report)
+    folder = store.copy_version(source, artefacts_root, metadata=new, evaluation=report)
+    if test_year_ledger is not None:  # the figures are saved: the read is completed (ADR 0009)
+        ledger.complete_read(test_year_ledger, ledger.fingerprint(new))
+    return folder
 
 
 if __name__ == "__main__":
