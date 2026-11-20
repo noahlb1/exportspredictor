@@ -4,6 +4,8 @@ Calibration rows are the fixture world's 2024 training rows; fold models are tra
 through the package on the years before, as the pipeline does.
 """
 
+import math
+
 import numpy as np
 import polars as pl
 import pytest
@@ -75,7 +77,10 @@ def test_the_fold_hash_includes_the_exporter_and_ignores_row_order(baseline_year
 
 
 def _calibration(potentials, residuals, weights=None, exporter="DEU") -> pl.DataFrame:
-    """Scored calibration rows built by hand, shaped like `conformal.score_calibration`'s output."""
+    """Scored calibration rows built by hand, shaped like `conformal.score_calibration`'s output.
+
+    `residuals` are log residuals: each row's Actual Exports are exp(log(1 + potential) + residual) − 1.
+    """
     potentials = [float(p) for p in potentials]
     residuals = [float(r) for r in residuals]
     return pl.DataFrame(
@@ -85,24 +90,37 @@ def _calibration(potentials, residuals, weights=None, exporter="DEU") -> pl.Data
             "iso3": "JPN",
             "weight": weights or [1.0] * len(potentials),
             "fold": 0,
-            "actual_exports_usd": [p + r for p, r in zip(potentials, residuals, strict=True)],
+            "actual_exports_usd": [math.expm1(math.log1p(p) + r) for p, r in zip(potentials, residuals, strict=True)],
             "export_potential_usd": potentials,
-            "residual_usd": residuals,
+            "residual_log": residuals,
         }
     )
+
+
+def _bands(low_ratio: float, high_ratio: float) -> pl.DataFrame:
+    """One band whose offsets multiply 1 + Export Potential by `low_ratio` and `high_ratio`."""
+    return pl.DataFrame({
+        "band": pl.Series([0], dtype=pl.Int16), "min_export_potential_usd": [0.0], "rows": [1000],
+        "low_offset_log": [math.log(low_ratio)], "high_offset_log": [math.log(high_ratio)],
+    })
+
+
+def test_a_calibration_residual_is_on_the_log_scale(scored):
+    expected = np.log1p(scored["actual_exports_usd"].to_numpy()) - np.log1p(scored["export_potential_usd"].to_numpy())
+    np.testing.assert_allclose(scored["residual_log"].to_numpy(), expected)
 
 
 def test_each_band_takes_the_10th_and_90th_percentiles_of_its_residuals():
     # Four equal-count bands of 25 rows; in each, residuals run -12..12 times the band's scale.
     potentials = range(1, 101)
-    residuals = [(i % 25 - 12) * (1 + i // 25) for i in range(100)]
+    residuals = [(i % 25 - 12) * 0.1 * (1 + i // 25) for i in range(100)]
 
     bands = conformal.fit_bands(_calibration(potentials, residuals), n_bands=4, min_rows=10)
 
     assert bands["rows"].to_list() == [25, 25, 25, 25]
-    # The 10th percentile of 25 sorted values is the 3rd (-10), the 90th the 23rd (+10).
-    assert bands["low_offset_usd"].to_list() == [-10.0, -20.0, -30.0, -40.0]
-    assert bands["high_offset_usd"].to_list() == [10.0, 20.0, 30.0, 40.0]
+    # The 10th percentile of 25 sorted values is the 3rd (-1.0 × scale), the 90th the 23rd (+1.0 × scale).
+    assert bands["low_offset_log"].to_list() == pytest.approx([-1.0, -2.0, -3.0, -4.0])
+    assert bands["high_offset_log"].to_list() == pytest.approx([1.0, 2.0, 3.0, 4.0])
     assert bands["min_export_potential_usd"].to_list() == [0.0, 26.0, 51.0, 76.0]
 
 
@@ -116,43 +134,51 @@ def test_a_band_below_the_minimum_rows_merges_with_a_neighbour():
 
 
 def test_sampled_zero_cells_count_by_their_weight():
-    # Nine rows of +1 and one row of -100 weighted 9: half the weight sits at -100.
+    # Nine rows of +0.1 and one row of -2 weighted 9: half the weight sits at -2.
     bands = conformal.fit_bands(
-        _calibration([5] * 10, [1] * 9 + [-100], weights=[1.0] * 9 + [9.0]), n_bands=1, min_rows=1
+        _calibration([5] * 10, [0.1] * 9 + [-2.0], weights=[1.0] * 9 + [9.0]), n_bands=1, min_rows=1
     )
 
-    assert bands["low_offset_usd"].item() == -100.0
-    assert bands["high_offset_usd"].item() == 1.0
+    assert bands["low_offset_log"].item() == pytest.approx(-2.0)
+    assert bands["high_offset_log"].item() == pytest.approx(0.1)
 
 
-def test_the_potential_range_is_the_band_offsets_around_export_potential_clipped_at_zero():
-    bands = conformal.fit_bands(
-        _calibration(range(1, 101), [(i % 25 - 12) * (1 + i // 25) for i in range(100)]), n_bands=4, min_rows=10
-    )
-    pairs = pl.DataFrame({"export_potential_usd": [5.0, 30.0, 1000.0, 0.0]})
+def test_the_potential_range_is_the_band_offsets_applied_to_one_plus_export_potential_clipped_at_zero():
+    pairs = pl.DataFrame({"export_potential_usd": [99.0, 999.0, 0.0]})
 
-    ranged = conformal.potential_range(pairs, bands)
+    ranged = conformal.potential_range(pairs, _bands(0.5, 2.0))
 
-    assert ranged["potential_range_low_usd"].to_list() == [0.0, 10.0, 960.0, 0.0]
-    assert ranged["potential_range_high_usd"].to_list() == [15.0, 50.0, 1040.0, 10.0]
+    # (1 + 99) × 0.5 − 1 = 49 and (1 + 99) × 2 − 1 = 199; at $0, (1 × 0.5) − 1 is clipped to $0.
+    assert ranged["potential_range_low_usd"].to_list() == pytest.approx([49.0, 499.0, 0.0])
+    assert ranged["potential_range_high_usd"].to_list() == pytest.approx([199.0, 1999.0, 1.0])
+
+
+def test_the_range_scales_with_export_potential_within_one_band():
+    # A $2m pair and a $1bn pair share the top band: the range is the same ratio, not the same dollars.
+    pairs = pl.DataFrame({"export_potential_usd": [2e6, 1e9]})
+
+    ranged = conformal.potential_range(pairs, _bands(0.25, 3.0))
+
+    width = (ranged["potential_range_high_usd"] - ranged["potential_range_low_usd"]).to_list()
+    assert width[1] / width[0] == pytest.approx(500.0, rel=1e-3)
+    assert ranged["potential_range_low_usd"][1] == pytest.approx(0.25e9, rel=1e-6)
 
 
 def test_an_uncertain_opportunity_is_an_opportunity_whose_actual_exports_lie_inside_its_range():
-    bands = conformal.fit_bands(_calibration([100.0] * 10, range(-40, 60, 10)), n_bands=1, min_rows=1)
-    # Residuals -40..50: offsets -40 (1st of 10) and +40 (9th), so Export Potential 100 gives 60 to 140.
+    # Export Potential 99 with ratios 0.6 and 1.4 gives a range of 59 to 139.
     baseline = pl.DataFrame(
         {
-            "export_potential_usd": [100.0, 100.0, 100.0, 100.0, 100.0],
-            "actual_exports_usd": [80.0, 60.0, 59.0, 120.0, 100.0],
-            "export_gap_usd": [20.0, 40.0, 41.0, -20.0, 0.0],
+            "export_potential_usd": [99.0, 99.0, 99.0, 99.0, 99.0],
+            "actual_exports_usd": [80.0, 59.5, 58.5, 120.0, 99.0],
+            "export_gap_usd": [19.0, 39.5, 40.5, -21.0, 0.0],
         }
     )
 
-    ranged = conformal.with_potential_range(baseline, bands)
+    ranged = conformal.with_potential_range(baseline, _bands(0.6, 1.4))
 
-    assert ranged["potential_range_low_usd"].to_list() == [60.0] * 5
-    assert ranged["potential_range_high_usd"].to_list() == [140.0] * 5
-    # Inside and an Opportunity; on the edge; below the range; inside but no Opportunity (twice).
+    assert ranged["potential_range_low_usd"].to_list() == pytest.approx([59.0] * 5)
+    assert ranged["potential_range_high_usd"].to_list() == pytest.approx([139.0] * 5)
+    # Inside and an Opportunity; just inside the edge; just below it; inside but no Opportunity (twice).
     assert ranged["uncertain_opportunity"].to_list() == [True, True, False, False, False]
 
 

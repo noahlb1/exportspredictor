@@ -135,3 +135,10 @@ def test_the_ppml_benchmark_is_opt_in_and_trains_no_model(fixture_world, tuned, 
 def test_the_command_line_switches_on_the_ppml_benchmark():
     assert parse_parts(["--ppml-benchmark"]) == Parts(ppml_benchmark=True)
     assert parse_parts(["--every-part"]).ppml_benchmark
+
+
+@pytest.mark.parametrize("command", ["refresh", "rerange", "compare"])
+def test_the_command_line_help_names_the_commands_that_copy_the_newest_version(command, capsys):
+    with pytest.raises(SystemExit):
+        parse_parts(["--help"])
+    assert f"python -m exportspredictor.pipeline {command}" in capsys.readouterr().out

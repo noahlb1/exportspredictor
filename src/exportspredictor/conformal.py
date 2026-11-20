@@ -10,9 +10,12 @@ Market), as UK pairs are.
 
 Calibration is Mondrian: rows are split into `N_BANDS` equal-count bands of Export
 Potential, because Tweedie errors grow with the prediction, and a band with fewer than
-`MIN_BAND_ROWS` rows merges with its smaller neighbour (`fit_bands`). Each band's 10th and
-90th percentiles of signed residuals are its offsets; sampled Zero Cells count by their
-weight. The range is the offsets around Export Potential, clipped at $0 (`potential_range`).
+`MIN_BAND_ROWS` rows merges with its smaller neighbour (`fit_bands`). Residuals are on the
+log scale, log(1 + Actual Exports) − log(1 + Export Potential), so the range is a ratio of
+Export Potential, not a fixed number of dollars: dollar offsets gave every pair in the top
+band, from about $2m to over $1bn, the same width (ADR 0007, amended). Each band's 10th and
+90th percentiles of signed log residuals are its offsets; sampled Zero Cells count by their
+weight. The range is exp(log(1 + Export Potential) + offset) − 1, clipped at $0 (`potential_range`).
 For a UK pair they go around the Gap Period mean Export Potential, and an Opportunity
 whose Gap Period mean Actual Exports lie inside its range is an Uncertain Opportunity
 (`with_potential_range`).
@@ -49,7 +52,7 @@ def score_calibration(
 
     `rows` is a feature table from `features.training_rows` (untransformed). UK rows are
     dropped. Returns exporter, hs6, iso3 (strings), weight, fold, actual_exports_usd,
-    export_potential_usd and residual_usd (Actual Exports minus Export Potential).
+    export_potential_usd and residual_log (`log_residual`).
     """
     calibration = (
         transform.apply(rows.filter(pl.col("exporter").cast(pl.String) != uk))
@@ -69,7 +72,12 @@ def score_calibration(
         "fold",
         actual_exports_usd="value_usd",
         export_potential_usd=export_potential(calibration, models, form=form),
-    ).with_columns(residual_usd=pl.col("actual_exports_usd") - pl.col("export_potential_usd"))
+    ).with_columns(residual_log=log_residual(pl.col("actual_exports_usd"), pl.col("export_potential_usd")))
+
+
+def log_residual(actual: pl.Expr, potential: pl.Expr) -> pl.Expr:
+    """log(1 + Actual Exports) − log(1 + Export Potential): a ratio, so a band's offsets scale with the pair."""
+    return actual.log1p() - potential.log1p()
 
 
 def potential_range_text(low_usd: float, high_usd: float, actual_exports_usd: float, *, uncertain: bool) -> str:
@@ -92,6 +100,7 @@ N_BANDS = 20
 MIN_BAND_ROWS = 1000  # a parameter: the fixture world has far fewer calibration rows
 LOW_QUANTILE, HIGH_QUANTILE = 0.1, 0.9  # an 80% Potential Range
 COVERAGE = HIGH_QUANTILE - LOW_QUANTILE
+SCALE = "log"  # residuals and offsets are log(1 + dollars); earlier versions recorded none and used dollars
 
 
 def fit_bands(scored: pl.DataFrame, *, n_bands: int = N_BANDS, min_rows: int = MIN_BAND_ROWS) -> pl.DataFrame:
@@ -100,8 +109,8 @@ def fit_bands(scored: pl.DataFrame, *, n_bands: int = N_BANDS, min_rows: int = M
     Rows are sorted by Export Potential and cut into `n_bands` equal-count bands; while a
     band holds fewer than `min_rows` rows it merges with its smaller neighbour. Returns one
     row per band, by Export Potential: band, min_export_potential_usd (its lower edge; the
-    first band starts at $0), rows, low_offset_usd and high_offset_usd (the weighted 10th
-    and 90th percentiles of its residuals).
+    first band starts at $0), rows, low_offset_log and high_offset_log (the weighted 10th
+    and 90th percentiles of its log residuals, `log_residual`).
     """
     if scored.is_empty():
         raise ValueError("No calibration rows: the Potential Range needs other Exporters' Baseline-year rows")
@@ -122,7 +131,7 @@ def fit_bands(scored: pl.DataFrame, *, n_bands: int = N_BANDS, min_rows: int = M
             neighbour = smallest - 1 if sizes[smallest - 1] <= sizes[smallest + 1] else smallest + 1
         del starts[max(smallest, neighbour)]
     potential = rows["export_potential_usd"].to_numpy()
-    residual = rows["residual_usd"].to_numpy()
+    residual = rows["residual_log"].to_numpy()
     weight = rows["weight"].to_numpy()
     bands = []
     for b, (start, end) in enumerate(pairwise(starts)):
@@ -132,8 +141,8 @@ def fit_bands(scored: pl.DataFrame, *, n_bands: int = N_BANDS, min_rows: int = M
         "band": pl.Int16,
         "min_export_potential_usd": pl.Float64,
         "rows": pl.Int64,
-        "low_offset_usd": pl.Float64,
-        "high_offset_usd": pl.Float64,
+        "low_offset_log": pl.Float64,
+        "high_offset_log": pl.Float64,
     }
     return pl.DataFrame(bands, schema=schema, orient="row")
 
@@ -143,25 +152,30 @@ def potential_range(
 ) -> pl.DataFrame:
     """`table` with `band`, `potential_range_low_usd` and `potential_range_high_usd`.
 
-    Each row takes the offsets of the band its `potential` column falls in, added to that
-    Export Potential and clipped at $0. Row order is kept.
+    Each row takes the log offsets of the band its `potential` column falls in, applied to
+    log(1 + Export Potential) and turned back into dollars, clipped at $0. Row order is kept.
     """
-    edges = bands.select("band", "min_export_potential_usd", "low_offset_usd", "high_offset_usd")
+    edges = bands.select("band", "min_export_potential_usd", "low_offset_log", "high_offset_log")
     indexed = table.with_row_index("_row")
     banded = (
         indexed.select("_row", pl.col(potential).alias("_potential"))
         .sort("_potential")
         .join_asof(edges, left_on="_potential", right_on="min_export_potential_usd", strategy="backward")
         # Below the first edge ($0) only if negative; Tweedie predictions never are.
-        .with_columns(pl.col("band", "low_offset_usd", "high_offset_usd").fill_null(strategy="backward"))
+        .with_columns(pl.col("band", "low_offset_log", "high_offset_log").fill_null(strategy="backward"))
         .select(
             "_row",
             "band",
-            potential_range_low_usd=(pl.col("_potential") + pl.col("low_offset_usd")).clip(lower_bound=0.0),
-            potential_range_high_usd=(pl.col("_potential") + pl.col("high_offset_usd")).clip(lower_bound=0.0),
+            potential_range_low_usd=_shifted("low_offset_log"),
+            potential_range_high_usd=_shifted("high_offset_log"),
         )
     )
     return indexed.join(banded, on="_row", how="left").sort("_row").drop("_row")
+
+
+def _shifted(offset: str) -> pl.Expr:
+    """exp(log(1 + Export Potential) + offset) − 1, clipped at $0."""
+    return (pl.col("_potential").log1p() + pl.col(offset)).exp().sub(1.0).clip(lower_bound=0.0)
 
 
 def with_potential_range(baseline: pl.DataFrame, bands: pl.DataFrame) -> pl.DataFrame:
