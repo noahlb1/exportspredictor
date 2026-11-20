@@ -98,36 +98,31 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Click something slow (e.g. a filter on the real Leaderboard): after a short delay the logo's ship rides the waves in the middle of the page until the app is done.
 - [ ] Every page shows, under its heading and introduction, the grey line "Figures are associations the model has learned, not causes or forecasts.", and, after a divider at the foot of the page, a grey footer stating the Baseline year (provisional data), that Export Gaps are 2022–2024 averages, "Values are nominal US dollars, as reported by BACI", and the model version. There is no blue banner, and no page shows a pound sign or a currency switch.
 - [ ] Stop the API (`podman compose stop api`) and reload: within a few seconds, every page shows a clear "API is unavailable" message instead of an error or a spinner. Start it again with `podman compose start api` and wait for <http://localhost:8000/health> to answer before reloading.
+
+**Leaderboard**
 - [ ] The Leaderboard opens without searching, listing UK Product–Market pairs by Export Gap, largest first, with no Excluded Product (e.g. no crude oil or gold) among them.
 - [ ] On the real artefact (about 1.16 M pairs), the Leaderboard loads, and responds to each filter change, within about a second.
-- [ ] The summary row shows the number of pairs and the total positive Export Gap ("2022–2024 average"); both change with the filters.
-- [ ] Each row shows its Opportunity Type (Expand, New Market or New Product), its Relative Export Gap, whether a UK Trade Agreement is in force, and any Flagged Product or Re-export Hub badge.
+- [ ] The filters sit in the sidebar: Product search, Market, Sector (by name, e.g. "Beverages, spirits and vinegar"), Market region, Opportunity Type, UK Trade Agreement in force, minimum Export Gap, Hide Flagged Products, Hide Re-export Hubs and Rank by, then **Reset filters**.
+- [ ] One line above the table names the filters in force (or says there are none), "N pairs shown of M" and the total positive Export Gap ("2022–2024 average"); it changes with the filters. There is no row of summary metrics.
+- [ ] Each row shows its Opportunity Type (Expand, New Market or New Product), its Relative Export Gap, whether a UK Trade Agreement is in force (e.g. whisky: Japan Yes, India No), and any Flagged Product or Re-export Hub badge.
+- [ ] Export Potential, Actual Exports and Export Gap appear side by side, each headed "2022–2024 average"; values are in USD: column headers say "(USD, nominal)".
 - [ ] Switch "Rank by" to Relative Export Gap: a minimum Export Potential selector appears ($0, $100.0k, $1.0m, $10.0m, $100.0m; default $1.0m), pairs below it disappear, and pairs tied at 100% are ordered by Export Gap.
+- [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product is chosen, and the table ranks its Markets by Export Gap, largest first. A prefix matching several Products (e.g. `8703`) offers each to choose from.
+- [ ] Search text that matches nothing (e.g. `zzz`) shows a clear "No Product matches" warning.
+- [ ] Search an Excluded Product (e.g. `gold`): it is marked "(Excluded Product)", and choosing it shows why it is not ranked and points to the Excluded Products section of Model Evaluation, instead of a ranking.
+- [ ] Choose a Market (e.g. Japan): the table ranks its Products by Export Gap. The region filter narrows the Market list.
 - [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
+- [ ] Search a jewellery Product (e.g. `711319`): every row carries the "Flagged Product" caveat badge, and the Netherlands, Hong Kong and other Re-export Hubs carry "Re-export Hub". "Hide Flagged Products" and "Hide Re-export Hubs" are off by default; ticking one removes exactly those rows.
+- [ ] Each filter you set appears in the page's URL (Product as its HS6 code, Market as its ISO3 code; defaults left out). Copy the URL into a fresh browser tab: the same filters and rows appear. A link naming one Product and one Market (e.g. `?product=220830&market=JPN`) leaves that one pair.
+- [ ] Set some filters, open another page from the menu and come back: the filters are still set.
+- [ ] **Reset filters** restores the full ranking and clears the filters from the URL.
 - [ ] "Excluded Products" under the filters lists each Excluded Product with its reason.
-- [ ] Each Leaderboard row shows its Potential Range as "low–high". No ranking page (Leaderboard, Product → Markets, Market → Products, Blocked Opportunities) shows an "Uncertain Opportunity" badge or a filter for it; the Flagged Product and Re-export Hub badges and their hide filters are unchanged.
-- [ ] Export the Leaderboard to CSV and open it: the columns and rows match the table on screen.
+- [ ] Each Leaderboard row shows its Potential Range as "low–high". No ranking page (Leaderboard, Blocked Opportunities) shows an "Uncertain Opportunity" badge or a filter for it; the Flagged Product and Re-export Hub badges and their hide filters are unchanged.
+- [ ] Export the Leaderboard to CSV and open it, unfiltered and with one Product or one Market chosen: the columns and rows match the table on screen.
 - [ ] Click **Why?** on a Leaderboard row: the Why? page opens for that pair and shows its Opportunity Type.
 
-**Product → Markets**
-- [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product's code and description appear, with Markets ranked by Export Gap, largest first.
-- [ ] Export Potential, Actual Exports and Export Gap appear side by side, each headed "2022–2024 average".
-- [ ] Search text that matches nothing (e.g. `zzz`) shows a clear "No Product matches" warning.
-- [ ] Open "Excluded Products" under the filters: each Excluded Product (e.g. `270900` crude oil, `710812` gold) is listed with its reason. Searching one (e.g. `gold`) marks it "(Excluded Product)", and choosing it shows why it is not ranked instead of a ranking.
-- [ ] Values are in USD: column headers say "(USD, nominal)".
-- [ ] Each row says whether a UK Trade Agreement is in force with the Market (e.g. Japan: Yes, India: No).
-- [ ] The Sector filter narrows the Product search; the region and minimum-Gap filters narrow the ranking.
-- [ ] Search a jewellery Product (e.g. `711319`): every row carries the "Flagged Product" caveat badge, and the Netherlands, Hong Kong and other Re-export Hubs carry "Re-export Hub". "Hide Flagged Products" and "Hide Re-export Hubs" are off by default; ticking one removes exactly those rows.
-- [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
-
-**Market → Products**
-- [ ] Pick a Market (e.g. Japan): Products are ranked by Export Gap, and the page says whether a UK Trade Agreement is in force with it.
-- [ ] The region filter narrows the Market list; the Sector and minimum-Gap (USD) filters narrow the ranking, and a filter matching nothing says so.
-- [ ] Values are in USD: column headers say "(USD, nominal)".
-- [ ] Export the ranking to CSV and open it: the columns and row count match the table on screen.
-
 **Blocked Opportunities**
-- [ ] Open Blocked Opportunities from the sidebar: every UK pair is ranked by Blocked Opportunity value, largest first, with no "Rank by" toggle; the Leaderboard and ranking pages no longer offer that order.
+- [ ] Open Blocked Opportunities from the sidebar: every UK pair is ranked by Blocked Opportunity value, largest first, with no "Rank by" toggle; the Leaderboard does not offer that order.
 - [ ] Pairs with a Market that has a UK Trade Agreement in force (e.g. Japan) have a value of 0; rows clearing 20% and $1M are marked as Blocked Opportunities.
 - [ ] The summary shows the number of pairs, the number of Blocked Opportunities and the total value of those Blocked Opportunities (not of every pair); all three change with the filters. No pair has a negative value: an added agreement never lowers Export Potential.
 - [ ] The summary's total and the table's Blocked Opportunity value column are headed "illustrative" (e.g. "Blocked Opportunity value, illustrative (USD, nominal)"), and an Illustrative note under the summary gives the PPML gravity benchmark, the model's association and the Event Backtest, or says one was not run for this version.
@@ -145,7 +140,7 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] The page states the EU–Japan Event Backtest result (predicted against observed) above the Scenario choice.
 
 **Why?**
-- [ ] On **Product → Markets** and **Market → Products**, click **Why?** on a ranking row: the Why? page opens for that Product and Market.
+- [ ] On the Leaderboard with one Product or one Market chosen, click **Why?** on a row: the Why? page opens for that Product and Market.
 - [ ] The factors are described in plain words (no raw feature names), each marked as raising or lowering Export Potential, phrased as associations.
 - [ ] A year-by-year table shows the last six years' UK Actual Exports (0 for years with none) and, for 2022–2024, each year's Export Potential and Export Gap; the three yearly gaps average to the Export Gap shown above it.
 - [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.

@@ -17,8 +17,6 @@ PAGES = {
     "Blocked Opportunities": "pages/blocked_opportunities.py",
     "Scenarios": "pages/scenarios.py",
     "Model Evaluation": "pages/model_evaluation.py",
-    "Product → Markets": "pages/product_to_markets.py",
-    "Market → Products": "pages/market_to_products.py",
     "Why?": "pages/why.py",
 }
 
