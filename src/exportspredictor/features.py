@@ -14,7 +14,9 @@ tables (`Sources`). Leakage rules are built in:
 - **Leave-one-out supply** (ADR 0001): the Exporter's exports of the Product leave out the
   row's own Importer, so a UK row never sees its target Market.
 - **Leave-one-out demand**: the Importer's imports of the Product leave out the row's own
-  Exporter, and so do Market import growth and the re-export ratio built from them.
+  Exporter, and so do Market import growth and the re-export ratio built from them, and the
+  Exporter count (the other Exporters supplying the Product to the Market): a UK row never
+  sees a UK Flow in it.
 - **Relatedness leaves out the Market**: the Exporter's RCA in neighbouring Products is
   computed without any Flow into the row's Importer, so a UK row never sees its Market.
 - **No pair trade in other Products**: no feature uses the Exporter–Importer pair's trade in
@@ -24,20 +26,27 @@ tables (`Sources`). Leakage rules are built in:
   fitted on training years, so test-year data cannot reach it. Proximity is fitted on
   PROXIMITY_YEARS, before the validation year.
 
-`build()` (also `uv run python -m exportspredictor.features`) runs this on real data, one
-year at a time so that peak memory stays far below 32 GB, and writes under the data root:
+`build()` (also `uv run python -m exportspredictor.features --help`) runs this on real data,
+one year at a time so that peak memory stays far below 32 GB, and writes one feature set
+(`FEATURE_SETS`) under the data root. Every reader opens the set `EXPORTSPREDICTOR_FEATURE_SET`
+names, the original by default; a set already built is never overwritten unless asked:
+
+    derived/features_<BACI version>[_<set>]/...
 
     derived/features_<BACI version>/training_<year>.parquet   training rows with features
     derived/features_<BACI version>/uk_grid_<year>.parquet    the full UK grid with features (Gap Period
                                                               years: the union of their grids)
     derived/features_<BACI version>/proximity.parquet         Product proximity (Relatedness)
-    derived/features_<BACI version>/features.json             scope, rates, seed, years, feature list
+    derived/features_<BACI version>/features.json             scope, rates, seed, years, feature lists,
+                                                              monotone constraints, gravity fill
 
 Every table is keyed by standard ISO3 codes (BACI's `S19` becomes `TWN`), as the gravity
 and policy tables are.
 """
 
+import argparse
 import json
+import os
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -45,7 +54,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from exportspredictor import baci, policy, scope
+from exportspredictor import baci, gravity, policy, scope
 from exportspredictor.downloads import write_parquet
 from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
 from exportspredictor.gap_period import gap_period, gap_years
@@ -82,6 +91,14 @@ RELATEDNESS_FEATURES = ["relatedness"]
 # Market import growth over GROWTH_YEARS, and the Market's exports of the Product over its
 # imports of it (log-capped), both leaving out the row's own Exporter.
 MARKET_TREND_FEATURES = ["market_import_growth", "reexport_ratio"]
+# The Exporter count (spec #113's "supplier count"): ln(1 + the number of Exporters other than
+# the row's own with a non-zero Flow of the Product into the Market that year), from every
+# Exporter's Flows (ADR 0004). A UK row never counts the UK. How open a Market is to a Product;
+# not a policy feature, so it has no monotone constraint.
+EXPORTER_COUNT_FEATURES = ["log_exporters_loo"]
+# Features `build_features` computes and stores that are not yet model inputs: the experiment
+# loop tries each as an Arm (spec #113 Phase 2) and a win moves it into ALL_FEATURES.
+CANDIDATE_FEATURES = [*EXPORTER_COUNT_FEATURES]
 # The Applied Tariff as ln(1 + t), with t the rate as a fraction (ADR 0006).
 TARIFF_FEATURES = ["log_applied_tariff"]
 POLICY_FEATURES = [*policy.POLICY_FEATURES, *TARIFF_FEATURES]
@@ -113,6 +130,7 @@ CLIPPED_FEATURES = [f for f in [
     "log_distance",
     *SUPPLY_FEATURES,
     *DEMAND_FEATURES,
+    *EXPORTER_COUNT_FEATURES,
     *RELATEDNESS_FEATURES,
     *MARKET_TREND_FEATURES,
     *TARIFF_FEATURES,
@@ -126,7 +144,7 @@ TARIFF_METADATA = ["tariff_imputed", "mfn_tariff"]
 # non-UK rate of 0.65, 5% gave the lowest deviance (412.1 against 413.6 at 2% and 413.8 at
 # 10%) with UK Spearman within 0.003 of 2%, and leaves a higher non-UK rate than 10% does.
 ZERO_SAMPLING_RATE = 0.05
-_FLOAT_FEATURES = [*GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES]
+_FLOAT_FEATURES = [*GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES, *EXPORTER_COUNT_FEATURES]
 # Market import growth compares the year with this many years earlier.
 GROWTH_YEARS = 3
 # The re-export ratio is ln(1 + min(exports / imports, cap)): beyond 10x its imports a
@@ -292,7 +310,7 @@ def grid_pairs(grids: Iterable[pl.DataFrame | pl.LazyFrame]) -> pl.DataFrame:
 
 
 def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) -> pl.DataFrame:
-    """Return KEYS, ALL_FEATURES (FEATURES and the ablated ones), `value_usd` and `weight` for each row.
+    """Return KEYS, ALL_FEATURES (FEATURES and the ablated ones), CANDIDATE_FEATURES, `value_usd` and `weight` for each row.
 
     `rows` are keyed by KEYS with the row's own Flow `value_usd` (0 for a zero cell);
     `flows` holds every Flow of the same years, from which the supply and demand
@@ -313,7 +331,7 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
     world_product = active.group_by("hs6", "year").agg(world_product=value.sum())
     world = active.group_by("year").agg(world=value.sum())
     demand = active.group_by("importer", "hs6", "year").agg(
-        demand=value.sum(), demand_high_income=value.filter(pl.col("high_income")).sum()
+        demand=value.sum(), demand_high_income=value.filter(pl.col("high_income")).sum(), exporter_count=pl.len()
     )
 
     own = pl.col("value_usd")
@@ -329,6 +347,8 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
     own_high_income = pl.when(pl.col("exporter").cast(pl.String).is_in(high_income)).then(own).otherwise(0.0)
     supply_loo = (pl.col("supply") - own).clip(lower_bound=0.0)
     demand_loo = (pl.col("demand") - own).clip(lower_bound=0.0)
+    # Exporters with a non-zero Flow of the Product into the Market, the row's own left out.
+    exporters_loo = (pl.col("exporter_count") - (own > 0).cast(pl.UInt32)).clip(lower_bound=0)
     # Revealed comparative advantage with the row's own Flow left out of every total. The
     # Exporter's total keeps its other-Product exports to this Importer: they are a sliver
     # of a country-year total, the same for every Market, so they say nothing about the pair.
@@ -353,6 +373,7 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
                 "supply", "exporter_total", "world_product", "world", "demand", "demand_high_income", "demand_then",
                 "own_then",
             ).fill_null(0.0),
+            pl.col("exporter_count").fill_null(0).cast(pl.UInt32),
             _d=pl.col("importer").cast(pl.String),
         )
         .join(market_exports, on=["_d", "hs6", "year"], how="left")
@@ -361,6 +382,7 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
             log_supply_loo=supply_loo.log1p(),
             rca_loo=pl.when((world_share > 0) & (pl.col("exporter_total") > own)).then(product_share / world_share),
             log_demand_loo=demand_loo.log1p(),
+            log_exporters_loo=exporters_loo.cast(pl.Float64).log1p(),
             high_income_share_loo=pl.when(demand_loo > 0).then(
                 ((pl.col("demand_high_income") - own_high_income) / demand_loo).clip(0.0, 1.0)
             ),
@@ -682,14 +704,38 @@ def _relatedness_in_year(rows: pl.DataFrame, flows: pl.DataFrame, weights: np.nd
 
 YEARS = list(range(2012, 2025))
 SETTINGS_FILE = "features.json"
+# Feature builds are versioned as feature sets, each in its own folder, so a rebuild never
+# overwrites the files that cached models and served artefacts were built on. Each set names the
+# country-year gravity table it reads:
+# - "" (`features_<BACI version>`): the original build, on the primary sources only;
+# - "exporter_count" (`features_<BACI version>_exporter_count`, #126): with the Exporter count
+#   stored and
+#   GDP and population filled from secondary sources for the Markets the primary ones miss.
+FEATURE_SETS = {"": "country_year.parquet", "exporter_count": gravity.COUNTRY_YEAR_FILLED}
+# The feature set every reader (the loop, the pipeline, evaluation) opens; unset means "".
+FEATURE_SET_ENV = "EXPORTSPREDICTOR_FEATURE_SET"
 
 
-def features_dir(root: Path | None = None) -> Path:
-    return Path(root or data_dir()) / "derived" / f"features_{baci.BACI_VERSION}"
+def feature_set(name: str | None = None) -> str:
+    """`name`, or the feature set `FEATURE_SET_ENV` names ("" when unset); an unknown set raises."""
+    name = os.environ.get(FEATURE_SET_ENV, "") if name is None else name
+    if name not in FEATURE_SETS:
+        raise ValueError(f"Unknown feature set {name!r}; known: {sorted(FEATURE_SETS)}")
+    return name
 
 
-def load_sources(root: Path | None = None) -> tuple[Sources, dict[str, str]]:
-    """The derived gravity and policy tables, and the BACI ISO3 -> standard ISO3 mapping."""
+def features_dir(root: Path | None = None, *, feature_set_name: str | None = None) -> Path:
+    """The folder of a feature set (`feature_set`): `derived/features_<BACI version>[_<set>]`."""
+    name = feature_set(feature_set_name)
+    suffix = f"_{name}" if name else ""
+    return Path(root or data_dir()) / "derived" / f"features_{baci.BACI_VERSION}{suffix}"
+
+
+def load_sources(root: Path | None = None, *, feature_set_name: str | None = None) -> tuple[Sources, dict[str, str]]:
+    """The derived gravity and policy tables, and the BACI ISO3 -> standard ISO3 mapping.
+
+    The country-year table is the one the feature set reads (`FEATURE_SETS`).
+    """
     root = Path(root or data_dir())
     derived = root / "derived"
     country_map = pl.read_parquet(derived / "country_map.parquet").select("baci_iso3", "iso3").unique()
@@ -700,7 +746,7 @@ def load_sources(root: Path | None = None) -> tuple[Sources, dict[str, str]]:
     sources = Sources(
         agreements=pl.read_parquet(paths["agreements"]),
         blocs=pl.read_parquet(paths["trading_blocs"]),
-        country_year=pl.read_parquet(derived / "country_year.parquet"),
+        country_year=pl.read_parquet(derived / FEATURE_SETS[feature_set(feature_set_name)]),
         pairs=pl.read_parquet(derived / "gravity_pairs.parquet"),
         high_income=frozenset(to_iso3.get(code, code) for code in high_income),
         tariffs=load_tariffs(root),
@@ -708,10 +754,23 @@ def load_sources(root: Path | None = None) -> tuple[Sources, dict[str, str]]:
     return sources, to_iso3
 
 
+def _scan_years(root: Path | None, years: Iterable[int]) -> pl.LazyFrame:
+    """The BACI Flows of `years`, read from those years' own files only, so no other year's file is opened.
+
+    With none of them on disk, an empty frame of the Flows' schema (from the earliest year's file).
+    """
+    files = [baci.flows_dir(root) / f"flows_{y}.parquet" for y in sorted(set(years))]
+    files = [str(f) for f in files if f.exists()]
+    if files:
+        return pl.scan_parquet(files)
+    earliest = min(baci.flows_dir(root).glob("flows_*.parquet"))
+    return pl.scan_parquet(earliest).head(0)
+
+
 def load_year_flows(year: int, to_iso3: dict[str, str], root: Path | None = None) -> pl.DataFrame:
-    """One year of BACI Flows with Exporter and Importer as standard ISO3 strings."""
+    """One year of BACI Flows with Exporter and Importer as standard ISO3 strings (empty if not on disk)."""
     return (
-        baci.scan_flows(root)
+        _scan_years(root, [year])
         .filter(pl.col("year") == year)
         .with_columns(
             pl.col(side).cast(pl.String).replace_strict(to_iso3, return_dtype=pl.String)
@@ -731,6 +790,10 @@ def build(
     scope_size: int = scope.TOP_EXPORTERS,
     proximity_years: list[int] = PROXIMITY_YEARS,
     baseline_year: int = YEARS[-1],
+    feature_set: str | None = None,
+    overwrite: bool = False,
+    resume: bool = False,
+    parts: int = 1,
 ) -> Path:
     """Write the training rows and the UK grid, with features, for each year; return the folder.
 
@@ -741,29 +804,40 @@ def build(
     years when the model is trained (`FeatureTransform`). The grids of the Gap Period ending
     with `baseline_year` all hold the union of those years' pairs, so every pair is scored
     in every Gap Period year (`gap_period`).
+
+    The files go to the folder of `feature_set` (`features_dir`; by default the one
+    `FEATURE_SET_ENV` names). A folder already built is never overwritten unless `overwrite`.
+    `resume` keeps the years and the proximity of an unfinished build already on disk. `parts` builds each year's
+    training rows' features in that many groups of Markets, to keep peak memory down; every
+    feature reads the whole year's Flows, so the rows are the same.
     """
-    sources, to_iso3 = load_sources(root)
+    out = features_dir(root, feature_set_name=feature_set)
+    name = out.name.removeprefix(f"features_{baci.BACI_VERSION}").removeprefix("_")
+    if (out / SETTINGS_FILE).exists() and not (overwrite or resume):
+        raise FileExistsError(f"{out} is already built; pass overwrite=True or build another feature set")
+    sources, to_iso3 = load_sources(root, feature_set_name=name)
     exporters = scope.exporter_scope(sources.country_year, uk=uk, n=scope_size)
-    out = features_dir(root)
     out.mkdir(parents=True, exist_ok=True)
     fitted_on = [y for y in proximity_years if (baci.flows_dir(root) / f"flows_{y}.parquet").exists()]
     if not fitted_on:
         raise ValueError(f"No BACI Flows on disk for the proximity years {proximity_years}")
-    proximity = fit_proximity(baci.scan_flows(root), fitted_on)
-    write_parquet(proximity, out / "proximity.parquet", compression="zstd")
+    if resume and (out / "proximity.parquet").exists():
+        proximity = pl.read_parquet(out / "proximity.parquet")  # fitted on the same years, so the same
+    else:
+        proximity = fit_proximity(_scan_years(root, fitted_on), fitted_on)
+        write_parquet(proximity, out / "proximity.parquet", compression="zstd")
     sources = replace(sources, proximity=proximity)
     gap = [y for y in gap_years(baseline_year) if y in years]
     pairs = grid_pairs(uk_grid(load_year_flows(y, to_iso3, root), uk) for y in gap) if gap else None
     for year in years:
+        written = [out / f"{kind}_{year}.parquet" for kind in ("training", "uk_grid")]
+        if resume and all(path.exists() for path in written):
+            continue  # each file is renamed into place only when complete (`write_parquet`)
         flows = load_year_flows(year, to_iso3, root)
         with_earlier = pl.concat([flows, load_year_flows(year - GROWTH_YEARS, to_iso3, root)])
-        write_parquet(
-            build_features(
-                training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters), with_earlier, sources
-            ),
-            out / f"training_{year}.parquet",
-            compression="zstd",
-        )
+        rows = training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters)
+        write_parquet(_features_in_parts(rows, with_earlier, sources, parts), written[0], compression="zstd")
+        del rows
         grid = uk_grid(flows, uk, pairs=pairs if year in gap else None)
         write_parquet(build_features(grid, with_earlier, sources), out / f"uk_grid_{year}.parquet", compression="zstd")
         del flows, with_earlier, grid
@@ -774,7 +848,11 @@ def build(
         "zero_sampling_rate": rate,
         "uk_zero_sampling_rate": 1.0,
         "zero_sampling_seed": seed,
+        "feature_set": name,
         "features": FEATURES,
+        "candidate_features": CANDIDATE_FEATURES,
+        "monotone_constraints": MONOTONE_CONSTRAINTS,
+        "gravity": {"country_year": FEATURE_SETS[name], **gravity.fill_record(sources.country_year)},
         "excluded_products": [exclusion.codes for exclusion in EXCLUSIONS],
         "proximity_years": fitted_on,
         "gap_years": gap_period(baseline_year),
@@ -783,5 +861,32 @@ def build(
     return out
 
 
+def _features_in_parts(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources, parts: int) -> pl.DataFrame:
+    """`build_features` on `rows` split into `parts` groups of Markets, concatenated.
+
+    By Market, because Relatedness is computed one Market at a time: each Market's work is done once.
+    """
+    if parts <= 1:
+        return build_features(rows, flows, sources)
+    group = pl.col("importer").cast(pl.String).hash() % parts
+    groups = [rows.filter(group == part) for part in range(parts)]
+    return pl.concat([build_features(g, flows, sources) for g in groups if not g.is_empty()])
+
+
+def main(argv: list[str] | None = None) -> None:
+    """`python -m exportspredictor.features [--set NAME] [--first-year Y] [--last-year Y] [--overwrite|--resume] [--parts N]`."""
+    parser = argparse.ArgumentParser(description="Build the feature files of one feature set.")
+    parser.add_argument("--set", default=None, choices=sorted(FEATURE_SETS), help="the feature set (default: $"
+                        f"{FEATURE_SET_ENV}, else the original)")
+    parser.add_argument("--first-year", type=int, default=YEARS[0])
+    parser.add_argument("--last-year", type=int, default=YEARS[-1])
+    parser.add_argument("--overwrite", action="store_true", help="overwrite a feature set already built")
+    parser.add_argument("--resume", action="store_true", help="keep the years an unfinished build already wrote")
+    parser.add_argument("--parts", type=int, default=1, help="build each year's training rows in this many parts")
+    args = parser.parse_args(argv)
+    years = list(range(args.first_year, args.last_year + 1))
+    print(build(years=years, feature_set=args.set, overwrite=args.overwrite, resume=args.resume, parts=args.parts))
+
+
 if __name__ == "__main__":
-    print(build())
+    main()
