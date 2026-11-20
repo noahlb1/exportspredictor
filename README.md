@@ -36,6 +36,8 @@ uv run uvicorn api.main:app --reload   # API on http://localhost:8000
 uv run streamlit run app/Home.py       # app on http://localhost:8501
 ```
 
+While the API runs, http://localhost:8000/docs lists every endpoint with its parameters and response fields, and lets you call each one from the browser to see the JSON the app reads. FastAPI generates the page itself.
+
 Settings are environment variables:
 
 | Variable | Default | Used by |
