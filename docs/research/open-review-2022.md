@@ -223,6 +223,17 @@ The model knows tariffs and agreements, not whether a UK Product may enter a Mar
 
 The measure weighs each of the 225 Markets equally, and about 100 of them are microstates whose zeros dominate narrow Products. On the 30 largest importers the Blend scores 0.507, and on the 60 largest 0.544 (0.5635 on all). Report it beside the headline, never select on it, so the write-up shows how well the ranking does where Advisors look.
 
+*Added by #123, which reports it.* `scripts/wt.ps1 python scripts/research/open_review_2022/s22_large_markets.py` reproduces both figures with the package's function (`large_markets.restricted_measures`) and gives the tie-proof measure (#115) beside them. Ties do not move the Blend or the model alone; they lower only the Naive Baseline. The review ranked Markets by their imports of the UK grid's Products from Exporters other than the UK (`s05_anyflow`); the evaluation ranks them by total imports from every Exporter, which swaps Saudi Arabia out of the top 30 for Sweden.
+
+| 2022, held-out UK pairs | Top 30, old | Top 30, tie-proof | Top 60, old | Top 60, tie-proof | Every Market, tie-proof |
+|---|---|---|---|---|---|
+| Blend, Markets as the review ranked them | **0.5065** | 0.5065 | **0.5437** | 0.5437 | 0.5635 |
+| Blend, Markets as the evaluation ranks them | 0.5048 | 0.5048 | 0.5437 | 0.5437 | 0.5635 |
+| v2, the model alone (evaluation's ranking) | 0.5329 | 0.5329 | 0.5621 | 0.5621 | 0.5206 |
+| Naive Baseline (evaluation's ranking) | 0.3577 | 0.3573 | 0.4030 | 0.4025 | 0.5240 |
+
+On the largest Markets the model alone ranks better than the Blend, and the Naive Baseline much worse: the Naive Baseline's weight was chosen on every Market. That is an association on one validation year, reported, not chosen on.
+
 ### 8. Gravity for the 20 Markets without it; group the UK Overseas Territories
 
 Twenty Markets have no GDP or distance (section 2), so every split on those features sends them down the default branch. Gibraltar and the Falklands receive $5–15 for every $1 of Export Potential. Filling GDP and distance from another source is cheap but needs features rebuilt and models retrained, for small Markets: a hypothesis with a small expected gain. A cheaper Advisor-facing step is to group the UK Overseas Territories (Gibraltar, the Falklands, Montserrat, Saint Helena, Anguilla, the British Virgin Islands, the British Indian Ocean Territory, Pitcairn, Bermuda, the Cayman Islands, Turks and Caicos) so they can be filtered like the Re-export Hubs.
@@ -253,3 +264,4 @@ Scripts are in `scripts/research/open_review_2022/`, run in order by `run_all.ps
 | `s12_structure`, `s13_demand` | sections 3, 5 and 6, and the demand proxies |
 | `s08_artefact`, `s15_access`, `s16_blocked` | the served artefact and section 4 (no metric, no 2023 rows) |
 | `s20_floor`, `s21_floor_fair` | idea 2 |
+| `s22_large_markets` | idea 7, with the package's `large_markets` (added by #123, after the review) |

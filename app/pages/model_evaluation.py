@@ -29,6 +29,25 @@ def _metric_table(overall: dict, metrics: dict) -> pd.DataFrame:
     )
 
 
+LARGEST_MARKETS = (30, 60)
+
+
+def _largest_markets_table(headline: dict, large: dict | None) -> pd.DataFrame:
+    """The headline beside the same measure on the 30 and 60 largest importing Markets; "n/a" for a version
+    evaluated before they were reported."""
+    found = {row["markets"]: row for row in (large or {}).get("rows", [])}
+    rows = [("Every Market (the headline)", headline)] + [
+        (f"{n} largest importers", found.get(n, {})) for n in LARGEST_MARKETS
+    ]
+    return pd.DataFrame(
+        {
+            "Markets measured": [name for name, _ in rows],
+            "Model": [number_text(row.get("model"), ".2f") for _, row in rows],
+            "Naive Baseline": [number_text(row.get("naive"), ".2f") for _, row in rows],
+        }
+    )
+
+
 def _breakdown_table(rows: list[dict], label: str) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -355,6 +374,12 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
         with _section("How accurate is the model?"):
             headline = report["headline"]
             (st.success if headline["beats_naive"] else st.warning)(headline["text"])
+            large = report.get("large_markets")
+            st.dataframe(_largest_markets_table(headline, large), hide_index=True)
+            st.caption(
+                large["text"] if large else "The measure on the largest importing Markets was not computed for this "
+                "version: it is reported from the next evaluation of the test year."
+            )
             st.caption(
                 f"Measured on {test_year}, a year the model never saw: the models were trained on "
                 f"{years_text(training_years)} with settings tuned on {report['validation_year']}, so "

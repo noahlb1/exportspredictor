@@ -324,6 +324,20 @@ class Headline(BaseModel):
     text: str
 
 
+class LargeMarketsRow(BaseModel):
+    markets: int  # the count of largest importing Markets measured (30, 60)
+    model: float | None
+    naive: float | None
+
+
+class LargeMarkets(BaseModel):
+    """The headline's measure on the largest importing Markets (`large_markets.large_markets_report`)."""
+
+    test_year: int
+    rows: list[LargeMarketsRow]
+    text: str
+
+
 class Stability(BaseModel):
     years: list[int]
     pairs: int
@@ -540,6 +554,7 @@ class Evaluation(BaseModel):
     naive_baseline: str
     accuracy: dict[str, ScopeAccuracy]  # "all_exporters" and "uk_out_of_fold"
     headline: Headline
+    large_markets: LargeMarkets | None = None  # None for a version evaluated before #123
     tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None

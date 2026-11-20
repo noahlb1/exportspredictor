@@ -185,6 +185,17 @@ def test_headline_compares_the_model_with_the_naive_baseline(report):
     assert headline["text"]
 
 
+def test_the_measure_on_the_largest_importers_is_reported_beside_the_headline(report):
+    headline, large = report["headline"], report["large_markets"]
+
+    assert [row["markets"] for row in large["rows"]] == [30, 60]
+    # The fixture has 4 Markets, so the 30 and 60 largest are every Market: the headline's own figures
+    for row in large["rows"]:
+        assert row["model"] == pytest.approx(headline["model"])
+        assert row["naive"] == pytest.approx(headline["naive"])
+    assert "30" in large["text"] and "60" in large["text"]
+
+
 def test_stability_compares_the_baseline_with_the_test_year(report):
     stability = report["stability"]
 
