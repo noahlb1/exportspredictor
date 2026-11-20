@@ -49,3 +49,12 @@ def test_a_ranking_summarises_every_filtered_pair_before_its_limit(fixture_artef
 
     assert top.rows["hs6"].to_list() == everything.head(3)["hs6"].to_list()
     assert top.summary == rankings.summarise(everything)
+
+
+def test_hide_drops_the_rows_of_each_named_caveat_tier(fixture_artefacts):
+    everything = rankings.rank_opportunities(fixture_artefacts)
+
+    shown = rankings.rank_opportunities(fixture_artefacts, hide=["flagged_product", "reexport_hub"])
+
+    expected = everything.filter(~everything["flagged_product"] & ~everything["reexport_hub"])
+    assert shown.equals(expected) and 0 < shown.height < everything.height

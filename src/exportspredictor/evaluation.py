@@ -15,7 +15,9 @@ the row's own Flow left out, as the model's supply and demand features are):
   Lower is better.
 - **Spearman rank correlation within each Product**, averaged over Products: how well
   the ranking of Flows within a Product matches reality. Higher is better. This is how
-  Advisors use the model (Markets ranked for one Product), so it is the headline.
+  Advisors use the model (Markets ranked for one Product), so it is the headline. It is
+  the Selection Measure (`selection_measure`): ties in a prediction are broken by a stable
+  hash, so tied predictions cannot raise it.
 
 Two scopes are evaluated:
 
@@ -70,13 +72,19 @@ from exportspredictor.prediction import (
     ModelForm,
     export_potential,
 )
+from exportspredictor.selection_measure import (
+    MIN_RANKED_ROWS,
+    selection_measure,
+    with_tie_key,
+    within_product_correlations,
+)
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
 from exportspredictor.wording import number_text, rate_text
 
 TWEEDIE_POWER = 1.5
-# A Product (or Product within a group) needs this many rows for its rank correlation.
-MIN_RANKED_ROWS = 3
+# A row of every Exporter is one Product, Exporter and Importer: the tie key hashes all three.
+_ROW_MARKET = ("exporter", "importer")
 STABILITY_TOP_N = 1000
 TEST_MODELS_FILE = "test_models.json"
 METRICS = ["tweedie_deviance", "rmse_log", "spearman_within_product"]
@@ -477,21 +485,16 @@ def _metrics(frame: pl.DataFrame, group: str) -> pl.DataFrame:
         **{f"{name}_rmse_log": _rmse_log(col) for name, col in _PREDICTORS.items()},
     )
     within = (
-        frame.group_by(group, "hs6")
-        .agg(
-            _n=pl.len(),
-            **{name: pl.corr(col, "value_usd", method="spearman") for name, col in _PREDICTORS.items()},
-        )
-        .filter(pl.col("_n") >= MIN_RANKED_ROWS)
-        .group_by(group)
-        .agg(
-            ranked_products=pl.len(),
-            **{
-                f"{name}_spearman_within_product": pl.col(name).filter(pl.col(name).is_not_nan()).mean()
-                for name in _PREDICTORS
-            },
+        frame.group_by(group, "hs6").len().filter(pl.col("len") >= MIN_RANKED_ROWS).group_by(group).agg(
+            ranked_products=pl.len()
         )
     )
+    keyed = with_tie_key(frame, market=_ROW_MARKET)  # hashed once for both predictors
+    for name, col in _PREDICTORS.items():
+        rho = within_product_correlations(keyed, col, by=[group]).group_by(group).agg(
+            pl.col("rho").mean().alias(f"{name}_spearman_within_product")
+        )
+        within = within.join(rho, on=group, how="left")
     return (
         sums.join(within, on=group, how="left")
         .with_columns(pl.col("ranked_products").fill_null(0))
@@ -647,35 +650,23 @@ def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STA
     """How much UK rankings move between two years scored by the same models.
 
     Both tables hold hs6, iso3, export_potential_usd and export_gap_usd. Reports the mean
-    within-Product Spearman correlation of Export Potential and of Export Gap between the
-    years, and the share of the top `top_n` Opportunities (by Export Gap) shared by both.
+    within-Product rank correlation of Export Potential and of Export Gap between the years
+    (the Selection Measure's, ties in this year's figures broken by the tie key), and the share of the top `top_n` Opportunities (by Export Gap) shared by both.
     """
     columns = ["hs6", "iso3", "export_potential_usd", "export_gap_usd"]
     joined = current.select(columns).join(previous.select(columns), on=["hs6", "iso3"], suffix="_prev")
-    within = (
-        joined.group_by("hs6")
-        .agg(
-            _n=pl.len(),
-            potential=pl.corr("export_potential_usd", "export_potential_usd_prev", method="spearman"),
-            gap=pl.corr("export_gap_usd", "export_gap_usd_prev", method="spearman"),
-        )
-        .filter(pl.col("_n") >= MIN_RANKED_ROWS)
-    )
     n = max(1, min(top_n, joined.height))
     top_now = set(joined.top_k(n, by="export_gap_usd").select("hs6", "iso3").iter_rows())
     top_before = set(joined.top_k(n, by="export_gap_usd_prev").select("hs6", "iso3").iter_rows())
     return {
         "pairs": joined.height,
-        "spearman_potential": _mean_finite(within["potential"]),
-        "spearman_gap": _mean_finite(within["gap"]),
+        "spearman_potential": selection_measure(
+            joined, "export_potential_usd", target="export_potential_usd_prev", market="iso3"
+        ),
+        "spearman_gap": selection_measure(joined, "export_gap_usd", target="export_gap_usd_prev", market="iso3"),
         "top_n": n,
         "top_overlap": len(top_now & top_before) / n,
     }
-
-
-def _mean_finite(values: pl.Series) -> float | None:
-    finite = values.drop_nulls().filter(values.drop_nulls().is_not_nan())
-    return float(finite.mean()) if finite.len() else None
 
 
 # --- Test-year models and scoring -------------------------------------------------------

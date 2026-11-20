@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable
 import pandas as pd
 import streamlit as st
 
-from app.ui import caveat_badges, illustrative, term, usd_unit
+from app.ui import caveat_badges, caveat_tiers, illustrative, term, usd_unit
 
 MILLION = 1_000_000
 # The chosen row's tint, the same in light and dark mode (spec #103, "Theme and logo").
@@ -198,6 +198,12 @@ def leaderboard_frame(rows: list[dict]) -> pd.DataFrame:
     )
 
 
+def _either(names: Iterable[str]) -> str:
+    """Names joined for a sentence: "A", "A or B", "A, B or C"."""
+    *rest, last = names
+    return f"{', '.join(rest)} or {last}" if rest else last
+
+
 def leaderboard_columns(body: dict) -> dict:
     """The column config of `leaderboard_frame`: a tooltip on every heading, the four terms in the API's wording."""
     year, averaged = body["baseline_year"], body["gap_period_label"]
@@ -226,7 +232,7 @@ def leaderboard_columns(body: dict) -> dict:
             "Blocked Opportunity", help="The Blocked Opportunity value clears the default thresholds."
         ),
         "Caveats": st.column_config.TextColumn(
-            "Caveats", help="Flagged Product or Re-export Hub: read this pair's figures with care."
+            "Caveats", help=f"{_either(tier['badge'] for tier in caveat_tiers())}: read this pair's figures with care."
         ),
         "Opportunity Type": st.column_config.TextColumn("Opportunity Type", help=term("opportunity_type")),
         "Potential Range": st.column_config.TextColumn(

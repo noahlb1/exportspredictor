@@ -8,6 +8,7 @@ page's read (`/opportunities/blocked`) is `blocked_opportunities`: only Blocked 
 `rank_opportunities`.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import polars as pl
@@ -86,8 +87,7 @@ def rank_opportunities(
     opportunity_type: str | None = None,
     min_gap_usd: float | None = None,
     trade_agreement: bool | None = None,
-    hide_flagged: bool = False,
-    hide_hubs: bool = False,
+    hide: Iterable[str] = (),
     rank_by: str = DEFAULT_RANK_BY,
     min_potential_usd: float | None = None,
     limit: int | None = None,
@@ -101,16 +101,15 @@ def rank_opportunities(
     Opportunity Type, the Baseline year's Export Potential and the Blocked Opportunity value
     in nominal USD, flags a Blocked Opportunity at the default thresholds against the Baseline
     year (`blocked_opportunity`), gives the Baseline Applied Tariff in percent from the Baseline policy features
-    (`applied_tariff_pct`, null where unknown), and carries the Baseline's `flagged_product` and
-    `reexport_hub` caveat flags (ADR 0005) and its Potential Range with the `uncertain_opportunity`
+    (`applied_tariff_pct`, null where unknown), and carries the Baseline's Caveat Tier columns
+    (`caveats.TIERS`, ADR 0005) and its Potential Range with the `uncertain_opportunity`
     (Uncertain Opportunity) flag (ADR 0007).
 
     Filters keep the rows of one Product (`hs6`), one Market (`iso3`), one Sector (HS2
     chapter), one Market region, one Opportunity Type, an Export Gap of at least
     `min_gap_usd`, or pairs with (`trade_agreement=True`) or without (`False`) a UK Trade
-    Agreement in force; `hide_flagged` drops Flagged Products and `hide_hubs` drops Re-export
-    Hubs (both off by default, as they are
-    ranked as normal). An order with a minimum Export
+    Agreement in force; `hide` drops the rows of each Caveat Tier it names by column, such as
+    `reexport_hub` (none by default, as they are ranked as normal). An order with a minimum Export
     Potential (Relative Export Gap) keeps only pairs whose Export Potential is at least
     `min_potential_usd` (default `DEFAULT_MIN_POTENTIAL_USD`); other orders ignore it. Rows
     are sorted by the `rank_by` order's column (`RANK_BY`, or `BLOCKED`) and its tie-breaks, largest first (then hs6,
@@ -134,10 +133,8 @@ def rank_opportunities(
         rows = rows.filter(pl.col("opportunity_type") == opportunity_type)
     if trade_agreement is not None:
         rows = rows.filter(pl.col("trade_agreement") == trade_agreement)
-    if hide_flagged:
-        rows = rows.filter(~pl.col("flagged_product"))
-    if hide_hubs:
-        rows = rows.filter(~pl.col("reexport_hub"))
+    for column in hide:
+        rows = rows.filter(~pl.col(column))
     if order.min_potential:
         floor = DEFAULT_MIN_POTENTIAL_USD if min_potential_usd is None else min_potential_usd
         rows = rows.filter((pl.col("export_potential_usd") >= floor) & pl.col(order.column).is_not_null())
@@ -194,8 +191,7 @@ def blocked_opportunities(
     sector: str | None = None,
     region: str | None = None,
     min_value_usd: float | None = None,
-    hide_flagged: bool = False,
-    hide_hubs: bool = False,
+    hide: Iterable[str] = (),
     limit: int | None = None,
 ) -> BlockedRanking:
     """The Blocked Opportunities at the default thresholds, ranked by Blocked Opportunity value, in Baseline-year figures.
@@ -204,7 +200,7 @@ def blocked_opportunities(
     Exports in the Baseline year, from the yearly history, 0 where there is no Flow) and `potential_with_agreement_usd`,
     Export Potential with a Trade Agreement (Baseline Export Potential plus the Blocked Opportunity value). Filters keep
     one Product (`hs6`), one Sector, one Market region, a Blocked Opportunity value of at least `min_value_usd`, and drop
-    Flagged Products (`hide_flagged`) or Re-export Hubs (`hide_hubs`). The summary and the per-Market totals cover every
+    the rows of the Caveat Tiers named in `hide`. The summary and the per-Market totals cover every
     filtered Blocked Opportunity; `limit` then keeps the top rows. Presentation only: the definition and thresholds are
     those of `is_blocked` (spec #103, #102).
     """
@@ -213,8 +209,7 @@ def blocked_opportunities(
         hs6=hs6,
         sector=sector,
         region=region,
-        hide_flagged=hide_flagged,
-        hide_hubs=hide_hubs,
+        hide=hide,
         rank_by=BLOCKED.name,
     ).filter("blocked_opportunity")
     value = pl.col("blocked_opportunity_value_usd")

@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from exportspredictor.experiments import spearman_within_product
 from exportspredictor.prediction import blend
+from exportspredictor.selection_measure import legacy_selection_measure
 
 DATA = Path(os.environ.get("EXPORTSPREDICTOR_DATA_DIR", r"C:\CodingProjectsC\exportspredictor\data"))
 ARTEFACTS = Path(os.environ.get("EXPORTSPREDICTOR_ARTEFACTS_DIR", r"C:\CodingProjectsC\exportspredictor\artefacts"))
@@ -53,8 +53,8 @@ def frame() -> pl.DataFrame:
 
 
 def measure(df: pl.DataFrame, col: str) -> float:
-    """The Selection Measure of `col` on `df` (pooled: each Product's Markets ranked once)."""
-    return spearman_within_product(df, col)
+    """The Selection Measure of `col` on `df` as the review measured it, before ties were broken (ticket #115)."""
+    return legacy_selection_measure(df, col)
 
 
 def per_product(df: pl.DataFrame, col: str, target: str = "value_usd") -> pl.DataFrame:

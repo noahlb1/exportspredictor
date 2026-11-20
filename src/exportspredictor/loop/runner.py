@@ -14,7 +14,6 @@ from xgboost.callback import EarlyStopping
 from exportspredictor import experiments, search
 from exportspredictor.evaluation import naive_potential
 from exportspredictor.exclusions import drop_excluded
-from exportspredictor.experiments import spearman_within_product
 from exportspredictor.features import (
     KEYS,
     PRODUCT_DETAIL_FEATURES,
@@ -59,6 +58,7 @@ from exportspredictor.prediction import (
     flow_probability,
     two_part_potential,
 )
+from exportspredictor.selection_measure import selection_measure, with_tie_key
 from exportspredictor.training import (
     BASE_MARGIN,
     model_params,
@@ -125,7 +125,8 @@ class Loop:
         self.validation = self.transform.apply(naive_potential(validation, flows))
         self.grid = self.transform.apply(naive_potential(grid, flows))
         del flows
-        self._grid_keys = self.grid.select("hs6", "value_usd")
+        # Hashed once: the round-by-round measure reads the tie key instead of rehashing every round.
+        self._grid_keys = with_tie_key(self.grid.select("hs6", "importer", "value_usd"))
         if "naive" not in self.results:
             self.results |= {
                 "selection_measure": SELECTION_MEASURE_TEXT,
@@ -412,7 +413,7 @@ class Loop:
         }
 
     def _round_measure(self, predictions, _matrix) -> tuple[str, float]:
-        value = spearman_within_product(self._grid_keys.with_columns(prediction=pl.Series(predictions)), "prediction")
+        value = selection_measure(self._grid_keys.with_columns(prediction=pl.Series(predictions)), "prediction")
         return SELECTION_MEASURE, NO_MEASURE if value is None else value
 
     def _training_matrices(self, settings: Settings, part: str | None = None):

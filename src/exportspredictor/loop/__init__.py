@@ -6,7 +6,10 @@ choice is measured and when it counts as a win:
 - **The selection measure** (`SELECTION_MEASURE`): the mean over Products of the Spearman
   correlation between Export Potential and Actual Exports across Markets, on the held-out
   fold's UK pairs in the validation year (2022), on every non-Excluded Product. It is the
-  headline measure of `evaluation` moved to the validation year. Nothing here selects on
+  headline measure of `evaluation` moved to the validation year, and both call the one
+  function `exportspredictor.selection_measure.selection_measure`: ties in Export Potential
+  are broken by a stable hash of Product and Market, so tying the bottom of a ranking (an
+  early tree, a floor) cannot raise it (spec #113, ADR 0008 amended). Nothing here selects on
   Tweedie deviance: it is reported with the other diagnostics (`measures`), never used.
 - **An arm** (`Arm`) is a named set of settings that differ from the best arm so far.
   Running it trains one model on the training years (2012–2021) with one fold of UK pairs

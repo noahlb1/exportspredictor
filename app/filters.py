@@ -1,11 +1,14 @@
 """The sidebar filters of the two ranking pages, each kept in the page's URL and for the session.
 
 - The Leaderboard (`leaderboard_filters`, spec #103 "Leaderboard"): Product search, Market, Sector, Market region,
-  Opportunity Type, UK Trade Agreement in force, minimum Export Gap, the two hide filters and Rank by, then Reset filters.
+  Opportunity Type, UK Trade Agreement in force, minimum Export Gap, the hide filters and Rank by, then Reset filters.
 - Blocked Opportunities (`blocked_filters`, spec #103 "Blocked Opportunities"): Product search, Sector, Market region,
-  minimum Blocked Opportunity value, the two hide filters, then Reset filters.
+  minimum Blocked Opportunity value, the hide filters, then Reset filters.
 
-Each filter is kept in the page's URL under its own query parameter (`PARAMS`, `BLOCKED_PARAMS`; a default is left
+There is one hide filter per Caveat Tier the API serves (`/caveats`, e.g. Hide Re-export Hubs), keyed and kept in the
+URL under the tier's `hide_param`.
+
+Each filter is kept in the page's URL under its own query parameter (`_params`, `_blocked_params`; a default is left
 out), so a filtered view, or one pair, can be shared as a link. The Product parameter is the HS6 code and the Market
 parameter the ISO3 code. The URL is read and written here by hand, not with Streamlit's `bind="query-params"`, because
 a bound selectbox writes its displayed label (a Market's name), not its code.
@@ -33,7 +36,7 @@ from app import client
 from app.format import format_usd
 from app.ui import (
     ROWS_SHOWN,
-    caveats,
+    caveat_tiers,
     fetch,
     labels,
     rank_orders,
@@ -74,31 +77,39 @@ def _flag(name: str) -> Param:
 _PRODUCT = Param("product")  # HS6 code
 _SECTOR = Param("sector")  # HS2 chapter
 _REGION = Param("region")
-_HIDE_FLAGGED = _flag("hide_flagged")
-_HIDE_HUBS = _flag("hide_hubs")
 
-PARAMS = [
-    _PRODUCT,
-    Param("market"),  # ISO3 code
-    _SECTOR,
-    _REGION,
-    Param("opportunity_type"),
-    Param("trade_agreement", to_url=lambda value: "yes" if value else "no", from_url=lambda text: _YES_NO[text]),
-    Param("min_gap_usd", to_url=_number, from_url=float),
-    _HIDE_FLAGGED,
-    _HIDE_HUBS,
-    Param("rank_by"),
-    Param("min_potential_usd", to_url=_number, from_url=float),
-    _flag(SHOW_ALL),
-]
-BLOCKED_PARAMS = [
-    _PRODUCT,
-    _SECTOR,
-    _REGION,
-    Param("min_value_usd", to_url=_number, from_url=float),  # minimum Blocked Opportunity value
-    _HIDE_FLAGGED,
-    _HIDE_HUBS,
-]
+
+def _hides() -> dict[str, bool]:
+    """Each Caveat Tier's hide filter (`/caveats`), by its parameter, at its default: off."""
+    return {tier["hide_param"]: False for tier in caveat_tiers()}
+
+
+def _params() -> list[Param]:
+    """The Leaderboard's URL parameters, each Caveat Tier's hide filter among them."""
+    return [
+        _PRODUCT,
+        Param("market"),  # ISO3 code
+        _SECTOR,
+        _REGION,
+        Param("opportunity_type"),
+        Param("trade_agreement", to_url=lambda value: "yes" if value else "no", from_url=lambda text: _YES_NO[text]),
+        Param("min_gap_usd", to_url=_number, from_url=float),
+        *(_flag(name) for name in _hides()),
+        Param("rank_by"),
+        Param("min_potential_usd", to_url=_number, from_url=float),
+        _flag(SHOW_ALL),
+    ]
+
+
+def _blocked_params() -> list[Param]:
+    """The Blocked Opportunities page's URL parameters."""
+    return [
+        _PRODUCT,
+        _SECTOR,
+        _REGION,
+        Param("min_value_usd", to_url=_number, from_url=float),  # minimum Blocked Opportunity value
+        *(_flag(name) for name in _hides()),
+    ]
 
 
 def _defaults() -> dict[str, Any]:
@@ -114,8 +125,7 @@ def _defaults() -> dict[str, Any]:
         "opportunity_type": None,
         "trade_agreement": None,
         "min_gap_usd": None,
-        "hide_flagged": False,
-        "hide_hubs": False,
+        **_hides(),
         "rank_by": next(iter(orders)),
         "min_potential_usd": minimums[0] if minimums else None,
         SHOW_ALL: False,
@@ -130,8 +140,7 @@ def _blocked_defaults() -> dict[str, Any]:
         "sector": None,
         "region": None,
         "min_value_usd": None,
-        "hide_flagged": False,
-        "hide_hubs": False,
+        **_hides(),
     }
 
 
@@ -204,8 +213,8 @@ class Filters:
 
 def leaderboard_filters() -> Filters:
     """Draw the Leaderboard's filters in the sidebar, kept in the URL and for the session; return those in force."""
-    defaults = _defaults()
-    _start(PARAMS, defaults)
+    defaults, url_params = _defaults(), _params()
+    _start(url_params, defaults)
     with st.sidebar:
         st.header("Filters")
         product, found = _product_search()
@@ -227,7 +236,7 @@ def leaderboard_filters() -> Filters:
             f"Minimum Export Gap ({usd_unit()})", value=None, step=1_000_000.0, key="min_gap_usd",
             persist_state="session",
         )
-        hide_flagged, hide_hubs = _hide()
+        hides = _hide()
         orders = rank_orders()
         rank_by = st.radio(
             "Rank by", list(orders), format_func=lambda name: orders[name]["title"], key="rank_by",
@@ -254,14 +263,13 @@ def leaderboard_filters() -> Filters:
         "opportunity_type": opportunity_type,
         "trade_agreement": trade_agreement,
         "min_gap_usd": min_gap_usd,
-        "hide_flagged": hide_flagged,
-        "hide_hubs": hide_hubs,
+        **hides,
         "rank_by": rank_by,
         # Kept (and in the URL) only while the order uses it
         "min_potential_usd": min_potential_usd if options else defaults["min_potential_usd"],
         SHOW_ALL: st.session_state[SHOW_ALL],  # its control sits above the table (`show_all`)
     }
-    _write_url(PARAMS, values, defaults)
+    _write_url(url_params, values, defaults)
     params = {
         **{
             name: value
@@ -269,8 +277,7 @@ def leaderboard_filters() -> Filters:
             if value is not None and name not in ("min_potential_usd", SHOW_ALL)
         },
         "min_potential_usd": min_potential_usd,
-        "hide_flagged": hide_flagged or None,
-        "hide_hubs": hide_hubs or None,
+        **{name: on or None for name, on in hides.items()},
     }
     named = _named(values, sectors, orders, options)
     return Filters({name: value for name, value in params.items() if value is not None}, named, found)
@@ -279,8 +286,8 @@ def leaderboard_filters() -> Filters:
 def blocked_filters() -> Filters:
     """Draw the Blocked Opportunities page's filters in the sidebar, under its own keys, kept in the URL and for the
     session; return those in force. There is no Market, order, Opportunity Type or Trade Agreement filter."""
-    defaults = _blocked_defaults()
-    _start(BLOCKED_PARAMS, defaults, BLOCKED_KEY_PREFIX)
+    defaults, url_params = _blocked_defaults(), _blocked_params()
+    _start(url_params, defaults, BLOCKED_KEY_PREFIX)
     with st.sidebar:
         st.header("Filters")
         product, found = _product_search(BLOCKED_KEY_PREFIX)
@@ -295,7 +302,7 @@ def blocked_filters() -> Filters:
             f"Minimum Blocked Opportunity value ({usd_unit()})", value=None, step=1_000_000.0,
             key=f"{BLOCKED_KEY_PREFIX}min_value_usd", persist_state="session",
         )
-        hide_flagged, hide_hubs = _hide(BLOCKED_KEY_PREFIX)
+        hides = _hide(BLOCKED_KEY_PREFIX)
         st.button("Reset filters", key=f"{BLOCKED_KEY_PREFIX}reset_filters", on_click=reset_blocked)
 
     values = {
@@ -303,11 +310,10 @@ def blocked_filters() -> Filters:
         "sector": sector,
         "region": region,
         "min_value_usd": min_value_usd,
-        "hide_flagged": hide_flagged,
-        "hide_hubs": hide_hubs,
+        **hides,
     }
-    _write_url(BLOCKED_PARAMS, values, defaults, BLOCKED_KEY_PREFIX)
-    params = {**values, "hide_flagged": hide_flagged or None, "hide_hubs": hide_hubs or None}
+    _write_url(url_params, values, defaults, BLOCKED_KEY_PREFIX)
+    params = {**values, **{name: on or None for name, on in hides.items()}}
     named = []
     if product:
         named.append(f"Product: {product}")
@@ -317,7 +323,7 @@ def blocked_filters() -> Filters:
         named.append(f"Market region: {region}")
     if min_value_usd is not None:
         named.append(f"Blocked Opportunity value at least {format_usd(min_value_usd)}")
-    named += _hidden(hide_flagged, hide_hubs)
+    named += _hidden(hides)
     return Filters({name: value for name, value in params.items() if value is not None}, named, found)
 
 
@@ -380,17 +386,14 @@ def _sector(prefix: str = "") -> tuple[str | None, dict[str, str]]:
     return sector, sectors
 
 
-def _hide(prefix: str = "") -> tuple[bool, bool]:
-    """Hide Flagged Products and Hide Re-export Hubs."""
-    caveat = caveats()
-    hide_flagged = st.checkbox(
-        "Hide Flagged Products", key=f"{prefix}hide_flagged", help=caveat["flagged_product"][1],
-        persist_state="session",
-    )
-    hide_hubs = st.checkbox(
-        "Hide Re-export Hubs", key=f"{prefix}hide_hubs", help=caveat["reexport_hub"][1], persist_state="session"
-    )
-    return hide_flagged, hide_hubs
+def _hide(prefix: str = "") -> dict[str, bool]:
+    """One checkbox per Caveat Tier, e.g. Hide Re-export Hubs: whether each is on, by its hide parameter."""
+    return {
+        tier["hide_param"]: st.checkbox(
+            f"Hide {tier['plural']}", key=f"{prefix}{tier['hide_param']}", help=tier["text"], persist_state="session"
+        )
+        for tier in caveat_tiers()
+    }
 
 
 def _market_and_region() -> tuple[str | None, str | None]:
@@ -415,8 +418,9 @@ def _region(markets: list[dict], iso3: str) -> str:
     return next(market["region"] for market in markets if market["iso3"] == iso3)
 
 
-def _hidden(hide_flagged: bool, hide_hubs: bool) -> list[str]:
-    return [text for text, on in (("Flagged Products hidden", hide_flagged), ("Re-export Hubs hidden", hide_hubs)) if on]
+def _hidden(values: dict[str, Any]) -> list[str]:
+    """The active-filters line's notice of each Caveat Tier hidden, e.g. "Re-export Hubs hidden"."""
+    return [f"{tier['plural']} hidden" for tier in caveat_tiers() if values[tier["hide_param"]]]
 
 
 def _named(values: dict[str, Any], sectors: dict[str, str], orders: dict[str, dict], options: list | None) -> list[str]:
@@ -437,7 +441,7 @@ def _named(values: dict[str, Any], sectors: dict[str, str], orders: dict[str, di
         named.append(f"UK Trade Agreement in force: {_AGREEMENT_CHOICES[values['trade_agreement']]}")
     if values["min_gap_usd"] is not None:
         named.append(f"Export Gap at least {format_usd(values['min_gap_usd'])}")
-    named += _hidden(values["hide_flagged"], values["hide_hubs"])
+    named += _hidden(values)
     if options:
         named.append(
             f"Ranked by {orders[values['rank_by']]['title']}, Export Potential at least "
