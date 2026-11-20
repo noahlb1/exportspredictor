@@ -807,7 +807,7 @@ def build(
 
     The files go to the folder of `feature_set` (`features_dir`; by default the one
     `FEATURE_SET_ENV` names). A folder already built is never overwritten unless `overwrite`.
-    `resume` keeps the years of an unfinished build already on disk. `parts` builds each year's
+    `resume` keeps the years and the proximity of an unfinished build already on disk. `parts` builds each year's
     training rows' features in that many groups of Markets, to keep peak memory down; every
     feature reads the whole year's Flows, so the rows are the same.
     """
@@ -821,8 +821,11 @@ def build(
     fitted_on = [y for y in proximity_years if (baci.flows_dir(root) / f"flows_{y}.parquet").exists()]
     if not fitted_on:
         raise ValueError(f"No BACI Flows on disk for the proximity years {proximity_years}")
-    proximity = fit_proximity(_scan_years(root, fitted_on), fitted_on)
-    write_parquet(proximity, out / "proximity.parquet", compression="zstd")
+    if resume and (out / "proximity.parquet").exists():
+        proximity = pl.read_parquet(out / "proximity.parquet")  # fitted on the same years, so the same
+    else:
+        proximity = fit_proximity(_scan_years(root, fitted_on), fitted_on)
+        write_parquet(proximity, out / "proximity.parquet", compression="zstd")
     sources = replace(sources, proximity=proximity)
     gap = [y for y in gap_years(baseline_year) if y in years]
     pairs = grid_pairs(uk_grid(load_year_flows(y, to_iso3, root), uk) for y in gap) if gap else None

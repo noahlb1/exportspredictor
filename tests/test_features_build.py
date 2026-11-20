@@ -196,3 +196,14 @@ def test_a_resumed_build_keeps_the_years_already_written(derived_data_root, monk
     assert pl.read_parquet(out / "training_2023.parquet").columns == ["marker"]
     assert "log_exporters_loo" in pl.read_parquet(out / "training_2024.parquet").columns
     assert json.loads((out / "features.json").read_text())["years"] == [2023, 2024]
+
+
+def test_a_resumed_build_reuses_the_proximity_it_saved(derived_data_root):
+    out = features.build(derived_data_root, years=[2023], rate=1.0)
+    saved = pl.read_parquet(out / "proximity.parquet")
+    saved.head(0).write_parquet(out / "proximity.parquet")  # a stand-in that refitting would replace
+
+    features.build(derived_data_root, years=[2023, 2024], rate=1.0, resume=True)
+
+    assert pl.read_parquet(out / "proximity.parquet").is_empty()
+    assert pl.read_parquet(out / "training_2024.parquet")["relatedness"].null_count() > 0
