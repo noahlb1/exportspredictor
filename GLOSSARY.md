@@ -39,7 +39,7 @@ A Product left out of training, scoring and rankings, because its recorded Flows
 _Avoid_: removed product, banned product
 
 **Flagged Product**:
-A Product scored and ranked as normal, but shown with a caveat that its values are volatile or entrepôt-driven.
+A Product scored and ranked as normal, but shown with a caveat that names its reason: precious stones and jewellery of Sector 71, whose values are volatile and entrepôt-driven; UK exports that swing widely from year to year over the training years (the top fifth by volatility); or a one-off Product sold in few, large contracts.
 _Avoid_: warning product, suspect product
 
 **Re-export Hub**:

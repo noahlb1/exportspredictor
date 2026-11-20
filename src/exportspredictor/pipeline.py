@@ -70,6 +70,7 @@ from exportspredictor import (
     loop,
     ppml,
     search,
+    volatility,
 )
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.caveats import (
@@ -663,6 +664,10 @@ def _train_and_score(
             for year, table in scored.items()
         ]
     ).with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
+    # Volatile Flagged Products (ADR 0005): read from the UK's exports in the training years only.
+    volatile_products = volatility.volatile_products(
+        year_flows, training, baseline_year=baseline_year, products=pairs["hs6"].unique().to_list()
+    )
     baseline = (
         export_gaps(yearly)
         .join(
@@ -671,7 +676,7 @@ def _train_and_score(
             ),
             on=["hs6", "iso3"],
         )
-        .pipe(with_caveat_columns, CaveatContext(baseline_year))
+        .pipe(with_caveat_columns, CaveatContext(baseline_year, volatile_products.reasons))
         .pipe(with_opportunity_columns)
     )
     # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.
@@ -760,6 +765,8 @@ def _train_and_score(
             "potential_range_bands": conformal.N_BANDS,
             "potential_range_min_band_rows": min_band_rows,
         },
+        # The volatility rule's years, threshold and Flagged Products with their reasons (ADR 0005).
+        volatility.METADATA_KEY: volatile_products.to_dict(),
         # What every summed figure is read against (spec #113, "Totals understate").
         "potential_share_of_actual_exports": potential_share_of_actual_exports(baseline),
         "created_at": datetime.now(UTC).isoformat(),
@@ -1152,16 +1159,40 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
     return replace(bundle, metadata=metadata)
 
 
-def recaveat(bundle: Artefacts, *, version: str | None = None, tiers: Sequence[CaveatTier] = TIERS) -> Artefacts:
+def recaveat(
+    bundle: Artefacts,
+    *,
+    version: str | None = None,
+    tiers: Sequence[CaveatTier] = TIERS,
+    volatile: volatility.VolatileProducts | None = None,
+) -> Artefacts:
     """A new version of a saved bundle whose Baseline is marked again with the declared Caveat Tiers; no retraining.
 
     Each tier's columns are replaced in place or added (`caveats.with_caveat_columns`, for the bundle's Baseline
     year); every other column, table and model is reused. Use it when a tier is added or its table changes, such as
-    a sanctions regime or prohibition in `restrictions`.
+    a sanctions regime or prohibition in `restrictions`. Flagged Products take the volatility rule `volatile` and
+    record it in the metadata; without it, the rule the bundle recorded (none in a bundle saved before it).
     """
-    baseline = with_caveat_columns(bundle.baseline, CaveatContext(bundle.baseline_year), tiers=tiers)
+    recorded = bundle.metadata.get(volatility.METADATA_KEY)
+    if volatile is None and recorded is not None:
+        volatile = volatility.VolatileProducts.from_dict(recorded)
+    reasons = {} if volatile is None else volatile.reasons
+    baseline = with_caveat_columns(bundle.baseline, CaveatContext(bundle.baseline_year, reasons), tiers=tiers)
     metadata = {**bundle.metadata, "version": version or new_version(), "refreshed_from": bundle.version}
+    if volatile is not None:
+        metadata[volatility.METADATA_KEY] = volatile.to_dict()
     return replace(bundle, metadata=metadata, baseline=baseline)
+
+
+def real_volatile_products(bundle: Artefacts, root: Path | None = None) -> volatility.VolatileProducts:
+    """The volatility rule for a saved bundle's Baseline, from the real BACI Flows of its training years."""
+    to_iso3 = load_sources(root)[1]
+    return volatility.volatile_products(
+        lambda year: load_year_flows(year, to_iso3, root),
+        bundle.metadata["training_years"],
+        baseline_year=bundle.baseline_year,
+        products=bundle.baseline["hs6"].unique().to_list(),
+    )
 
 
 _RANGE_COLUMNS = ["potential_range_low_usd", "potential_range_high_usd", "uncertain_opportunity"]
@@ -1282,7 +1313,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     saved bundle (`refresh`), in seconds. `python -m exportspredictor.pipeline rerange` saves a
     copy of the newest bundle with its Potential Range recomputed (`rerange`), in a few minutes
     on the CPU. `python -m exportspredictor.pipeline recaveat` saves a copy whose Baseline is marked again with
-    the declared Caveat Tiers (`recaveat`). `python -m exportspredictor.pipeline compare` saves a
+    the declared Caveat Tiers (`recaveat`), its volatile Flagged Products recomputed from the training years'
+    BACI Flows (`real_volatile_products`). `python -m exportspredictor.pipeline compare` saves a
     copy of the newest bundle with the v1 comparison and gain ladder added (`add_v1_comparison`).
 
     The training run and `compare` read the test year: each records the read in the test-year
@@ -1309,7 +1341,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(_rerange_latest(), flush=True)
         return
     if list(argv) == ["recaveat"]:
-        marked = recaveat(artefacts.load(artefacts.latest_folder(artefacts_dir())))
+        bundle = artefacts.load(artefacts.latest_folder(artefacts_dir()))
+        marked = recaveat(bundle, volatile=real_volatile_products(bundle))
+        print(json.dumps({k: v for k, v in marked.metadata[volatility.METADATA_KEY].items() if k != "products"}),
+              flush=True)
         saved = artefacts.save(marked, artefacts_dir())
         governance.write_model_card(marked, saved)
         print(saved, flush=True)
