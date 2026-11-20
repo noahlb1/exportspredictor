@@ -10,7 +10,6 @@ import streamlit as st
 from app import client
 
 ROWS_SHOWN = 500  # the top of a Leaderboard-style ranking shown on the page; its summary covers every filtered pair
-READ_LIMIT = 6000  # the most rows a ranking read returns (the API refuses more): the CSV and Show all hold these
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -24,6 +23,12 @@ def labels() -> dict:
     """The API's wording and options (`/labels`): unit and caption, Opportunity Types, caveats, last tariff year,
     caution line and term definitions."""
     return fetch("/labels", client.api_url())
+
+
+def read_limit() -> int:
+    """The most rows a ranking read returns, as the API serves it (`/labels` `max_rows`; it refuses more): the CSV and
+    Show all hold these."""
+    return labels()["max_rows"]
 
 
 def term(name: str) -> str:

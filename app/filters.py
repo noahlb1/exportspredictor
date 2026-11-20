@@ -32,18 +32,19 @@ import streamlit as st
 from app import client
 from app.format import format_usd
 from app.ui import (
-    READ_LIMIT,
     ROWS_SHOWN,
     caveats,
     fetch,
     labels,
     rank_orders,
+    read_limit,
     term,
     usd_unit,
 )
 
 QUERY = "product_query"  # the Product search text; the chosen Product's HS6 code is the `product` parameter
-SHOW_ALL = "show_all"  # Show all: every filtered row (501 to 6,000) instead of the top 500; not an API filter
+# Show all: every filtered row read (up to `read_limit()`) instead of the top `ROWS_SHOWN`; not an API filter
+SHOW_ALL = "show_all"
 BLOCKED = "blocked_"  # the prefix of the Blocked Opportunities page's widget keys, apart from the Leaderboard's
 _AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
 _YES_NO = {"yes": True, "no": False}
@@ -316,11 +317,11 @@ def blocked_filters() -> Filters:
 def show_all(pairs: int) -> bool:
     """The Show all control, for a filtered ranking of `pairs` pairs: whether to show every row read.
 
-    It is drawn only when the ranking has more than `ROWS_SHOWN` pairs and no more than `READ_LIMIT`; outside that
+    It is drawn only when the ranking has more than `ROWS_SHOWN` pairs and no more than `read_limit()`; outside that
     range it disappears and turns off (in the session and the URL). It is kept in the URL like the filters, and Reset
     filters switches it off.
     """
-    if ROWS_SHOWN < pairs <= READ_LIMIT:
+    if ROWS_SHOWN < pairs <= read_limit():
         return st.toggle(f"Show all {pairs:,} pairs", key=SHOW_ALL, persist_state="session")
     if st.session_state.get(SHOW_ALL):
         st.session_state[SHOW_ALL] = False
