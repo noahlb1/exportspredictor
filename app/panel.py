@@ -10,7 +10,7 @@ The Leaderboard shows the whole panel with `show(row)`, in order:
 
 A page with another opening (Blocked Opportunities leads with the Barrier, then its own three figures) reads the
 explanation with `explanation(row)`, draws `opening`, `barrier(row, body, note=...)` and its figures itself, then
-`from_facts(row, body, with_barrier=False)`.
+`from_facts(row, body, with_barrier=False, with_gap=False)`: without the Export Gap, which that page does not show.
 
 A row is a ranking row (`/opportunities/top`, `/opportunities/blocked`): it carries the pair's names, caveats, Trade
 Agreement, Applied Tariff and Blocked Opportunity value. The explanation carries the Gap Period figures, the factors
@@ -66,22 +66,24 @@ def figures(body: dict) -> None:
     st.caption(f"Each is a {body['gap_period_label']}.")
 
 
-def from_facts(row: dict, body: dict, *, with_barrier: bool = True) -> None:
+def from_facts(row: dict, body: dict, *, with_barrier: bool = True, with_gap: bool = True) -> None:
     """The panel from its facts table on: the facts, the Barrier (unless the page led with it), the factors and the
-    year-by-year history."""
-    facts(row, body)
+    year-by-year history. `with_gap=False` leaves out the Export Gap and the figures read against it (the Relative
+    Export Gap and the Potential Range), for a page that shows Baseline-year figures only."""
+    facts(row, body, with_gap=with_gap)
     if with_barrier:
         barrier(row, body)
     factors(body)
-    history(body)
+    history(body, with_gap=with_gap)
 
 
 def _tariff(row: dict) -> str:
     return "not known" if row["applied_tariff_pct"] is None else f"{row['applied_tariff_pct']:.1f}%"
 
 
-def facts(row: dict, body: dict) -> None:
-    """The facts table, the Barrier's figures first: one line per fact, with a tooltip where a fact needs one."""
+def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
+    """The facts table, the Barrier's figures first: one line per fact, with a tooltip where a fact needs one.
+    `with_gap=False` leaves out the Relative Export Gap and the Potential Range."""
     year = body["baseline_year"]
     kind = body["opportunity_type"]
     kinds = term("opportunity_type")
@@ -117,6 +119,8 @@ def facts(row: dict, body: dict) -> None:
             body["potential_range_text"],
         ),
     ]
+    if not with_gap:
+        lines = lines[:4]  # the Applied Tariff, UK Trade Agreement, Blocked Opportunity value and Opportunity Type
     with st.container(border=True):
         for name, text, tip in lines:
             st.markdown(f"**{name}:** {text}", help=tip)
@@ -217,9 +221,9 @@ def _text_colour() -> str:
     return TEXT["dark"] if st.context.theme.type == "dark" else TEXT["light"]
 
 
-def history(body: dict) -> None:
+def history(body: dict, *, with_gap: bool = True) -> None:
     """Actual Exports against Export Potential year by year, then the yearly figures with each year's Applied Tariff
-    mark in an expander."""
+    mark in an expander (with each year's Export Gap unless `with_gap` is False)."""
     st.markdown("**Year by year**")
     year = body["baseline_year"]
     points = {point["year"]: point for point in body["history"]}
@@ -250,25 +254,31 @@ def history(body: dict) -> None:
         st.caption(f"Amounts in {millions_unit()}.")
         # Each year's Applied Tariff mark (ADR 0006); blank for a year with no row.
         marks = {True: f"Carried forward from {labels()['last_tariff_year']}", False: "From tariff data"}
+        table = pd.DataFrame(
+            {
+                "Year": years,
+                "Export Potential": millions(p["export_potential_usd"] for p in yearly),
+                "Actual Exports": millions(p["actual_exports_usd"] for p in yearly),
+                "Export Gap": millions(p["export_gap_usd"] for p in yearly),
+                "Applied Tariff": [marks.get(p["tariff_imputed"], "") for p in yearly],
+            }
+        )
         st.dataframe(
-            pd.DataFrame(
-                {
-                    "Year": years,
-                    "Export Potential": millions(p["export_potential_usd"] for p in yearly),
-                    "Actual Exports": millions(p["actual_exports_usd"] for p in yearly),
-                    "Export Gap": millions(p["export_gap_usd"] for p in yearly),
-                    "Applied Tariff": [marks.get(p["tariff_imputed"], "") for p in yearly],
-                }
-            ),
+            table if with_gap else table.drop(columns=["Export Gap"]),
             hide_index=True,
             column_config={
                 "Export Potential": money_column("Export Potential", term("export_potential")),
                 "Actual Exports": money_column("Actual Exports", "What the UK actually exported that year."),
-                "Export Gap": money_column("Export Gap", "Export Potential minus Actual Exports that year."),
+                **(
+                    {"Export Gap": money_column("Export Gap", "Export Potential minus Actual Exports that year.")}
+                    if with_gap
+                    else {}
+                ),
             },
         )
+        gap = f"The Export Gap above is the {averaged} of the yearly Export Gaps of the Gap Period. " if with_gap else ""
         st.caption(
-            f"The Export Gap above is the {averaged} of the yearly Export Gaps of the Gap Period; each year's Export "
-            "Potential is scored from that year's conditions. Earlier years show UK Actual Exports only. "
-            f"{year} figures are provisional. A year with no recorded UK exports shows 0."
+            f"{gap}Each year's Export Potential is scored from that year's conditions. "
+            f"Earlier years show UK Actual Exports only. {year} figures are provisional. A year with no recorded UK "
+            "exports shows 0."
         )

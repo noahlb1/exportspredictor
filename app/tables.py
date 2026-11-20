@@ -227,3 +227,106 @@ def leaderboard_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
     columns = ["HS6", "Product", "Sector", "Market", "Region"]
     rest = [column for column in table.columns if column not in {*columns, *money}]
     return pd.concat([table[columns], pd.DataFrame(dollars), table[rest]], axis=1)
+
+
+# The Blocked Opportunities page (spec #103, "Blocked Opportunities"): a Markets table and the chosen Market's Products
+# table, every figure for the Baseline year. The Export Gap is not on this page.
+BLOCKED_MARKETS = ["Market", "Blocked Opportunities", "Total value"]
+BLOCKED_PRODUCTS = ["Product", "Blocked Opportunity value", "Applied Tariff %", "Potential with agreement", "Actual Exports"]
+BLOCKED_FORMATS: dict[str, str | Callable] = {
+    "Blocked Opportunities": "{:,}",
+    "Total value": ONE_DECIMAL,
+    "Blocked Opportunity value": ONE_DECIMAL,
+    "Applied Tariff %": ONE_DECIMAL,
+    "Potential with agreement": ONE_DECIMAL,
+    "Actual Exports": ONE_DECIMAL,
+}
+
+
+def blocked_markets_frame(markets: list[dict]) -> pd.DataFrame:
+    """The per-Market totals (`/opportunities/blocked` `markets`): Market, count and total value in $ millions."""
+    raw = pd.DataFrame(markets)
+    return pd.DataFrame(
+        {
+            "Market": raw["market"],
+            "Blocked Opportunities": raw["blocked_opportunities"],
+            "Total value": millions(raw["blocked_opportunity_value_usd"]),
+        }
+    )
+
+
+def blocked_markets_columns(body: dict) -> dict:
+    """The column config of `blocked_markets_frame`, with a tooltip on every heading."""
+    return {
+        "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to."),
+        "Blocked Opportunities": st.column_config.NumberColumn(
+            "Blocked Opportunities", help="The Market's Blocked Opportunities under the filters."
+        ),
+        "Total value": money_column(
+            "Total value",
+            f"The sum of their Blocked Opportunity values, {body['baseline_year']}. {illustrative().capitalize()}.",
+        ),
+    }
+
+
+def blocked_products_frame(rows: list[dict]) -> pd.DataFrame:
+    """One Market's Blocked Opportunities: Product, value, Applied Tariff, Export Potential with a Trade Agreement and
+    Actual Exports, all for the Baseline year, money in $ millions."""
+    raw = pd.DataFrame(rows)
+    return pd.DataFrame(
+        {
+            "Product": raw["description"],
+            "Blocked Opportunity value": millions(raw["blocked_opportunity_value_usd"]),
+            "Applied Tariff %": pd.Series(raw["applied_tariff_pct"], dtype="float64"),
+            "Potential with agreement": millions(raw["potential_with_agreement_usd"]),
+            "Actual Exports": millions(raw["baseline_actual_exports_usd"]),
+        }
+    )
+
+
+def blocked_products_columns(body: dict) -> dict:
+    """The column config of `blocked_products_frame`: a tooltip on every heading, each naming the Baseline year."""
+    year, word = body["baseline_year"], illustrative().capitalize()
+    return {
+        "Product": st.column_config.TextColumn("Product", help="The Product (HS6, 2012 edition)."),
+        "Blocked Opportunity value": money_column(
+            "Blocked Opportunity value",
+            f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement and removing "
+            f"the tariff. {word}.",
+        ),
+        "Applied Tariff %": tariff_column(
+            year,
+            help=f"The tariff the Market charges on this Product from the UK in {year}, in percent. Where it is 0, the "
+            "Blocked Opportunity value rests on the Trade Agreement alone. A blank means the tariff is not known.",
+        ),
+        "Potential with agreement": money_column(
+            "Potential with agreement",
+            f"Export Potential with a Trade Agreement: {year} Export Potential plus the Blocked Opportunity value, the "
+            f"level the model associates with adding the agreement. {word}.",
+        ),
+        "Actual Exports": money_column(
+            "Actual Exports",
+            f"What the UK actually exported of this Product to this Market in {year} (0 where there was no Flow).",
+        ),
+    }
+
+
+def blocked_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
+    """The Blocked Opportunities CSV: every row given, in full dollars, each money heading naming its year and unit."""
+    raw = pd.DataFrame(rows)
+    year, unit, word = body["baseline_year"], usd_unit(), illustrative()
+    return pd.DataFrame(
+        {
+            "HS6": raw["hs6"],
+            "Product": raw["description"],
+            "Sector": raw["sector_name"],
+            "Market": raw["market"],
+            "Region": raw["region"],
+            f"Blocked Opportunity value, {year}, {word} ({unit})": raw["blocked_opportunity_value_usd"],
+            "Applied Tariff %": raw["applied_tariff_pct"],
+            f"Export Potential, {year} ({unit})": raw["baseline_export_potential_usd"],
+            f"Export Potential with a Trade Agreement, {year}, {word} ({unit})": raw["potential_with_agreement_usd"],
+            f"Actual Exports, {year} ({unit})": raw["baseline_actual_exports_usd"],
+            "Caveats": [caveat_badges(row) for row in rows],
+        }
+    )
