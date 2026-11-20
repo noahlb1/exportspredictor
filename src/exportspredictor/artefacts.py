@@ -92,7 +92,8 @@ class Artefacts:
     products: pl.DataFrame  # every Product, Excluded Products included (search marks them)
     markets: pl.DataFrame
     excluded_products: pl.DataFrame  # hs6, description, sector, reason (`exclusions.excluded_products`)
-    # band, min_export_potential_usd, rows, low_offset_usd, high_offset_usd (`conformal.fit_bands`)
+    # band, min_export_potential_usd, rows, low_offset_log, high_offset_log (`conformal.fit_bands`;
+    # versions before ADR 0007's log-scale amendment hold low_offset_usd, high_offset_usd)
     potential_range_bands: pl.DataFrame
     # The evaluation report (`exportspredictor.evaluation`), JSON-ready; None if not evaluated.
     evaluation: dict | None = None

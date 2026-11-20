@@ -265,8 +265,12 @@ def result_limitations(metadata: dict, report: dict) -> list[dict]:
 
 
 def range_limitations(bands: pl.DataFrame) -> list[dict]:
-    """The Potential Range's offsets are dollars per band, so the top band gives every large pair one width."""
-    if bands.is_empty():
+    """For a version whose offsets are dollars per band, the top band gives every large pair one width.
+
+    Versions since the log-scale amendment of ADR 0007 store log offsets (`low_offset_log`), whose
+    range scales with Export Potential, and have no such limitation.
+    """
+    if bands.is_empty() or "low_offset_usd" not in bands.columns:
         return []
     top = bands.sort("min_export_potential_usd").row(-1, named=True)
     width = top["high_offset_usd"] - top["low_offset_usd"]
