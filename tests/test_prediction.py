@@ -151,7 +151,7 @@ def test_market_reach_multiplies_a_uk_rows_export_potential_by_its_folds_market_
     assert reached == pytest.approx(blended * np.exp(2.0 * offset) * 0.5, rel=1e-6)
 
 
-def test_other_exporters_rows_get_no_market_reach_offset_only_the_constant(fixture_artefacts):
+def test_other_exporters_rows_get_no_market_reach(fixture_artefacts):
     rows = fixture_artefacts.baseline_features
     models = fixture_artefacts.fold_models
     form = _reach_form(rows, beta=2.0, constant=0.5)
@@ -159,7 +159,7 @@ def test_other_exporters_rows_get_no_market_reach_offset_only_the_constant(fixtu
 
     reached = export_potential(others, models, form=form).to_numpy()
 
-    assert reached == pytest.approx(export_potential(others, models).to_numpy() * 0.5, rel=1e-6)
+    assert reached == pytest.approx(export_potential(others, models).to_numpy(), rel=1e-6)
 
 
 def test_market_reach_without_its_table_refuses_to_predict(fixture_artefacts):

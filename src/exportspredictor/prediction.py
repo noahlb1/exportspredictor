@@ -23,9 +23,9 @@ the size (`two_part_potential`).
 
 A form may also carry **Market Reach** (spec #113, ADR 0010, `MarketReach`): Export Potential is
 then multiplied by exp(β · offset) × c, with the offset of the row's fold and Market from the
-Market Reach table and c the rescale constant (`market_reach.apply`). Only UK rows take an offset:
-a row with an `exporter` column naming another Exporter, or scored by the mean of the models, is
-multiplied by c alone. The offset is the same for every Product of a Market and the Naive Baseline
+Market Reach table and c the rescale constant (`market_reach.apply`). Only UK rows take it: a row
+with an `exporter` column naming another Exporter, or scored by the mean of the models, is left as
+the form without Market Reach makes it. The offset is the same for every Product of a Market and the Naive Baseline
 has no policy features, so a Scenario's relative effect is unchanged.
 
 `by="fold"` scores each row with the fold model named by its `fold` column, the model that
@@ -210,7 +210,9 @@ def _naive(rows: pl.DataFrame, form: ModelForm) -> np.ndarray | None:
 def _reach_multiplier(rows: pl.DataFrame, form: ModelForm, by: str = "fold") -> np.ndarray | None:
     """Each row's Market Reach multiplier, exp(β · offset) × c (`market_reach.apply`), or None without Market Reach.
 
-    Rows scored by the mean of the models, or whose `exporter` is not the UK, take c alone."""
+    Rows scored by the mean of the models, or whose `exporter` is not the UK, are not UK pairs and take none
+    (multiplier 1): c is defined on the UK grid only, and scaling other Exporters by it would move the Potential
+    Range's calibration off the scale of their Actual Exports."""
     reach = form.market_reach
     if reach is None:
         return None
@@ -227,7 +229,8 @@ def _reach_multiplier(rows: pl.DataFrame, form: ModelForm, by: str = "fold") -> 
         fold=pl.when(uk_row).then(pl.col("fold")) if "fold" in rows.columns else pl.lit(None, pl.Int8),
         importer=pl.col(market),
     )
-    return market_reach.apply(np.ones(rows.height), keys, reach.table, beta=reach.beta, constant=reach.constant)
+    multiplier = market_reach.apply(np.ones(rows.height), keys, reach.table, beta=reach.beta, constant=reach.constant)
+    return np.where(rows.select(uk_row.alias("uk")).to_series().to_numpy(), multiplier, 1.0)
 
 
 def _model_potential(rows, models, features, by, rounds, device, base_margin) -> pl.Series:

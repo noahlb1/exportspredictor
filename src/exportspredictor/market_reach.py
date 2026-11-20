@@ -215,8 +215,10 @@ def pair_figures(
 
 
 def reach_text(sent: int, imported: int, expected: float, market: str, year: int) -> str:
-    """A Market's reach in one sentence, so a Market-wide shortfall stays visible beside Product-level Export Gaps."""
+    """A Market's reach in one sentence, so a Market-wide shortfall stays visible beside Product-level Export Gaps.
+
+    The UK can send Products the Market imports from no other Exporter, so `sent` may exceed `imported`."""
     return (
-        f"In {year} the UK sent {sent:,} of the {imported:,} Products {market} imported, against about "
-        f"{expected:,.0f} expected at the UK's usual reach across Markets."
+        f"In {year} the UK sent {sent:,} Products to {market}, which imported {imported:,} from other Exporters; "
+        f"at the UK's usual reach across Markets, about {expected:,.0f} were expected."
     )

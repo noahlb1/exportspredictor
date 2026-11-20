@@ -1384,8 +1384,10 @@ def test_the_market_view_serves_the_markets_reach_in_the_reference_year(client, 
         assert reach["year"] == year
         assert (reach["products_sent"], reach["products_imported"]) == (sent, imported)
         assert 0 < reach["products_expected"] <= imported
-        assert reach["text"].startswith(f"In {year} the UK sent {sent:,} of the {imported:,} Products Japan imported")
-        assert f"about {reach['products_expected']:,.0f} expected" in reach["text"]
+        assert reach["text"].startswith(
+            f"In {year} the UK sent {sent:,} Products to Japan, which imported {imported:,} from other Exporters"
+        )
+        assert f"about {reach['products_expected']:,.0f} were expected" in reach["text"]
     assert client.get("/opportunities/top").json()["market_reach"] is None
 
 

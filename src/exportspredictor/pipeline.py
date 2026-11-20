@@ -857,8 +857,8 @@ def _score_gap_period(
     # `mfn_tariff` (not a feature) is the rate a Scenario restores when it removes a Trade Agreement (ADR 0006).
     # `naive_usd` (not a feature) is the naive baseline a blend takes; a Scenario leaves it unchanged.
     baseline_features = scored[baseline_year].select("hs6", "iso3", "fold", *FEATURES, "mfn_tariff", "naive_usd")
-    # The Potential Range (ADR 0007): other Exporters' Baseline-year rows, never the UK's. They take the rescale
-    # constant but no UK Market Reach offset (`prediction`, ADR 0010).
+    # The Potential Range (ADR 0007): other Exporters' Baseline-year rows, never the UK's. They take no Market Reach
+    # (`prediction`, ADR 0010).
     started = time.perf_counter()
     scored_calibration = conformal.score_calibration(
         evaluation.naive_potential(read_chunk(calibration), year_flows(baseline_year)), models, transform, uk=UK,
