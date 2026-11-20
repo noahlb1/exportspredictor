@@ -46,6 +46,10 @@ _Avoid_: warning product, suspect product
 A Market that re-exports much of what it imports, so part of its demand belongs to other Markets. It is shown with a caveat and can be filtered out.
 _Avoid_: entrepôt, transit country
 
+**Caveat Tier**:
+A group of Product–Market pairs, keyed on the Market, the Product or the pair, that is scored and ranked as normal but shown with one caveat, its badge and a filter to hide it. Flagged Products and Re-export Hubs are Caveat Tiers; Excluded Products are not, as they are left out.
+_Avoid_: flag type, warning level
+
 **Relatedness**:
 How close a Product is to the Products an Exporter already exports competitively, judged by which Products tend to be exported competitively together across the world.
 _Avoid_: density, product space, proximity

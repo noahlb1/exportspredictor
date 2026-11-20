@@ -9,8 +9,8 @@ Layout of `<root>/<version>/`:
     models/fold_<k>.ubj
     baseline.parquet   one row per UK Product–Market pair: Gap Period means of Export Potential,
                        Actual Exports and Export Gap; the Baseline year's Export Potential;
-                       the Blocked Opportunity value; its Flagged Product and Re-export Hub
-                       flags (ADR 0005); its Potential Range and Uncertain Opportunity flag (ADR 0007);
+                       the Blocked Opportunity value; its Caveat Tier columns, such as the
+                       Flagged Product and Re-export Hub flags (`caveats.TIERS`, ADR 0005); its Potential Range and Uncertain Opportunity flag (ADR 0007);
                        whether its Baseline-year Applied Tariff is carried forward from 2021 (ADR 0006)
     baseline_features.parquet  the same pairs' Baseline-year model inputs, fold and Naive Baseline
                        (`naive_usd`), for Scenarios and explanations
@@ -82,7 +82,7 @@ class Artefacts:
     metadata: dict
     fold_models: list[xgb.Booster]
     # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd (Gap Period means),
-    # baseline_export_potential_usd (the Baseline year's), flagged_product, reexport_hub, blocked_opportunity_value_usd,
+    # baseline_export_potential_usd (the Baseline year's), each Caveat Tier's columns (`caveats.TIERS`), blocked_opportunity_value_usd,
     # potential_range_low_usd, potential_range_high_usd, uncertain_opportunity, tariff_imputed
     baseline: pl.DataFrame
     # hs6, iso3, fold, FEATURES (transformed, as the models saw them), mfn_tariff (percent, the 2021 MFN rate),
