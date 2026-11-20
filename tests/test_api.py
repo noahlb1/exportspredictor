@@ -103,7 +103,9 @@ def test_by_product_returns_every_market_sorted_by_export_gap(client):
     gaps = [row["export_gap_usd"] for row in body["opportunities"]]
     assert gaps == sorted(gaps, reverse=True)
     assert {row["iso3"] for row in body["opportunities"]} == {"JPN", "CAN", "IND", "HKG"}
-    assert body["product"] == {"hs6": "220830", "description": "Whiskies", "sector": "22"}
+    assert body["product"] == {
+        "hs6": "220830", "description": "Whiskies", "sector": "22", "sector_name": "Beverages, spirits and vinegar"
+    }
     assert body["baseline_year"] == 2024
     assert body["gap_years"] == [2022, 2024]  # the values are Gap Period means
     assert body["artefact_version"] == "fixture-test"
@@ -157,7 +159,14 @@ def test_products_search_matches_words_in_the_description(client):
     body = client.get("/products", params={"q": "jewellery precious"}).json()
 
     assert body == [
-        {"hs6": "711319", "description": PRODUCTS["711319"], "sector": "71", "excluded": False, "exclusion_reason": None}
+        {
+            "hs6": "711319",
+            "description": PRODUCTS["711319"],
+            "sector": "71",
+            "sector_name": "Pearls, precious stones and metals",
+            "excluded": False,
+            "exclusion_reason": None,
+        }
     ]
 
 
@@ -1131,3 +1140,58 @@ def test_the_v1_comparisons_detail_is_still_not_served(client, fixture_artefacts
 
     assert "v1_comparison" not in body and "v1_comparison" not in body["model_choice"]
     assert "ladder" not in str(body["model_choice"]) and "verdict" not in str(body["model_choice"])
+
+
+# --- Sector names, the Sectors read and the Leaderboard's Product filter (spec #103) -----------
+
+
+def test_the_sectors_read_lists_each_sector_with_products_by_code_and_name(client):
+    sectors = client.get("/sectors").json()
+
+    # The fixture's Products sit in chapters 22, 27 (the Excluded crude oil), 30, 71, 85 and 87.
+    assert [sector["code"] for sector in sectors] == ["22", "27", "30", "71", "85", "87"]
+    names = {sector["code"]: sector["name"] for sector in sectors}
+    assert names["22"] == "Beverages, spirits and vinegar"
+    assert names["85"] == "Electrical machinery and equipment"
+
+
+@pytest.mark.parametrize(
+    "path", ["/opportunities/top", "/opportunities/blocked", "/opportunities/by-market/JPN"]
+)
+def test_every_ranking_row_carries_its_sector_name(client, path):
+    rows = client.get(path).json()["opportunities"]
+
+    assert rows
+    whisky = [row for row in rows if row["hs6"] == FIXTURE_HS6]
+    assert whisky and all(row["sector_name"] == "Beverages, spirits and vinegar" for row in whisky)
+
+
+def test_every_product_carries_its_sector_name(client):
+    [phone] = client.get("/products", params={"q": "851712"}).json()
+    [crude] = client.get("/products/excluded").json()
+    product = client.get(f"/opportunities/by-product/{FIXTURE_HS6}").json()["product"]
+
+    assert phone["sector_name"] == "Electrical machinery and equipment"
+    assert crude["sector_name"] == "Mineral fuels and oils"
+    assert product["sector_name"] == "Beverages, spirits and vinegar"
+
+
+def test_the_leaderboard_product_filter_keeps_that_products_markets_and_the_summary_follows(client):
+    everything = _top(client)["opportunities"]
+    body = _top(client, product=FIXTURE_HS6)
+
+    expected = [row for row in everything if row["hs6"] == FIXTURE_HS6]
+    assert body["opportunities"] == expected and len(expected) == 4
+    assert body["summary"] == _gap_summary(expected)
+    assert _top(client, product=FIXTURE_HS6, market="JPN")["opportunities"] == [
+        row for row in expected if row["iso3"] == "JPN"
+    ]
+
+
+def test_the_leaderboard_product_filter_answers_404_for_an_unknown_or_excluded_product(client):
+    unknown = client.get("/opportunities/top", params={"product": "999999"})
+    excluded = client.get("/opportunities/top", params={"product": CRUDE_OIL})
+
+    assert unknown.status_code == 404 and "999999" in unknown.json()["detail"]
+    assert excluded.status_code == 404
+    assert "Excluded Product" in excluded.json()["detail"] and "pipelines" in excluded.json()["detail"]
