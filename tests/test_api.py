@@ -68,6 +68,19 @@ def test_labels_serve_the_caution_line_every_page_shows_under_its_heading(client
     assert caution == "Figures are associations the model has learned, not causes or forecasts."
 
 
+@pytest.mark.parametrize(("share", "about"), [(0.7, "about 70%"), (0.7999, "about 80%")])
+def test_labels_serve_the_totals_note_with_the_share_the_artefact_records(fixture_artefacts, tmp_path, share, about):
+    # Spec #113 "Totals understate": the share comes from the artefact, not a constant.
+    metadata = {**fixture_artefacts.metadata, "potential_share_of_actual_exports": share}
+    store.save(replace(fixture_artefacts, metadata=metadata), tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        note = client.get("/labels").json()["totals_note"]
+
+    assert note["potential_share_of_actual_exports"] == pytest.approx(share)
+    assert "median-type" in note["text"] and f"{about} of Actual Exports" in note["text"]
+    assert "2022–2024 average" in note["text"]
+
+
 def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
     now = [0.0]
     with TestClient(create_app(tmp_path, retry_seconds=60, clock=lambda: now[0])) as client:

@@ -258,11 +258,28 @@ def test_a_limit_keeps_the_top_rows_but_not_the_summary_or_totals(blocked_client
 
 def test_potential_with_agreement_is_baseline_export_potential_plus_the_value(blocked_client):
     rows = _blocked(blocked_client)["opportunities"]
+    below = [row for row in rows if row["baseline_actual_exports_usd"] <= row["baseline_export_potential_usd"]]
 
-    for row in rows:
+    assert below  # whisky in India: $38.1m exported against $40.6m of Export Potential, 2024
+    for row in below:
         baseline = blocked_client.get(f"/explain/{row['hs6']}/{row['iso3']}").json()["baseline_export_potential_usd"]
         assert row["baseline_export_potential_usd"] == pytest.approx(baseline)
         assert row["potential_with_agreement_usd"] == pytest.approx(baseline + row["blocked_opportunity_value_usd"])
+        assert row["blocked_opportunity_uplift"] is None
+
+
+def test_where_actual_exports_exceed_export_potential_the_value_is_an_uplift_with_no_dollar_level(blocked_client):
+    # Spec #113 "Blocked Opportunity figures": no "with a Trade Agreement" dollar level below what the UK already sells.
+    rows = {(row["hs6"], row["iso3"]): row for row in _blocked(blocked_client)["opportunities"]}
+    cars = rows[(CARS, "HKG")]
+
+    assert cars["baseline_actual_exports_usd"] > cars["baseline_export_potential_usd"]
+    assert cars["potential_with_agreement_usd"] is None
+    assert cars["blocked_opportunity_uplift"] == pytest.approx(
+        cars["blocked_opportunity_value_usd"] / cars["baseline_export_potential_usd"]
+    )
+    # Its value still counts in the ranking, the summary and its Market's total.
+    assert cars["blocked_opportunity_value_usd"] > 0
 
 
 def test_baseline_year_actual_exports_match_the_history_with_0_where_there_is_no_flow(blocked_artefacts, tmp_path):

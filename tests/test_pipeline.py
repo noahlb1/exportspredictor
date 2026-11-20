@@ -283,6 +283,24 @@ def test_refresh_adds_derived_metadata_to_a_saved_bundle_without_retraining(arte
     assert refreshed.baseline is older.baseline
 
 
+def test_refresh_records_the_share_of_actual_exports_that_summed_export_potential_reaches(artefacts):
+    # Spec #113 "Totals understate": two pairs, $30m + $40m of Export Potential against $50m + $50m exported: 70%.
+    two_pairs = artefacts.baseline.head(2).with_columns(
+        export_potential_usd=pl.Series([30e6, 40e6]), actual_exports_usd=pl.Series([50e6, 50e6])
+    )
+
+    refreshed = refresh(replace(artefacts, baseline=two_pairs), version="refreshed")
+
+    assert refreshed.metadata["potential_share_of_actual_exports"] == pytest.approx(0.7)
+    assert refreshed.potential_share_of_actual_exports == pytest.approx(0.7)
+
+
+def test_the_pipeline_records_the_share_of_actual_exports_that_summed_export_potential_reaches(artefacts):
+    baseline = artefacts.baseline
+    expected = baseline["export_potential_usd"].sum() / baseline["actual_exports_usd"].sum()
+    assert artefacts.metadata["potential_share_of_actual_exports"] == pytest.approx(expected)
+
+
 def test_rerange_rebuilds_a_dollar_offset_range_as_the_pipeline_now_builds_it(world, artefacts):
     # A version from before ADR 0007's log-scale amendment: dollar offsets and a range built from them.
     older = replace(
