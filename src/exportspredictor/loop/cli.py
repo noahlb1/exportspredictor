@@ -26,6 +26,7 @@ from exportspredictor.loop.arms import (
 )
 from exportspredictor.loop.confirmation import V2, WINNER, confirm
 from exportspredictor.loop.data import RESULTS_FILE, load, loop_dir, real_data
+from exportspredictor.loop.recheck import current_win_threshold
 from exportspredictor.loop.runner import Loop, run_product_detail
 from exportspredictor.loop.selection import SELECTION_MEASURE
 from exportspredictor.loop.served import v2_plan
@@ -85,7 +86,7 @@ def confirm_best(root: Path | None = None) -> dict:
     plan = v2_plan(root)
     return confirm(
         real_data(root), replace(plan, fold=0), winner, v2,
-        threshold=results[NOISE_FLOOR]["win_threshold"], folder=loop_dir(root),
+        threshold=current_win_threshold(results), folder=loop_dir(root),
     )
 
 
