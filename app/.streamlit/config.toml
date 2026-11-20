@@ -1,0 +1,64 @@
+# The app's theme: "Warm paper, darker" (resolution of issue #101), accent #2a78d6 (issue #97).
+#
+# Streamlit reads this file because it sits next to the entry point (app/Home.py), so it ships in the
+# container with the app. Every colour is set under [theme.light] and [theme.dark] and their sidebar
+# sections, never under [theme]: a colour there makes a custom theme that stops following the
+# computer's light or dark mode. tests/test_app_theme.py checks this.
+
+[theme]
+# Smaller than the default 2.25rem, so the detail panel's three figures fit their columns at 1280 px.
+metricValueFontSize = "1.5rem"
+
+[theme.light]
+primaryColor = "#2a78d6"
+backgroundColor = "#fbf9f4"
+secondaryBackgroundColor = "#efebe1"
+textColor = "#1b1915"
+borderColor = "#cdc6b6"
+linkColor = "#1d5fb4"
+dataframeHeaderBackgroundColor = "#ece7db"
+dataframeHeaderTextColor = "#3d382e"
+dataframeBorderColor = "#ddd7c9"
+chartCategoricalColors = ["#2a78d6", "#d9730d", "#0f9d8a", "#7c4ddb", "#d6336c"]
+blueBackgroundColor = "#e3eefc"
+blueTextColor = "#17467f"
+yellowBackgroundColor = "#fff0c7"
+yellowTextColor = "#6b4a00"
+redBackgroundColor = "#fde4e2"
+redTextColor = "#8c1d18"
+greenBackgroundColor = "#dff3e6"
+greenTextColor = "#14532d"
+grayBackgroundColor = "#e9edf2"
+grayTextColor = "#3b4554"
+
+[theme.light.sidebar]
+backgroundColor = "#f1ede3"
+secondaryBackgroundColor = "#fbf9f4"
+borderColor = "#cdc6b6"
+
+[theme.dark]
+primaryColor = "#2a78d6"
+backgroundColor = "#1a1917"
+secondaryBackgroundColor = "#2a2825"
+textColor = "#f5f2ec"
+borderColor = "#48443d"
+linkColor = "#6eabf2"
+dataframeHeaderBackgroundColor = "#2a2825"
+dataframeHeaderTextColor = "#c9c3b8"
+dataframeBorderColor = "#37342f"
+chartCategoricalColors = ["#5b9dea", "#f0a04b", "#3fc1ac", "#a78bfa", "#f06595"]
+blueBackgroundColor = "#16304f"
+blueTextColor = "#bcd8fb"
+yellowBackgroundColor = "#4a3a10"
+yellowTextColor = "#ffe29a"
+redBackgroundColor = "#4d1c1a"
+redTextColor = "#ffc9c5"
+greenBackgroundColor = "#173b27"
+greenTextColor = "#bfeccd"
+grayBackgroundColor = "#2a303b"
+grayTextColor = "#c3cad6"
+
+[theme.dark.sidebar]
+backgroundColor = "#232220"
+secondaryBackgroundColor = "#1a1917"
+borderColor = "#48443d"

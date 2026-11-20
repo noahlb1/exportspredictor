@@ -1,23 +1,22 @@
 """The Model Evaluation page's "How the model was chosen" section, asserted against the API's values."""
 
 from dataclasses import replace
-from pathlib import Path
 
 import httpx
 import pytest
+from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
 from exportspredictor import artefacts as store
 from exportspredictor import evaluation
 
-PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "6_Model_Evaluation.py"
+PAGE = "pages/model_evaluation.py"
 SECTION = "How the model was chosen"
 
 
 def _run(monkeypatch, url: str) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", url)
-    page = AppTest.from_file(str(PAGE), default_timeout=30)
-    page.run()
+    page = run_page(PAGE)
     assert not page.exception
     return page
 
@@ -48,7 +47,7 @@ def served(monkeypatch, live_api, fixture_artefacts, tmp_path):
 def test_page_has_a_how_the_model_was_chosen_section(served):
     page, _ = served
 
-    assert SECTION in [element.value for element in page.subheader]
+    assert SECTION in [expander.label for expander in page.expander]
 
 
 def test_page_shows_the_selection_measure_the_model_form_and_the_win_threshold(served):
@@ -93,10 +92,9 @@ def test_page_says_what_the_blend_traded_away(served):
 
 def test_the_event_backtest_section_says_it_measured_the_model_alone(served):
     page, body = served
-    text = _text(page)
+    [backtest] = [expander for expander in page.expander if expander.label.endswith("(Event Backtest)")]
 
-    backtest = text.split("Event Backtest)")[1]
-    assert body["event_backtest_note"]["text"] in backtest
+    assert any(body["event_backtest_note"]["text"] in info.value for info in backtest.info)
 
 
 def test_page_shows_the_five_fold_confirmation_fold_by_fold(monkeypatch, live_api, fixture_artefacts, tmp_path):
@@ -132,6 +130,6 @@ def test_an_artefact_without_experiment_results_still_renders_the_section_saying
         page = _run(monkeypatch, url)
         choice = httpx.get(f"{url}/evaluation").json()["model_choice"]
 
-    assert SECTION in [element.value for element in page.subheader]
+    assert SECTION in [expander.label for expander in page.expander]
     assert choice["recorded"] is False and choice["text"] in _text(page)
     assert not any("Experiment" in t.columns for t in _tables(page))

@@ -32,12 +32,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.schemas import (
+    BlockedMarket,
     BlockedOpportunities,
+    BlockedOpportunity,
     BlockedQuery,
     BlockedSummary,
     Caveat,
     Evaluation,
     ExcludedProductOut,
+    ExcludedReasonOut,
     Explanation,
     FactorOut,
     Health,
@@ -60,6 +63,7 @@ from api.schemas import (
     ScenarioIn,
     ScenarioRequest,
     ScenarioResponse,
+    SectorOut,
     Thresholds,
 )
 from exportspredictor import artefacts as store
@@ -71,9 +75,10 @@ from exportspredictor.exclusions import (
     FLAGGED_PRODUCT_CAVEAT,
     REEXPORT_HUB_CAVEAT,
     not_ranked_message,
+    reason_counts,
 )
 from exportspredictor.explain import UnknownPair, explain_pair
-from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
 from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.illustrative import ILLUSTRATIVE, ILLUSTRATIVE_TEXT, scenario_note
 from exportspredictor.lookups import search_products
@@ -82,12 +87,17 @@ from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
     BLOCKED,
     DEFAULT_MIN_POTENTIAL_USD,
+    MAX_ROWS,
     MIN_POTENTIAL_USD_OPTIONS,
     RANK_BY,
+    blocked_opportunities,
     rank_opportunities,
     ranking,
 )
+from exportspredictor.sectors import sectors as sectors_of
+from exportspredictor.sectors import with_sector_names
 from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
+from exportspredictor.wording import CAUTION, term_definitions
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -138,8 +148,9 @@ def create_app(
         )
 
     @app.get("/labels", response_model=Labels)
-    def labels():
-        """The wording and options the app shows: unit, Opportunity Types, caveats and the last tariff year."""
+    def labels(artefacts: store.Artefacts = Depends(loaded)):
+        """The wording and options the app shows: unit, Opportunity Types, caveats, the last tariff year, the
+        caution line under every page heading and the term definitions (with the artefact's Gap Period)."""
         return Labels(
             usd_caption=USD_CAPTION,
             usd_unit=USD_UNIT,
@@ -151,6 +162,9 @@ def create_app(
             last_tariff_year=LAST_TRAINS_YEAR,
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
+            caution=CAUTION,
+            terms=term_definitions(gap_period_label(artefacts.gap_years)),
+            max_rows=MAX_ROWS,
         )
 
     @app.get("/products", response_model=list[ProductMatch])
@@ -159,13 +173,27 @@ def create_app(
 
         Excluded Products are listed too, marked `excluded` with their `exclusion_reason`.
         """
-        found = search_products(artefacts.products, q, limit=limit, excluded=artefacts.excluded_products)
+        found = with_sector_names(
+            search_products(artefacts.products, q, limit=limit, excluded=artefacts.excluded_products)
+        )
         return [_pick(ProductMatch, row) for row in found.iter_rows(named=True)]
 
     @app.get("/products/excluded", response_model=list[ExcludedProductOut])
     def excluded_products(artefacts: store.Artefacts = Depends(loaded)):
         """The Excluded Products (ADR 0005), each with the reason it is left out, by HS6 code."""
-        return [_pick(ExcludedProductOut, row) for row in artefacts.excluded_products.iter_rows(named=True)]
+        excluded = with_sector_names(artefacts.excluded_products)
+        return [_pick(ExcludedProductOut, row) for row in excluded.iter_rows(named=True)]
+
+    @app.get("/products/excluded/reasons", response_model=list[ExcludedReasonOut])
+    def excluded_reasons(artefacts: store.Artefacts = Depends(loaded)):
+        """Each reason Products are excluded for, with how many it leaves out, most first."""
+        counted = reason_counts(artefacts.excluded_products)
+        return [_pick(ExcludedReasonOut, row) for row in counted.iter_rows(named=True)]
+
+    @app.get("/sectors", response_model=list[SectorOut])
+    def sectors(artefacts: store.Artefacts = Depends(loaded)):
+        """Each Sector that has Products in the artefact, by code (HS2 chapter) and name, in code order."""
+        return [SectorOut(code=row["sector"], name=row["sector_name"]) for row in sectors_of(artefacts.products).iter_rows(named=True)]
 
     @app.get("/markets", response_model=list[MarketOut])
     def markets(artefacts: store.Artefacts = Depends(loaded)):
@@ -186,14 +214,32 @@ def create_app(
 
     @app.get("/opportunities/top", response_model=Leaderboard)
     def top(query: Annotated[LeaderboardQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
-        """The Leaderboard: every UK Product–Market pair ranked, with a summary of the filtered pairs."""
-        return Leaderboard(**_leaderboard(artefacts, query, LeaderboardSummary), rank_by=query.rank_by)
+        """The Leaderboard: every UK Product–Market pair ranked (or one Market's, or one Product's), with a summary of
+        the filtered pairs. An unknown Market or Product answers 404, as does an Excluded Product, with its reason."""
+        return Leaderboard(**_leaderboard(artefacts, query), rank_by=query.rank_by)
 
     @app.get("/opportunities/blocked", response_model=BlockedOpportunities)
     def blocked(query: Annotated[BlockedQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
-        """The Blocked Opportunities page: every UK pair ranked by Blocked Opportunity value, with a summary."""
+        """The Blocked Opportunities page: only Blocked Opportunities (default thresholds), ranked by Blocked Opportunity
+        value, in Baseline-year figures, with a summary and per-Market totals over every filtered one. An unknown
+        Product answers 404, as does an Excluded Product, with its reason."""
+        _check_product(artefacts, query.product)
+        found = blocked_opportunities(
+            artefacts,
+            hs6=query.product,
+            sector=query.sector,
+            region=query.region,
+            min_value_usd=query.min_value_usd,
+            hide_flagged=query.hide_flagged,
+            hide_hubs=query.hide_hubs,
+            limit=query.limit,
+        )
         return BlockedOpportunities(
-            **_leaderboard(artefacts, query, BlockedSummary),
+            **_metadata(artefacts),
+            summary=BlockedSummary(**found.summary),
+            markets=[_pick(BlockedMarket, row) for row in found.markets.iter_rows(named=True)],
+            opportunities=[_pick(BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)],
+            thresholds=Thresholds(),
             rank_by=BLOCKED.name,
             order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
             note=scenario_note(artefacts),
@@ -326,7 +372,13 @@ def _product(artefacts: store.Artefacts, hs6: str) -> ProductOut:
     reason = not_ranked_message(artefacts.excluded_products, hs6)
     if reason is not None:
         raise HTTPException(status_code=404, detail=reason)
-    return _pick(ProductOut, found.row(0, named=True))
+    return _pick(ProductOut, with_sector_names(found).row(0, named=True))
+
+
+def _check_product(artefacts: store.Artefacts, hs6: str | None) -> None:
+    """A read's one-Product filter: 404 for an unknown or Excluded Product (with its reason); nothing when unset."""
+    if hs6 is not None:
+        _product(artefacts, hs6)
 
 
 def _market(artefacts: store.Artefacts, iso3: str) -> MarketOut:
@@ -362,14 +414,15 @@ def _filters(query: RankingQuery) -> dict:
     }
 
 
-def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, summary_model: type[BaseModel]) -> dict:
-    """The fields the Leaderboard and the Blocked Opportunities page share: metadata, summary and top rows."""
+def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery) -> dict:
+    """The Leaderboard's fields: metadata, summary and top rows."""
     if query.market is not None:
         _market(artefacts, query.market)
-    ranked = ranking(artefacts, iso3=query.market, limit=query.limit, **_filters(query))
+    _check_product(artefacts, query.product)
+    ranked = ranking(artefacts, hs6=query.product, iso3=query.market, limit=query.limit, **_filters(query))
     return {
         **_metadata(artefacts),
-        "summary": summary_model(**ranked.summary),
+        "summary": LeaderboardSummary(**ranked.summary),
         "opportunities": [_pick(LeaderboardOpportunity, row) for row in ranked.rows.iter_rows(named=True)],
     }
 
@@ -402,6 +455,13 @@ def scenario_response(
     blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
     total = result.total()
+
+    def shown(rows: pl.DataFrame) -> list[dict]:
+        """The top `limit` rows, each with its Baseline-year Actual Exports."""
+        return with_baseline_actual_exports(
+            rows.head(request.limit), artefacts.history, artefacts.baseline_year
+        ).to_dicts()
+
     return ScenarioResponse(
         **_metadata(artefacts),
         scenario=ScenarioIn.model_validate(asdict(result.scenario)),
@@ -415,8 +475,8 @@ def scenario_response(
         .head(request.limit)
         .join(products, on="hs6", how="left", maintain_order="left")
         .to_dicts(),
-        top_pairs=top.head(request.limit).to_dicts(),
-        blocked_opportunities=blocked.head(request.limit).to_dicts(),
+        top_pairs=shown(top),
+        blocked_opportunities=shown(blocked),
         blocked_count=blocked.height,
         clipped_pairs=result.clipped_pairs,
         note=scenario_note(artefacts),

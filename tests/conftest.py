@@ -4,10 +4,13 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import replace
+from pathlib import Path
 
 import polars as pl
 import pytest
 import uvicorn
+from streamlit.testing.v1 import AppTest
 
 from api.main import create_app
 from exportspredictor import artefacts as store
@@ -17,6 +20,33 @@ from exportspredictor.pipeline import Parts, build_artefacts
 
 FIXTURE_VERSION = "fixture-test"
 TAIWAN_BACI = "S19"  # BACI's code for Taiwan ("Other Asia, nes")
+APP_ROUTER = Path(__file__).resolve().parents[1] / "app" / "Home.py"
+
+
+def run_page(page: str | None = None, *, query: dict[str, str] | None = None) -> AppTest:
+    """Open one app page as a visitor does, through the router (`app/Home.py`), against the API that
+    `EXPORTSPREDICTOR_API_URL` names.
+
+    `run_page()` opens the default page (the Leaderboard); `run_page("pages/scenarios.py")` switches to another
+    page, with `query` as its URL parameters. Returns the AppTest after the page's run.
+    """
+    app = AppTest.from_file(str(APP_ROUTER), default_timeout=30)
+    if page is not None:
+        app.run()  # registers the router's pages, so switch_page can find them
+        app.switch_page(page)
+    app.query_params.update(query or {})
+    return app.run()
+
+
+@pytest.fixture
+def open_page(monkeypatch):
+    """`run_page` against the API at a given URL: `open_page(api_url, "pages/scenarios.py")`."""
+
+    def open_(api_url: str, page: str | None = None, *, query: dict[str, str] | None = None) -> AppTest:
+        monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
+        return run_page(page, query=query)
+
+    return open_
 
 
 @pytest.fixture(scope="session")
@@ -81,6 +111,42 @@ def live_api():
 def fixture_api_url(fixture_artefacts_dir):
     """The API serving the fixture artefacts for the whole session (for Streamlit page tests)."""
     with serve_api(fixture_artefacts_dir) as url:
+        yield url
+
+
+# Every amount of the Baseline and the yearly history is multiplied by this in the Blocked world (`blocked_artefacts`).
+BLOCKED_WORLD_SCALE = 1000
+
+
+@pytest.fixture(scope="session")
+def blocked_artefacts(fixture_artefacts):
+    """The fixture artefacts with every Baseline and history amount × 1,000, so some pairs clear the $1M threshold.
+
+    The fixture's own Blocked Opportunity values are all under $1M, so it has no Blocked Opportunity. Scaled, it has
+    four, two in each Market without a UK Trade Agreement: whisky and jewellery in India, jewellery and cars in Hong
+    Kong. Cars in Hong Kong is the one whose Baseline-year Actual Exports are above Export Potential with a Trade
+    Agreement. Tariffs and fold models are unchanged.
+    """
+
+    def scaled(table: pl.DataFrame) -> pl.DataFrame:
+        return table.with_columns(pl.col(r"^.*_usd$") * BLOCKED_WORLD_SCALE)
+
+    return replace(
+        fixture_artefacts, baseline=scaled(fixture_artefacts.baseline), history=scaled(fixture_artefacts.history)
+    )
+
+
+@pytest.fixture(scope="session")
+def blocked_artefacts_dir(blocked_artefacts, tmp_path_factory):
+    root = tmp_path_factory.mktemp("blocked_artefacts")
+    store.save(blocked_artefacts, root)
+    return root
+
+
+@pytest.fixture(scope="session")
+def blocked_api_url(blocked_artefacts_dir):
+    """The API serving the Blocked world (`blocked_artefacts`) for the whole session."""
+    with serve_api(blocked_artefacts_dir) as url:
         yield url
 
 

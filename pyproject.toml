@@ -45,7 +45,7 @@ packages = ["src/exportspredictor", "api", "app"]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 
 [tool.ruff.lint.per-file-ignores]
-# Streamlit names pages after their files (Home.py, pages/1_Product_to_Markets.py).
+# The entry point keeps its name (app/Home.py), so the run command and compose file do not change.
 "app/**/*.py" = ["N999"]
 
 [tool.pytest.ini_options]

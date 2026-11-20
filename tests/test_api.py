@@ -22,6 +22,16 @@ def client(fixture_artefacts_dir):
         yield client
 
 
+BLOCKED_READ = "/opportunities/blocked"
+
+
+@pytest.fixture(scope="module")
+def blocked_client(blocked_artefacts_dir):
+    """The API over the Blocked world (`conftest.blocked_artefacts`): the fixture alone has no Blocked Opportunity."""
+    with TestClient(create_app(blocked_artefacts_dir)) as client:
+        yield client
+
+
 def test_health_reports_version_format_baseline_year_and_gap_period_once_loaded(client):
     response = client.get("/health")
 
@@ -50,6 +60,12 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
     assert body["last_tariff_year"] == 2021
     assert "carried forward from 2021" in body["tariff_carried_forward"]
+
+
+def test_labels_serve_the_caution_line_every_page_shows_under_its_heading(client):
+    caution = client.get("/labels").json()["caution"]
+
+    assert caution == "Figures are associations the model has learned, not causes or forecasts."
 
 
 def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
@@ -97,7 +113,9 @@ def test_by_product_returns_every_market_sorted_by_export_gap(client):
     gaps = [row["export_gap_usd"] for row in body["opportunities"]]
     assert gaps == sorted(gaps, reverse=True)
     assert {row["iso3"] for row in body["opportunities"]} == {"JPN", "CAN", "IND", "HKG"}
-    assert body["product"] == {"hs6": "220830", "description": "Whiskies", "sector": "22"}
+    assert body["product"] == {
+        "hs6": "220830", "description": "Whiskies", "sector": "22", "sector_name": "Beverages, spirits and vinegar"
+    }
     assert body["baseline_year"] == 2024
     assert body["gap_years"] == [2022, 2024]  # the values are Gap Period means
     assert body["artefact_version"] == "fixture-test"
@@ -123,6 +141,7 @@ def test_by_product_rows_have_the_documented_shape(client):
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",
+        "applied_tariff_pct",
     }
 
 
@@ -151,7 +170,14 @@ def test_products_search_matches_words_in_the_description(client):
     body = client.get("/products", params={"q": "jewellery precious"}).json()
 
     assert body == [
-        {"hs6": "711319", "description": PRODUCTS["711319"], "sector": "71", "excluded": False, "exclusion_reason": None}
+        {
+            "hs6": "711319",
+            "description": PRODUCTS["711319"],
+            "sector": "71",
+            "sector_name": "Pearls, precious stones and metals",
+            "excluded": False,
+            "exclusion_reason": None,
+        }
     ]
 
 
@@ -516,7 +542,7 @@ def test_asking_for_an_excluded_product_returns_404_with_its_reason(client, path
 
 @pytest.mark.parametrize("iso3", ["JPN", "CAN", "IND", "HKG"])
 def test_no_ranking_contains_an_excluded_product(client, iso3):
-    for path, params in [(f"/opportunities/by-market/{iso3}", {}), ("/opportunities/blocked", {"market": iso3})]:
+    for path, params in [(f"/opportunities/by-market/{iso3}", {}), ("/opportunities/top", {"market": iso3})]:
         body = client.get(path, params=params).json()
 
         hs6s = {row["hs6"] for row in body["opportunities"]}
@@ -1125,3 +1151,160 @@ def test_the_v1_comparisons_detail_is_still_not_served(client, fixture_artefacts
 
     assert "v1_comparison" not in body and "v1_comparison" not in body["model_choice"]
     assert "ladder" not in str(body["model_choice"]) and "verdict" not in str(body["model_choice"])
+
+
+# --- Sector names, the Sectors read and the Leaderboard's Product filter (spec #103) -----------
+
+
+def test_the_sectors_read_lists_each_sector_with_products_by_code_and_name(client):
+    sectors = client.get("/sectors").json()
+
+    # The fixture's Products sit in chapters 22, 27 (the Excluded crude oil), 30, 71, 85 and 87.
+    assert [sector["code"] for sector in sectors] == ["22", "27", "30", "71", "85", "87"]
+    names = {sector["code"]: sector["name"] for sector in sectors}
+    assert names["22"] == "Beverages, spirits and vinegar"
+    assert names["85"] == "Electrical machinery and equipment"
+
+
+@pytest.mark.parametrize(
+    "path", ["/opportunities/top", BLOCKED_READ, "/opportunities/by-market/JPN"]
+)
+def test_every_ranking_row_carries_its_sector_name(client, blocked_client, path):
+    rows = (blocked_client if path == BLOCKED_READ else client).get(path).json()["opportunities"]
+
+    assert rows
+    whisky = [row for row in rows if row["hs6"] == FIXTURE_HS6]
+    assert whisky and all(row["sector_name"] == "Beverages, spirits and vinegar" for row in whisky)
+
+
+def test_every_product_carries_its_sector_name(client):
+    [phone] = client.get("/products", params={"q": "851712"}).json()
+    [crude] = client.get("/products/excluded").json()
+    product = client.get(f"/opportunities/by-product/{FIXTURE_HS6}").json()["product"]
+
+    assert phone["sector_name"] == "Electrical machinery and equipment"
+    assert crude["sector_name"] == "Mineral fuels and oils"
+    assert product["sector_name"] == "Beverages, spirits and vinegar"
+
+
+def test_the_leaderboard_product_filter_keeps_that_products_markets_and_the_summary_follows(client):
+    everything = _top(client)["opportunities"]
+    body = _top(client, product=FIXTURE_HS6)
+
+    expected = [row for row in everything if row["hs6"] == FIXTURE_HS6]
+    assert body["opportunities"] == expected and len(expected) == 4
+    assert body["summary"] == _gap_summary(expected)
+    assert _top(client, product=FIXTURE_HS6, market="JPN")["opportunities"] == [
+        row for row in expected if row["iso3"] == "JPN"
+    ]
+
+
+def test_the_leaderboard_product_filter_answers_404_for_an_unknown_or_excluded_product(client):
+    unknown = client.get("/opportunities/top", params={"product": "999999"})
+    excluded = client.get("/opportunities/top", params={"product": CRUDE_OIL})
+
+    assert unknown.status_code == 404 and "999999" in unknown.json()["detail"]
+    assert excluded.status_code == 404
+    assert "Excluded Product" in excluded.json()["detail"] and "pipelines" in excluded.json()["detail"]
+
+
+# --- Row limit, Applied Tariff on ranking rows, term definitions (#106) ------------------------------
+
+RANKING_READS = [
+    "/opportunities/top",
+    BLOCKED_READ,
+    f"/opportunities/by-product/{FIXTURE_HS6}",
+    "/opportunities/by-market/JPN",
+]
+
+
+@pytest.mark.parametrize("path", RANKING_READS)
+def test_every_ranking_read_accepts_a_limit_of_6000_and_refuses_6001(client, path):
+    assert client.get(path, params={"limit": 6000}).status_code == 200
+    assert client.get(path, params={"limit": 6001}).status_code == 422
+
+
+@pytest.mark.parametrize("path", RANKING_READS)
+def test_every_ranking_row_carries_the_baseline_applied_tariff_in_percent(client, blocked_client, path):
+    rows = (blocked_client if path == BLOCKED_READ else client).get(path).json()["opportunities"]
+
+    assert rows and all("applied_tariff_pct" in row for row in rows)
+    # The fixture's tariffs: India charges 150% on whisky; Japan, with a UK Trade Agreement, charges nothing.
+    tariffs = {(row.get("hs6", FIXTURE_HS6), row.get("iso3", "JPN")): row["applied_tariff_pct"] for row in rows}
+    if (FIXTURE_HS6, "IND") in tariffs:
+        assert tariffs[(FIXTURE_HS6, "IND")] == pytest.approx(150.0, rel=1e-5)
+    if (FIXTURE_HS6, "JPN") in tariffs:
+        assert tariffs[(FIXTURE_HS6, "JPN")] == 0.0
+
+
+def test_the_applied_tariff_is_null_where_it_is_unknown(blocked_artefacts, tmp_path):
+    # Whisky in India, a Blocked Opportunity in the Blocked world, has no known tariff here.
+    unknown = (pl.col("hs6") == FIXTURE_HS6) & (pl.col("iso3") == "IND")
+    features = blocked_artefacts.baseline_features.with_columns(
+        log_applied_tariff=pl.when(unknown).then(None).otherwise(pl.col("log_applied_tariff"))
+    )
+    store.save(replace(blocked_artefacts, baseline_features=features), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as constructed:
+        for path in RANKING_READS:
+            rows = constructed.get(path).json()["opportunities"]
+            tariffs = {(row.get("hs6", FIXTURE_HS6), row.get("iso3", "JPN")): row["applied_tariff_pct"] for row in rows}
+            assert tariffs.get((FIXTURE_HS6, "IND"), None) is None
+            assert any(tariff is not None for tariff in tariffs.values())
+
+
+def test_labels_carry_the_term_definitions_with_the_gap_period_from_the_artefact(client):
+    terms = client.get("/labels").json()["terms"]
+
+    assert set(terms) == {"export_potential", "actual_exports", "export_gap", "opportunity_type"}
+    assert terms["export_potential"] == (
+        "The value of UK exports of this Product to this Market that the model expects, given the fundamentals "
+        "of the UK, the Market and the Product."
+    )
+    assert terms["actual_exports"] == (
+        "What the UK actually exported of this Product to this Market (2022–2024 average)."
+    )
+    assert terms["export_gap"] == (
+        "Export Potential minus Actual Exports (2022–2024 average). Positive means the UK exports less than its "
+        "fundamentals suggest: an Opportunity."
+    )
+    assert terms["opportunity_type"].startswith("Expand: the UK already exports the Product to this Market.")
+
+
+def test_the_term_definitions_take_the_gap_period_label_from_the_artefact(fixture_artefacts, tmp_path):
+    store.save(replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "gap_years": [2021, 2023]}), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as constructed:
+        terms = constructed.get("/labels").json()["terms"]
+
+    assert "(2021–2023 average)" in terms["actual_exports"] and "(2021–2023 average)" in terms["export_gap"]
+
+
+# --- One definition of the row cap, one read on Blocked Opportunities, reasons counted (#103 review) ---------------
+
+
+def test_labels_serve_the_most_rows_a_ranking_read_returns(client):
+    assert client.get("/labels").json()["max_rows"] == 6000
+
+
+def test_the_blocked_opportunities_read_carries_the_default_thresholds(blocked_client):
+    thresholds = blocked_client.get(BLOCKED_READ).json()["thresholds"]
+
+    assert thresholds == {"min_effect_share": 0.2, "min_effect_usd": 1_000_000.0}
+
+
+def test_excluded_product_reasons_are_counted_most_products_first(fixture_artefacts, tmp_path):
+    fuels, bullion = "Mineral fuels: pipeline geography", "Bullion: market geography"
+    excluded = pl.DataFrame(
+        {
+            "hs6": ["271011", "710812", "270900"],
+            "description": ["Light petroleum oils", "Gold, unwrought", "Crude petroleum oils"],
+            "sector": ["27", "71", "27"],
+            "reason": [fuels, bullion, fuels],
+        }
+    )
+    store.save(replace(fixture_artefacts, excluded_products=excluded), tmp_path)
+    with TestClient(create_app(tmp_path)) as constructed:
+        reasons = constructed.get("/products/excluded/reasons").json()
+
+    assert reasons == [{"reason": fuels, "products": 2}, {"reason": bullion, "products": 1}]

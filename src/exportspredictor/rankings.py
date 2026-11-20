@@ -2,9 +2,9 @@
 
 Every ranking view (the API's `/opportunities/top`, `/opportunities/by-product` and
 `/opportunities/by-market`) goes through `rank_opportunities`, which filters, sorts and limits
-once; `summarise` sizes the filtered rows for the Leaderboard's summary row, and
-`summarise_blocked` for the Blocked Opportunities page's (`/opportunities/blocked`, ordered by
-`BLOCKED`). A new ranking order is one entry in `RANK_BY`; a new row field is added in
+once; `summarise` sizes the filtered rows for the Leaderboard's summary. The Blocked Opportunities
+page's read (`/opportunities/blocked`) is `blocked_opportunities`: only Blocked Opportunities, ordered by
+`BLOCKED`, with per-Market totals and Baseline-year figures. A new ranking order is one entry in `RANK_BY`; a new row field is added in
 `rank_opportunities`.
 """
 
@@ -13,8 +13,17 @@ from dataclasses import dataclass
 import polars as pl
 
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.gap_period import OPPORTUNITY_TYPES
-from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, is_blocked
+from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
+from exportspredictor.scenarios import (
+    DEFAULT_MIN_SHARE,
+    DEFAULT_MIN_USD,
+    is_blocked,
+    tariff_percent,
+)
+from exportspredictor.sectors import with_sector_names
+
+# The most rows a ranking read returns: enough for one Market's or one Product's full ranking, never the full grid.
+MAX_ROWS = 6000
 
 
 @dataclass(frozen=True)
@@ -55,7 +64,7 @@ RANK_BY = {
 }
 DEFAULT_RANK_BY = "gap"
 # The Blocked Opportunities page's order. It is not in `RANK_BY`, so the Leaderboard and ranking
-# pages do not offer it: Blocked Opportunities show no Export Gap and have their own page.
+# pages do not offer it: Blocked Opportunities are measured apart from the Export Gap and have their own page.
 BLOCKED = RankOrder(
     "blocked",
     "blocked_opportunity_value_usd",
@@ -85,13 +94,14 @@ def rank_opportunities(
 ) -> pl.DataFrame:
     """The Baseline's UK Product–Market pairs (all, or one Product's or one Market's), ordered by `rank_by`.
 
-    Each row names its Product (hs6, description, sector) and Market (iso3, market, region),
+    Each row names its Product (hs6, description, sector and its `sector_name`) and Market (iso3, market, region),
     says whether a UK Trade Agreement with the Market is in force in the Baseline year
     (`trade_agreement`, the policy feature the model saw), gives Export Potential, Actual
     Exports and Export Gap as Gap Period means with the Relative Export Gap and the
     Opportunity Type, the Baseline year's Export Potential and the Blocked Opportunity value
     in nominal USD, flags a Blocked Opportunity at the default thresholds against the Baseline
-    year (`blocked_opportunity`), and carries the Baseline's `flagged_product` and
+    year (`blocked_opportunity`), gives the Baseline Applied Tariff in percent from the Baseline policy features
+    (`applied_tariff_pct`, null where unknown), and carries the Baseline's `flagged_product` and
     `reexport_hub` caveat flags (ADR 0005) and its Potential Range with the `uncertain_opportunity`
     (Uncertain Opportunity) flag (ADR 0007).
 
@@ -110,7 +120,9 @@ def rank_opportunities(
     if opportunity_type is not None and opportunity_type not in OPPORTUNITY_TYPES:
         raise ValueError(f"Unknown Opportunity Type: {opportunity_type}")
     rows = artefacts.baseline
-    policy = artefacts.baseline_features.select("hs6", "iso3", pl.col("trade_agreement") == 1)
+    policy = artefacts.baseline_features.select(
+        "hs6", "iso3", pl.col("trade_agreement") == 1, applied_tariff_pct=tariff_percent()
+    )
     if hs6 is not None:
         rows, policy = (t.filter(pl.col("hs6") == hs6) for t in (rows, policy))
     if iso3 is not None:
@@ -138,7 +150,7 @@ def rank_opportunities(
     if limit is not None:
         rows = rows.head(limit)
     return (
-        rows.join(artefacts.products, on="hs6", how="left", maintain_order="left")
+        rows.join(with_sector_names(artefacts.products), on="hs6", how="left", maintain_order="left")
         .join(artefacts.markets.rename({"name": "market"}), on="iso3", how="left", maintain_order="left")
         .with_columns(blocked_opportunity=is_blocked("blocked_opportunity_value_usd", "baseline_export_potential_usd"))
     )
@@ -152,30 +164,70 @@ def summarise(rows: pl.DataFrame) -> dict:
     }
 
 
-def summarise_blocked(rows: pl.DataFrame) -> dict:
-    """The Blocked Opportunities page's summary: `summarise`, plus the Blocked Opportunities and their total value (USD).
-
-    The total sums the Blocked Opportunity values of the Blocked Opportunities only, not of
-    every filtered pair: most pairs without a Trade Agreement have a small value below the thresholds.
-    """
-    blocked = rows.filter("blocked_opportunity")
-    return {
-        **summarise(rows),
-        "blocked_opportunities": blocked.height,
-        "blocked_opportunity_value_usd": float(blocked["blocked_opportunity_value_usd"].sum()),
-    }
-
-
 @dataclass(frozen=True)
 class Ranking:
-    """A ranking with its summary: the Leaderboard's and the Blocked Opportunities page's answer."""
+    """A ranking with its summary: the Leaderboard's answer."""
 
     rows: pl.DataFrame  # the top `limit` rows, as `rank_opportunities` returns them
-    summary: dict  # `summarise` (`summarise_blocked` for the `BLOCKED` order) over every filtered pair
+    summary: dict  # `summarise` over every filtered pair
 
 
 def ranking(artefacts: Artefacts, *, limit: int | None = None, **filters) -> Ranking:
     """`rank_opportunities` with `filters`, summarised over every filtered pair, then cut to the top `limit` rows."""
     rows = rank_opportunities(artefacts, **filters)
-    summary = summarise_blocked if filters.get("rank_by") == BLOCKED.name else summarise
-    return Ranking(rows=rows if limit is None else rows.head(limit), summary=summary(rows))
+    return Ranking(rows=rows if limit is None else rows.head(limit), summary=summarise(rows))
+
+
+@dataclass(frozen=True)
+class BlockedRanking:
+    """The Blocked Opportunities page's answer: the Blocked Opportunities, their summary and their per-Market totals."""
+
+    rows: pl.DataFrame  # the top `limit` Blocked Opportunities, by Blocked Opportunity value
+    summary: dict  # over every filtered Blocked Opportunity: their count and total Blocked Opportunity value (USD)
+    markets: pl.DataFrame  # iso3, market, blocked_opportunities, blocked_opportunity_value_usd; largest total first
+
+
+def blocked_opportunities(
+    artefacts: Artefacts,
+    *,
+    hs6: str | None = None,
+    sector: str | None = None,
+    region: str | None = None,
+    min_value_usd: float | None = None,
+    hide_flagged: bool = False,
+    hide_hubs: bool = False,
+    limit: int | None = None,
+) -> BlockedRanking:
+    """The Blocked Opportunities at the default thresholds, ranked by Blocked Opportunity value, in Baseline-year figures.
+
+    Each row is a `rank_opportunities` row plus two Baseline-year figures: `baseline_actual_exports_usd` (UK Actual
+    Exports in the Baseline year, from the yearly history, 0 where there is no Flow) and `potential_with_agreement_usd`,
+    Export Potential with a Trade Agreement (Baseline Export Potential plus the Blocked Opportunity value). Filters keep
+    one Product (`hs6`), one Sector, one Market region, a Blocked Opportunity value of at least `min_value_usd`, and drop
+    Flagged Products (`hide_flagged`) or Re-export Hubs (`hide_hubs`). The summary and the per-Market totals cover every
+    filtered Blocked Opportunity; `limit` then keeps the top rows. Presentation only: the definition and thresholds are
+    those of `is_blocked` (spec #103, #102).
+    """
+    rows = rank_opportunities(
+        artefacts,
+        hs6=hs6,
+        sector=sector,
+        region=region,
+        hide_flagged=hide_flagged,
+        hide_hubs=hide_hubs,
+        rank_by=BLOCKED.name,
+    ).filter("blocked_opportunity")
+    value = pl.col("blocked_opportunity_value_usd")
+    if min_value_usd is not None:
+        rows = rows.filter(value >= min_value_usd)
+    markets = (
+        rows.group_by("iso3", "market", maintain_order=True)
+        .agg(blocked_opportunities=pl.len(), blocked_opportunity_value_usd=value.sum())
+        .sort(["blocked_opportunity_value_usd", "market"], descending=[True, False])
+    )
+    summary = {"blocked_opportunities": rows.height, "blocked_opportunity_value_usd": float(rows["blocked_opportunity_value_usd"].sum())}
+    shown = rows if limit is None else rows.head(limit)
+    shown = with_baseline_actual_exports(shown, artefacts.history, artefacts.baseline_year).with_columns(
+        potential_with_agreement_usd=pl.col("baseline_export_potential_usd") + value
+    )
+    return BlockedRanking(rows=shown, summary=summary, markets=markets)

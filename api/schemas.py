@@ -10,6 +10,7 @@ from exportspredictor.rankings import (
     BLOCKED,
     DEFAULT_MIN_POTENTIAL_USD,
     DEFAULT_RANK_BY,
+    MAX_ROWS,
     RANK_BY,
 )
 from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, PRESETS
@@ -29,6 +30,12 @@ class ProductOut(BaseModel):
     hs6: str
     description: str
     sector: str
+    sector_name: str  # the Sector's HS 2012 chapter title, shortened (`exportspredictor.sectors`)
+
+
+class SectorOut(BaseModel):
+    code: str  # the HS2 chapter, e.g. 22: the value of the ranking reads' `sector` filter
+    name: str  # its HS 2012 chapter title, shortened, e.g. "Beverages, spirits and vinegar"
 
 
 class ProductMatch(ProductOut):
@@ -40,6 +47,11 @@ class ProductMatch(ProductOut):
 
 class ExcludedProductOut(ProductOut):
     reason: str  # why it is left out of training, scoring and rankings
+
+
+class ExcludedReasonOut(BaseModel):
+    reason: str  # why Products are left out (`exportspredictor.exclusions.EXCLUSIONS`)
+    products: int  # how many Excluded Products it leaves out
 
 
 class Caveat(BaseModel):
@@ -58,6 +70,11 @@ class Labels(BaseModel):
     tariff_carried_forward: str  # the caveat of a carried-forward Applied Tariff (ADR 0006)
     # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
     illustrative: Caveat
+    caution: str  # the grey line under every page heading: figures are associations, not causes or forecasts
+    # What Export Potential, Actual Exports, Export Gap and Opportunity Type mean, by row field, for tooltips;
+    # those that name the Gap Period take its label from the artefact (`wording.term_definitions`)
+    terms: dict[str, str]
+    max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
 
 
 class MarketOut(BaseModel):
@@ -87,16 +104,32 @@ class RankOrderOut(BaseModel):
     default_min_potential_usd: float | None = None
 
 
-class RankingQuery(BaseModel):
-    """Query parameters both ranking views accept; an unknown one (such as the old `min_gap_gbp`) is a 422."""
+class _FilterQuery(BaseModel):
+    """The filters every ranking read accepts; an unknown parameter (such as the old `min_gap_gbp`) is a 422."""
 
     model_config = ConfigDict(extra="forbid")
+
+    sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
+    region: str | None = Field(None, description="Market region, e.g. South Asia")
+    hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
+    hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
+    limit: int | None = Field(None, ge=1, le=MAX_ROWS, description=f"Keep only the top rows (at most {MAX_ROWS:,})")
+
+
+class _OneProduct(BaseModel):
+    """One Product, for a read over every UK pair (the Leaderboard, Blocked Opportunities)."""
+
+    product: str | None = Field(
+        None, description="One Product, by HS6 code (2012 edition), e.g. 220830; 404 if unknown or Excluded"
+    )
+
+
+class RankingQuery(_FilterQuery):
+    """Query parameters both ranking views accept: the shared filters, the order and the Export Gap filters."""
 
     rank_by: RankBy = Field(
         DEFAULT_RANK_BY, description="; ".join(f"{order.name}: {order.title}" for order in RANK_BY.values())
     )
-    sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
-    region: str | None = Field(None, description="Market region, e.g. South Asia")
     opportunity_type: OpportunityType | None = Field(
         None, description="Opportunity Type: " + ", ".join(OPPORTUNITY_TYPES)
     )
@@ -104,27 +137,26 @@ class RankingQuery(BaseModel):
     trade_agreement: bool | None = Field(
         None, description="Only pairs with (true) or without (false) a UK Trade Agreement in force"
     )
-    hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
-    hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
     min_potential_usd: float | None = Field(
         None,
         ge=0,
         description="rank_by=relative only: rank only pairs whose Export Potential is at least this, in USD "
         f"(default {DEFAULT_MIN_POTENTIAL_USD:,.0f})",
     )
-    limit: int | None = Field(None, ge=1, description="Keep only the top rows")
 
 
-class LeaderboardQuery(RankingQuery):
-    """The ranking filters plus one Market, for the Leaderboard over every UK pair."""
+class LeaderboardQuery(RankingQuery, _OneProduct):
+    """The ranking filters plus one Market and one Product, for the Leaderboard over every UK pair."""
 
     market: str | None = Field(None, description="One Market, by ISO3 code, e.g. JPN")
 
 
-class BlockedQuery(LeaderboardQuery):
-    """The Leaderboard's filters for the Blocked Opportunities page, which has one fixed order."""
+class BlockedQuery(_FilterQuery, _OneProduct):
+    """The Blocked Opportunities page's filters: the shared ones, one Product and a minimum Blocked Opportunity value.
+    It has one order and no Market filter (the page groups by Market); an unknown parameter, such as `market` or
+    `rank_by`, is a 422."""
 
-    rank_by: BlockedRankBy = Field(BLOCKED.name, description=f"Always {BLOCKED.name}: {BLOCKED.title}")
+    min_value_usd: float | None = Field(None, ge=0, description="Minimum Blocked Opportunity value, in USD")
 
 
 class _Values(BaseModel):
@@ -144,6 +176,7 @@ class _Values(BaseModel):
     potential_range_low_usd: float
     potential_range_high_usd: float
     uncertain_opportunity: bool  # an Uncertain Opportunity: an Opportunity whose Actual Exports lie inside its range
+    applied_tariff_pct: float | None  # the Baseline Applied Tariff in percent (Baseline policy features); None where unknown
 
 
 class MarketOpportunity(_Values):
@@ -156,12 +189,14 @@ class ProductOpportunity(_Values):
     hs6: str
     description: str
     sector: str
+    sector_name: str
 
 
 class LeaderboardOpportunity(_Values):
     hs6: str
     description: str
     sector: str
+    sector_name: str
     iso3: str
     market: str
     region: str
@@ -185,17 +220,38 @@ class Leaderboard(_Ranking):
     opportunities: list[LeaderboardOpportunity]  # UK Product–Market pairs, sorted by `rank_by`, largest first
 
 
-class BlockedSummary(LeaderboardSummary):
-    blocked_opportunities: int  # the filtered pairs that clear the default Blocked Opportunity thresholds
+class BlockedSummary(BaseModel):
+    blocked_opportunities: int  # every filtered Blocked Opportunity (before `limit`)
     blocked_opportunity_value_usd: float  # the sum of their Blocked Opportunity values (Baseline-year Scenario Effects)
 
 
-class BlockedOpportunities(Leaderboard):
-    """The Blocked Opportunities page: every UK pair ranked by Blocked Opportunity value."""
+class BlockedMarket(BaseModel):
+    """One Market's filtered Blocked Opportunities: their count and total Blocked Opportunity value."""
+
+    iso3: str
+    market: str
+    blocked_opportunities: int
+    blocked_opportunity_value_usd: float
+
+
+class BlockedOpportunity(LeaderboardOpportunity):
+    """A Blocked Opportunity: the ranking row plus its Baseline-year figures."""
+
+    baseline_export_potential_usd: float  # Baseline Export Potential (the Baseline year's)
+    baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
+    # Export Potential with a Trade Agreement: Baseline Export Potential plus the Blocked Opportunity value (Illustrative)
+    potential_with_agreement_usd: float
+
+
+class BlockedOpportunities(_Ranking):
+    """The Blocked Opportunities page: only Blocked Opportunities (default thresholds), by Blocked Opportunity value."""
 
     rank_by: BlockedRankBy
     order: RankOrderOut  # the order's title and (associational) description, for the page caption
     summary: BlockedSummary
+    markets: list[BlockedMarket]  # per-Market totals over every filtered Blocked Opportunity, largest total first
+    opportunities: list[BlockedOpportunity]
+    thresholds: "Thresholds"  # the default thresholds every Blocked Opportunity here clears, defined below
     # Blocked Opportunity values are Illustrative: the same note as the Scenario response, defined below
     note: "ScenarioNote"
 
@@ -561,6 +617,7 @@ class PairEffect(BaseModel):
     effect_share: float
     baseline_tariff_pct: float | None  # the Applied Tariff (percent) in the Baseline; None where unknown
     scenario_tariff_pct: float | None  # and under the Scenario (clipped to the training range)
+    baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
     blocked_opportunity: bool
 
 

@@ -1,44 +1,22 @@
-"""Streamlit entry point and the Leaderboard. Run with:  uv run streamlit run app/Home.py
+"""Streamlit entry point: the router. Run with:  uv run streamlit run app/Home.py
 
-Home opens on the Leaderboard: every UK Product–Market pair, ranked from the precomputed
-Baseline table, so Advisors see the top Opportunities without searching. Each page lives in
-app/pages/ and reads the model only through the API (app/client.py).
+It declares the app's pages, sets what every page shares once (`app.frame.setup`), and runs the chosen page only
+while the API is up. Each page lives in app/pages/, wraps its content in `app.frame.page` and reads the model only
+through the API (app/client.py).
 """
 
 import streamlit as st
 
-from app import client
-from app.format import format_usd
-from app.ui import (
-    ROWS_SHOWN,
-    banner,
-    excluded_products_list,
-    fetch,
-    ranking_filters,
-    show_leaderboard,
-)
+from app import frame
 
-st.set_page_config(page_title="UK Exports Predictor", layout="wide")
-st.title("UK Exports Predictor")
-if banner() is not None:
-    st.header("Leaderboard")
-    st.markdown(
-        "Every UK Product–Market pair, ranked by how far UK goods exports fall short of what the UK's "
-        "fundamentals suggest. Filter to your portfolio, or look up one Product or Market in the sidebar. "
-        "Pairs the model associates with gains from a new UK Trade Agreement are on the Blocked Opportunities page."
-    )
-    try:
-        filters = ranking_filters(market_filter=True)
-        body = fetch("/opportunities/top", client.api_url(), **filters, limit=ROWS_SHOWN)
-    except client.ApiUnavailable as error:
-        st.error(f"The API is unavailable: {error}")
-    else:
-        excluded_products_list()
-        summary = body["summary"]
-        pairs_column, gap_column = st.columns(2)
-        pairs_column.metric("Product–Market pairs", f"{summary['pairs']:,}")
-        gap_column.metric(
-            f"Total positive Export Gap, {body['gap_period_label']}",
-            format_usd(summary["positive_export_gap_usd"]),
-        )
-        show_leaderboard(body, file_name="leaderboard")
+frame.setup()
+chosen = st.navigation(
+    [
+        st.Page("pages/leaderboard.py", title="Leaderboard", default=True),
+        st.Page("pages/blocked_opportunities.py", title="Blocked Opportunities", url_path="Blocked_Opportunities"),
+        st.Page("pages/scenarios.py", title="Scenarios", url_path="Scenarios"),
+        st.Page("pages/model_evaluation.py", title="Model Evaluation", url_path="Model_Evaluation"),
+    ]
+)
+if frame.api_ready():
+    chosen.run()

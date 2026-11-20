@@ -51,12 +51,13 @@ def test_adding_a_trade_agreement_never_lowers_export_potential(artefacts):
 
 
 def test_the_blocked_summary_totals_the_blocked_opportunities_only(artefacts):
-    ranked = rankings.ranking(artefacts, rank_by=rankings.BLOCKED.name)
+    found = rankings.blocked_opportunities(artefacts)
     rows = rankings.rank_opportunities(artefacts, rank_by=rankings.BLOCKED.name)
     blocked = rows.filter("blocked_opportunity")
 
-    assert ranked.summary["blocked_opportunities"] == blocked.height
-    assert ranked.summary["blocked_opportunity_value_usd"] == pytest.approx(blocked["blocked_opportunity_value_usd"].sum())
+    assert found.rows.height == found.summary["blocked_opportunities"] == blocked.height
+    assert found.summary["blocked_opportunity_value_usd"] == pytest.approx(blocked["blocked_opportunity_value_usd"].sum())
+    assert found.markets["blocked_opportunities"].sum() == blocked.height
 
 
 def test_every_potential_range_is_an_ordered_non_negative_interval(artefacts):
