@@ -717,6 +717,7 @@ def _train_and_score(
         "training_seconds": round(training_seconds, 2),
         "potential_range": {
             "coverage": conformal.COVERAGE,
+            "scale": conformal.SCALE,
             "n_bands": conformal.N_BANDS,
             "min_band_rows": min_band_rows,
             "bands": bands.height,
@@ -1100,6 +1101,82 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
     return replace(bundle, metadata=metadata)
 
 
+_RANGE_COLUMNS = ["potential_range_low_usd", "potential_range_high_usd", "uncertain_opportunity"]
+
+
+def rerange(
+    bundle: Artefacts,
+    calibration: Chunk,
+    year_flows: pl.DataFrame,
+    *,
+    version: str | None = None,
+    min_band_rows: int | None = None,
+) -> Artefacts:
+    """A new version of a saved bundle with its Potential Range recomputed as `conformal` now builds it; no retraining.
+
+    Only the bands, each UK pair's Potential Range and Uncertain Opportunity flag, and the range's
+    report and metadata change; the fold models and Export Potential are reused. `calibration` is the
+    Baseline year's training rows (untransformed, as `features.training_rows` builds them) and
+    `year_flows` every Exporter's Flows of that year, for the naive baseline a Blend takes. Bands keep
+    the bundle's minimum size unless `min_band_rows` is given.
+    """
+    metadata = bundle.metadata
+    min_rows = metadata["potential_range"]["min_band_rows"] if min_band_rows is None else min_band_rows
+    started = time.perf_counter()
+    scored = conformal.score_calibration(
+        evaluation.naive_potential(read_chunk(calibration), year_flows), bundle.fold_models,
+        FeatureTransform.from_dict(metadata["feature_transform"]), uk=UK, form=bundle.model_form,
+    )
+    bands = conformal.fit_bands(scored, min_rows=min_rows)
+    baseline = conformal.with_potential_range(bundle.baseline.drop(_RANGE_COLUMNS), bands).select(
+        bundle.baseline.columns
+    )
+    report = {**conformal.coverage_report(scored, min_rows=min_rows), **conformal.uncertain_share(baseline)}
+    seconds = time.perf_counter() - started
+    print(
+        f"Potential Range from {scored.height:,} calibration rows in {seconds:.0f} s: "
+        f"{bands.height} bands, held-out coverage {report['coverage']:.1%}",
+        flush=True,
+    )
+    range_metadata = {
+        **metadata["potential_range"],
+        "scale": conformal.SCALE,
+        "min_band_rows": min_rows,
+        "bands": bands.height,
+        "calibration_rows": scored.height,
+        "calibration_exporters": scored["exporter"].n_unique(),
+        "seconds": round(seconds, 2),
+    }
+    return replace(
+        bundle,
+        metadata={**metadata, "version": version or new_version(), "refreshed_from": bundle.version,
+                  "potential_range": range_metadata},
+        baseline=baseline,
+        potential_range_bands=bands,
+        evaluation=None if bundle.evaluation is None else {
+            **bundle.evaluation, "potential_range": {**report, "text": conformal.coverage_text(report)}
+        },
+    )
+
+
+def _rerange_latest(root: Path | None = None) -> Path:
+    """Save `rerange` of the newest real bundle, from the Baseline year's feature file, with its model card."""
+    from exportspredictor import artefacts
+    from exportspredictor.paths import artefacts_dir
+
+    root = Path(root or data_dir())
+    bundle = artefacts.load(artefacts.latest_folder(artefacts_dir()))
+    folder = features_dir(root)
+    settings = json.loads((folder / "features.json").read_text(encoding="utf-8"))
+    if settings.get("features") != bundle.metadata["features"]:
+        raise ValueError(f"The feature files in {folder} hold other features than version {bundle.version}")
+    year = bundle.baseline_year
+    ranged = rerange(bundle, folder / f"training_{year}.parquet", load_year_flows(year, load_sources(root)[1], root))
+    saved = artefacts.save(ranged, artefacts_dir())
+    governance.write_model_card(ranged, saved)
+    return saved
+
+
 def parse_parts(argv: Sequence[str]) -> Parts:
     """The opt-in parts a command line asks for: `--event-backtests`, `--constraint-comparison`,
     `--gain-ladder`, `--ppml-benchmark`, or `--every-part` for all four. None of them: the default run."""
@@ -1126,7 +1203,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     switches that add the Event Backtests, the constraint comparison, the gain ladder and the PPML benchmark.
 
     `python -m exportspredictor.pipeline refresh` instead saves a refreshed copy of the newest
-    saved bundle (`refresh`), in seconds. `python -m exportspredictor.pipeline compare` saves a
+    saved bundle (`refresh`), in seconds. `python -m exportspredictor.pipeline rerange` saves a
+    copy of the newest bundle with its Potential Range recomputed (`rerange`), in a few minutes
+    on the CPU. `python -m exportspredictor.pipeline compare` saves a
     copy of the newest bundle with the v1 comparison and gain ladder added (`add_v1_comparison`).
     """
     import sys
@@ -1144,6 +1223,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "sources")}), flush=True)
         # Copied file for file, so files this step does not know about (e.g. the model card) survive.
         print(artefacts.copy_version(source, artefacts_dir(), metadata=bundle.metadata), flush=True)
+        return
+    if list(argv) == ["rerange"]:
+        print(_rerange_latest(), flush=True)
         return
     bundle = build_real_artefacts(parts=parse_parts(argv))
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}

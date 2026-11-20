@@ -82,8 +82,8 @@ def test_page_lists_every_known_limitation(page):
 
     for limitation in LIMITATIONS:
         assert limitation["title"] in text
-    # and those the artefact shows, the Potential Range's fixed dollar width included (spec story 44)
-    assert "The Potential Range is a fixed width in dollars" in text
+    # The fixture's bands are log offsets (ADR 0007, amended): no fixed dollar width to report
+    assert "The Potential Range is a fixed width in dollars" not in text
 
 
 def test_page_shows_the_imputed_observed_tariff_split(page, fixture_artefacts):

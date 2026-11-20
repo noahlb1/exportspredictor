@@ -424,3 +424,12 @@ def test_the_potential_range_limitation_refers_to_no_badge():
 
     assert "badge" not in limit["text"]  # the ranking pages carry none since spec #66 story 41
     assert "a small gap for its size" in limit["text"]
+
+
+def test_log_scale_bands_have_no_fixed_width_limitation():
+    bands = pl.DataFrame({
+        "band": [0, 1], "min_export_potential_usd": [0.0, 2_000_000.0], "rows": [10, 10],
+        "low_offset_log": [-1.2, -2.5], "high_offset_log": [0.3, 1.1],
+    })
+
+    assert evaluation.range_limitations(bands) == []

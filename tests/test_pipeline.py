@@ -12,13 +12,21 @@ from exportspredictor.features import (
     POLICY_FEATURES,
     FeatureTransform,
     build_features,
+    training_rows,
     uk_grid,
 )
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
 from exportspredictor.gap_period import with_baseline_actual_exports
 from exportspredictor.loop import NAIVE_EXPERIMENT, SELECTION_MEASURE_TEXT
-from exportspredictor.pipeline import build_artefacts, fixture_training, refresh
+from exportspredictor.pipeline import (
+    FIXTURE_ZERO_SAMPLING_RATE,
+    build_artefacts,
+    exporter_scope,
+    fixture_training,
+    refresh,
+    rerange,
+)
 from exportspredictor.prediction import blend
 from exportspredictor.search import FIXTURE_SEARCH
 
@@ -273,6 +281,39 @@ def test_refresh_adds_derived_metadata_to_a_saved_bundle_without_retraining(arte
     assert "gbp_rate" not in refreshed.metadata
     assert refreshed.fold_models is older.fold_models
     assert refreshed.baseline is older.baseline
+
+
+def test_rerange_rebuilds_a_dollar_offset_range_as_the_pipeline_now_builds_it(world, artefacts):
+    # A version from before ADR 0007's log-scale amendment: dollar offsets and a range built from them.
+    older = replace(
+        artefacts,
+        potential_range_bands=pl.DataFrame({
+            "band": pl.Series([0], dtype=pl.Int16), "min_export_potential_usd": [0.0], "rows": [60],
+            "low_offset_usd": [-5.0], "high_offset_usd": [5.0],
+        }),
+        baseline=artefacts.baseline.with_columns(
+            potential_range_low_usd=pl.lit(0.0), potential_range_high_usd=pl.lit(1.0), uncertain_opportunity=False
+        ),
+        metadata={k: v for k, v in artefacts.metadata.items() if k != "potential_range"}
+        | {"potential_range": {k: v for k, v in artefacts.metadata["potential_range"].items() if k != "scale"}},
+    )
+    year = artefacts.baseline_year
+    year_flows = world.flows.filter(pl.col("year") == year)
+    calibration = build_features(
+        training_rows(year_flows, rate=FIXTURE_ZERO_SAMPLING_RATE, seed=0, uk=UK,
+                      exporters=exporter_scope(world.country_year, uk=UK)),
+        world.flows,
+        world.sources,
+    )
+
+    ranged = rerange(older, calibration, year_flows, version="reranged")
+
+    assert ranged.version == "reranged" and ranged.metadata["refreshed_from"] == "fixture-test"
+    assert ranged.metadata["potential_range"]["scale"] == "log"
+    assert ranged.fold_models is older.fold_models
+    assert ranged.potential_range_bands.equals(artefacts.potential_range_bands)
+    assert ranged.baseline.equals(artefacts.baseline)
+    assert ranged.evaluation["potential_range"] == artefacts.evaluation["potential_range"]
 
 
 # --- Excluded Products (ADR 0005) -----------------------------------------------------------

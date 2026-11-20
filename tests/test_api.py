@@ -245,10 +245,9 @@ def test_evaluation_serves_the_limitations_the_artefact_shows(client, fixture_ar
     body = client.get("/evaluation").json()
 
     limitations = {item["title"]: item["text"] for item in body["limitations"]}
-    # The Potential Range's fixed dollar width (spec story 44), from the artefact's own bands
-    fixed_width = limitations["The Potential Range is a fixed width in dollars"]
-    assert "Uncertain Opportunity" in fixed_width
-    # and what its results show, as on the model card
+    # The artefact's bands are log offsets (ADR 0007, amended), so no fixed dollar width is reported,
+    assert "The Potential Range is a fixed width in dollars" not in limitations
+    # but what its results show is, as on the model card
     headline = "Does not beat" if not fixture_artefacts.evaluation["headline"]["beats_naive"] else "Only slightly better"
     assert any(title.startswith(headline) for title in limitations)
     assert "Trained on a sample of other Exporters' Flows" in limitations
