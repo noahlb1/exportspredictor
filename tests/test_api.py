@@ -851,6 +851,15 @@ def test_evaluation_states_the_share_of_opportunities_inside_their_potential_ran
     assert served["uncertain_opportunity_share"] == saved["uncertain_opportunity_share"]
 
 
+def test_evaluation_serves_the_potential_range_coverage_by_size(client, fixture_artefacts):
+    saved = fixture_artefacts.evaluation["potential_range"]["by_size"]
+
+    served = client.get("/evaluation").json()["potential_range"]["by_size"]
+
+    assert [row["size"] for row in served] == ["under $2m", "$2m–10m", "$10m–100m", "over $100m"]
+    assert served == saved
+
+
 # --- The Scenario note: Illustrative, beside its benchmarks (spec #66) ------------------
 
 SCENARIO = {"add_agreements": ["IND"]}

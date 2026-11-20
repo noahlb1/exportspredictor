@@ -106,6 +106,15 @@ def test_page_shows_the_potential_range_coverage(page, fixture_artefacts):
     assert any("Coverage" in t.columns and "Exporter" in t.columns for t in tables)
 
 
+def test_page_shows_the_potential_range_coverage_by_size(page, fixture_artefacts):
+    by_size = fixture_artefacts.evaluation["potential_range"]["by_size"]
+    tables = [element.value for element in page.dataframe]
+
+    table = next(t for t in tables if "Size of Export Potential" in t.columns)
+    assert list(table["Size of Export Potential"]) == [row["size"] for row in by_size]
+    assert list(table["Rows"]) == [row["rows"] for row in by_size]
+
+
 def test_page_drops_no_tariffs_and_lists_v2s_limitations(page):
     text = _text(page)
 
