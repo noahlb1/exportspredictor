@@ -71,11 +71,11 @@ from exportspredictor import (
     search,
 )
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
+from exportspredictor.caveats import CaveatContext, with_caveat_columns
 from exportspredictor.exclusions import (
     EXCLUSIONS,
     drop_excluded,
     excluded_products,
-    flag_columns,
     is_excluded,
 )
 from exportspredictor.features import (
@@ -649,7 +649,7 @@ def _train_and_score(
             ),
             on=["hs6", "iso3"],
         )
-        .with_columns(*flag_columns())
+        .pipe(with_caveat_columns, CaveatContext(baseline_year))
         .pipe(with_opportunity_columns)
     )
     # Scenarios start from the Baseline year's features and Export Potential, never the Gap Period mean.

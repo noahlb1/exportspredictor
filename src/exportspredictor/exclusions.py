@@ -11,9 +11,10 @@ same with or without the exclusion. The exclusion limits rows, not features.
 Products with reasons (`excluded_products`), which the API serves at `/products/excluded`.
 
 Flagged Products (the rest of Sector 71) and Re-export Hubs are the other two tiers of
-ADR 0005. They stay in training, scoring and rankings; the Baseline carries them as the
-boolean `flagged_product` and `reexport_hub` columns (`flag_columns`), and Advisors see
-their caveats and can hide them.
+ADR 0005. They stay in training, scoring and rankings. Their lists and caveat text are
+here; `caveats.TIERS` declares them as Caveat Tiers, which mark the Baseline with the
+boolean `flagged_product` and `reexport_hub` columns, so Advisors see their caveats and
+can hide them.
 """
 
 from dataclasses import dataclass

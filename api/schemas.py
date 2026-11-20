@@ -1,10 +1,18 @@
-"""Response models: the API contract the app and the contract tests rely on."""
+"""Response models: the API contract the app and the contract tests rely on.
 
-from typing import TYPE_CHECKING, Literal
+Models that carry Caveat Tiers (the ranking queries, ranking rows and explanations) are declared here without them;
+`tiered(tiers)` builds the ones the API serves, with each declared tier's hide filter, column and reason column
+(`exportspredictor.caveats`).
+"""
 
-from pydantic import BaseModel, ConfigDict, Field
+from dataclasses import dataclass
+from functools import cache
+from typing import TYPE_CHECKING, Literal, cast
+
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from exportspredictor import scenarios
+from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.rankings import (
     BLOCKED,
@@ -59,6 +67,19 @@ class Caveat(BaseModel):
     text: str  # what it means for the Advisor
 
 
+class CaveatTierOut(BaseModel):
+    """One Caveat Tier (`exportspredictor.caveats`): what the app needs to show its badge, caveat and hide filter."""
+
+    column: str  # the boolean field on ranking rows and explanations that sets it, e.g. "reexport_hub"
+    badge: str  # e.g. "Re-export Hub"
+    plural: str  # e.g. "Re-export Hubs", for "Hide Re-export Hubs" and "Re-export Hubs hidden"
+    text: str  # what the caveat means for the Advisor
+    key: str  # "market", "product" or "pair": what membership depends on
+    hide_param: str  # the ranking reads' query parameter that leaves the tier's rows out, e.g. "hide_hubs"
+    reason_column: str | None  # the row field holding each flagged row's reason, if the tier declares reasons
+    row_text: str | None  # a flagged row's caveat text, with "{reason}" for its reason; `text` when absent
+
+
 class Labels(BaseModel):
     """Wording and options the app shows, each defined once in the package."""
 
@@ -111,8 +132,7 @@ class _FilterQuery(BaseModel):
 
     sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
     region: str | None = Field(None, description="Market region, e.g. South Asia")
-    hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
-    hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
+    # `tiered` adds each Caveat Tier's hide filter here, e.g. hide_hubs
     limit: int | None = Field(None, ge=1, le=MAX_ROWS, description=f"Keep only the top rows (at most {MAX_ROWS:,})")
 
 
@@ -170,8 +190,7 @@ class _Values(BaseModel):
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
     blocked_opportunity_value_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
     blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
-    flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
-    reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
+    # `tiered` adds each Caveat Tier's column here (and its reason column, if any), e.g. reexport_hub (ADR 0005)
     # The Potential Range (ADR 0007): where Actual Exports fall 80% of the time for comparable pairs
     potential_range_low_usd: float
     potential_range_high_usd: float
@@ -717,8 +736,7 @@ class Explanation(BaseModel):
     baseline_export_potential_usd: float  # the Baseline year's, which the factors explain
     relative_export_gap: float | None  # Export Gap / Export Potential (Gap Period means)
     opportunity_type: OpportunityType  # Expand, New Market or New Product, over the Gap Period
-    flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
-    reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
+    # `tiered` adds each Caveat Tier's column here (and its reason column, if any), as on ranking rows
     potential_range_low_usd: float  # the Potential Range around the Gap Period mean (ADR 0007)
     potential_range_high_usd: float
     uncertain_opportunity: bool  # an Uncertain Opportunity
@@ -731,3 +749,74 @@ class Explanation(BaseModel):
 
 
 BlockedOpportunities.model_rebuild()  # resolves `note`, whose ScenarioNote is defined after it
+
+
+# --- Caveat Tiers: the models that carry them, built from the declared tiers --------------------------------------
+
+
+@dataclass(frozen=True)
+class Tiered:
+    """The query and response models that carry Caveat Tiers, each with every declared tier's fields.
+
+    The classes of the same name above lack those fields; the API serves these.
+    """
+
+    RankingQuery: type[RankingQuery]
+    LeaderboardQuery: type[LeaderboardQuery]
+    BlockedQuery: type[BlockedQuery]
+    MarketOpportunity: type[MarketOpportunity]
+    ProductOpportunity: type[ProductOpportunity]
+    LeaderboardOpportunity: type[LeaderboardOpportunity]
+    BlockedOpportunity: type[BlockedOpportunity]
+    Leaderboard: type[Leaderboard]
+    BlockedOpportunities: type[BlockedOpportunities]
+    ProductOpportunities: type[ProductOpportunities]
+    MarketOpportunities: type[MarketOpportunities]
+    Explanation: type[Explanation]
+
+
+def _rebuilt[M: BaseModel](model: type[M], *, after: str | None = None, added: dict | None = None, **replaced) -> type[M]:
+    """`model` under its own name with `added` fields inserted after the field `after`, and `replaced` fields swapped
+    in place, so field order (and the OpenAPI document) reads as if they had been declared there."""
+    fields: dict = {}
+    for name, info in model.model_fields.items():
+        fields[name] = (replaced[name], info) if name in replaced else (info.annotation, info)
+        if name == after:
+            fields.update(added or {})
+    built = create_model(
+        model.__name__, __config__=model.model_config, __doc__=model.__doc__, __module__=model.__module__, **fields
+    )
+    return cast(type[M], built)
+
+
+@cache
+def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
+    """The models carrying `tiers`: each tier's hide filter on the ranking queries (after `region`), and its column
+    (then its reason column, if any) on ranking rows (after `blocked_opportunity`) and explanations (after
+    `opportunity_type`)."""
+    hides = {
+        tier.hide_param: (bool, Field(False, description=tier.hide_description)) for tier in tiers
+    }
+    columns: dict = {}
+    for tier in tiers:
+        columns[tier.column] = (bool, ...)
+        if tier.reason_column is not None:
+            columns[tier.reason_column] = (str | None, ...)
+    market, product, leaderboard, blocked = (
+        _rebuilt(row, after="blocked_opportunity", added=columns)
+        for row in (MarketOpportunity, ProductOpportunity, LeaderboardOpportunity, BlockedOpportunity)
+    )
+    return Tiered(
+        RankingQuery=_rebuilt(RankingQuery, after="region", added=hides),
+        LeaderboardQuery=_rebuilt(LeaderboardQuery, after="region", added=hides),
+        BlockedQuery=_rebuilt(BlockedQuery, after="region", added=hides),
+        MarketOpportunity=market,
+        ProductOpportunity=product,
+        LeaderboardOpportunity=leaderboard,
+        BlockedOpportunity=blocked,
+        Leaderboard=_rebuilt(Leaderboard, opportunities=list[leaderboard]),
+        BlockedOpportunities=_rebuilt(BlockedOpportunities, opportunities=list[blocked]),
+        ProductOpportunities=_rebuilt(ProductOpportunities, opportunities=list[market]),
+        MarketOpportunities=_rebuilt(MarketOpportunities, opportunities=list[product]),
+        Explanation=_rebuilt(Explanation, after="opportunity_type", added=columns),
+    )

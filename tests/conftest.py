@@ -86,10 +86,10 @@ def fixture_artefacts_dir(fixture_artefacts, tmp_path_factory):
 
 
 @contextmanager
-def serve_api(root):
-    """Run the API on a free local port over an artefact root; yields its base URL."""
+def serve_api(root, **options):
+    """Run the API on a free local port over an artefact root (`options` go to `create_app`); yields its base URL."""
     port = free_port()
-    server = uvicorn.Server(uvicorn.Config(create_app(root), host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(create_app(root, **options), host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     while not server.started and thread.is_alive():
