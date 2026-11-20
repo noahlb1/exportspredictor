@@ -92,7 +92,6 @@ def _lift_figures(lift: dict) -> pd.DataFrame:
 
 
 def _show_lift(lift: dict) -> None:
-    st.subheader("Do large Export Gaps point at growth? (Lift)")
     st.markdown(lift["text"])
     st.dataframe(_lift_figures(lift), hide_index=True)
     st.markdown(SIZE_EXPLANATION.format(usd=lift["min_growth_usd"]))
@@ -138,7 +137,6 @@ def _tariff_table(rows: list[dict], last_tariff_year: int) -> pd.DataFrame:
 
 
 def _show_tariff_split(report: dict) -> None:
-    st.subheader("Observed against carried-forward tariffs")
     st.markdown(report["tariff_split_text"])
     year = labels()["last_tariff_year"]
     for scope, label in SCOPES.items():
@@ -153,7 +151,6 @@ def _show_tariff_split(report: dict) -> None:
 
 
 def _show_potential_range(coverage: dict) -> None:
-    st.subheader("How often Actual Exports fall inside the Potential Range")
     st.markdown(coverage["text"])
     by_exporter = pd.DataFrame(
         [
@@ -171,7 +168,6 @@ def _show_potential_range(coverage: dict) -> None:
 
 def _show_model_choice(choice: dict) -> None:
     """How the served model was chosen (ADR 0008): every figure comes from the API, read from the artefact."""
-    st.subheader("How the model was chosen")
     st.markdown(choice["text"])
     if choice["recorded"]:
         st.markdown(f"**Model Form.** {choice['model_form']['text']}")
@@ -224,7 +220,6 @@ def _show_model_choice(choice: dict) -> None:
 
 
 def _show_event_backtest(backtest: dict, names: dict[str, str], note: dict | None) -> None:
-    st.subheader("Scenario Effects against a real Trade Agreement (Event Backtest)")
     if note:
         st.info(note["text"])
     for event in backtest["events"]:
@@ -241,6 +236,83 @@ def _show_event_backtest(backtest: dict, names: dict[str, str], note: dict | Non
             f"from {years_text(event['pre_years'])} relative to the change in the control Markets. "
             f"{event.get('states', '')} {event['control_rule']} {event['caveat']}"
         )
+
+
+def _show_scorecard(report: dict) -> None:
+    """The four figures above the sections: ranking against the Naive Baseline, coverage, Lift and stability."""
+    headline, coverage, lift, stability = (
+        report["headline"], report.get("potential_range"), report.get("lift"), report["stability"],
+    )
+    rank, inside, matched, steady = st.columns(4)
+    rank.metric(
+        "Rank correlation, UK pairs",
+        number_text(headline["model"], ".2f"),
+        f"Naive Baseline {number_text(headline['naive'], '.2f')}",
+        delta_color="off",
+        delta_arrow="off",
+        help=f"How well each Product's Markets are ranked in {report['test_year']}, a year the model never saw; "
+        "1 means ranked exactly as the UK's Actual Exports rank them.",
+        border=True,
+    )
+    inside.metric(
+        "Inside the Potential Range",
+        "n/a" if coverage is None else f"{coverage['coverage']:.0%}",
+        None if coverage is None else f"target {coverage['target']:.0%}",
+        delta_color="off",
+        delta_arrow="off",
+        help="How often Actual Exports fall inside the Potential Range, on held-out rows of other Exporters.",
+        border=True,
+    )
+    matched.metric(
+        "Size-matched Lift",
+        "n/a" if lift is None else number_text(lift["size_matched"]["lift"], ".2f"),
+        "above 1: large Export Gaps grew more often than pairs of their size",
+        delta_color="off",
+        delta_arrow="off",
+        help="A tendency across many pairs, not a forecast for any one Opportunity.",
+        border=True,
+    )
+    steady.metric(
+        "Ranking stability",
+        number_text(stability["spearman_potential"], ".2f"),
+        f"{stability['top_overlap']:.0%} of the top {stability['top_n']:,} the same",
+        delta_color="off",
+        delta_arrow="off",
+        help=f"Rank correlation of Export Potential between {years_text(stability['years'])}, scored by the same "
+        "models, and the share of the top Opportunities by Export Gap found in both years.",
+        border=True,
+    )
+
+
+def _show_excluded_products(excluded: list[dict]) -> None:
+    """Why some Products are never ranked: the reasons with their counts, and the full list folded below."""
+    st.markdown(
+        f"{len(excluded):,} Products are left out of training, scoring and every ranking, because their recorded "
+        "trade follows bullion-market, pipeline or grid geography the model cannot see, or is unreliable; their "
+        "trade still counts in every country and world total."
+    )
+    full = pd.DataFrame(
+        {
+            "HS6": [row["hs6"] for row in excluded],
+            "Product": [row["description"] for row in excluded],
+            "Sector": [row["sector_name"] for row in excluded],
+            "Reason": [row["reason"] for row in excluded],
+        }
+    )
+    reasons = full.groupby("Reason", sort=False).size().reset_index(name="Products")
+    st.dataframe(
+        reasons.sort_values("Products", ascending=False, kind="stable")[["Reason", "Products"]], hide_index=True
+    )
+    with st.expander(f"All {len(full):,} Excluded Products"):
+        st.dataframe(full, hide_index=True)
+
+
+OPEN_AT_START = {"How accurate is the model?", "Known limitations"}
+
+
+def _section(heading: str):
+    """One folded section of the page; accuracy and the known limitations start open."""
+    return st.expander(heading, expanded=heading in OPEN_AT_START)
 
 
 with page("Model Evaluation", "How accurate the model is, where it is weak, and what it cannot tell you."):
@@ -263,64 +335,75 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
             else f"a {rate:.0%} sample of non-UK rows (reweighted so totals stay unbiased)"
         )
 
-        st.subheader("How accurate is the model?")
-        headline = report["headline"]
-        (st.success if headline["beats_naive"] else st.warning)(headline["text"])
-        st.caption(
-            f"Measured on {test_year}, a year the model never saw: the models were trained on "
-            f"{years_text(training_years)} with settings tuned on {report['validation_year']}, so "
-            f"neither tuning nor training ever read {test_year}. They were trained on every UK row and {sample}, "
-            f"as the Baseline models are. The naive baseline is {report['naive_baseline'][0].lower()}"
-            f"{report['naive_baseline'][1:]}"
-        )
+        _show_scorecard(report)
 
-        _show_model_choice(report["model_choice"])
+        with _section("How accurate is the model?"):
+            headline = report["headline"]
+            (st.success if headline["beats_naive"] else st.warning)(headline["text"])
+            st.caption(
+                f"Measured on {test_year}, a year the model never saw: the models were trained on "
+                f"{years_text(training_years)} with settings tuned on {report['validation_year']}, so "
+                f"neither tuning nor training ever read {test_year}. They were trained on every UK row and {sample}, "
+                f"as the Baseline models are. The naive baseline is {report['naive_baseline'][0].lower()}"
+                f"{report['naive_baseline'][1:]}"
+            )
 
-        st.subheader(f"Accuracy in {test_year}")
-        for scope, label in SCOPES.items():
-            st.markdown(f"**{label}**")
-            st.dataframe(_metric_table(report["accuracy"][scope]["overall"], report["metrics"]), hide_index=True)
-        st.caption(
-            "Rank correlation is averaged over Products: 1 means Markets are ranked exactly as the UK's actual "
-            "exports rank them, 0 means no better than chance. RMSE of log value is the typical error in orders of "
-            f"magnitude on Flows that happened. Tweedie deviance (power {report['tweedie_power']}) is the "
-            "training loss over every row, zeros included."
-        )
+        with _section("How the model was chosen"):
+            _show_model_choice(report["model_choice"])
 
-        st.subheader("Where the model is weakest")
-        scope = st.radio(
-            "Rows evaluated", list(SCOPES), format_func=SCOPES.get, key="breakdown_scope", horizontal=True
-        )
-        accuracy = report["accuracy"][scope]
-        sector_tab, region_tab = st.tabs(["By Sector", "By region"])
-        with sector_tab:
-            st.markdown(f"**Weakest Sectors** (HS2 chapter, rank correlation): {_weakest(accuracy['by_sector'])}")
-            st.dataframe(_breakdown_table(accuracy["by_sector"], "Sector"), hide_index=True)
-        with region_tab:
-            st.markdown(f"**Weakest regions** (Market region, rank correlation): {_weakest(accuracy['by_region'])}")
-            st.dataframe(_breakdown_table(accuracy["by_region"], "Region"), hide_index=True)
-        st.caption("Sorted weakest first, by the model's rank correlation within each Product.")
+        with _section(f"Accuracy in {test_year}"):
+            for scope, label in SCOPES.items():
+                st.markdown(f"**{label}**")
+                st.dataframe(_metric_table(report["accuracy"][scope]["overall"], report["metrics"]), hide_index=True)
+            st.caption(
+                "Rank correlation is averaged over Products: 1 means Markets are ranked exactly as the UK's actual "
+                "exports rank them, 0 means no better than chance. RMSE of log value is the typical error in orders "
+                f"of magnitude on Flows that happened. Tweedie deviance (power {report['tweedie_power']}) is the "
+                "training loss over every row, zeros included."
+            )
+
+        with _section("Where the model is weakest"):
+            scope = st.radio(
+                "Rows evaluated", list(SCOPES), format_func=SCOPES.get, key="breakdown_scope", horizontal=True
+            )
+            accuracy = report["accuracy"][scope]
+            sector_tab, region_tab = st.tabs(["By Sector", "By region"])
+            with sector_tab:
+                st.markdown(f"**Weakest Sectors** (HS2 chapter, rank correlation): {_weakest(accuracy['by_sector'])}")
+                st.dataframe(_breakdown_table(accuracy["by_sector"], "Sector"), hide_index=True)
+            with region_tab:
+                st.markdown(
+                    f"**Weakest regions** (Market region, rank correlation): {_weakest(accuracy['by_region'])}"
+                )
+                st.dataframe(_breakdown_table(accuracy["by_region"], "Region"), hide_index=True)
+            st.caption("Sorted weakest first, by the model's rank correlation within each Product.")
 
         if report.get("tariff_split_text"):
-            _show_tariff_split(report)
+            with _section("Observed against carried-forward tariffs"):
+                _show_tariff_split(report)
 
-        st.subheader("Stability of the rankings")
-        st.markdown(report["stability"]["text"])
+        with _section("Stability of the rankings"):
+            st.markdown(report["stability"]["text"])
 
         if report.get("potential_range"):
-            _show_potential_range(report["potential_range"])
+            with _section("How often Actual Exports fall inside the Potential Range"):
+                _show_potential_range(report["potential_range"])
 
         if report.get("lift"):
-            _show_lift(report["lift"])
+            with _section("Do large Export Gaps point at growth? (Lift)"):
+                _show_lift(report["lift"])
         if report.get("event_backtest"):
-            names = {market["iso3"]: market["name"] for market in fetch("/markets", client.api_url())}
-            _show_event_backtest(report["event_backtest"], names, report.get("event_backtest_note"))
+            with _section("Scenario Effects against a real Trade Agreement (Event Backtest)"):
+                names = {market["iso3"]: market["name"] for market in fetch("/markets", client.api_url())}
+                _show_event_backtest(report["event_backtest"], names, report.get("event_backtest_note"))
         if report.get("not_run"):
-            st.subheader("Parts not run")
-            for part in report["not_run"]:
-                st.markdown(part["text"])
+            with _section("Parts not run"):
+                for part in report["not_run"]:
+                    st.markdown(part["text"])
 
-        st.subheader("Known limitations")
-        with st.container(border=True):
+        with _section("Excluded Products"):
+            _show_excluded_products(fetch("/products/excluded", client.api_url()))
+
+        with _section("Known limitations"):
             for limitation in report["limitations"]:
                 st.markdown(f"**{limitation['title']}.** {limitation['text']}")

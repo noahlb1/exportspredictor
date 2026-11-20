@@ -8,7 +8,7 @@ from app import client
 from app.filters import leaderboard_filters
 from app.format import format_usd
 from app.frame import page
-from app.ui import ROWS_SHOWN, excluded_products_list, fetch, show_leaderboard
+from app.ui import ROWS_SHOWN, fetch, show_leaderboard
 
 with page(
     "Leaderboard",
@@ -29,7 +29,6 @@ with page(
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
     else:
-        excluded_products_list()
         summary, shown = body["summary"], len(body["opportunities"])
         in_force = "; ".join(filters.named) if filters.named else "No filters"
         st.markdown(
