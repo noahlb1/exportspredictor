@@ -101,11 +101,12 @@ def score_out_of_fold(
 
     `inputs` are the models' features, in order; `form` is the model form (a blend needs `naive_usd`).
     """
-    rows = _with_fold(features.filter(pl.col("exporter").cast(pl.String) == uk), len(models))
+    rows = with_folds(features.filter(pl.col("exporter").cast(pl.String) == uk), len(models))
     return rows.with_columns(export_potential_usd=export_potential(rows, models, features=inputs, form=form))
 
 
-def _with_fold(rows: pl.DataFrame, n_folds: int) -> pl.DataFrame:
+def with_folds(rows: pl.DataFrame, n_folds: int = N_FOLDS) -> pl.DataFrame:
+    """Rows keyed by `hs6` and `importer` with their pair's `fold` (`assign_folds` on the UK pair keys)."""
     return assign_folds(rows.rename({"importer": "iso3"}), n_folds).rename({"iso3": "importer"})
 
 
@@ -114,7 +115,7 @@ def outside_fold(uk: str, n_folds: int, k: int):
 
     def keep(table: pl.DataFrame) -> pl.DataFrame:
         is_uk = pl.col("exporter").cast(pl.String) == uk
-        uk_rows = _with_fold(table.filter(is_uk), n_folds).filter(pl.col("fold") != k).drop("fold")
+        uk_rows = with_folds(table.filter(is_uk), n_folds).filter(pl.col("fold") != k).drop("fold")
         return pl.concat([table.filter(~is_uk), uk_rows])
 
     return keep

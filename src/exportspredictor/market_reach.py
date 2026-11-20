@@ -46,7 +46,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.features import FEATURES
-from exportspredictor.folds import N_FOLDS, assign_folds, score_out_of_fold
+from exportspredictor.folds import N_FOLDS, score_out_of_fold, with_folds
 from exportspredictor.prediction import MarketReach, ModelForm
 
 FORM = "share"  # the open review's share form (its rank-expectation form is the alternative not taken)
@@ -67,18 +67,21 @@ def reach_table(
 
     `uk_rows` are UK grid rows (`year`, `fold`, `hs6`, `importer`, `value_usd`, `log_demand_loo`);
     only year `scored_year` − `LAG_YEARS` is read. Fold k's offsets come from the pairs outside fold k.
+    Rows with a `weight` column (training rows, whose Zero Cells are sampled) are counted by their
+    weight, so the counts stay unbiased (`exporter_reach`); the UK grid has every pair, weight 1.
     """
+    count = pl.col("weight").cast(pl.Float64) if "weight" in uk_rows.columns else pl.lit(1, pl.Int64)
     source = uk_rows.filter(pl.col("year") == scored_year - LAG_YEARS).select(
         "fold",
         pl.col("importer").cast(pl.String),
-        sent=(pl.col("value_usd") > 0).cast(pl.Int64),
-        imported=(pl.col(DEMAND) > 0).cast(pl.Int64),
+        sent=pl.when(pl.col("value_usd") > 0).then(count).otherwise(0),
+        imported=pl.when(pl.col(DEMAND) > 0).then(count).otherwise(0),
     )
     a = pseudo_count
     tables = []
     for k in range(n_folds):
         outside = source.filter(pl.col("fold") != k)
-        sent, imported = int(outside["sent"].sum()), int(outside["imported"].sum())
+        sent, imported = outside["sent"].sum(), outside["imported"].sum()
         pooled = sent / imported if imported else 0.0
         log_pooled = np.log((sent + a) / (imported + 2 * a))
         tables.append(
@@ -105,10 +108,57 @@ def apply(potential: np.ndarray, rows: pl.DataFrame, table: pl.DataFrame, *, bet
     return np.asarray(potential, dtype=np.float64) * _multiplier(rows, table, beta) * constant
 
 
-def rescale_constant(potential: np.ndarray, rows: pl.DataFrame, table: pl.DataFrame, *, beta: float) -> float:
-    """c such that `apply` with it keeps the summed Export Potential of `rows` unchanged."""
+def rescale_constant(
+    potential: np.ndarray, rows: pl.DataFrame, table: pl.DataFrame, *, beta: float, weight: np.ndarray | None = None
+) -> float:
+    """c such that `apply` with it keeps the summed Export Potential of `rows` (weighted by `weight`) unchanged."""
     potential = np.asarray(potential, dtype=np.float64)
+    if weight is not None:
+        potential = potential * np.asarray(weight, dtype=np.float64)
     return float(potential.sum() / (potential * _multiplier(rows, table, beta)).sum())
+
+
+def exporter_reach(
+    potential: np.ndarray, rows: pl.DataFrame, source: pl.DataFrame, *, scored_year: int, beta: float,
+    n_folds: int = N_FOLDS,
+) -> np.ndarray:
+    """`potential` with Market Reach applied to every Exporter's own rows, as the served Model Form applies the
+    UK's to UK pairs: Lift measures the served form on held-out Exporters (`backtests.lift_rows`), not on the UK.
+
+    `rows` are one year's training rows (`exporter`, `hs6`, `importer`, `weight`), in `potential`'s order;
+    `source` the same Exporters' training rows of `scored_year` − `LAG_YEARS` (`year`, `exporter`, `hs6`,
+    `importer`, `value_usd`, `log_demand_loo`, `weight`). Each Exporter gets its own table (`reach_table`,
+    counted by weight, since other Exporters' Zero Cells are sampled) from its pairs outside each pair's
+    fold, so a pair's own Flows never reach its offset (ADR 0001), and its own c, which keeps its weighted
+    summed Export Potential unchanged.
+    """
+    potential = np.asarray(potential, dtype=np.float64)
+    out = potential.copy()
+    exporters = rows["exporter"].cast(pl.String).to_numpy()
+    keyed = with_folds(rows.select("hs6", pl.col("importer").cast(pl.String)), n_folds)
+    for exporter in np.unique(exporters):
+        mask = exporters == exporter
+        own = source.filter(pl.col("exporter").cast(pl.String) == exporter).select(
+            "year", "hs6", pl.col("importer").cast(pl.String), "value_usd", DEMAND, "weight"
+        )
+        table = reach_table(with_folds(own, n_folds), scored_year, n_folds=n_folds)
+        pairs = keyed.filter(pl.Series(mask))
+        weight = rows.filter(pl.Series(mask))["weight"].to_numpy()
+        constant = rescale_constant(potential[mask], pairs, table, beta=beta, weight=weight)
+        out[mask] = apply(potential[mask], pairs, table, beta=beta, constant=constant)
+    return out
+
+
+def uk_keys(rows: pl.DataFrame, *, fold: pl.Expr, uk: str) -> pl.DataFrame:
+    """The keys a Market Reach offset is looked up by, one row per row of `rows`: `fold` (the `fold` expression on
+    UK rows, null on other Exporters' rows, which take no offset), `importer` (the row's `importer`, or `iso3`) and
+    `uk` (whether the row is a UK pair: rows without an `exporter` column are). The served form
+    (`prediction.reach_multiplier`) and the experiment loop's Arms (`loop.runner`) both key their rows here."""
+    market = "importer" if "importer" in rows.columns else "iso3"
+    is_uk = pl.col("exporter").cast(pl.String) == uk if "exporter" in rows.columns else pl.lit(True)
+    return rows.select(
+        fold=pl.when(is_uk).then(fold).cast(pl.Int8), importer=pl.col(market).cast(pl.String), uk=is_uk
+    )
 
 
 def _multiplier(rows: pl.DataFrame, table: pl.DataFrame, beta: float) -> np.ndarray:
@@ -147,8 +197,7 @@ def fit(
     `form` without Market Reach, so the UK's summed Export Potential over the grid is unchanged; every
     Scenario then reuses the same c.
     """
-    sourced = assign_folds(source.rename({"importer": "iso3"}), len(models)).rename({"iso3": "importer"})
-    table = reach_table(sourced, scored_year, n_folds=len(models))
+    table = reach_table(with_folds(source, len(models)), scored_year, n_folds=len(models))
     plain = form.without_market_reach()
     scored = score_out_of_fold(grid, list(models), uk, inputs=features, form=plain)
     rows = scored.select("fold", importer=pl.col("importer").cast(pl.String))

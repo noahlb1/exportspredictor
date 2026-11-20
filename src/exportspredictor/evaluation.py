@@ -55,7 +55,7 @@ import xgboost as xgb
 
 from exportspredictor import artefacts as store
 from exportspredictor import baci, ledger, market_reach
-from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
+from exportspredictor.conformal import COVERAGE, COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import (
@@ -239,8 +239,39 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
         *result_limitations(artefacts.metadata, report),
         *range_limitations(artefacts.potential_range_bands),
         *size_coverage_limitations(report.get("potential_range")),
+        *uk_pair_coverage_limitations(artefacts.metadata, report.get("potential_range")),
         *LIMITATIONS,
     ]
+
+
+# UK-pair coverage further than this below the Potential Range's target is a known limitation (spec #113 story 13).
+UK_PAIR_SHORTFALL = 0.05
+
+
+def uk_pair_coverage_limitations(metadata: dict, potential_range: dict | None) -> list[dict]:
+    """When fewer UK pairs than the target, less `UK_PAIR_SHORTFALL`, have their Gap Period Actual Exports inside
+    their Potential Range. Read from the report's `uk_pair_coverage`, or, for a version upgraded by `rereach`, its
+    metadata's `market_reach_pair_coverage`; none for a version that records neither."""
+    found = (potential_range or {}).get("uk_pair_coverage")
+    saved = metadata.get("market_reach_pair_coverage")
+    if found:
+        coverage, without = found["with_market_reach"], found["without_market_reach"]
+    elif saved:
+        coverage, without = saved["after"], saved["before"]
+    else:
+        return []
+    target = (potential_range or {}).get("target", COVERAGE)
+    if coverage is None or round(target - coverage, 9) <= UK_PAIR_SHORTFALL:
+        return []
+    return [{
+        "title": "The Potential Range holds fewer UK pairs than its target",
+        "text": f"Only {coverage:.1%} of UK pairs have their Gap Period Actual Exports inside their Potential Range"
+        + ("" if without is None else f" ({without:.1%} without Market Reach)")
+        + f", against a target of {target:.0%}. The range is "
+        "calibrated on other Exporters' pairs (ADR 0007), and Market Reach moves UK Export Potential by a Market-wide "
+        "factor those pairs do not take (ADR 0010), so for UK pairs the range understates how far Actual Exports "
+        "vary around Export Potential.",
+    }]
 
 
 def result_limitations(metadata: dict, report: dict) -> list[dict]:
@@ -941,6 +972,10 @@ def evaluate(
         form, previous_form = fitted["test"], fitted["previous"]
     scored_rows = score_rows(test_rows, test_models.models, test_models.transform, uk, form=form)
     scored_grid = score_rows(test_grid, test_models.models, test_models.transform, uk, form=form)
+    without = {}
+    if form.market_reach is not None:  # the kept change's effect on the ranking (`market_reach_effect`)
+        plain = score_rows(test_grid, test_models.models, test_models.transform, uk, form=form.without_market_reach())
+        without["without_market_reach"] = _ranking_figures(drop_excluded(plain), flows, year)
     accuracy_by_scope = {
         "all_exporters": accuracy(scored_rows, markets),
         "uk_out_of_fold": accuracy(scored_grid, markets),
@@ -971,7 +1006,83 @@ def evaluate(
         "large_markets": large_markets_report(drop_excluded(scored_grid), flows, year, predictors=_PREDICTORS),
         "tariff_split_text": tariff_split_text(accuracy_by_scope, year),
         "stability": stable,
+        **without,
     }
+
+
+def _ranking_figures(scored_grid: pl.DataFrame, flows: pl.DataFrame, year: int) -> dict:
+    """The model's headline (tie-proof), old-measure and large-Market figures on a scored UK grid of the test year."""
+    column = _PREDICTORS["model"]
+    large = large_markets_report(scored_grid, flows, year, predictors={"model": column, "naive": _PREDICTORS["naive"]})
+    return {
+        "headline_model": selection_measure(scored_grid, column, market=_ROW_MARKET),
+        "old_measure_model": legacy_selection_measure(scored_grid, column),
+        "large_markets": [{"markets": row["markets"], "model": row["model"]} for row in large["rows"]],
+    }
+
+
+# Why the Scenario Effect comparisons measure the model without Market Reach (ADR 0010).
+SCENARIO_EFFECTS_UNCHANGED = (
+    "Market Reach leaves Scenario Effects unchanged: it scales a pair's Export Potential with and without a Scenario "
+    "alike, so the Event Backtests and the PPML benchmark compare the model's Scenario Effects without it (ADR 0010)."
+)
+
+
+def market_reach_effect(report: dict) -> dict | None:
+    """What Market Reach, the change this version keeps (ADR 0010), does to the test-year figures: the served form
+    beside the same models without it, on the headline (tie-proof and old measure), the large-Market measures, Lift
+    (`lift` against `lift_without_market_reach`) and the Potential Range's coverage of UK pairs; Scenario Effects are
+    unchanged by it (`SCENARIO_EFFECTS_UNCHANGED`). None for a version without Market Reach."""
+    without = report.get("without_market_reach")
+    if without is None:
+        return None
+    large = {row["markets"]: row["model"] for row in (report.get("large_markets") or {}).get("rows", [])}
+    block: dict = {
+        "selection_measure": {"with": report["headline"]["model"], "without": without["headline_model"]},
+        "old_measure": {"with": (report.get("old_measure") or {}).get("model"), "without": without["old_measure_model"]},
+        "large_markets": [
+            {"markets": row["markets"], "with": large.get(row["markets"]), "without": row["model"]}
+            for row in without["large_markets"]
+        ],
+    }
+    lift, plain = report.get("lift"), report.get("lift_without_market_reach")
+    if lift and plain:
+        block["lift"] = {
+            "with": lift["lift"], "without": plain["lift"],
+            "size_matched_with": lift["size_matched"]["lift"], "size_matched_without": plain["size_matched"]["lift"],
+        }
+    coverage = (report.get("potential_range") or {}).get("uk_pair_coverage")
+    if coverage:
+        block["uk_pair_coverage"] = {"with": coverage["with_market_reach"], "without": coverage["without_market_reach"]}
+    block["scenario_effects"] = SCENARIO_EFFECTS_UNCHANGED
+    return {**block, "text": market_reach_effect_text(block, report["test_year"])}
+
+
+def market_reach_effect_text(block: dict, test_year: int) -> str:
+    """The `market_reach_effect` sentences, worded from its figures."""
+
+    def pair(figures: dict, fmt: str = ".3f") -> str:
+        return f"{number_text(figures['with'], fmt)} with it against {number_text(figures['without'], fmt)} without"
+
+    large = "; ".join(f"on the {row['markets']} largest Markets {pair(row)}" for row in block["large_markets"])
+    parts = [
+        f"Market Reach is the change this version keeps (ADR 0010). On {test_year}, the UK ranking is "
+        f"{pair(block['selection_measure'])} on the tie-proof Selection Measure ({pair(block['old_measure'])} on the "
+        f"old measure)" + (f"; {large}" if large else "") + ".",
+    ]
+    if "lift" in block:
+        lift = block["lift"]
+        parts.append(
+            f"Lift is {pair(lift, '.2f')} (size-matched {number_text(lift['size_matched_with'], '.2f')} against "
+            f"{number_text(lift['size_matched_without'], '.2f')}), each held-out Exporter scaled by its own Market Reach."
+        )
+    if "uk_pair_coverage" in block:
+        parts.append(
+            f"The Potential Range holds {pair(block['uk_pair_coverage'], '.0%')} of UK pairs' Gap Period Actual Exports."
+        )
+    parts.append(block["scenario_effects"])
+    parts.append("These are associations on one test year, not a forecast.")
+    return " ".join(parts)
 
 
 def _stability_text(result: dict, year: int, baseline_year: int) -> str:

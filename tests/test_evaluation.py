@@ -539,3 +539,64 @@ def test_no_size_limitation_when_every_size_group_is_near_the_target_or_has_no_r
     assert evaluation.size_coverage_limitations(_by_size(0.85, 0.75, 0.80, None)) == []
     assert evaluation.size_coverage_limitations({"target": 0.8}) == []
     assert evaluation.size_coverage_limitations(None) == []
+
+
+# --- UK pairs inside the Potential Range under Market Reach (spec #113 story 13) -----------------------------------
+
+
+def _uk_pairs(with_reach, without):
+    return {"target": 0.8, "uk_pair_coverage": {"with_market_reach": with_reach, "without_market_reach": without}}
+
+
+def test_uk_pair_coverage_more_than_five_points_below_the_target_is_a_known_limitation():
+    limits = evaluation.uk_pair_coverage_limitations({}, _uk_pairs(0.736, 0.809))
+
+    assert [x["title"] for x in limits] == ["The Potential Range holds fewer UK pairs than its target"]
+    assert "73.6%" in limits[0]["text"] and "80.9% without Market Reach" in limits[0]["text"]
+    assert "80%" in limits[0]["text"]
+
+
+def test_uk_pair_coverage_within_five_points_of_the_target_is_no_limitation():
+    assert evaluation.uk_pair_coverage_limitations({}, _uk_pairs(0.75, 0.81)) == []
+    assert evaluation.uk_pair_coverage_limitations({}, _uk_pairs(0.86, 0.81)) == []
+    assert evaluation.uk_pair_coverage_limitations({}, None) == []
+
+
+def test_a_version_upgraded_by_rereach_states_its_uk_pair_coverage_from_its_metadata():
+    metadata = {"market_reach_pair_coverage": {"before": 0.809, "after": 0.736}}
+
+    [limit] = evaluation.uk_pair_coverage_limitations(metadata, {"target": 0.8})
+
+    assert "73.6%" in limit["text"]
+
+
+def test_the_fixture_build_reports_uk_pair_coverage_with_the_coverage_by_size(fixture_artefacts):
+    from exportspredictor import conformal
+
+    report = fixture_artefacts.evaluation["potential_range"]
+    coverage = report["uk_pair_coverage"]
+
+    assert coverage["with_market_reach"] == pytest.approx(conformal.pair_coverage(fixture_artefacts.baseline))
+    assert 0 <= coverage["without_market_reach"] <= 1
+    assert fixture_artefacts.metadata["market_reach_pair_coverage"] == {
+        "before": coverage["without_market_reach"], "after": coverage["with_market_reach"]
+    }
+    assert report["by_size"]
+    assert f"{coverage['with_market_reach']:.0%} of UK pairs" in report["text"]
+    titles = [x["title"] for x in evaluation.known_limitations(fixture_artefacts)]
+    shortfall = coverage["with_market_reach"] < 0.75
+    assert ("The Potential Range holds fewer UK pairs than its target" in titles) == shortfall
+
+
+def test_the_kept_change_s_effect_on_the_ranking_is_reported_beside_the_served_form(report):
+    effect = report["market_reach_effect"]
+
+    assert effect["selection_measure"]["with"] == report["headline"]["model"]
+    assert effect["old_measure"]["with"] == report["old_measure"]["model"]
+    assert [row["markets"] for row in effect["large_markets"]] == [30, 60]
+    assert [row["with"] for row in effect["large_markets"]] == [row["model"] for row in report["large_markets"]["rows"]]
+    for figures in (effect["selection_measure"], effect["old_measure"], *effect["large_markets"]):
+        assert figures["without"] is not None
+    assert effect["uk_pair_coverage"]["with"] == report["potential_range"]["uk_pair_coverage"]["with_market_reach"]
+    assert "leaves Scenario Effects unchanged" in effect["text"] and "Event Backtests" in effect["text"]
+    assert "not a forecast" in effect["text"]

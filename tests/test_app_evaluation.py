@@ -198,7 +198,7 @@ def test_page_shows_size_matched_lift_next_to_raw_lift_and_explains_the_differen
     assert f"${lift['min_growth_usd']:,.0f}" in text  # the growth threshold, from the API
     assert "tendency" in text
     first, last = lift["gap_years"][0], lift["gap_years"][-1]
-    assert f"{first}–{last}" in text  # the Gap Period the Export Gaps are averaged over
+    assert (str(first) if first == last else f"{first}–{last}") in text  # the Gap Period the gaps are averaged over
 
 
 def test_page_shows_the_event_backtest_predicted_against_observed_with_its_control_group(page, fixture_artefacts):

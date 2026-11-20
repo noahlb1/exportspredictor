@@ -178,7 +178,7 @@ def export_potential(
     has no model, a fold model held out another fold, or a blend's rows have no `naive_usd`.
     """
     naive = _naive(rows, form)
-    reach = _reach_multiplier(rows, form, by)
+    reach = reach_multiplier(rows, form, by)
     potential = _model_potential(rows, models, features, by, rounds, device, base_margin)
     if naive is None and reach is None:
         return potential
@@ -207,30 +207,27 @@ def _naive(rows: pl.DataFrame, form: ModelForm) -> np.ndarray | None:
     return rows[NAIVE_COLUMN].cast(pl.Float64).to_numpy()
 
 
-def _reach_multiplier(rows: pl.DataFrame, form: ModelForm, by: str = "fold") -> np.ndarray | None:
+def reach_multiplier(rows: pl.DataFrame, form: ModelForm, by: str = "fold") -> np.ndarray | None:
     """Each row's Market Reach multiplier, exp(β · offset) × c (`market_reach.apply`), or None without Market Reach.
 
     Rows scored by the mean of the models, or whose `exporter` is not the UK, are not UK pairs and take none
     (multiplier 1): c is defined on the UK grid only, and scaling other Exporters by it would move the Potential
-    Range's calibration off the scale of their Actual Exports."""
+    Range's calibration off the scale of their Actual Exports. A row's Export Potential without Market Reach is
+    its Export Potential divided by this."""
     reach = form.market_reach
     if reach is None:
         return None
     if reach.table is None:
         raise ValueError("A Model Form with Market Reach needs its Market Reach table to predict")
+    if by != "fold":
+        return np.ones(rows.height)
     # Imported here: `market_reach` imports `folds`, which imports this module.
     from exportspredictor import market_reach
 
-    market = "importer" if "importer" in rows.columns else "iso3"
-    uk_row = pl.lit(by == "fold")
-    if "exporter" in rows.columns:
-        uk_row = uk_row & (pl.col("exporter").cast(pl.String) == UK)
-    keys = rows.select(
-        fold=pl.when(uk_row).then(pl.col("fold")) if "fold" in rows.columns else pl.lit(None, pl.Int8),
-        importer=pl.col(market),
-    )
+    fold = pl.col("fold") if "fold" in rows.columns else pl.lit(None, pl.Int8)
+    keys = market_reach.uk_keys(rows, fold=fold, uk=UK)
     multiplier = market_reach.apply(np.ones(rows.height), keys, reach.table, beta=reach.beta, constant=reach.constant)
-    return np.where(rows.select(uk_row.alias("uk")).to_series().to_numpy(), multiplier, 1.0)
+    return np.where(keys["uk"].to_numpy(), multiplier, 1.0)
 
 
 def _model_potential(rows, models, features, by, rounds, device, base_margin) -> pl.Series:
@@ -302,7 +299,7 @@ def log_contributions(
     no feature's contribution changes, and the Market's reach is shown on its own (ADR 0010).
     """
     contributions, log_potential = _blend_contributions(rows, models, features, form)
-    reach = _reach_multiplier(rows, form)
+    reach = reach_multiplier(rows, form)
     if reach is None:
         return contributions, log_potential
     contributions = contributions.astype(np.float64)

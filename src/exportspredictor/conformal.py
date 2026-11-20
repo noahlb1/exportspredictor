@@ -318,15 +318,25 @@ def _weighted_quantiles(values: np.ndarray, weights: np.ndarray, quantiles) -> l
 def coverage_text(report: dict) -> str:
     """The Potential Range's held-out coverage and the share of Uncertain Opportunities, in one paragraph.
 
-    The Uncertain Opportunity is reported only as this share, never as a badge per row (ADR 0007).
+    The Uncertain Opportunity is reported only as this share, never as a badge per row (ADR 0007). A report with
+    `uk_pair_coverage` (built since spec #113's review) also says how many UK pairs' Actual Exports lie inside their
+    range, with Market Reach and without it.
     """
-    return (
+    text = (
         f"On a held-out half of the calibration rows ({report['held_out_rows']:,} other Exporters' rows), "
         f"{report['coverage']:.0%} of their Actual Exports fell inside their Potential Range, against a target of "
         f"{report['target']:.0%}. {report['uncertain_opportunities']:,} of the {report['opportunities']:,} "
         f"Opportunities ({report['uncertain_opportunity_share']:.0%}) have UK Actual Exports inside their "
         "Potential Range (Uncertain Opportunities): most Export Gaps are within the variation normally seen among "
-        "comparable pairs, so an Export Gap ranks a lead rather than proving one."
+        "comparable pairs, so an Export Gap says where to look rather than proving an Opportunity."
+    )
+    uk = report.get("uk_pair_coverage")
+    if not uk or uk.get("with_market_reach") is None:
+        return text
+    without = uk.get("without_market_reach")
+    return text + (
+        f" Over every UK pair, {uk['with_market_reach']:.0%} of UK pairs have Gap Period Actual Exports inside their "
+        f"Potential Range" + ("" if without is None else f" ({without:.0%} without Market Reach)") + "."
     )
 
 

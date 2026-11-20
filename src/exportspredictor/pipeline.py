@@ -114,7 +114,7 @@ from exportspredictor.gap_period import (
 )
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
-from exportspredictor.prediction import ModelForm
+from exportspredictor.prediction import ModelForm, reach_multiplier
 from exportspredictor.rankings import DEFAULT_MIN_POTENTIAL_USD
 from exportspredictor.scenarios import (
     DEFAULT_MIN_SHARE,
@@ -156,7 +156,8 @@ FIXTURE_MIN_BAND_ROWS = 12
 # so controls ignore income.
 FIXTURE_BACKTESTS = backtests.Plan(
     lift=backtests.LiftSettings(
-        training_years=(2021, 2022), gap_years=(2021, 2022), outcome_year=2023, min_growth_share=0.05,
+        # One Gap Period year: Lift with Market Reach learns each held-out Exporter's reach from the year before (2021).
+        training_years=(2021, 2022), gap_years=(2022,), outcome_year=2023, min_growth_share=0.05,
         min_growth_usd=0.0,
     ),
     event=backtests.Event(
@@ -785,6 +786,8 @@ def _train_and_score(
         volatility.METADATA_KEY: volatile_products.to_dict(),
         # What every summed figure is read against (spec #113, "Totals understate").
         "potential_share_of_actual_exports": potential_share_of_actual_exports(baseline),
+        # The Potential Range's coverage of UK pairs' Actual Exports without and with Market Reach (as `rereach` records).
+        "market_reach_pair_coverage": _pair_coverage_metadata(scored.potential_range_report["uk_pair_coverage"]),
         "created_at": datetime.now(UTC).isoformat(),
     }
     return _Trained(
@@ -891,6 +894,7 @@ def _score_gap_period(
     potential_range_report = {
         **conformal.coverage_report(scored_calibration, min_rows=min_band_rows),
         **conformal.uncertain_share(baseline),
+        "uk_pair_coverage": _uk_pair_coverage(scored, forms, baseline, bands),
     }
     potential_range_seconds = time.perf_counter() - started
     print(
@@ -916,6 +920,27 @@ def _score_gap_period(
     )
 
 
+def _uk_pair_coverage(
+    scored: Mapping[int, pl.DataFrame], forms: Mapping[int, ModelForm], baseline: pl.DataFrame, bands: pl.DataFrame
+) -> dict:
+    """The share of UK pairs whose Gap Period Actual Exports lie inside their Potential Range (`conformal.pair_coverage`),
+    with Market Reach (the served Baseline) and without it (each year's Export Potential divided by its Market Reach
+    multiplier, ranged by the same bands): what Market Reach does to the range for UK pairs (spec #113 story 13)."""
+    plain = pl.concat([
+        table.select(
+            "hs6", "iso3", year=pl.lit(year, pl.Int16), actual_exports_usd="value_usd",
+            export_potential_usd=pl.col("export_potential_usd") / pl.Series(reach_multiplier(table, forms[year])),
+        )
+        for year, table in scored.items()
+    ])
+    without = conformal.with_potential_range(export_gaps(plain), bands)
+    return {
+        "with_market_reach": conformal.pair_coverage(baseline),
+        "without_market_reach": conformal.pair_coverage(without),
+        "target": conformal.COVERAGE,
+    }
+
+
 def reach_source(grids: Mapping[int, Chunk], year: int) -> pl.DataFrame:
     """The UK grid Market Reach for `year` is learned from: that of year − `market_reach.LAG_YEARS` (ADR 0010)."""
     reference = year - market_reach.LAG_YEARS
@@ -931,6 +956,11 @@ def _reach_fits(forms: Mapping[int, ModelForm]) -> dict:
         assert fitted.market_reach is not None
         fits[str(year)] = {"reference_year": fitted.market_reach.reference_year, "constant": fitted.market_reach.constant}
     return fits
+
+
+def _pair_coverage_metadata(coverage: Mapping) -> dict:
+    """`_uk_pair_coverage` as the metadata records it: before and after Market Reach."""
+    return {"before": coverage["without_market_reach"], "after": coverage["with_market_reach"]}
 
 
 _TRAINING_FILE = "training.json"
@@ -1003,8 +1033,11 @@ def _evaluate(
     features: it would scale their effects by 1 − w).
 
     `reach_grid` is the UK grid of the year before the test year, which the test year's Market Reach is learned
-    from (ADR 0010). The opt-in parts and the v1 comparison score without Market Reach: Lift and the Event Backtests
-    span other years, whose own tables they do not build, and the v1 comparison is pre-registered on the Blend.
+    from (ADR 0010). Lift takes each held-out Exporter's own Market Reach (`backtests.lift_rows`) and is also scored
+    without it; `market_reach_effect` sets the served form's headline, large-Market measures, Lift and UK-pair
+    coverage beside the form without Market Reach. The Event Backtests and the PPML benchmark compare Scenario
+    Effects, which Market Reach leaves unchanged, so they measure the model without it (ADR 0010). The v1
+    comparison was pre-registered on the Blend and scores it without Market Reach, its Lift included.
 
     Callers record the read in the test-year ledger (`_record_test_year_read`) before they load
     anything of the test year for it.
@@ -1050,7 +1083,7 @@ def _evaluate(
         report |= backtests.run(
             backtest_chunks or training, backtest_plan, uk=UK, params=metadata["params"], rounds=metadata["rounds"],
             device=device, non_uk_rate=non_uk_rate, seed=seed, high_income=high_income, test_models=test_models,
-            cache=backtest_cache, lift_held_out=lift_held_out, form=form.without_market_reach(), year_flows=year_flows,
+            cache=backtest_cache, lift_held_out=lift_held_out, form=form, year_flows=year_flows,
         )
         print(f"Backtests in {report['event_backtest']['seconds']:.0f} s", flush=True)
     if parts.constraint_comparison:
@@ -1071,6 +1104,9 @@ def _evaluate(
     report["potential_range"] = {
         **trained.potential_range_report, "text": conformal.coverage_text(trained.potential_range_report)
     }
+    effect = evaluation.market_reach_effect(report)
+    if effect is not None:
+        report["market_reach_effect"] = effect
     if v1 is not None:
         if not parts.gain_ladder:
             v1 = replace(v1, ladder=None)
@@ -1130,7 +1166,8 @@ def _v1_comparison(
             )
             ladder[name] = evaluation.score_rows(v1.rows["uk"], rung.models, rung.transform, UK, features=rung.features)
     started = time.perf_counter()
-    form = ModelForm.from_dict(metadata["model_form"]).without_market_reach()  # pre-registered on the Blend
+    served = ModelForm.from_dict(metadata["model_form"])
+    form = served.without_market_reach()  # pre-registered on the Blend
     test_flows = v1.flows.filter(pl.col("year") == test_year) if "year" in v1.flows.columns else v1.flows
     block = comparison.compare(
         v1.frozen,
@@ -1141,7 +1178,7 @@ def _v1_comparison(
             for name, rows in v1.rows.items()
         },
         flows=v1.flows,
-        lift_v2=report.get("lift"),
+        lift_v2=report.get("lift_without_market_reach") or report.get("lift"),  # the Blend without Market Reach
         event_v2=report["event_backtest"]["events"][0] if "event_backtest" in report else None,
         lift_settings=lift_settings,
         scope=metadata["exporter_scope"],
@@ -1152,6 +1189,9 @@ def _v1_comparison(
         ladder=ladder,
         ladder_plan=v1.ladder,
     )
+    if served.market_reach is not None:  # labelled: the served form adds Market Reach, which this does not score
+        block["model_form"], block["scored_without_market_reach"] = form.to_dict(), True
+        block["verdict"]["text"] = comparison.WITHOUT_MARKET_REACH_NOTE + block["verdict"]["text"]
     print(f"v1 comparison in {time.perf_counter() - started:.0f} s: {block['verdict']['text']}", flush=True)
     return block
 
@@ -1387,7 +1427,16 @@ def rerange(
     baseline = conformal.with_potential_range(bundle.baseline.drop(_RANGE_COLUMNS), bands).select(
         bundle.baseline.columns
     )
-    report = {**conformal.coverage_report(scored, min_rows=min_rows), **conformal.uncertain_share(baseline)}
+    report = {
+        **conformal.coverage_report(scored, min_rows=min_rows),
+        **conformal.uncertain_share(baseline),
+        # Without Market Reach it would need every Gap Period year's Market Reach table, which a version does not hold.
+        "uk_pair_coverage": {
+            "with_market_reach": conformal.pair_coverage(baseline),
+            "without_market_reach": None if bundle.model_form.market_reach else conformal.pair_coverage(baseline),
+            "target": conformal.COVERAGE,
+        },
+    }
     seconds = time.perf_counter() - started
     print(
         f"Potential Range from {scored.height:,} calibration rows in {seconds:.0f} s: "
@@ -1463,7 +1512,7 @@ def rereach(
     history = _history(earlier, scored.yearly).select(bundle.history.columns)
     reach = scored.form.market_reach
     assert reach is not None
-    coverage = {"before": conformal.pair_coverage(bundle.baseline), "after": conformal.pair_coverage(baseline)}
+    coverage = _pair_coverage_metadata(scored.potential_range_report["uk_pair_coverage"])
     print(f"Potential Range coverage of UK pairs' Actual Exports: {coverage}", flush=True)
     range_metadata = {
         **metadata["potential_range"],
