@@ -52,6 +52,7 @@ import numpy as np
 import polars as pl
 import xgboost as xgb
 
+from exportspredictor import ledger
 from exportspredictor.features import FEATURES, TARIFF_FEATURES, FeatureTransform
 from exportspredictor.prediction import (
     MODEL_ALONE,
@@ -979,8 +980,12 @@ def add_to_latest(
     device: str = "cuda",
     version: str | None = None,
     v1_frozen: Path | None = None,
+    test_year_ledger: ledger.Ledger | None,
 ) -> Path:
     """Run the backtests for the newest evaluated artefact and save it again, with them, as a new version.
+
+    Lift's outcome year is the test year, so the read is recorded in `test_year_ledger` first and
+    refused if the newest version's configuration was read before (ADR 0009); `None` only on synthetic data.
 
     The Lift model holds out v1's frozen held-out Exporters within the artefact's scope, read
     from `v1_frozen` (default: the real v1 artefact's frozen tables under `artefacts_root`).
@@ -1001,6 +1006,9 @@ def add_to_latest(
     if bundle.evaluation is None:
         raise ValueError(f"Artefact {bundle.version} has no evaluation; run `python -m exportspredictor.evaluation` first")
     metadata = bundle.metadata
+    new = {**metadata, "version": version or store.new_version(), "copied_from": bundle.version}
+    if test_year_ledger is not None:
+        ledger.record_read(test_year_ledger, new, read="Lift and Event Backtests")
     folder = features_dir(root)
     years = json.loads((folder / "features.json").read_text(encoding="utf-8"))["years"]
     result = run(
@@ -1022,9 +1030,11 @@ def add_to_latest(
         year_flows=lambda year: load_year_flows(year, load_sources(root)[1], root),
     )
     report = {**bundle.evaluation, **result}
-    new = {**metadata, "version": version or store.new_version(), "copied_from": bundle.version}
     return store.copy_version(source, artefacts_root, metadata=new, evaluation=report)
 
 
 if __name__ == "__main__":
-    print(add_to_latest(), flush=True)
+    import sys
+
+    command = ledger.Ledger.for_command("python -m exportspredictor.backtests", sys.argv[1:])
+    print(add_to_latest(test_year_ledger=command), flush=True)

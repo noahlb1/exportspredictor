@@ -146,6 +146,14 @@ _Avoid_: benchmark (the PPML benchmark is another thing), naive model
 How Export Potential is made from the fold models. The served form is a **Blend**: the model's Export Potential and the Naive Baseline combined on the log scale with fixed weights (the Naive Baseline's weight chosen on the Selection Measure). The Naive Baseline has no policy features, so a Scenario moves only the model's share.
 _Avoid_: ensemble, model type
 
+**Configuration Fingerprint**:
+A short hash of the settings that decide a version's test-year models and how they are scored (features, Model Form, hyperparameters, round count, sampling, data source). Rebuilding the same configuration under a new version name keeps the fingerprint (ADR 0009).
+_Avoid_: version hash, model ID
+
+**Test-year Ledger**:
+The record of every read of the test year: date, version, Configuration Fingerprint, what was read and the command. A fingerprint already in it is refused a second read unless overridden, and the override is recorded too (ADR 0009).
+_Avoid_: audit log, read log
+
 ### Scenarios
 
 **Baseline**:

@@ -23,6 +23,7 @@ from matplotlib.figure import Figure
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.evaluation import NOT_RUN, relabelled
+from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
@@ -201,6 +202,12 @@ def round_count(bundle: Artefacts) -> pl.DataFrame | NotRun:
     return pl.DataFrame(rows, schema={
         "model": pl.String, "chosen_on": pl.String, "rounds_chosen": pl.Int64, "rounds_trained": pl.Int64,
     })
+
+
+def test_year_ledger(path: Path = LEDGER_PATH) -> pl.DataFrame:
+    """Every read of the test year, oldest first, from the Test-year Ledger file alone (ADR 0009); nothing
+    of the test year is read. Each row's source record stays in the file's `record` column."""
+    return read_ledger(path).drop("record")
 
 
 def lift_by_tenth(bundle: Artefacts) -> Chart | NotRun:
