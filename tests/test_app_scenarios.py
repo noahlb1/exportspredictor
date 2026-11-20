@@ -1,9 +1,15 @@
-"""The Streamlit Scenarios page and the ranking toggle, run with AppTest against a live API on fixture artefacts.
+"""The Streamlit Scenarios page, run with AppTest against a live API on fixture artefacts.
 
 The fixture Baseline (2024) has UK Trade Agreements with Japan and Canada, none with India.
+
+AppTest cannot click a table row, so a test chooses a Market or a pair by setting the page's remembered selection
+(`scenario_market`, `scenario_drill_pair`, `scenario_blocked_pair`), as a click does.
 """
 
+import json
+
 import httpx
+import pandas as pd
 import pytest
 import streamlit
 from conftest import run_page
@@ -12,6 +18,9 @@ from streamlit.testing.v1 import AppTest
 from app import client
 
 SCENARIOS = "pages/scenarios.py"
+# The page's tables, in order once a Scenario has run.
+MARKETS, DRILL_DOWN, PRODUCTS, BLOCKED = range(4)
+INDIA = {"add_agreements": ["IND"], "min_effect_share": 0.0, "min_effect_usd": 0.0, "limit": 100}
 
 
 @pytest.fixture
@@ -24,36 +33,194 @@ def _scenarios_page(monkeypatch, api_url) -> AppTest:
     return run_page(SCENARIOS)
 
 
-def test_a_preset_scenario_shows_an_associational_summary_and_markets(monkeypatch, api_url):
+def _run_cptpp(monkeypatch, api_url) -> AppTest:
     page = _scenarios_page(monkeypatch, api_url)
-
-    page.radio(key="kind").set_value("Trading Bloc preset").run()
     page.selectbox(key="preset").set_value("cptpp").run()
     page.button(key="run").click().run()
-
     assert not page.exception
-    text = " ".join(element.value for element in page.markdown)
-    assert "associates" in text
-    markets = page.dataframe[0].value
-    assert set(markets["Market"]) == {"Japan", "Canada"}
+    return page
 
 
-def test_a_custom_scenario_shows_blocked_opportunities_and_a_drill_down(monkeypatch, api_url):
+def _run_india(monkeypatch, api_url, *, thresholds_off: bool = False) -> AppTest:
     page = _scenarios_page(monkeypatch, api_url)
-
     page.radio(key="kind").set_value("Custom Trade Agreements").run()
     page.multiselect(key="add").set_value(["IND"]).run()
-    page.number_input(key="min_share").set_value(0.0).run()
-    page.number_input(key="min_usd").set_value(0.0).run()
+    if thresholds_off:
+        page.number_input(key="min_share").set_value(0.0).run()
+        page.number_input(key="min_usd").set_value(0.0).run()
     page.button(key="run").click().run()
+    assert not page.exception
+    return page
+
+
+def _page_text(page: AppTest) -> str:
+    return " ".join(
+        str(element.value) for element in [*page.markdown, *page.caption, *page.info, *page.warning, *page.subheader]
+    )
+
+
+def _stale(page: AppTest) -> list[str]:
+    return [element.value for element in [*page.info, *page.warning] if "Run Scenario" in element.value]
+
+
+def test_the_page_is_empty_until_a_scenario_is_run(monkeypatch, api_url):
+    page = _scenarios_page(monkeypatch, api_url)
 
     assert not page.exception
-    assert any("Blocked Opportunities" in element.value for element in page.subheader)
-    page.selectbox(key="drill_market").set_value("IND").run()
-    pairs = page.dataframe[-1].value
-    assert len(pairs) == 5 and set(pairs["Market"]) == {"India"}
-    effects = list(pairs["Scenario Effect, illustrative (USD, nominal)"])
+    assert not page.dataframe and not page.metric
+    assert "Change per Market" not in _page_text(page)
+
+    page.selectbox(key="preset").set_value("cptpp").run()
+    assert not page.dataframe  # choosing a Scenario does not run it
+
+    page.button(key="run").click().run()
+    assert page.dataframe and page.metric
+    assert "Change per Market" in _page_text(page)
+
+
+def test_the_builder_has_no_sidebar_controls(monkeypatch, api_url):
+    page = _run_cptpp(monkeypatch, api_url)
+
+    sidebar = page.sidebar
+    assert not [*sidebar.radio, *sidebar.selectbox, *sidebar.multiselect, *sidebar.number_input, *sidebar.button]
+
+
+def test_a_preset_scenario_shows_an_associational_summary_and_markets(monkeypatch, api_url):
+    page = _run_cptpp(monkeypatch, api_url)
+
+    assert "associates" in " ".join(element.value for element in page.markdown)
+    assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan", "Canada"}
+
+
+def test_a_line_says_when_the_controls_differ_from_the_result_shown(monkeypatch, api_url):
+    page = _run_cptpp(monkeypatch, api_url)
+    assert not _stale(page)
+
+    page.selectbox(key="preset").set_value("eu_rejoin").run()
+    assert _stale(page)
+    assert page.dataframe  # the earlier result stays on screen under the line
+
+    page.selectbox(key="preset").set_value("cptpp").run()
+    assert not _stale(page)  # back to the controls of the result shown
+
+    page.number_input(key="min_share").set_value(0.0).run()
+    assert _stale(page)
+    page.button(key="run").click().run()
+    assert not _stale(page)
+
+
+def test_the_top_market_drives_the_drill_down_on_open(monkeypatch, api_url):
+    top = httpx.post(f"{api_url}/scenarios", json={"preset": "cptpp", "limit": 100}).json()["markets"][0]
+
+    page = _run_cptpp(monkeypatch, api_url)
+
+    assert f"Pairs most affected in {top['market']}" in _page_text(page)
+    assert not [box for box in page.selectbox if box.key == "drill_market"]  # no Market picker
+
+
+def test_a_selected_market_drives_the_drill_down(monkeypatch, api_url):
+    posted = []
+    original = client.post
+
+    def record(path, body):
+        posted.append(body)
+        return original(path, body)
+
+    monkeypatch.setattr(client, "post", record)
+    streamlit.cache_data.clear()  # earlier tests may have cached this Scenario's responses
+    page = _run_cptpp(monkeypatch, api_url)
+    page.session_state["scenario_market"] = "CAN"
+    page.run()
+
+    assert not page.exception
+    assert any(body.get("market") == "CAN" for body in posted)
+    assert "Pairs most affected in Canada" in _page_text(page)
+    canada = httpx.post(f"{api_url}/scenarios", json={"preset": "cptpp", "market": "CAN", "limit": 50}).json()
+    assert list(page.dataframe[DRILL_DOWN].value["Product"]) == [row["description"] for row in canada["top_pairs"]]
+
+
+def test_drill_down_pairs_are_largest_effect_first(monkeypatch, api_url):
+    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+
+    pairs = page.dataframe[DRILL_DOWN].value
+    assert len(pairs) == 5
+    effects = list(pairs["Scenario Effect"])
     assert effects == sorted(effects, reverse=True)
+
+
+@pytest.mark.parametrize("remembered", ["scenario_drill_pair", "scenario_blocked_pair"])
+def test_a_selected_pair_shows_its_box_with_a_link_to_the_leaderboard(monkeypatch, api_url, remembered):
+    pair = httpx.post(f"{api_url}/scenarios", json=INDIA).json()["blocked_opportunities"][1]
+
+    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    assert not page.page_link  # no pair chosen yet
+    page.session_state[remembered] = {"hs6": pair["hs6"], "iso3": pair["iso3"]}
+    page.run()
+
+    assert not page.exception
+    [link] = page.page_link
+    assert "Leaderboard" in link.proto.label
+    assert sorted(link.proto.query_string.split("&")) == sorted([f"product={pair['hs6']}", f"market={pair['iso3']}"])
+    labels = [metric.label for metric in page.metric]
+    assert pair["description"] in _page_text(page)
+    assert any("Scenario Effect" in label for label in labels)
+    assert {"Tariff, Baseline", "Tariff, Scenario"} <= set(labels)
+
+
+def test_a_remembered_pair_not_in_the_rows_shows_no_box(monkeypatch, api_url):
+    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    page.session_state["scenario_blocked_pair"] = {"hs6": "000000", "iso3": "IND"}
+    page.run()
+
+    assert not page.exception
+    assert not page.page_link
+
+
+def test_money_columns_are_numeric_millions_with_the_unit_stated_once(monkeypatch, api_url):
+    result = httpx.post(f"{api_url}/scenarios", json=INDIA).json()
+
+    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+
+    blocked = page.dataframe[BLOCKED].value
+    assert pd.api.types.is_float_dtype(blocked["Scenario Effect"])
+    assert list(blocked["Scenario Effect"]) == pytest.approx(
+        [row["effect_usd"] / 1e6 for row in result["blocked_opportunities"]]
+    )
+    assert list(blocked["Actual Exports"]) == pytest.approx(
+        [row["baseline_actual_exports_usd"] / 1e6 for row in result["blocked_opportunities"]]
+    )
+    for frame in page.dataframe:
+        for column in ("Baseline", "Scenario"):
+            assert pd.api.types.is_float_dtype(frame.value[column])
+        assert not [heading for heading in frame.value.columns if "USD" in heading or "$" in heading]
+    assert "$ millions" in _page_text(page)
+
+
+def test_short_headings_carry_tooltips(monkeypatch, api_url):
+    word = httpx.get(f"{api_url}/labels").json()["illustrative"]["badge"].lower()
+
+    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+
+    blocked = page.dataframe[BLOCKED]
+    assert list(blocked.value.columns)[:2] == ["Product", "Market"]
+    for heading in (
+        "Scenario Effect", "Effect, % of Baseline", "Baseline", "Scenario", "Actual Exports",
+        "Tariff, Baseline %", "Tariff, Scenario %",
+    ):
+        assert heading in blocked.value.columns
+    config = json.loads(blocked.proto.columns)
+    effect = next(value for key, value in config.items() if "Scenario Effect" in key)
+    assert word in effect["help"].lower()
+    assert "Pairs changed" in page.dataframe[MARKETS].value.columns
+
+
+def test_blocked_opportunities_leave_no_pair_out_for_its_actual_exports(monkeypatch, api_url):
+    result = httpx.post(f"{api_url}/scenarios", json=INDIA).json()
+
+    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+
+    assert len(page.dataframe[BLOCKED].value) == result["blocked_count"]
+    assert any(row["baseline_actual_exports_usd"] > 0 for row in result["blocked_opportunities"])
 
 
 def test_a_scenario_that_changes_nothing_says_so(monkeypatch, api_url):
@@ -68,20 +235,7 @@ def test_a_scenario_that_changes_nothing_says_so(monkeypatch, api_url):
     assert not page.dataframe
 
 
-def _run_india(monkeypatch, api_url) -> AppTest:
-    page = _scenarios_page(monkeypatch, api_url)
-    page.radio(key="kind").set_value("Custom Trade Agreements").run()
-    page.multiselect(key="add").set_value(["IND"]).run()
-    page.button(key="run").click().run()
-    assert not page.exception
-    return page
-
-
-def _page_text(page: AppTest) -> str:
-    return " ".join(element.value for element in [*page.markdown, *page.caption, *page.info, *page.warning])
-
-
-def test_the_note_is_not_shown_above_the_inputs_before_a_run(monkeypatch, api_url, fixture_artefacts):
+def test_the_note_is_not_shown_before_a_run(monkeypatch, api_url, fixture_artefacts):
     page = _scenarios_page(monkeypatch, api_url)
 
     note_text = httpx.get(f"{api_url}/labels").json()["illustrative"]["text"]
@@ -103,34 +257,13 @@ def test_a_run_shows_the_apis_scenario_note_beside_the_scenario_effect(monkeypat
     assert note["blend"]["text"] in text
 
 
-def test_scenario_effect_column_headings_say_illustrative(monkeypatch, api_url):
+def test_the_scenario_effect_figure_says_illustrative(monkeypatch, api_url):
     word = httpx.get(f"{api_url}/labels").json()["illustrative"]["badge"].lower()
 
     page = _run_india(monkeypatch, api_url)
 
-    headings = [column for frame in page.dataframe for column in frame.value.columns if "Scenario Effect" in column]
-    assert headings and all(word in heading for heading in headings)
-    assert all(word in metric.label for metric in page.metric if "Scenario Effect" in metric.label)
-
-
-def test_the_drill_down_asks_the_api_for_the_chosen_markets_own_top_pairs(monkeypatch, api_url):
-    posted = []
-    original = client.post
-
-    def record(path, body):
-        posted.append(body)
-        return original(path, body)
-
-    monkeypatch.setattr(client, "post", record)
-    streamlit.cache_data.clear()  # earlier tests may have cached this Scenario's responses
-    page = _scenarios_page(monkeypatch, api_url)
-    page.selectbox(key="preset").set_value("cptpp").run()
-    page.button(key="run").click().run()
-    page.selectbox(key="drill_market").set_value("CAN").run()
-
-    assert not page.exception
-    assert any(body.get("market") == "CAN" for body in posted)
-    assert set(page.dataframe[-1].value["Market"]) == {"Canada"}
+    effects = [metric.label for metric in page.metric if "Scenario Effect" in metric.label]
+    assert effects and all(word in label for label in effects)
 
 
 def test_threshold_inputs_default_to_the_apis_thresholds(monkeypatch, api_url):
@@ -139,6 +272,15 @@ def test_threshold_inputs_default_to_the_apis_thresholds(monkeypatch, api_url):
 
     assert page.number_input(key="min_share").value == defaults["min_effect_share"] * 100
     assert page.number_input(key="min_usd").value == defaults["min_effect_usd"] / 1e6
+
+
+def test_tariff_sectors_are_offered_by_name(monkeypatch, api_url):
+    page = _scenarios_page(monkeypatch, api_url)
+    page.radio(key="kind").set_value("Tariff change").run()
+
+    offered = " ".join(page.multiselect(key="tariff_sectors").options)
+    for sector in httpx.get(f"{api_url}/sectors").json():
+        assert sector["name"] in offered
 
 
 def test_the_tariff_mode_runs_and_says_when_the_effect_flattens_beyond_the_training_range(monkeypatch, api_url):
@@ -153,8 +295,7 @@ def test_the_tariff_mode_runs_and_says_when_the_effect_flattens_beyond_the_train
     assert "associates" in " ".join(element.value for element in page.markdown)
     clip = [element.value for element in page.warning if "training range" in element.value]
     assert clip and "5" in clip[0]  # the clipped pairs, counted by the API
-    pairs = page.dataframe[-1].value
-    assert set(pairs["Market"]) == {"Japan"}
+    assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan"}
 
 
 def test_a_tariff_within_the_training_range_shows_no_clip_message(monkeypatch, api_url):
@@ -168,4 +309,4 @@ def test_a_tariff_within_the_training_range_shows_no_clip_message(monkeypatch, a
 
     assert not page.exception
     assert not [element.value for element in page.warning if "training range" in element.value]
-    assert set(page.dataframe[0].value["Market"]) == {"Japan"}
+    assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan"}
