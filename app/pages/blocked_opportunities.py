@@ -6,9 +6,9 @@ figure is for the Baseline year.
 
 One cached read (`/opportunities/blocked`) gives every filtered Blocked Opportunity (up to `app.ui.read_limit()`),
 the summary, the per-Market totals and the default thresholds. Left, the Markets table, largest total first; clicking
-any value chooses a Market, remembered under `MARKET`. Right, the chosen Market's Products, every one of them, and under it the detail panel
-(`app.panel`) of the chosen Product, remembered as (HS6, ISO3) under `PAIR`. Until one is chosen, or when the chosen
-one is not shown, the top row is. Filters are `app.filters.blocked_filters`, kept apart from the Leaderboard's.
+any value chooses a Market, remembered under `MARKET`. Right, the chosen Market's Products, every one of them, and
+under it the detail panel (`app.panel`) of the chosen Product, remembered as (HS6, ISO3) under `PAIR`. Until one is
+chosen, or when the chosen one is not shown, the top row is. Filters are `app.filters.blocked_filters`, kept apart from the Leaderboard's.
 """
 
 import streamlit as st
@@ -120,7 +120,8 @@ with page(
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
     else:
-        summary, rows, year, thresholds = body["summary"], body["opportunities"], body["baseline_year"], body["thresholds"]
+        summary, rows, year = body["summary"], body["opportunities"], body["baseline_year"]
+        thresholds = body["thresholds"]
         count, word = summary["blocked_opportunities"], illustrative()
         in_force = "; ".join(filters.named) if filters.named else "No filters"
         st.markdown(

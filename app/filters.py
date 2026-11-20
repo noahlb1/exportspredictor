@@ -19,8 +19,8 @@ Show all (`show_all`, the toggle above the Leaderboard's table) is kept in the U
 filter.
 
 The Leaderboard's widget keys are the parameter names (plus `product_query`, the search text, which is not in the
-URL). The Blocked Opportunities page keeps its own filter state: its keys carry the `BLOCKED` prefix (`blocked_sector`,
-...), while its URL uses the same parameter names.
+URL). The Blocked Opportunities page keeps its own filter state: its keys carry `BLOCKED_KEY_PREFIX`
+(`blocked_sector`, ...), while its URL uses the same parameter names.
 """
 
 from collections.abc import Callable
@@ -45,7 +45,8 @@ from app.ui import (
 QUERY = "product_query"  # the Product search text; the chosen Product's HS6 code is the `product` parameter
 # Show all: every filtered row read (up to `read_limit()`) instead of the top `ROWS_SHOWN`; not an API filter
 SHOW_ALL = "show_all"
-BLOCKED = "blocked_"  # the prefix of the Blocked Opportunities page's widget keys, apart from the Leaderboard's
+# The prefix of the Blocked Opportunities page's widget keys, apart from the Leaderboard's
+BLOCKED_KEY_PREFIX = "blocked_"
 _AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
 _YES_NO = {"yes": True, "no": False}
 _TRUE = "true"
@@ -65,11 +66,16 @@ class Param:
     from_url: Callable[[str], Any] = str
 
 
+def _flag(name: str) -> Param:
+    """A switch kept in the URL as `name=true` while on (and left out while off)."""
+    return Param(name, to_url=lambda value: _TRUE, from_url=lambda text: text == _TRUE)
+
+
 _PRODUCT = Param("product")  # HS6 code
 _SECTOR = Param("sector")  # HS2 chapter
 _REGION = Param("region")
-_HIDE_FLAGGED = Param("hide_flagged", to_url=lambda value: _TRUE, from_url=lambda text: text == _TRUE)
-_HIDE_HUBS = Param("hide_hubs", to_url=lambda value: _TRUE, from_url=lambda text: text == _TRUE)
+_HIDE_FLAGGED = _flag("hide_flagged")
+_HIDE_HUBS = _flag("hide_hubs")
 
 PARAMS = [
     _PRODUCT,
@@ -83,7 +89,7 @@ PARAMS = [
     _HIDE_HUBS,
     Param("rank_by"),
     Param("min_potential_usd", to_url=_number, from_url=float),
-    Param(SHOW_ALL, to_url=lambda value: _TRUE, from_url=lambda text: text == _TRUE),
+    _flag(SHOW_ALL),
 ]
 BLOCKED_PARAMS = [
     _PRODUCT,
@@ -140,7 +146,7 @@ def reset() -> None:
 
 def reset_blocked() -> None:
     """Reset the Blocked Opportunities page's filters, as `reset` does the Leaderboard's."""
-    st.session_state.update(_keyed(_blocked_defaults(), BLOCKED))
+    st.session_state.update(_keyed(_blocked_defaults(), BLOCKED_KEY_PREFIX))
 
 
 def _written(prefix: str) -> str:
@@ -274,22 +280,23 @@ def blocked_filters() -> Filters:
     """Draw the Blocked Opportunities page's filters in the sidebar, under its own keys, kept in the URL and for the
     session; return those in force. There is no Market, order, Opportunity Type or Trade Agreement filter."""
     defaults = _blocked_defaults()
-    _start(BLOCKED_PARAMS, defaults, BLOCKED)
+    _start(BLOCKED_PARAMS, defaults, BLOCKED_KEY_PREFIX)
     with st.sidebar:
         st.header("Filters")
-        product, found = _product_search(BLOCKED)
-        sector, sectors = _sector(BLOCKED)
+        product, found = _product_search(BLOCKED_KEY_PREFIX)
+        sector, sectors = _sector(BLOCKED_KEY_PREFIX)
         markets = fetch("/markets", client.api_url())
         region = st.selectbox(
             "Market region", [None, *sorted({market["region"] for market in markets})],
-            format_func=lambda r: "All regions" if r is None else r, key=f"{BLOCKED}region", persist_state="session",
+            format_func=lambda r: "All regions" if r is None else r, key=f"{BLOCKED_KEY_PREFIX}region",
+            persist_state="session",
         )
         min_value_usd = st.number_input(
             f"Minimum Blocked Opportunity value ({usd_unit()})", value=None, step=1_000_000.0,
-            key=f"{BLOCKED}min_value_usd", persist_state="session",
+            key=f"{BLOCKED_KEY_PREFIX}min_value_usd", persist_state="session",
         )
-        hide_flagged, hide_hubs = _hide(BLOCKED)
-        st.button("Reset filters", key=f"{BLOCKED}reset_filters", on_click=reset_blocked)
+        hide_flagged, hide_hubs = _hide(BLOCKED_KEY_PREFIX)
+        st.button("Reset filters", key=f"{BLOCKED_KEY_PREFIX}reset_filters", on_click=reset_blocked)
 
     values = {
         "product": product,
@@ -299,7 +306,7 @@ def blocked_filters() -> Filters:
         "hide_flagged": hide_flagged,
         "hide_hubs": hide_hubs,
     }
-    _write_url(BLOCKED_PARAMS, values, defaults, BLOCKED)
+    _write_url(BLOCKED_PARAMS, values, defaults, BLOCKED_KEY_PREFIX)
     params = {**values, "hide_flagged": hide_flagged or None, "hide_hubs": hide_hubs or None}
     named = []
     if product:
