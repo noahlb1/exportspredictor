@@ -9,8 +9,10 @@ The Leaderboard shows the whole panel with `show(row)`, in order:
    Trade Agreement), the factors and the year-by-year history.
 
 A page with another opening (Blocked Opportunities leads with the Barrier, then its own three figures) reads the
-explanation with `explanation(row)`, draws `opening`, `barrier(row, body, note=...)` and its figures itself, then
-`from_facts(row, body, with_barrier=False, with_gap=False)`: without the Export Gap, which that page does not show.
+explanation with `explanation(row)`, draws `barrier(row, body, note=..., titled=True)` (the box headed by the pair),
+`opening(row, body, titled=False)` and its figures itself, then
+`from_facts(row, body, with_barrier=False, with_gap=False)`: without the Export Gap figures, which that page does not
+show.
 
 A row is a ranking row (`/opportunities/top`, `/opportunities/blocked`): it carries the pair's names, caveats, Trade
 Agreement, Applied Tariff and Blocked Opportunity value. The explanation carries the Gap Period figures, the factors
@@ -21,7 +23,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client
-from app.format import format_usd
+from app.format import format_usd, tariff_text
 from app.tables import MILLION, millions, millions_unit, money_column
 from app.ui import fetch, labels, show_caveats, term
 
@@ -50,13 +52,19 @@ def show(row: dict) -> None:
     from_facts(row, body)
 
 
-def opening(row: dict, body: dict) -> None:
-    """The pair, what it is, its caveats and, when the Baseline year's Applied Tariff is carried forward, that warning."""
-    st.subheader(f"{row['description']} → {row['market']}")
+def opening(row: dict, body: dict, *, titled: bool = True) -> None:
+    """The pair (unless `titled` is False: a box above already names it), what it is, its caveats and, when the
+    Baseline year's Applied Tariff is carried forward, that warning."""
+    if titled:
+        st.subheader(_title(row))
     st.caption(f"HS6 {row['hs6']} · {row['sector_name']} · {row['region']}")
     show_caveats(row)
     if body["tariff_caveat"]:
         st.warning(body["tariff_caveat"])
+
+
+def _title(row: dict) -> str:
+    return f"{row['description']} → {row['market']}"
 
 
 def figures(body: dict) -> None:
@@ -70,8 +78,8 @@ def figures(body: dict) -> None:
 
 def from_facts(row: dict, body: dict, *, with_barrier: bool = True, with_gap: bool = True) -> None:
     """The panel from its facts table on: the facts, the Barrier (unless the page led with it), the factors and the
-    year-by-year history. `with_gap=False` leaves out the Export Gap and the figures read against it (the Relative
-    Export Gap and the Potential Range), for a page that shows Baseline-year figures only."""
+    year-by-year history. `with_gap=False` leaves out the Export Gap figures (the Relative Export Gap and each year's
+    Export Gap), for a page that shows Baseline-year figures only."""
     facts(row, body, with_gap=with_gap)
     if with_barrier:
         barrier(row, body)
@@ -79,13 +87,9 @@ def from_facts(row: dict, body: dict, *, with_barrier: bool = True, with_gap: bo
     history(body, with_gap=with_gap)
 
 
-def _tariff(row: dict) -> str:
-    return "not known" if row["applied_tariff_pct"] is None else f"{row['applied_tariff_pct']:.1f}%"
-
-
 def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
     """The facts table, the Barrier's figures first: one line per fact, with a tooltip where a fact needs one.
-    `with_gap=False` leaves out the Relative Export Gap and the Potential Range."""
+    `with_gap=False` leaves out the Relative Export Gap."""
     year = body["baseline_year"]
     kind = body["opportunity_type"]
     kinds = term("opportunity_type")
@@ -97,7 +101,7 @@ def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
     lines = [
         (
             f"Applied Tariff, {year}",
-            _tariff(row),
+            tariff_text(row["applied_tariff_pct"]),
             f"The tariff the Market charges on this Product from the UK in the Baseline year {year}.",
         ),
         ("UK Trade Agreement in force", "Yes" if row["trade_agreement"] else "No", None),
@@ -122,27 +126,30 @@ def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
         ),
     ]
     if not with_gap:
-        lines = lines[:4]  # the Applied Tariff, UK Trade Agreement, Blocked Opportunity value and Opportunity Type
+        lines = [line for line in lines if line[0] != "Relative Export Gap"]
     with st.container(border=True):
         for name, text, tip in lines:
             st.markdown(f"**{name}:** {text}", help=tip)
 
 
-def barrier(row: dict, body: dict, note: str | None = None) -> None:
+def barrier(row: dict, body: dict, note: str | None = None, *, titled: bool = False) -> None:
     """The Barrier, only for a pair with no UK Trade Agreement: its Applied Tariff and the Illustrative amount the
     model associates with adding an agreement. A warning when the pair is a Blocked Opportunity. `note` adds a
-    sentence of the calling page's own."""
+    sentence of the calling page's own; `titled` heads the box with the pair, for a panel that opens with it."""
     if row["trade_agreement"]:
         return
     badge = labels()["illustrative"]["badge"]
     text = (
         f"**The Barrier.** No UK Trade Agreement is in force with {row['market']}, and the Applied Tariff is "
-        f"{_tariff(row)}. The model associates adding a Trade Agreement, and removing the tariff, with "
+        f"{tariff_text(row['applied_tariff_pct'])}. The model associates adding a Trade Agreement, and removing the "
+        "tariff, with "
         f"**{format_usd(row['blocked_opportunity_value_usd'])}** more {body['baseline_year']} Export Potential. "
         f"{badge}: a tendency the model has learned, not a forecast."
     )
     if note:
         text += f" {note}"
+    if titled:
+        text = f"**{_title(row)}**\n\n{text}"
     if row["blocked_opportunity"]:
         st.warning(text)
     else:

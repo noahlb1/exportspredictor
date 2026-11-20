@@ -34,3 +34,8 @@ def years_text(years: list[int]) -> str:
 def number_text(value: float | None, spec: str) -> str:
     """`value` formatted with `spec`, or "n/a" where it is missing."""
     return "n/a" if value is None else format(value, spec)
+
+
+def tariff_text(percent: float | None) -> str:
+    """An Applied Tariff in percent to one decimal, e.g. "12.5%", or "not known" where it is missing."""
+    return "not known" if percent is None else f"{percent:.1f}%"

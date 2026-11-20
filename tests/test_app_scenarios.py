@@ -310,3 +310,36 @@ def test_a_tariff_within_the_training_range_shows_no_clip_message(monkeypatch, a
     assert not page.exception
     assert not [element.value for element in page.warning if "training range" in element.value]
     assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan"}
+
+
+# --- Final review of #103: click-to-select as on the other pages, adaptive money in sentences ----------------------
+
+
+def test_rows_are_chosen_by_clicking_any_value_as_on_the_leaderboard(monkeypatch, api_url):
+    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
+    leaderboard = run_page()
+    clicked_any_value = list(leaderboard.dataframe[0].proto.selection_mode)
+
+    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+
+    for table in (MARKETS, DRILL_DOWN, BLOCKED):
+        assert list(page.dataframe[table].proto.selection_mode) == clicked_any_value
+    assert not list(page.dataframe[PRODUCTS].proto.selection_mode)  # Top Products gaining opens nothing
+
+
+def test_choosing_a_pair_keeps_the_market_and_the_other_table_unchanged(monkeypatch, api_url):
+    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    pair = httpx.post(f"{api_url}/scenarios", json=INDIA).json()["blocked_opportunities"][0]
+
+    page.session_state["scenario_blocked_pair"] = {"hs6": pair["hs6"], "iso3": pair["iso3"]}
+    page.run()
+
+    assert not page.exception
+    assert len(page.page_link) == 1  # only the Blocked Opportunities table opens a pair's box
+
+
+def test_the_blocked_opportunities_line_states_the_threshold_in_the_adaptive_form(monkeypatch, api_url):
+    page = _run_india(monkeypatch, api_url)  # the default thresholds: 20% and $1M
+
+    line = next(element.value for element in page.caption if "whatever their Actual Exports" in element.value)
+    assert "$1.0m" in line and "$1,000,000" not in line

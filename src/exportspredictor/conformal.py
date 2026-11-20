@@ -81,8 +81,8 @@ def potential_range_text(low_usd: float, high_usd: float, actual_exports_usd: fl
     )
     if uncertain:
         return text + (
-            f"UK Actual Exports of {format_usd(actual_exports_usd)} lie inside it, so this Export Gap is within "
-            "the variation normally seen among comparable pairs: an Uncertain Opportunity."
+            f"UK Actual Exports of {format_usd(actual_exports_usd)} lie inside it, within the variation "
+            "normally seen among comparable pairs: an Uncertain Opportunity."
         )
     where = "below" if actual_exports_usd < low_usd else "above" if actual_exports_usd > high_usd else "inside"
     return text + f"UK Actual Exports of {format_usd(actual_exports_usd)} lie {where} it."

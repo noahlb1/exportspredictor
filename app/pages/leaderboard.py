@@ -2,7 +2,7 @@
 table, so Advisors see the top Opportunities without searching. Its filters sit in the sidebar and in the URL
 (`app.filters`); a Product search or a Market filter ranks one Product's Markets or one Market's Products.
 
-One cached read of up to `READ_LIMIT` rows per filter set: the page shows the top `ROWS_SHOWN` of them (all of them
+One cached read of up to `read_limit()` rows per filter set: the page shows the top `ROWS_SHOWN` of them (all of them
 with Show all), and the CSV holds them all, in full dollars.
 
 Clicking any value of a row chooses its pair, remembered as (HS6, ISO3) under `PAIR`, and the detail panel
@@ -27,11 +27,11 @@ from app.tables import (
     pick_row,
 )
 from app.ui import (
-    READ_LIMIT,
     ROWS_SHOWN,
     caveats,
     fetch,
     rank_orders,
+    read_limit,
 )
 
 PAIR = "leaderboard_pair"  # the chosen pair, (HS6, ISO3)
@@ -108,7 +108,7 @@ with page(
     _three_steps()
     try:
         filters = leaderboard_filters()
-        body = fetch("/opportunities/top", client.api_url(), **filters.params, limit=READ_LIMIT)
+        body = fetch("/opportunities/top", client.api_url(), **filters.params, limit=read_limit())
     except client.NotFound as error:
         # An Excluded Product chosen in the search (or named in a link): its reason, and no ranking.
         st.warning(str(error))
@@ -125,7 +125,7 @@ with page(
         line = st.empty()  # the active-filters line, written once Show all is known
         rows = read if show_all(pairs) else read[:ROWS_SHOWN]
         in_force = "; ".join(filters.named) if filters.named else "No filters"
-        if pairs > READ_LIMIT:
+        if pairs > read_limit():
             shown = f"Top {len(rows):,} of {pairs:,} pairs: narrow them down with the filters to show them all."
         else:
             shown = f"{len(rows):,} pair{'' if len(rows) == 1 else 's'} shown of {pairs:,}."

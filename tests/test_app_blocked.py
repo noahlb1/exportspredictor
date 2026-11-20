@@ -290,3 +290,52 @@ def test_with_no_benchmark_or_event_backtests_the_note_keeps_the_label_and_says_
     assert note["label"] in text and note["text"] in text
     for part in ("benchmark", "model_association", "event_backtest"):
         assert note[part]["run"] is False and note[part]["text"] in text
+
+
+# --- Final review of #103: the Barrier first, Potential Range kept, one read ---------------------------------------
+
+
+def _in_order(page: AppTest) -> list:
+    """Every element of the main area, in the order the page draws them."""
+    return list(page.main)  # depth first: each block, then what it holds
+
+
+def test_the_panel_opens_with_the_barrier_box_headed_by_the_pair_then_its_caveats(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), JEWELLERY, "HKG")  # a Re-export Hub: it has a caveat
+
+    texts = [str(getattr(node, "value", "")) for node in _in_order(page)]
+    barrier = next(i for i, text in enumerate(texts) if "The Barrier" in text)
+    assert "Articles of jewellery" in texts[barrier] and "Hong Kong" in texts[barrier]
+    hs6 = next(i for i, text in enumerate(texts) if text.startswith(f"HS6 {JEWELLERY}"))
+    caveat = next(i for i, text in enumerate(texts) if text.startswith("Re-export Hub"))
+    assert barrier < hs6 and barrier < caveat
+    assert not [element for element in page.subheader if "Hong Kong" in element.value]  # the box names the pair
+
+
+def test_the_facts_keep_the_potential_range_but_no_relative_export_gap(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
+
+    facts = [element.value for element in page.markdown if element.value.startswith("**") and ":**" in element.value]
+    assert any(fact.startswith("**Potential Range:**") for fact in facts)
+    assert not [fact for fact in facts if "Relative Export Gap" in fact]
+
+
+def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatch, blocked_api_url):
+    from app import client
+
+    paths = []
+    original = client.get
+
+    def record(path, **params):
+        paths.append(path)
+        return original(path, **params)
+
+    monkeypatch.setattr(client, "get", record)
+    streamlit.cache_data.clear()
+    page = _page(monkeypatch, blocked_api_url)
+
+    assert not page.exception
+    assert "/scenarios/thresholds" not in paths
+    assert paths.count("/opportunities/blocked") == 1
+    caption = " ".join(element.value for element in page.caption)
+    assert "20%" in caption and "$1.0m" in caption

@@ -1278,3 +1278,33 @@ def test_the_term_definitions_take_the_gap_period_label_from_the_artefact(fixtur
         terms = constructed.get("/labels").json()["terms"]
 
     assert "(2021–2023 average)" in terms["actual_exports"] and "(2021–2023 average)" in terms["export_gap"]
+
+
+# --- One definition of the row cap, one read on Blocked Opportunities, reasons counted (#103 review) ---------------
+
+
+def test_labels_serve_the_most_rows_a_ranking_read_returns(client):
+    assert client.get("/labels").json()["max_rows"] == 6000
+
+
+def test_the_blocked_opportunities_read_carries_the_default_thresholds(blocked_client):
+    thresholds = blocked_client.get(BLOCKED_READ).json()["thresholds"]
+
+    assert thresholds == {"min_effect_share": 0.2, "min_effect_usd": 1_000_000.0}
+
+
+def test_excluded_product_reasons_are_counted_most_products_first(fixture_artefacts, tmp_path):
+    fuels, bullion = "Mineral fuels: pipeline geography", "Bullion: market geography"
+    excluded = pl.DataFrame(
+        {
+            "hs6": ["271011", "710812", "270900"],
+            "description": ["Light petroleum oils", "Gold, unwrought", "Crude petroleum oils"],
+            "sector": ["27", "71", "27"],
+            "reason": [fuels, bullion, fuels],
+        }
+    )
+    store.save(replace(fixture_artefacts, excluded_products=excluded), tmp_path)
+    with TestClient(create_app(tmp_path)) as constructed:
+        reasons = constructed.get("/products/excluded/reasons").json()
+
+    assert reasons == [{"reason": fuels, "products": 2}, {"reason": bullion, "products": 1}]
