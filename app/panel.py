@@ -178,6 +178,7 @@ def factors(body: dict) -> None:
                     "type": "quantitative",
                     "scale": {"type": "log"},
                     "title": "Association with Export Potential (×1 = no effect)",
+                    "axis": {"titleAnchor": "end"},  # a centred title runs off the right of a narrow panel
                 },
                 "tooltip": [
                     {"field": "label", "title": "Factor"},
