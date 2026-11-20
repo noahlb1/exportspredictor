@@ -375,3 +375,16 @@ def test_loop_results_validated_on_another_year_are_refused(world, artefacts):
 
     with pytest.raises(ValueError, match="validated on 2021"):
         build_artefacts(world, version="mismatch", search_results=artefacts.metadata["search"], ranking_results=ranking)
+
+
+def test_loop_results_chosen_on_another_feature_set_are_refused(world, artefacts):
+    """#127: the loop kept its configuration on the rebuilt `exporter_count` files; the build must read those."""
+    ranking = artefacts.metadata["ranking_experiments"]
+    rebuilt = {**ranking, "experiments": {**ranking["experiments"], "exporter count": {"feature_set": "exporter_count"}}}
+
+    with pytest.raises(ValueError, match="EXPORTSPREDICTOR_FEATURE_SET=exporter_count"):
+        build_artefacts(world, version="mismatch", search_results=artefacts.metadata["search"], ranking_results=rebuilt)
+
+
+def test_the_artefact_records_the_feature_set_it_was_built_from(artefacts):
+    assert artefacts.metadata["feature_set"] == ""  # the original files (the fixture's)

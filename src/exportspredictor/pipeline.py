@@ -85,12 +85,14 @@ from exportspredictor.exclusions import (
     is_excluded,
 )
 from exportspredictor.features import (
+    FEATURE_SET_ENV,
     FEATURES,
     GROWTH_YEARS,
     KEYS,
     MONOTONE_CONSTRAINTS,
     FeatureTransform,
     build_features,
+    feature_set,
     features_dir,
     grid_pairs,
     load_sources,
@@ -597,6 +599,11 @@ def _train_and_score(
     for name, results in (("hyperparameter search", search_results), ("experiment loop", ranking_results)):
         if results["validation_year"] != validation_year:
             raise ValueError(f"The {name} validated on {results['validation_year']}, not {validation_year}")
+    if selected.feature_set != feature_set():
+        raise ValueError(
+            f"The experiment loop kept its configuration on the feature set {selected.feature_set!r}, but this build "
+            f"reads {feature_set()!r}; set {FEATURE_SET_ENV}={selected.feature_set}"
+        )
     params, selected_rounds = selected.params, selected.rounds
     tuning_counts = count_rows([training[y] for y in tuning_years], uk=UK)
     training_rows, tuning_rows = counts.expected(non_uk_rate), tuning_counts.expected(selected.non_uk_rate)
@@ -703,6 +710,7 @@ def _train_and_score(
         "training_years": training_years,
         "n_folds": n_folds,
         "features": FEATURES,
+        "feature_set": selected.feature_set,  # the feature files read ("" is the original build; #127)
         "monotone_constraints": MONOTONE_CONSTRAINTS,
         # The served form and the experiments that chose it (spec #65, ADR 0008).
         "model_form": form.to_dict(),

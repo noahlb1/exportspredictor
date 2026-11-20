@@ -7,10 +7,15 @@ from pathlib import Path
 
 import polars as pl
 
-from exportspredictor import baci, experiments
+from exportspredictor import baci, experiments, market_reach
 from exportspredictor.evaluation import naive_from_totals
-from exportspredictor.experiments import Data
-from exportspredictor.features import feature_set, features_dir, fit_product_detail
+from exportspredictor.experiments import Data, uk_grid
+from exportspredictor.features import (
+    build_features,
+    feature_set,
+    features_dir,
+    fit_product_detail,
+)
 from exportspredictor.paths import data_dir
 
 RESULTS_FILE = "results.json"
@@ -33,6 +38,9 @@ class LoopData:
     # The feature set the rows come from (`features.feature_set`); "" is the original build. A
     # model cached on one set is never reused on another (`Loop`'s cache key).
     feature_set: str = ""
+    # The UK grid of the year Market Reach learns from (`market_reach.LAG_YEARS` before the validation
+    # year): hs6, importer, value_usd and the Market's demand; read only by an arm scored with Market Reach.
+    reach_source: Callable[[], pl.DataFrame] | None = None
 
     @property
     def validation_year(self) -> int:
@@ -96,7 +104,13 @@ def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR) -
     flows = world.flows.filter(pl.col("year") == validation_year)
     world_exports = world_products(world.flows.filter(pl.col("year") < validation_year))
     detail = fit_product_detail(world.flows, sorted(rows.training), uk=baci.UK)
-    return LoopData(data=rows, flows=lambda: flows, world_products=lambda: world_exports, product_detail=lambda: detail)
+    lag = validation_year - market_reach.LAG_YEARS
+    before = world.flows.filter(pl.col("year") <= lag)
+    reach = build_features(uk_grid(before.filter(pl.col("year") == lag), baci.UK), before, world.sources)
+    return LoopData(
+        data=rows, flows=lambda: flows, world_products=lambda: world_exports, product_detail=lambda: detail,
+        reach_source=lambda: reach,
+    )
 
 
 def real_data(root: Path | None = None, *, validation_year: int = experiments.VALIDATION_YEAR) -> LoopData:
@@ -133,9 +147,15 @@ def real_data(root: Path | None = None, *, validation_year: int = experiments.VA
         flows = pl.scan_parquet(files).select("exporter", "importer", "hs6", "year", "value_usd")
         return fit_product_detail(flows, years, uk=baci.UK)
 
+    def reach_source() -> pl.DataFrame:
+        # The same feature set's UK grid of the year before (2021 for 2022), as #124 measured it.
+        lag = validation_year - market_reach.LAG_YEARS
+        columns = ["hs6", "importer", "value_usd", market_reach.DEMAND]
+        return pl.read_parquet(folder / f"uk_grid_{lag}.parquet", columns=columns)
+
     return LoopData(
         data=rows, flows=flows, zero_seed=settings.get("zero_sampling_seed", 0), world_products=world_exports,
-        product_detail=product_detail, feature_set=name,
+        product_detail=product_detail, feature_set=name, reach_source=reach_source,
     )
 
 
