@@ -204,6 +204,13 @@ def _either(names: Iterable[str]) -> str:
     return f"{', '.join(rest)} or {last}" if rest else last
 
 
+def caveats_column() -> "st.column_config.TextColumn":
+    """Every table's Caveats column: each row's caveat badges (`ui.caveat_badges`)."""
+    return st.column_config.TextColumn(
+        "Caveats", help=f"{_either(tier['badge'] for tier in caveat_tiers())}: read this pair's figures with care."
+    )
+
+
 def leaderboard_columns(body: dict) -> dict:
     """The column config of `leaderboard_frame`: a tooltip on every heading, the four terms in the API's wording."""
     year, averaged = body["baseline_year"], body["gap_period_label"]
@@ -231,9 +238,7 @@ def leaderboard_columns(body: dict) -> dict:
         "Blocked Opportunity": st.column_config.CheckboxColumn(
             "Blocked Opportunity", help="The Blocked Opportunity value clears the default thresholds."
         ),
-        "Caveats": st.column_config.TextColumn(
-            "Caveats", help=f"{_either(tier['badge'] for tier in caveat_tiers())}: read this pair's figures with care."
-        ),
+        "Caveats": caveats_column(),
         "Opportunity Type": st.column_config.TextColumn("Opportunity Type", help=term("opportunity_type")),
         "Potential Range": st.column_config.TextColumn(
             "Potential Range",

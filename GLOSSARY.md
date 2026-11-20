@@ -46,8 +46,16 @@ _Avoid_: warning product, suspect product
 A Market that re-exports much of what it imports, so part of its demand belongs to other Markets. It is shown with a caveat and can be filtered out.
 _Avoid_: entrepôt, transit country
 
+**Sanctioned Market**:
+A Market under broad UK trade sanctions in the Baseline year. It is scored and ranked as normal, but shown with a caveat and can be filtered out.
+_Avoid_: embargoed market, closed market, blocked market
+
+**Restricted Pair**:
+A Product–Market pair whose trade the Market prohibits outright, such as alcoholic beverages into a Market that bans alcohol imports. It is scored and ranked as normal, but shown with a caveat and can be filtered out.
+_Avoid_: banned pair, prohibited product
+
 **Caveat Tier**:
-A group of Product–Market pairs, keyed on the Market, the Product or the pair, that is scored and ranked as normal but shown with one caveat, its badge and a filter to hide it. Flagged Products and Re-export Hubs are Caveat Tiers; Excluded Products are not, as they are left out.
+A group of Product–Market pairs, keyed on the Market, the Product or the pair, that is scored and ranked as normal but shown with one caveat, its badge and a filter to hide it. Flagged Products, Re-export Hubs, Sanctioned Markets and Restricted Pairs are Caveat Tiers; Excluded Products are not, as they are left out.
 _Avoid_: flag type, warning level
 
 **Relatedness**:

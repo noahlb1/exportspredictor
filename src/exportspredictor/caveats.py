@@ -16,8 +16,10 @@ can depend on the Baseline year (a sanctions regime in force that year) or, once
 other inputs the pipeline holds.
 
 To add a tier: declare it (its membership usually lives in a module of its own, as Flagged Products and Re-export
-Hubs live in `exclusions`), append it to `TIERS`, add its term to GLOSSARY.md, and write an artefact version whose
-Baseline carries its columns (`with_caveat_columns` over the saved Baseline). No API or app code changes.
+Hubs live in `exclusions`, and Sanctioned Markets and Restricted Pairs in `restrictions`), append it to `TIERS`, add
+its term to GLOSSARY.md, and write an artefact version whose Baseline carries its columns
+(`python -m exportspredictor.pipeline recaveat`, which applies `with_caveat_columns` to the saved Baseline). No API
+or app code changes.
 
 Excluded Products are not a tier: they are left out of scoring and rankings altogether (`exclusions`).
 """
@@ -33,6 +35,16 @@ from exportspredictor.exclusions import (
     REEXPORT_HUB_CAVEAT,
     flagged_product_expr,
     reexport_hub_expr,
+)
+from exportspredictor.restrictions import (
+    PROHIBITIONS,
+    SANCTIONS_REGIMES,
+    Prohibition,
+    SanctionsRegime,
+    restricted_pair_expr,
+    restriction_reason_expr,
+    sanction_reason_expr,
+    sanctioned_market_expr,
 )
 
 Key = Literal["market", "product", "pair"]
@@ -112,7 +124,55 @@ REEXPORT_HUB = CaveatTier(
     flags=lambda context: reexport_hub_expr(),
 )
 
-TIERS: tuple[CaveatTier, ...] = (FLAGGED_PRODUCT, REEXPORT_HUB)
+
+
+def sanctioned_market_tier(regimes: tuple[SanctionsRegime, ...] = SANCTIONS_REGIMES) -> CaveatTier:
+    """Sanctioned Markets: Markets under broad UK trade sanctions in the Baseline year (`restrictions`); each row's
+    reason names the regime and its start year. Tests pass their own `regimes`."""
+    return CaveatTier(
+        column="sanctioned_market",
+        badge="Sanctioned Market",
+        plural="Sanctioned Markets",
+        text=(
+            "Sanctioned Market: this Market is under broad UK trade sanctions in the Baseline year. It is scored and "
+            "ranked as normal, but much UK trade with it may be prohibited: check the sanctions guidance first."
+        ),
+        key="market",
+        hide_param="hide_sanctioned",
+        hide_description="Leave out Sanctioned Markets (under broad UK trade sanctions in the Baseline year)",
+        flags=lambda context: sanctioned_market_expr(context.baseline_year, regimes),
+        reason=lambda context: sanction_reason_expr(context.baseline_year, regimes),
+        row_text=(
+            "Sanctioned Market: this Market is under broad UK trade sanctions ({reason}). It is scored and ranked as "
+            "normal, but much UK trade with it may be prohibited: check the sanctions guidance first."
+        ),
+    )
+
+
+def restricted_pair_tier(prohibitions: tuple[Prohibition, ...] = PROHIBITIONS) -> CaveatTier:
+    """Restricted Pairs: pairs whose trade the Market prohibits outright (`restrictions`); each row's reason says
+    what the Market prohibits. Tests pass their own `prohibitions`."""
+    return CaveatTier(
+        column="restricted_pair",
+        badge="Restricted Pair",
+        plural="Restricted Pairs",
+        text=(
+            "Restricted Pair: the Market prohibits imports of this Product outright. It is scored and ranked as "
+            "normal, but it is not an open lead."
+        ),
+        key="pair",
+        hide_param="hide_restricted",
+        hide_description="Leave out Restricted Pairs (Products the Market prohibits outright, e.g. alcohol)",
+        flags=lambda context: restricted_pair_expr(prohibitions),
+        reason=lambda context: restriction_reason_expr(prohibitions),
+        row_text="Restricted Pair: {reason}. It is scored and ranked as normal, but it is not an open lead.",
+    )
+
+
+SANCTIONED_MARKET = sanctioned_market_tier()
+RESTRICTED_PAIR = restricted_pair_tier()
+
+TIERS: tuple[CaveatTier, ...] = (FLAGGED_PRODUCT, REEXPORT_HUB, SANCTIONED_MARKET, RESTRICTED_PAIR)
 
 
 def with_caveat_columns[T: (pl.DataFrame, pl.LazyFrame)](

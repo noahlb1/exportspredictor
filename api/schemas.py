@@ -638,6 +638,7 @@ class PairEffect(BaseModel):
     scenario_tariff_pct: float | None  # and under the Scenario (clipped to the training range)
     baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
     blocked_opportunity: bool
+    # `tiered` adds each Caveat Tier's column here (and its reason column, if any), as on ranking rows
 
 
 class NotePart(BaseModel):
@@ -773,6 +774,8 @@ class Tiered:
     ProductOpportunities: type[ProductOpportunities]
     MarketOpportunities: type[MarketOpportunities]
     Explanation: type[Explanation]
+    PairEffect: type[PairEffect]
+    ScenarioResponse: type[ScenarioResponse]
 
 
 def _rebuilt[M: BaseModel](model: type[M], *, after: str | None = None, added: dict | None = None, **replaced) -> type[M]:
@@ -792,8 +795,8 @@ def _rebuilt[M: BaseModel](model: type[M], *, after: str | None = None, added: d
 @cache
 def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
     """The models carrying `tiers`: each tier's hide filter on the ranking queries (after `region`), and its column
-    (then its reason column, if any) on ranking rows (after `blocked_opportunity`) and explanations (after
-    `opportunity_type`)."""
+    (then its reason column, if any) on ranking rows and Scenario pairs (after `blocked_opportunity`) and on
+    explanations (after `opportunity_type`)."""
     hides = {
         tier.hide_param: (bool, Field(False, description=tier.hide_description)) for tier in tiers
     }
@@ -806,6 +809,7 @@ def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
         _rebuilt(row, after="blocked_opportunity", added=columns)
         for row in (MarketOpportunity, ProductOpportunity, LeaderboardOpportunity, BlockedOpportunity)
     )
+    pair = _rebuilt(PairEffect, after="blocked_opportunity", added=columns)
     return Tiered(
         RankingQuery=_rebuilt(RankingQuery, after="region", added=hides),
         LeaderboardQuery=_rebuilt(LeaderboardQuery, after="region", added=hides),
@@ -819,4 +823,6 @@ def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
         ProductOpportunities=_rebuilt(ProductOpportunities, opportunities=list[market]),
         MarketOpportunities=_rebuilt(MarketOpportunities, opportunities=list[product]),
         Explanation=_rebuilt(Explanation, after="opportunity_type", added=columns),
+        PairEffect=pair,
+        ScenarioResponse=_rebuilt(ScenarioResponse, top_pairs=list[pair], blocked_opportunities=list[pair]),
     )

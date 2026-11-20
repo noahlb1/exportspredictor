@@ -363,7 +363,7 @@ def create_app(
         """The default Blocked Opportunity thresholds."""
         return Thresholds()
 
-    @app.post("/scenarios", response_model=ScenarioResponse)
+    @app.post("/scenarios", response_model=models.ScenarioResponse)
     def run_scenario(request: ScenarioRequest, artefacts: store.Artefacts = Depends(loaded)):
         """Re-predict the Baseline with a preset, custom Trade Agreements or a tariff change (422 if invalid)."""
         if request.market is not None and artefacts.markets.filter(pl.col("iso3") == request.market).is_empty():
@@ -379,7 +379,7 @@ def create_app(
             )
         except scenarios.InvalidScenario as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        return scenario_response(result, request, artefacts)
+        return scenario_response(result, request, artefacts, models, tiers)
 
     return app
 
@@ -473,11 +473,17 @@ def _ranking(
 
 
 def scenario_response(
-    result: scenarios.ScenarioResult, request: ScenarioRequest, artefacts: store.Artefacts
+    result: scenarios.ScenarioResult,
+    request: ScenarioRequest,
+    artefacts: store.Artefacts,
+    models: Tiered,
+    tiers: tuple[CaveatTier, ...],
 ) -> ScenarioResponse:
-    """Totals, per-Market and per-Product effects, top pairs and Blocked Opportunities, in nominal USD."""
+    """Totals, per-Market and per-Product effects, top pairs and Blocked Opportunities, in nominal USD; each pair
+    carries its Caveat Tier columns from the Baseline."""
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
+    caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
     pairs = (
         result.pairs.with_columns(
             blocked_opportunity=scenarios.is_blocked(
@@ -486,6 +492,7 @@ def scenario_response(
         )
         .join(markets, on="iso3", how="left", maintain_order="left")
         .join(products, on="hs6", how="left", maintain_order="left")
+        .join(caveats, on=["hs6", "iso3"], how="left", maintain_order="left")
     )
     blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
@@ -497,7 +504,7 @@ def scenario_response(
             rows.head(request.limit), artefacts.history, artefacts.baseline_year
         ).to_dicts()
 
-    return ScenarioResponse(
+    return models.ScenarioResponse(
         **_metadata(artefacts),
         scenario=ScenarioIn.model_validate(asdict(result.scenario)),
         thresholds=_pick(Thresholds, request.model_dump()),
