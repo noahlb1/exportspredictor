@@ -17,7 +17,6 @@ PAGES = {
     "Blocked Opportunities": "pages/blocked_opportunities.py",
     "Scenarios": "pages/scenarios.py",
     "Model Evaluation": "pages/model_evaluation.py",
-    "Why?": "pages/why.py",
 }
 
 
@@ -41,6 +40,7 @@ def test_the_menu_shows_the_four_pages_in_order_and_opens_on_the_leaderboard(ope
     assert not app.exception
     assert isinstance(menu, list)  # a flat menu: a dict would give it group headings
     assert [page.title for page in menu if page.visibility == "visible"] == MENU
+    assert [page.title for page in menu] == MENU  # the removed pages (Why? among them) are not even hidden ones
     assert [page.title for page in menu if page.url_path == ""] == ["Leaderboard"]  # the default page
     assert [title.value for title in app.title] == ["UK Exports Predictor"]
     assert [heading.value for heading in app.header][:1] == ["Leaderboard"]

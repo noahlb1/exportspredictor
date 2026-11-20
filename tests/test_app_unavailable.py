@@ -12,7 +12,6 @@ PAGES = [
     "pages/blocked_opportunities.py",
     "pages/scenarios.py",
     "pages/model_evaluation.py",
-    "pages/why.py",
 ]
 
 

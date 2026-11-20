@@ -9,7 +9,7 @@ version) below it. Every wording, year and version comes from the API.
 """
 
 import base64
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -66,9 +66,17 @@ def api_ready() -> bool:
 
 
 @contextmanager
-def page(heading: str, intro: str) -> Iterator[None]:
-    """A page's frame: its heading, introduction and caution line, then the content, then a divider and the footer."""
-    st.header(heading)
+def page(heading: str, intro: str, beside: Callable[[], None] | None = None) -> Iterator[None]:
+    """A page's frame: its heading, introduction and caution line, then the content, then a divider and the footer.
+
+    `beside` draws something small beside the heading (the Leaderboard's "What is this?" link)."""
+    if beside is None:
+        st.header(heading)
+    else:
+        left, right = st.columns([6, 1], vertical_alignment="bottom")
+        left.header(heading)
+        with right:
+            beside()
     st.markdown(intro)
     st.caption(labels()["caution"])
     yield

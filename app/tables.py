@@ -8,16 +8,69 @@ column already divided by 1,000,000 and `money_column` formats it `%.1f` (a valu
 columns stay numeric, so they sort as numbers. The unit is said once above the table (`millions_unit`), never in a
 heading. A CSV keeps full dollars and every column: build it from the undivided rows (`leaderboard_csv`).
 Summary figures, sentences and panel metrics keep the adaptive form of `app.format.format_usd`.
+
+A table whose rows are chosen by clicking any value is `pick_row`: it tints the chosen row and remembers its id.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Hashable, Iterable
 
 import pandas as pd
 import streamlit as st
 
-from app.ui import caveat_badges, illustrative, term, usd_unit, why_column, why_link
+from app.ui import caveat_badges, illustrative, term, usd_unit
 
 MILLION = 1_000_000
+# The chosen row's tint, the same in light and dark mode (spec #103, "Theme and logo").
+TINT = {"background-color": "rgba(42, 120, 214, 0.28)", "font-weight": "600"}
+ONE_DECIMAL = "{:.1f}"  # how a $ millions or percent column reads in a `pick_row` table, as `money_column` does
+
+
+def pick_row(
+    table: pd.DataFrame,
+    ids: list[Hashable],
+    *,
+    key: str,
+    remembered: str,
+    formats: dict[str, str | Callable],
+    **dataframe: object,
+) -> int:
+    """Show `table` as a table where clicking any value chooses its row; return the chosen row's position.
+
+    `ids` names each row (e.g. a pair's (HS6, ISO3)). The chosen id is kept in session state under `remembered`, so it
+    survives a rerun, a view switch or a longer list. If it is not among `ids`, or nothing has been chosen yet, the
+    top row is chosen (it is not written back, so the remembered row returns when it is shown again). The chosen row
+    is tinted across its whole width. `table` must not be empty.
+
+    The tint needs a pandas Styler, whose display values replace the column formats, so `formats` gives each
+    numeric column its Styler format (e.g. `ONE_DECIMAL` for $ millions). `dataframe` goes to `st.dataframe`
+    (`column_order`, `column_config`, `height`).
+    """
+    chosen = st.session_state.get(remembered)
+    at = ids.index(chosen) if chosen in ids else 0
+    st.session_state[f"{key}_ids"] = ids  # what a click on row n means, for `_remember`
+    styled = table.style.format({column: f for column, f in formats.items() if column in table}, na_rep="")
+    styled = styled.set_properties(subset=pd.IndexSlice[[table.index[at]], :], **TINT)  # type: ignore[arg-type]
+    st.dataframe(
+        styled,
+        hide_index=True,
+        key=key,
+        on_select=_remember(key, remembered),
+        selection_mode="single-cell",
+        **dataframe,  # type: ignore[arg-type]
+    )
+    return at
+
+
+def _remember(key: str, remembered: str) -> Callable[[], None]:
+    """The callback of a click in a `pick_row` table: remember the clicked row's id."""
+
+    def remember() -> None:
+        cells = st.session_state[key]["selection"]["cells"]
+        ids = st.session_state.get(f"{key}_ids", [])
+        if cells and cells[0][0] < len(ids):
+            st.session_state[remembered] = ids[cells[0][0]]
+
+    return remember
 
 
 def millions(values: Iterable[float | None]) -> pd.Series:
@@ -65,12 +118,21 @@ LEADERBOARD_SHOWN = [
     "Caveats",
 ]
 LEADERBOARD_HIDDEN = ["Opportunity Type", "Potential Range", "HS6", "Sector", "Region"]
-WHY = "Why?"  # the link column, until the detail panel replaces it
+LEADERBOARD_NARROW = ["Product", "Market", "Export Gap"]  # the table beside the detail panel
+# How each numeric column of `leaderboard_frame` reads in a `pick_row` table.
+LEADERBOARD_FORMATS: dict[str, str | Callable] = {
+    "Export Gap": ONE_DECIMAL,
+    "Export Potential": ONE_DECIMAL,
+    "Actual Exports": ONE_DECIMAL,
+    "Applied Tariff %": ONE_DECIMAL,
+    "Relative Export Gap": "{:.0%}",
+    "Blocked Opportunity value": ONE_DECIMAL,
+}
 
 
 def leaderboard_frame(rows: list[dict]) -> pd.DataFrame:
-    """The Leaderboard's table of ranking rows: short headings, money in $ millions, every column (shown and hidden),
-    and the Why? link."""
+    """The Leaderboard's table of ranking rows: short headings, money in $ millions, every column (shown and
+    hidden)."""
     raw = pd.DataFrame(rows)
     return pd.DataFrame(
         {
@@ -93,7 +155,6 @@ def leaderboard_frame(rows: list[dict]) -> pd.DataFrame:
             "HS6": raw["hs6"],
             "Sector": raw["sector_name"],
             "Region": raw["region"],
-            WHY: [why_link(row["hs6"], row["iso3"]) for row in rows],
         }
     )
 
@@ -136,7 +197,6 @@ def leaderboard_columns(body: dict) -> dict:
         "HS6": st.column_config.TextColumn("HS6", help="The Product's HS6 code (2012 edition)."),
         "Sector": st.column_config.TextColumn("Sector", help="The Product's Sector (HS2 chapter)."),
         "Region": st.column_config.TextColumn("Region", help="The Market's region."),
-        WHY: why_column(),
     }
 
 
@@ -152,7 +212,7 @@ def leaderboard_unit(body: dict) -> str:
 def leaderboard_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
     """The Leaderboard's CSV: every row given, in full dollars, with every column of the table (money headings name
     their period and unit, as the CSV has no line above it)."""
-    table = leaderboard_frame(rows).drop(columns=[WHY, "Potential Range"])
+    table = leaderboard_frame(rows).drop(columns=["Potential Range"])
     averaged, year, unit = body["gap_period_label"], body["baseline_year"], usd_unit()
     raw = pd.DataFrame(rows)
     dollars = {

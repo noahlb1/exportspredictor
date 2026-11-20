@@ -51,7 +51,17 @@ def _search(monkeypatch, api_url: str, text: str) -> AppTest:
 
 
 def _table(page: AppTest) -> pd.DataFrame:
+    """The ranking table with every column: the Wide table view (the default view shows three)."""
+    _wide(page)
     return page.dataframe[0].value
+
+
+def _wide(page: AppTest) -> AppTest:
+    """Switch to the Wide table view, if the page shows a ranking and is not there yet."""
+    [*switch] = page.segmented_control
+    if switch and switch[0].value != "Wide table":
+        switch[0].set_value("Wide table").run()
+    return page
 
 
 def _active_filters(page: AppTest) -> str:
@@ -74,7 +84,8 @@ def test_home_opens_on_the_leaderboard_of_every_uk_pair(monkeypatch, fixture_api
     assert {"HS6", "Product", "Market", "Opportunity Type", RELATIVE, "Caveats"} <= set(table.columns)
     assert set(table["Opportunity Type"]) == {"Expand"}
     assert "Re-export Hub" in set(table["Caveats"]) and "Flagged Product" in set(table["Caveats"])
-    assert not page.metric  # the summary metrics row is gone
+    # The summary metrics row is gone: the only figures are the detail panel's three
+    assert [metric.label for metric in page.metric] == ["Export Potential", "Actual Exports", "Export Gap"]
 
 
 def test_the_filters_sit_in_the_sidebar_with_a_reset_button(monkeypatch, fixture_api_url):
@@ -348,7 +359,7 @@ MONEY = ["Export Gap", "Export Potential", "Actual Exports", "Blocked Opportunit
 
 def _column_config(page: AppTest) -> dict:
     """Each column's config, by the heading it configures."""
-    config = json.loads(page.dataframe[0].proto.columns)
+    config = json.loads(_wide(page).dataframe[0].proto.columns)
     return {value.get("label") or key.removeprefix("name:"): value for key, value in config.items()}
 
 
@@ -359,8 +370,8 @@ def _api_rows(api_url: str, **params) -> list[dict]:
 def test_the_default_columns_are_shown_in_order_and_the_others_hidden(monkeypatch, fixture_api_url):
     page = _home(monkeypatch, fixture_api_url)
 
-    order = list(page.dataframe[0].proto.column_order)
-    assert [column for column in order if column != "Why?"] == SHOWN_COLUMNS
+    order = list(_wide(page).dataframe[0].proto.column_order)
+    assert order == SHOWN_COLUMNS
     assert set(HIDDEN_COLUMNS) <= set(_table(page).columns)  # in the data, offered by Show/hide columns
     assert not set(HIDDEN_COLUMNS) & set(order)
     assert not any(config.get("pinned") for config in _column_config(page).values())
@@ -381,7 +392,8 @@ def test_money_columns_are_numeric_dollar_millions_with_the_unit_stated_once(mon
     for column in MONEY:
         assert pd.api.types.is_float_dtype(table[column])  # numeric, so they sort as numbers
         assert config[column]["type_config"]["format"] == "%.1f"
-    assert len([text for text in _texts(page) if "$ millions" in text]) == 1
+    # Once above the ranking (the panel's yearly figures state their own unit)
+    assert len([text for text in _texts(page) if "$ millions" in text and "Export Gap" in text]) == 1
     assert not any("USD" in column for column in table.columns)  # the unit is not in the headings
 
 
@@ -422,7 +434,7 @@ def test_the_csv_holds_every_filtered_row_in_full_dollars_with_every_column(
         ("Potential Range high, 2022–2024 average (USD, nominal)", "potential_range_high_usd"),
     ]:
         assert list(exported[column]) == pytest.approx([row[field] for row in rows]), column
-    others = set(_table(page).columns) - {"Why?", *MONEY, "Potential Range"}
+    others = set(_table(page).columns) - {*MONEY, "Potential Range"}
     assert others <= set(exported.columns)  # every other column, under its table heading
 
 
