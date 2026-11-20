@@ -40,6 +40,8 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 `build_artefacts(world)` runs this on the fixture world (CPU, seconds).
 `build_real_artefacts()` runs it on the per-year feature files of `features.build()`
 (GPU); `uv run python -m exportspredictor.pipeline` runs it and saves the artefact folder.
+`... pipeline refresh` copies the newest version with fresh metadata (`refresh`), `... pipeline rerange`
+copies it with its Potential Range recomputed (`rerange`), and `--help` lists both.
 """
 
 import hashlib
@@ -1182,7 +1184,16 @@ def parse_parts(argv: Sequence[str]) -> Parts:
     `--gain-ladder`, `--ppml-benchmark`, or `--every-part` for all four. None of them: the default run."""
     import argparse
 
-    parser = argparse.ArgumentParser(prog="python -m exportspredictor.pipeline")
+    parser = argparse.ArgumentParser(
+        prog="python -m exportspredictor.pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "commands that copy the newest saved version instead of training:\n"
+            "  python -m exportspredictor.pipeline refresh   fresh metadata, in seconds\n"
+            "  python -m exportspredictor.pipeline rerange   Potential Range recomputed, a few minutes on the CPU\n"
+            "  python -m exportspredictor.pipeline compare   v1 comparison and gain ladder added"
+        ),
+    )
     parser.add_argument("--event-backtests", action="store_true", help="also run Lift and the Event Backtests")
     parser.add_argument("--constraint-comparison", action="store_true", help="also run the monotone-constraint comparison")
     parser.add_argument("--gain-ladder", action="store_true", help="also train the v1 comparison's gain ladder")
