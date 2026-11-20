@@ -241,7 +241,8 @@ def _show_model_choice(choice: dict) -> None:
         (st.success if ranking["beats_naive"] else st.warning)(ranking["text"])
         st.dataframe(
             pd.DataFrame(
-                [{"Version": row["name"], "UK ranking": row["uk_ranking"]}
+                [{"Version": row["name"], "UK ranking, old measure": row["uk_ranking"],
+                  "UK ranking, tie-proof": row.get("uk_ranking_tie_proof")}
                  for row in [*ranking["rows"], *ranking["naive"]]]
             ),
             hide_index=True,

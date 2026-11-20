@@ -500,12 +500,13 @@ class Confirmation(BaseModel):
 
 
 class VersionResult(BaseModel):
-    """One version's test-year figures: this version or an earlier one (v2, v1)."""
+    """One version's test-year figures: this version or an earlier one (the Blend, v2, v1)."""
 
     model_config = ConfigDict(extra="allow")  # v2's artefact version
 
     name: str
-    uk_ranking: float | None = None
+    uk_ranking: float | None = None  # on the old measure (ties share their average rank), as every version reported
+    uk_ranking_tie_proof: float | None = None  # the Selection Measure; an earlier version's from its saved scores
     lift: float | None = None
     size_matched_lift: float | None = None
     tweedie_deviance_all_exporters: float | None = None
@@ -516,7 +517,8 @@ class NaiveBaselineResult(BaseModel):
     """The Naive Baseline's test-year UK ranking, from this run or as reported for v2."""
 
     name: str
-    uk_ranking: float | None = None
+    uk_ranking: float | None = None  # on the old measure
+    uk_ranking_tie_proof: float | None = None  # the Selection Measure, where measured
 
 
 class TestYearRanking(BaseModel):

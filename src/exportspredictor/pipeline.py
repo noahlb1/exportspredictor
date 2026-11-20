@@ -586,7 +586,7 @@ def build_real_artefacts(
         ladder_cache=ladder_dir(root),
         parts=parts,
         year_flows=flows_of_year,
-        earlier_v2=evaluation.V2_REPORTED,
+        earlier_reported=True,
     )
     bundle = Artefacts(
         metadata=metadata,
@@ -981,7 +981,7 @@ def _evaluate(
     ladder_cache: Path | None = None,
     parts: Parts = Parts(),
     year_flows: Callable[[int], pl.DataFrame] | None = None,
-    earlier_v2: dict | None = None,
+    earlier_reported: bool = False,
     test_year_ledger: ledger.Ledger | None = None,
     reach_grid: Chunk | None = None,
 ) -> dict:
@@ -1078,8 +1078,10 @@ def _evaluate(
             v1, test_models, report, metadata, training=training, lift_settings=backtest_plan.lift, device=device,
             non_uk_rate=non_uk_rate, seed=seed, ladder_cache=ladder_cache,
         )
-    # The test year beside v2's reported figures (`earlier_v2`, real runs only) and v1's.
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=earlier_v2)
+    # The test year beside the Blend's and v2's reported figures (`earlier_reported`, real runs only) and v1's.
+    report["earlier_versions"] = (
+        evaluation.earlier_versions(report) if earlier_reported else evaluation.earlier_versions(report, v2=None, blend=None)
+    )
     return report
 
 

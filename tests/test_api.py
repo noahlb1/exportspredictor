@@ -1131,7 +1131,7 @@ def _with_v2(fixture_artefacts, v2: dict = V2):
     from exportspredictor import evaluation
 
     report = {**fixture_artefacts.evaluation}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
     return replace(fixture_artefacts, evaluation=report)
 
 

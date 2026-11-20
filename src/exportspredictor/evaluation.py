@@ -78,6 +78,7 @@ from exportspredictor.prediction import (
 )
 from exportspredictor.selection_measure import (
     MIN_RANKED_ROWS,
+    legacy_selection_measure,
     selection_measure,
     with_tie_key,
     within_product_correlations,
@@ -565,6 +566,21 @@ V2_REPORTED = {
     "tweedie_deviance_all_exporters": 355.5288087632071,
     "tweedie_deviance_uk": 568.5883343927953,
 }
+# The Blend's 2023 figures, from its evaluation report (artefact 20261118T185910Z, the ledger's third read), on the
+# old measure: the version served before spec #113. Its naive baseline came from every Exporter's Flows, as this
+# run's does, so it is not listed apart.
+BLEND_REPORTED = {
+    "version": "20261118T185910Z",
+    "uk_ranking": 0.555192379963398,
+    "lift": 4.993143365742925,
+    "size_matched_lift": 0.760532455406604,
+    "tweedie_deviance_all_exporters": 433.76459865636,
+    "tweedie_deviance_uk": 566.3460040913492,
+}
+# The configuration fingerprints of the earlier versions the ledger was seeded with (`docs/test-year-ledger.csv`):
+# re-scoring their saved scores (`rescore_saved`) is recorded against them (`ledger.record_rescore`).
+EARLIER_FINGERPRINTS = {"Blend": "f4d0be3058fd", "v2": "f7cdd149f731", "v1": "a77726cf17b0"}
+TIE_PROOF_MEASURE = "tie-proof"  # the measure earlier versions' saved scores are re-scored under
 NAIVE_THIS_RUN = "Naive Baseline, every Exporter's Flows (this run)"
 NAIVE_AS_REPORTED_FOR_V2 = "Naive Baseline as reported for v2 (training rows' Flows)"
 # The names reports saved before review2 used, and today's (GLOSSARY.md), for `relabelled`.
@@ -575,45 +591,132 @@ _SAVED_NAMES = {
 _SAVED_THIS_VERSION = "This version ("
 
 
-def version_name(form: str) -> str:
-    """This version's row in `earlier_versions`: the Blend (GLOSSARY.md) when it serves one, else the model alone."""
+def version_name(model_form: Mapping | None) -> str:
+    """This version's row in `earlier_versions`: the Blend (GLOSSARY.md) when it serves one without Market Reach,
+    else this version named by its Model Form, so a new version is never confused with the earlier Blend."""
+    form = (model_form or {}).get("form", "model alone")
+    if (model_form or {}).get("market_reach"):
+        return f"{_SAVED_THIS_VERSION}{'Blend' if form == 'blend' else 'model alone'} with Market Reach)"
     return "Blend" if form == "blend" else f"{_SAVED_THIS_VERSION}{form})"
 
 
-def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED) -> dict:
-    """The test year's UK ranking, size-matched Lift and Tweedie deviance beside v2's and v1's.
+def old_measure(scored_grid: pl.DataFrame) -> dict:
+    """The headline on the old measure (`legacy_selection_measure`, average ranks for ties) for the model and the
+    Naive Baseline: what v1, v2 and the Blend reported on the test year, so this version stands beside them.
+    `scored_grid` is the UK's scored grid of the test year; Excluded Products are left out. Nothing is chosen on it."""
+    rows = drop_excluded(scored_grid)
+    return {name: legacy_selection_measure(rows, column) for name, column in _PREDICTORS.items()}
 
-    `report` is this version's evaluation report; v1's UK ranking is the v1 comparison's (the same
-    test-year rows). `v2` holds v2's reported figures (`V2_REPORTED`), or None where they do not
-    apply (the fixture). Both naive figures are listed, each named by the Flows it was computed from.
-    Whether the model beats the naive baseline is judged against this run's naive baseline.
+
+def rescore_saved(scores: Mapping[str, pl.DataFrame]) -> dict[str, dict]:
+    """Earlier versions' saved test-year UK scores on both measures: name -> `uk_ranking` (the old measure, which
+    should match what the version reported) and `uk_ranking_tie_proof` (the Selection Measure).
+
+    Each table holds one row per UK Product and Market (`hs6`, `importer`, `value_usd`, `export_potential_usd`).
+    Nothing is trained, predicted or chosen. The caller records the re-score in the test-year ledger first
+    (`ledger.record_rescore` with `EARLIER_FINGERPRINTS` and `TIE_PROOF_MEASURE`, ADR 0009) and puts the result in
+    the report with `with_rescored_earlier_versions`.
+    """
+    out = {}
+    for name, table in scores.items():
+        rows = drop_excluded(table.with_columns(pl.col("hs6").cast(pl.String), pl.col("importer").cast(pl.String)))
+        out[name] = {
+            "uk_ranking": legacy_selection_measure(rows, "export_potential_usd"),
+            "uk_ranking_tie_proof": selection_measure(rows, "export_potential_usd"),
+        }
+    return out
+
+
+def with_rescored_earlier_versions(
+    report: dict, rescored: Mapping[str, Mapping], *, v2: dict | None = V2_REPORTED, blend: dict | None = BLEND_REPORTED
+) -> dict:
+    """`report` with earlier versions' re-scored figures (`rescore_saved`, keyed by row name: "Blend", "v2", "v1")
+    and its `earlier_versions` block laid out again with them. The given report is not changed."""
+    out = {**report, "rescored_earlier_versions": {name: dict(figures) for name, figures in rescored.items()}}
+    return {**out, "earlier_versions": earlier_versions(out, v2=v2, blend=blend)}
+
+
+def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED, blend: dict | None = BLEND_REPORTED) -> dict:
+    """The test year's UK ranking, size-matched Lift and Tweedie deviance beside the Blend's, v2's and v1's.
+
+    Every row's `uk_ranking` is the old measure (average ranks for ties), the one every earlier version
+    reported, and `uk_ranking_tie_proof` the Selection Measure, so the two are never mixed. This version
+    has both (`report["old_measure"]` and its headline). An earlier version's tie-proof figure comes from
+    re-scoring its saved scores (`report["rescored_earlier_versions"]`, see `with_rescored_earlier_versions`)
+    and is None until then. `blend` and `v2` hold their reported figures (`BLEND_REPORTED`, `V2_REPORTED`),
+    or None where they do not apply (the fixture); v1's comes from the v1 comparison (the same test-year
+    rows, old measure). Both naive figures are listed, each named by the Flows it was computed from. Whether
+    the model beats the naive baseline is judged on the headline (tie-proof) against this run's.
+
+    A report without `old_measure` was saved before the two measures were told apart: its headline was the
+    old measure, and its rows hold `uk_ranking` only.
     """
     head, year = report["headline"], report["test_year"]
     overall = {scope: report["accuracy"][scope]["overall"] for scope in ("all_exporters", "uk_out_of_fold")}
     lift = report.get("lift") or {}
-    form = (report.get("model_form") or {}).get("form", "model alone")
+    old = report.get("old_measure")
+    rescored = report.get("rescored_earlier_versions") or {}
+
+    def measures(name: str, reported: float | None, tie_proof: float | None = None) -> dict:
+        if old is None:
+            return {"uk_ranking": reported}
+        return {"uk_ranking": reported,
+                "uk_ranking_tie_proof": (rescored.get(name) or {}).get("uk_ranking_tie_proof", tie_proof)}
+
     rows = [{
-        "name": version_name(form),
-        "uk_ranking": head["model"],
+        "name": version_name(report.get("model_form")),
+        **measures("this version", head["model"] if old is None else old["model"], head["model"]),
         "lift": lift.get("lift"),
         "size_matched_lift": (lift.get("size_matched") or {}).get("lift"),
         "tweedie_deviance_all_exporters": overall["all_exporters"]["model_tweedie_deviance"],
         "tweedie_deviance_uk": overall["uk_out_of_fold"]["model_tweedie_deviance"],
     }]
-    naive = [{"name": NAIVE_THIS_RUN, "uk_ranking": head["naive"]}]
+    naive = [{"name": NAIVE_THIS_RUN,
+              **measures("this run's naive", head["naive"] if old is None else old["naive"], head["naive"])}]
+    for name, reported in (("Blend", blend), ("v2", v2)):
+        if reported is not None:
+            figures = {k: v for k, v in reported.items() if k != "naive"}
+            rows.append({"name": name, **figures, **measures(name, reported["uk_ranking"])})
     if v2 is not None:
-        rows.append({"name": "v2", **{k: v for k, v in v2.items() if k != "naive"}})
-        naive.append({"name": NAIVE_AS_REPORTED_FOR_V2, "uk_ranking": v2["naive"]})
+        naive.append({"name": NAIVE_AS_REPORTED_FOR_V2, **measures("v2's naive", v2["naive"])})
     v1 = (report.get("v1_comparison") or {}).get("primary", {}).get("v1")
     if v1 is not None:
-        rows.append({"name": "v1", "uk_ranking": v1})
+        rows.append({"name": "v1", **measures("v1", v1)})
     beats = head["model"] is not None and head["naive"] is not None and head["model"] > head["naive"]
     block = {"test_year": year, "rows": rows, "naive": naive, "beats_naive": beats}
     return {**block, "text": _earlier_versions_text(block)}
 
 
 def _earlier_versions_text(block: dict) -> str:
-    """The `earlier_versions` sentence, worded from the block's rows."""
+    """The `earlier_versions` sentence, worded from the block's rows: on both measures where it holds them."""
+    this, *others = block["rows"]
+    if "uk_ranking_tie_proof" not in this:
+        return _saved_earlier_versions_text(block)
+    naive = {row["name"]: row for row in block["naive"]}
+    verdict = "beats the Naive Baseline" if block["beats_naive"] else "does not beat the Naive Baseline"
+    reported = naive.get(NAIVE_AS_REPORTED_FOR_V2)
+    this_run = naive[NAIVE_THIS_RUN]
+
+    def figure(value: float | None) -> str:
+        return "not yet re-scored" if value is None else f"{value:.3f}"
+
+    old = ", ".join(f"{row['name']} {figure(row['uk_ranking'])}" for row in others)
+    tie_proof = ", ".join(f"{row['name']} {figure(row['uk_ranking_tie_proof'])}" for row in others)
+    return (
+        f"On {block['test_year']}, read once, the UK ranking of this version is {figure(this['uk_ranking_tie_proof'])} "
+        f"on the tie-proof Selection Measure and {figure(this['uk_ranking'])} on the old measure (where tied "
+        f"predictions share their average rank): it {verdict} ({figure(this_run['uk_ranking_tie_proof'])} tie-proof "
+        f"and {figure(this_run['uk_ranking'])} old, from every Exporter's Flows"
+        + (f"; {reported['uk_ranking']:.3f} old, as reported for v2" if reported is not None else "")
+        + ")."
+        + (f" Earlier versions on the old measure: {old}; on the tie-proof measure, from their saved scores: "
+           f"{tie_proof}." if others else "")
+        + " These are associations on one test year, not a forecast."
+    )
+
+
+def _saved_earlier_versions_text(block: dict) -> str:
+    """The sentence of a block saved before the two measures were told apart (one figure per row)."""
     this, *others = block["rows"]
     naive = {row["name"]: row["uk_ranking"] for row in block["naive"]}
     verdict = "beats the Naive Baseline" if block["beats_naive"] else "does not beat the Naive Baseline"
@@ -641,10 +744,9 @@ def relabelled(report: dict) -> dict:
     block = report.get("earlier_versions")
     if not block:
         return report
-    form = (report.get("model_form") or {}).get("form", "model alone")
     this, *others = block["rows"]
     if this["name"].startswith(_SAVED_THIS_VERSION):
-        this = {**this, "name": version_name(form)}
+        this = {**this, "name": version_name(report.get("model_form"))}
     naive = [{**row, "name": _SAVED_NAMES.get(row["name"], row["name"])} for row in block["naive"]]
     block = {**block, "rows": [this, *others], "naive": naive}
     return {**report, "earlier_versions": {**block, "text": _earlier_versions_text(block)}}
@@ -864,6 +966,8 @@ def evaluate(
         "of that Product, each leaving the Flow itself out.",
         "accuracy": accuracy_by_scope,
         "headline": headline(accuracy_by_scope[HEADLINE_SCOPE]["overall"], year),
+        # The same on the old measure, for continuity with v1, v2 and the Blend (`earlier_versions`); nothing is chosen on it.
+        "old_measure": old_measure(scored_grid),
         "large_markets": large_markets_report(drop_excluded(scored_grid), flows, year, predictors=_PREDICTORS),
         "tariff_split_text": tariff_split_text(accuracy_by_scope, year),
         "stability": stable,
