@@ -4,21 +4,27 @@ table, so Advisors see the top Opportunities without searching. Its filters sit 
 
 One cached read of up to `READ_LIMIT` rows per filter set: the page shows the top `ROWS_SHOWN` of them (all of them
 with Show all), and the CSV holds them all, in full dollars.
+
+Clicking any value of a row chooses its pair, remembered as (HS6, ISO3) under `PAIR`, and the detail panel
+(`app.panel`) explains it in place: beside a three-column table (Table and detail) or under the wide table (Wide
+table). Until a pair is chosen, or when the chosen pair is not among the rows shown, the top row is explained.
 """
 
 import streamlit as st
 
-from app import client
+from app import client, panel
 from app.filters import leaderboard_filters, show_all
 from app.format import format_usd
 from app.frame import page
 from app.tables import (
+    LEADERBOARD_FORMATS,
+    LEADERBOARD_NARROW,
     LEADERBOARD_SHOWN,
-    WHY,
     leaderboard_columns,
     leaderboard_csv,
     leaderboard_frame,
     leaderboard_unit,
+    pick_row,
 )
 from app.ui import (
     READ_LIMIT,
@@ -28,11 +34,78 @@ from app.ui import (
     rank_orders,
 )
 
+PAIR = "leaderboard_pair"  # the chosen pair, (HS6, ISO3)
+VIEW = "leaderboard_view"
+SPLIT, WIDE = "Table and detail", "Wide table"
+STEPS = "leaderboard_steps"  # whether the three steps are shown; closed with Got it for the browser session
+STEP_TEXTS = [
+    ("1 · Read the ranking.", "Each row is one Product in one Market. The largest Export Gap is at the top."),
+    (
+        "2 · Open a row.",
+        "Click any value. The panel on the right shows which factors raised or lowered its Export Potential.",
+    ),
+    ("3 · Narrow it down.", "Use the filters on the left to keep one Sector, Market or Product."),
+]
+
+
+def _set_steps(shown: bool) -> None:
+    st.session_state[STEPS] = shown
+
+
+def _what_is_this() -> None:
+    """"What is this?" beside the heading, once the three steps are closed: it brings them back."""
+    if not st.session_state.get(STEPS, True):
+        st.button("What is this?", type="tertiary", on_click=_set_steps, args=(True,), key="steps_open")
+
+
+def _three_steps() -> None:
+    """Three bordered steps telling a first-time visitor how to read the page, with Got it to close them."""
+    if not st.session_state.get(STEPS, True):
+        return
+    columns = st.columns([4, 4, 4, 1], vertical_alignment="center")
+    for column, (title, text) in zip(columns, STEP_TEXTS, strict=False):
+        with column.container(border=True):
+            st.markdown(f"**{title}** {text}")
+    columns[3].button("Got it", on_click=_set_steps, args=(False,), key="steps_close")
+
+
+def _table_and_panel(body: dict, rows: list[dict]) -> None:
+    """The view switch, the table, and the chosen pair's detail panel beside or under it."""
+    switch, unit = st.columns([2, 5], vertical_alignment="center")
+    with switch:
+        view = st.segmented_control(
+            "View", [SPLIT, WIDE], key=VIEW, default=SPLIT, required=True, label_visibility="collapsed",
+            persist_state="session",
+        )
+    unit.caption(leaderboard_unit(body) + " Click any value in a row to explain that pair.")
+    table, ids = leaderboard_frame(rows), [(row["hs6"], row["iso3"]) for row in rows]
+    config = leaderboard_columns(body)
+    if view == WIDE:
+        at = pick_row(
+            table, ids, key="leaderboard_wide", remembered=PAIR, formats=LEADERBOARD_FORMATS,
+            column_order=LEADERBOARD_SHOWN, column_config=config, height=390,
+        )
+        with st.container(border=True):
+            panel.show(rows[at])
+        return
+    table_side, panel_side = st.columns([5, 4], gap="large")
+    with table_side:
+        at = pick_row(
+            table[LEADERBOARD_NARROW], ids, key="leaderboard_narrow", remembered=PAIR, formats=LEADERBOARD_FORMATS,
+            column_config={name: config[name] for name in LEADERBOARD_NARROW}, height=700,
+        )
+    # A new key for each pair makes the panel a new element, so it starts from its top on a new selection.
+    with panel_side, st.container(border=True, height=780, key=f"leaderboard_panel_{ids[at][0]}_{ids[at][1]}"):
+        panel.show(rows[at])
+
+
 with page(
     "Leaderboard",
     "Every UK Product–Market pair, ranked by how far UK goods exports fall short of what the UK's fundamentals "
     "suggest.",
+    beside=_what_is_this,
 ):
+    _three_steps()
     try:
         filters = leaderboard_filters()
         body = fetch("/opportunities/top", client.api_url(), **filters.params, limit=READ_LIMIT)
@@ -65,14 +138,7 @@ with page(
         if not rows:
             st.info("No Opportunities match these filters.")
         else:
-            st.caption(leaderboard_unit(body))
-            st.caption("Open **Why?** on a row to see which factors raised or lowered its Export Potential.")
-            st.dataframe(
-                leaderboard_frame(rows),
-                hide_index=True,
-                column_order=[*LEADERBOARD_SHOWN, WHY],
-                column_config=leaderboard_columns(body),
-            )
+            _table_and_panel(body, rows)
             flagged = [caveat for field, (_, caveat) in caveats().items() if any(row[field] for row in read)]
             if flagged:
                 st.caption(" ".join(flagged) + " Use the hide filters to leave them out.")

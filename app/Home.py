@@ -16,8 +16,6 @@ chosen = st.navigation(
         st.Page("pages/blocked_opportunities.py", title="Blocked Opportunities", url_path="Blocked_Opportunities"),
         st.Page("pages/scenarios.py", title="Scenarios", url_path="Scenarios"),
         st.Page("pages/model_evaluation.py", title="Model Evaluation", url_path="Model_Evaluation"),
-        # Out of the menu but still reachable by its old links, until a later ticket of spec #103 deletes it.
-        st.Page("pages/why.py", title="Why?", url_path="Why", visibility="hidden"),
     ]
 )
 if frame.api_ready():

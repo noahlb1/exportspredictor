@@ -27,7 +27,6 @@ SHOW = {
     "leaderboard_one_market": (None, {"market": "JPN"}, _shown),
     "blocked_opportunities": ("pages/blocked_opportunities.py", {}, _shown),
     "scenarios": ("pages/scenarios.py", {}, _scenarios),
-    "why": ("pages/why.py", {"hs6": "220830", "iso3": "JPN"}, _shown),
     "model_evaluation": ("pages/model_evaluation.py", {}, _shown),
 }
 

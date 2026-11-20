@@ -88,7 +88,7 @@ def test_filters_change_the_rows_and_the_summary(monkeypatch, fixture_api_url):
 def test_csv_export_matches_the_table_on_screen(monkeypatch, fixture_api_url, downloads):
     page = _page(monkeypatch, fixture_api_url)
 
-    on_screen = page.dataframe[0].value.drop(columns="Why?")
+    on_screen = page.dataframe[0].value
     exported = pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str, "Sector": str}, keep_default_na=False)
     pd.testing.assert_frame_equal(exported, on_screen.reset_index(drop=True), check_dtype=False)
 

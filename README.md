@@ -118,7 +118,10 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] **Reset filters** restores the full ranking and clears the filters from the URL.
 - [ ] Each Leaderboard row shows its Potential Range as "low–high". No ranking page (Leaderboard, Blocked Opportunities) shows an "Uncertain Opportunity" badge or a filter for it; the Flagged Product and Re-export Hub badges and their hide filters are unchanged.
 - [ ] Export the Leaderboard to CSV and open it, unfiltered and with one Product or one Market chosen: the columns and rows match the table on screen.
-- [ ] Click **Why?** on a Leaderboard row: the Why? page opens for that pair and shows its Opportunity Type.
+- [ ] The page opens on **Table and detail**: a three-column table (Product, Market, Export Gap) beside a detail panel already explaining the top row. Click any value of another row: that whole row is tinted, and the panel explains its pair and starts from its top.
+- [ ] Switch to **Wide table**: the table shows the wide columns (Applied Tariff % among them), the same pair stays selected and tinted, and its detail sits under the table. Switch back: still the same pair.
+- [ ] With Show all on (a filtered ranking of several thousand pairs), a row click answers in about a second.
+- [ ] The first visit shows three steps (Read the ranking, Open a row, Narrow it down) above the table; **Got it** closes them, and **What is this?** beside the heading brings them back.
 
 **Blocked Opportunities**
 - [ ] Open Blocked Opportunities from the sidebar: every UK pair is ranked by Blocked Opportunity value, largest first, with no "Rank by" toggle; the Leaderboard does not offer that order.
@@ -141,13 +144,14 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] In tariff mode, set a tariff above the highest one in training for one Market (e.g. 5000% for the USA; on the real artefact the training range ends at 3,000%): the Scenario Effect is never a rise, and the page says the effect flattens beyond the training range. Removing a Trade Agreement (e.g. with Japan) shows the restored 2021 MFN tariff in the pair tables.
 - [ ] After a run, the page states the EU–Japan Event Backtest result (predicted against observed) beside the Scenario Effect.
 
-**Why?**
-- [ ] On the Leaderboard with one Product or one Market chosen, click **Why?** on a row: the Why? page opens for that Product and Market.
-- [ ] The factors are described in plain words (no raw feature names), each marked as raising or lowering Export Potential, phrased as associations.
-- [ ] A year-by-year table shows the last six years' UK Actual Exports (0 for years with none) and, for 2022–2024, each year's Export Potential and Export Gap; the three yearly gaps average to the Export Gap shown above it.
-- [ ] Open the Why? page from the sidebar, pick a Product and a Market: the same explanation appears.
-- [ ] Open Why? for a Flagged Product or a Re-export Hub (e.g. `711319` to Hong Kong): its caveats are shown under the heading.
-- [ ] The Why? page shows a range bar with Export Potential and Actual Exports marked on the Potential Range, described in plain words (comparable pairs, never a confidence interval), saying whether Actual Exports lie below, inside or above it; no Uncertain Opportunity warning is shown.
+**Leaderboard: the detail panel**
+- [ ] The panel opens with the pair, its HS6, Sector and region, and its caveats: for a Flagged Product or a Re-export Hub (e.g. `711319` to Hong Kong) a warning each, and for a pair whose Applied Tariff is carried forward (e.g. `300490` to India) that warning.
+- [ ] Export Potential, Actual Exports and Export Gap show as three figures ("2022–2024 average"), each with a tooltip in the API's wording.
+- [ ] The facts start with the Applied Tariff, then UK Trade Agreement in force and the Blocked Opportunity value (illustrative), then the Opportunity Type with its meaning, the Relative Export Gap and the Potential Range; the Potential Range's tooltip describes it in plain words (comparable pairs, never a confidence interval). There is no Potential Range bar and no Uncertain Opportunity warning.
+- [ ] A pair with no UK Trade Agreement (e.g. whisky to India) shows **The Barrier**: its Applied Tariff and the amount the model associates with adding an agreement, marked Illustrative, as a warning when the pair is a Blocked Opportunity. A pair with an agreement (e.g. whisky to Japan) shows none.
+- [ ] The factors are described in plain words (no raw feature names), as a bar chart (raised in blue, lowered in red, values readable in light and dark mode) and a table, each marked as raising or lowering Export Potential, phrased as associations; **All factors** lists every one.
+- [ ] The year-by-year chart shows Actual Exports against Export Potential; **Figures by year** shows the last six years in $ millions with each year's Applied Tariff mark, and the three 2022–2024 yearly gaps average to the Export Gap.
+- [ ] Open a link naming one Product and one Market (e.g. `?product=220830&market=JPN`) in a fresh browser tab: the panel explains that pair.
 
 **Model Evaluation**
 - [ ] Four figures open the page: the rank correlation for UK pairs with the Naive Baseline's beside it, the share of Actual Exports inside the Potential Range against its 80% target, size-matched Lift, and ranking stability. Every section below is folded except "How accurate is the model?" and "Known limitations".

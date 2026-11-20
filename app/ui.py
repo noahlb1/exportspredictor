@@ -1,12 +1,11 @@
 """Shared page pieces: cached API reads and the ranking table (the frame around each page is `app.frame`).
 
-The Leaderboard and the Blocked Opportunities page render through `show_ranking`, so a column or row link is added
-here once. The Leaderboard's filters are `app.filters`; the Blocked Opportunities page's are `blocked_filters`.
+The Blocked Opportunities page renders through `show_ranking` (the Leaderboard's table is `app.tables`). The
+Leaderboard's filters are `app.filters`; the Blocked Opportunities page's are `blocked_filters`.
 """
 
 import json
 from typing import Any
-from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
@@ -167,17 +166,16 @@ def rank_orders() -> dict[str, dict]:
     return {order["name"]: order for order in fetch("/opportunities/rank-by", client.api_url())}
 
 
-def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: str | None = None, iso3: str | None = None) -> None:
-    """The ranking table in nominal USD, with caveat badges, a Why? link per row and a CSV export.
+def show_ranking(body: dict, columns: dict[str, str], file_name: str) -> None:
+    """The ranking table in nominal USD, with caveat badges and a CSV export.
 
     Export Potential, Actual Exports, Export Gap and the Relative Export Gap are Gap Period
     means, labelled as such (e.g. "Export Gap, 2022–2024 average (USD, nominal)"), and the Blocked
     Opportunity value is labelled illustrative (ADR 0008); each row
     shows its Opportunity Type and its Potential Range as "low–high".
 
-    `columns` maps the row fields that name each row (e.g. `market`) to their headings. The
-    ranking's fixed Product (`hs6`) or Market (`iso3`) completes each row's Why? link. The CSV
-    holds exactly the table's data columns (the Why? links are page navigation, not data).
+    `columns` maps the row fields that name each row (e.g. `market`) to their headings. The CSV
+    holds exactly the table's columns.
     """
     order = body.get("order") or rank_orders()[body["rank_by"]]  # Blocked Opportunities carry their own
     st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']}")
@@ -201,15 +199,13 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
     ]
     table["Blocked Opportunity"] = raw["blocked_opportunity"]
     table["Caveats"] = [caveat_badges(row) for row in rows]
-    links = [why_link(hs6 or row["hs6"], iso3 or row["iso3"]) for row in rows]
     st.dataframe(
-        table.assign(**{"Why?": links}),
+        table,
         hide_index=True,
         column_config={
             **{heading: st.column_config.NumberColumn(format="localized") for heading in headings.values()},
             relative: st.column_config.NumberColumn(format="percent"),
             "Opportunity Type": st.column_config.TextColumn(help=term("opportunity_type")),
-            "Why?": why_column(),
         },
     )
     shown = [caveat for field, (_, caveat) in caveats().items() if raw[field].any()]
@@ -222,59 +218,8 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
 
 def show_leaderboard(body: dict, file_name: str) -> None:
     """A Leaderboard-style ranking of every UK pair (the Leaderboard, Blocked Opportunities): how much of it
-    is shown, the Why? hint and the table, after the page's own summary metrics."""
+    is shown and the table, after the page's own summary metrics."""
     summary, shown = body["summary"], len(body["opportunities"])
     if summary["pairs"] > shown:
         st.caption(f"Showing the top {shown:,} of {summary['pairs']:,} pairs.")
-    st.caption("Open **Why?** on a row to see which factors raised or lowered its Export Potential.")
     show_ranking(body, PAIR_COLUMNS, file_name=file_name)
-
-
-WHY_PAGE_PATH = "/Why"  # the URL path the router (app/Home.py) gives app/pages/why.py
-
-
-def why_link(hs6: str, iso3: str) -> str:
-    """The Why? page URL for one Product–Market pair. Every ranking row links here."""
-    return f"{WHY_PAGE_PATH}?{urlencode({'hs6': hs6, 'iso3': iso3})}"
-
-
-def why_column() -> "st.column_config.LinkColumn":
-    """The ranking-table column config for the `Why?` links built by `why_link`."""
-    return st.column_config.LinkColumn(
-        "Why?", display_text="Why?", help="Which factors raised or lowered this pair's Export Potential"
-    )
-
-
-def potential_range_bar(body: dict) -> None:
-    """One pair's Potential Range as a bar, with its Export Potential and Actual Exports marked (Gap Period means)."""
-    low, high = body["potential_range_low_usd"], body["potential_range_high_usd"]
-    marks = [
-        {"marker": "Export Potential", "value_usd": body["export_potential_usd"]},
-        {"marker": "Actual Exports", "value_usd": body["actual_exports_usd"]},
-    ]
-    axis = {"title": f"{body['gap_period_label']} ({usd_unit()})", "format": "~s"}
-    st.vega_lite_chart(
-        {
-            "height": 70,
-            "layer": [
-                {
-                    "data": {"values": [{"marker": "Potential Range", "low_usd": low, "high_usd": high}]},
-                    "mark": {"type": "bar", "height": 18, "opacity": 0.35, "tooltip": True},
-                    "encoding": {
-                        "x": {"field": "low_usd", "type": "quantitative", "axis": axis},
-                        "x2": {"field": "high_usd"},
-                    },
-                },
-                {
-                    "data": {"values": marks},
-                    "mark": {"type": "point", "filled": True, "size": 160, "tooltip": True},
-                    "encoding": {
-                        "x": {"field": "value_usd", "type": "quantitative"},
-                        "color": {"field": "marker", "type": "nominal", "title": None},
-                        "shape": {"field": "marker", "type": "nominal", "title": None},
-                    },
-                },
-            ],
-        },
-        width="stretch",
-    )
