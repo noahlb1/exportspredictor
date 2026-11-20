@@ -50,7 +50,7 @@ import xgboost as xgb
 
 from exportspredictor import artefacts as store
 from exportspredictor import baci
-from exportspredictor.conformal import coverage_text
+from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import (
@@ -225,6 +225,7 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
     return [
         *result_limitations(artefacts.metadata, report),
         *range_limitations(artefacts.potential_range_bands),
+        *size_coverage_limitations(report.get("potential_range")),
         *LIMITATIONS,
     ]
 
@@ -290,6 +291,37 @@ def range_limitations(bands: pl.DataFrame) -> list[dict]:
         f"it is an Uncertain Opportunity only when its Export Gap is under the band's lower offset, "
         f"{format_usd(-top['low_offset_usd'])}: for a large pair that means \"a small gap for its size\", not that "
         f"the model is unsure of it. A relative (log-scale) range is a candidate for a later version.",
+    }]
+
+
+def size_coverage_limitations(potential_range: dict | None) -> list[dict]:
+    """A size of Export Potential whose held-out Potential Range coverage (`conformal.coverage_report`'s
+    `by_size`) is more than `COVERAGE_TOLERANCE` from the target: the range is too narrow or too wide
+    for pairs of that size. Groups with no held-out rows, and versions without the breakdown, show none.
+    """
+    if not potential_range or not potential_range.get("by_size"):
+        return []
+    target = potential_range.get("target", 0.8)
+    missed = [row for row in potential_range["by_size"]
+              if row["coverage"] is not None and round(abs(row["coverage"] - target), 9) > COVERAGE_TOLERANCE]
+    if not missed:
+        return []
+
+    def listed(rows: list[dict]) -> str:
+        return ", ".join(f"{row['size']} ({row['coverage']:.0%} inside it)" for row in rows)
+
+    narrow = [row for row in missed if row["coverage"] < target]
+    wide = [row for row in missed if row["coverage"] > target]
+    parts = [
+        *([f"too narrow, so it understates their variation, for pairs with Export Potential {listed(narrow)}"]
+          if narrow else []),
+        *([f"too wide, so it overstates their variation, for pairs with Export Potential {listed(wide)}"]
+          if wide else []),
+    ]
+    return [{
+        "title": "The Potential Range misses its target for some sizes of pair",
+        "text": f"On a held-out half of the calibration rows, the range is {'; and '.join(parts)}. The target is "
+        f"{target:.0%} of Actual Exports inside the range, give or take {COVERAGE_TOLERANCE * 100:.0f} points.",
     }]
 
 

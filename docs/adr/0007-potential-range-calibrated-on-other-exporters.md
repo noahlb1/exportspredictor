@@ -36,3 +36,29 @@ Residuals are now log(1 + Actual Exports) − log(1 + Export Potential), and the
 
 - **More bands at the top.** Each band would still give one dollar width across a wide span of Export Potential, only a narrower span.
 - **Residuals divided by Export Potential** (normalised conformal). Unstable near zero, where most rows lie, and a ratio of Actual Exports to Export Potential is what the log residual already measures.
+
+## Amendment: the top band split by size (spec #113, artefact rebuilt with `rerange`)
+
+The log scale gave every size the right coverage on average, but the top band still ran from about $2m to over $1bn and most of its rows sat near $2m, so a $929m pair took its ratios from $2m pairs, which miss by far more. France turbine parts (841191) read $8.4m to $2.6bn, a 314-fold range, while other Exporters' pairs above $100m vary about 11-fold between their 10th and 90th percentiles.
+
+The 20 equal-count bands stay. Any band whose Export Potential spans more than tenfold is then split at $10m, $100m and $1bn, as long as each part keeps the minimum rows (1,000); a part that would not merges with the part above it, and the topmost with the one below. A split band's lower edge is the split edge. On the 2024 calibration rows the top band becomes three: about $2m to $10m, $10m to $100m (155,755 rows) and over $100m (13,717 rows). The $1bn edge is not used: it would leave fewer than 1,000 rows above it.
+
+Held-out coverage is now also reported by size of Export Potential, on the evaluation page, in the model card and in the notebook, and a size more than five points from 80% is stated as a known limitation. On the same held-out half:
+
+| Size of Export Potential | Held-out rows | Before the split | After |
+| --- | --- | --- | --- |
+| under $2m | 6,075,054 | 85.1% | 85.1% |
+| $2m–10m | 232,073 | 78.5% | 79.9% |
+| $10m–100m | 78,073 | 84.2% | 80.4% |
+| over $100m | 6,804 | 85.9% | 79.8% |
+| overall | 6,392,004 | 85.1% | 85.1% |
+
+- **France turbine parts reads $267m to $2.9bn** (before: $8.4m to $2.6bn). Its Gap Period mean Actual Exports of $97m now lie below the range, so it is no longer an Uncertain Opportunity. Among pairs above $100m the range's lower ratio rises from about 1% of Export Potential to 29%; the upper ratio barely moves (2.8 to 3.2 times).
+- **Fewer of the largest gaps are Uncertain Opportunities.** 80% of the top 1,000 Opportunities by Export Gap are (94% before), and 91 of the 114 Opportunities with Export Potential above $100m (all of them before). The overall share stays 87%.
+- **Below $2m coverage is 85%,** five points over the target, because most rows there have Actual Exports of exactly $0 and ties widen the range. It is stated as a known limitation; the split does not change it.
+- **The artefact format stays 3.** The bands table keeps its columns, with more rows; the evaluation report's Potential Range block gains `by_size`, which older code ignores.
+
+### Considered Options
+
+- **Bands of equal width in log Export Potential throughout.** It would leave few rows in the top bands and change the well-covered lower bands for no gain.
+- **A fixed number of extra equal-count bands at the top.** The edges would move with each year's data; the decade edges ($10m, $100m, $1bn) say what an Advisor reads, and match the sizes coverage is reported by.

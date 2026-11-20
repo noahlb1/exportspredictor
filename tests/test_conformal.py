@@ -208,3 +208,63 @@ def test_the_coverage_text_states_the_held_out_coverage_and_the_uncertain_share(
     for figure in ("27", "71%", "80%", "10 of the 11 Opportunities (91%)"):
         assert figure in text, figure
     assert "Potential Range" in text.split("(91%)")[1]
+
+
+def _sized(groups: dict[float, int]) -> pl.DataFrame:
+    """Calibration rows: for each Export Potential, that many rows, with log residuals cycling −0.95 to +0.95."""
+    potentials = [p for p, n in groups.items() for _ in range(n)]
+    residuals = [(i % 20 - 9.5) * 0.1 for i in range(len(potentials))]
+    return _calibration(potentials, residuals)
+
+
+def test_a_band_spanning_several_orders_of_magnitude_is_split_at_log_spaced_edges():
+    # Two equal-count bands: 50 small rows, and a top band from $5m to $5bn.
+    scored = _sized({1e3: 50, 5e6: 12, 5e7: 12, 5e8: 13, 5e9: 13})
+
+    bands = conformal.fit_bands(scored, n_bands=2, min_rows=10)
+
+    assert bands["min_export_potential_usd"].to_list() == [0.0, 5e6, 1e7, 1e8, 1e9]
+    assert bands["rows"].to_list() == [50, 12, 12, 13, 13]
+    assert bands["band"].to_list() == [0, 1, 2, 3, 4]
+
+
+def test_a_split_that_would_leave_too_few_rows_merges_upwards():
+    # $10m–$100m holds 3 rows, so it joins the band above; above $1bn holds 3 and, with no band above it,
+    # joins the band below.
+    scored = _sized({1e3: 50, 5e6: 12, 5e7: 3, 5e8: 32, 5e9: 3})
+
+    bands = conformal.fit_bands(scored, n_bands=2, min_rows=10)
+
+    assert bands["min_export_potential_usd"].to_list() == [0.0, 5e6, 1e7]
+    assert bands["rows"].to_list() == [50, 12, 38]
+
+
+def test_a_band_spanning_less_than_an_order_of_magnitude_is_not_split():
+    # The top band runs from $6m to $40m: it crosses $10m but spans under tenfold.
+    scored = _sized({1e3: 50, 6e6: 25, 4e7: 25})
+
+    bands = conformal.fit_bands(scored, n_bands=2, min_rows=10)
+
+    assert bands["min_export_potential_usd"].to_list() == [0.0, 6e6]
+
+
+def test_coverage_is_reported_by_size_of_export_potential():
+    scored = _sized({1e5: 400, 5e6: 400, 5e7: 400, 5e8: 400})
+
+    report = conformal.coverage_report(scored, n_bands=4, min_rows=20)
+
+    assert [row["size"] for row in report["by_size"]] == ["under $2m", "$2m–10m", "$10m–100m", "over $100m"]
+    assert [row["min_export_potential_usd"] for row in report["by_size"]] == [0.0, 2e6, 1e7, 1e8]
+    assert sum(row["rows"] for row in report["by_size"]) == report["held_out_rows"]
+    assert all(row["rows"] > 100 for row in report["by_size"])
+    # Each size is its own band with the same residuals, so each lands roughly on the 80% target.
+    for row in report["by_size"]:
+        assert row["coverage"] == pytest.approx(0.8, abs=0.1)
+
+
+def test_a_size_group_with_no_held_out_rows_reports_no_coverage(scored):
+    report = conformal.coverage_report(scored, n_bands=4, min_rows=5)
+
+    by_size = {row["size"]: row for row in report["by_size"]}
+    assert by_size["over $100m"]["rows"] == 0
+    assert by_size["over $100m"]["coverage"] is None

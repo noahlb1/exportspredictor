@@ -443,3 +443,28 @@ def test_the_markets_no_source_gives_a_gdp_are_a_known_limitation():
     assert len(gaps) == 1
     for name in gravity.GDP_GAPS.values():
         assert name in gaps[0]["text"], name
+
+
+def _by_size(*coverages) -> dict:
+    labels = ["under $2m", "$2m–10m", "$10m–100m", "over $100m"]
+    return {"target": 0.8, "by_size": [
+        {"size": label, "min_export_potential_usd": edge, "rows": 0 if c is None else 500, "coverage": c}
+        for label, edge, c in zip(labels, [0.0, 2e6, 1e7, 1e8], coverages, strict=True)
+    ]}
+
+
+def test_a_size_group_more_than_five_points_from_the_target_is_a_known_limitation():
+    limits = evaluation.size_coverage_limitations(_by_size(0.85, 0.79, 0.74, 0.91))
+
+    assert [x["title"] for x in limits] == ["The Potential Range misses its target for some sizes of pair"]
+    text = limits[0]["text"]
+    # $10m–100m at 74% is too narrow and over $100m at 91% too wide; under $2m at 85% is within five points.
+    assert text.index("too narrow") < text.index("$10m–100m (74%") < text.index("too wide") < text.index("over $100m (91%")
+    assert "80%" in text
+    assert "under $2m" not in text and "$2m–10m" not in text
+
+
+def test_no_size_limitation_when_every_size_group_is_near_the_target_or_has_no_rows():
+    assert evaluation.size_coverage_limitations(_by_size(0.85, 0.75, 0.80, None)) == []
+    assert evaluation.size_coverage_limitations({"target": 0.8}) == []
+    assert evaluation.size_coverage_limitations(None) == []

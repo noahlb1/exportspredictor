@@ -477,3 +477,13 @@ def test_the_frozen_v1_comparison_names_the_blend_it_compared_even_when_saved_as
     assert ", the Blend " in section and "the Blend − v1" in section
     # The gain ladder's steps still name v2's configuration, which the Blend kept.
     assert "v2's Export Potential" not in section and "v2 − v1" not in section and "for v2 " not in section
+
+
+def test_model_card_reports_potential_range_coverage_by_size(card, fixture_artefacts):
+    saved = fixture_artefacts.evaluation["potential_range"]["by_size"]
+    assert card["potential_range"]["by_size"] == saved
+
+    section = _section(governance.render_model_card(card), "## Potential Range")
+    assert "| Size of Export Potential | Held-out rows | Coverage |" in section
+    for row in saved:
+        assert f"| {row['size']} | {row['rows']:,} |" in section
