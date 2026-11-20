@@ -1,10 +1,14 @@
-"""Plain-text pieces shared by every report the package words: year spans and numbers that may be missing.
+"""Plain-text pieces shared by every report the package words: year spans, numbers that may be missing,
+and the caution line every app page shows under its heading.
 
 Money has its own module (`currency.format_usd`); the Gap Period's label is `gap_period.label`.
 """
 
 import math
 from collections.abc import Iterable
+
+# Under the heading of every page that shows figures (CLAUDE.md: language about results stays associational).
+CAUTION = "Figures are associations the model has learned, not causes or forecasts."
 
 
 def years_text(years: Iterable[int]) -> str:

@@ -88,6 +88,7 @@ from exportspredictor.rankings import (
     ranking,
 )
 from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
+from exportspredictor.wording import CAUTION
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -139,7 +140,8 @@ def create_app(
 
     @app.get("/labels", response_model=Labels)
     def labels():
-        """The wording and options the app shows: unit, Opportunity Types, caveats and the last tariff year."""
+        """The wording and options the app shows: unit, Opportunity Types, caveats, the last tariff year and the
+        caution line under every page heading."""
         return Labels(
             usd_caption=USD_CAPTION,
             usd_unit=USD_UNIT,
@@ -151,6 +153,7 @@ def create_app(
             last_tariff_year=LAST_TRAINS_YEAR,
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
+            caution=CAUTION,
         )
 
     @app.get("/products", response_model=list[ProductMatch])

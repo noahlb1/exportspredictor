@@ -52,6 +52,12 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     assert "carried forward from 2021" in body["tariff_carried_forward"]
 
 
+def test_labels_serve_the_caution_line_every_page_shows_under_its_heading(client):
+    caution = client.get("/labels").json()["caution"]
+
+    assert caution == "Figures are associations the model has learned, not causes or forecasts."
+
+
 def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
     now = [0.0]
     with TestClient(create_app(tmp_path, retry_seconds=60, clock=lambda: now[0])) as client:

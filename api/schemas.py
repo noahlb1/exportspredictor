@@ -58,6 +58,7 @@ class Labels(BaseModel):
     tariff_carried_forward: str  # the caveat of a carried-forward Applied Tariff (ADR 0006)
     # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
     illustrative: Caveat
+    caution: str  # the grey line under every page heading: figures are associations, not causes or forecasts
 
 
 class MarketOut(BaseModel):
