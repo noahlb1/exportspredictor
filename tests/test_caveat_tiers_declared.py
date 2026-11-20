@@ -86,7 +86,7 @@ def test_the_api_serves_every_declared_tier(client):
         "row_text": None,
     }
     assert pair["reason_column"] == "test_pair_reason" and pair["row_text"] == "Test Pair: {reason}."
-    assert _get(client, "/labels")["caveats"]["test_market"]["badge"] == "Test Market"
+    assert "caveats" not in _get(client, "/labels")  # one source for every tier's badge and text: /caveats
 
 
 def test_ranking_rows_and_explanations_carry_each_tier_s_column_and_reason(client):
@@ -101,6 +101,21 @@ def test_ranking_rows_and_explanations_carry_each_tier_s_column_and_reason(clien
     assert (explained["test_market"], explained["test_pair"], explained["test_pair_reason"]) == (
         True, True, "banned since 2024"
     )
+
+
+def test_every_row_carries_its_caveat_texts_worded_by_the_api(client):
+    rows = _get(client, f"/opportunities/by-market/{INDIA}")["opportunities"]
+    whisky = next(row for row in rows if row["hs6"] == WHISKY)
+    other = next(row for row in rows if row["hs6"] != WHISKY)
+
+    # The tier's text, or its row text with the row's reason, in tier order: the app words none of it.
+    assert whisky["caveat_texts"][-2:] == ["Test Market: a throwaway Market-keyed tier.", "Test Pair: banned since 2024."]
+    assert other["caveat_texts"][-1] == "Test Market: a throwaway Market-keyed tier."
+    assert _get(client, f"/explain/{WHISKY}/{INDIA}")["caveat_texts"] == whisky["caveat_texts"]
+    blocked = _get(client, "/opportunities/blocked")["opportunities"]
+    assert all("caveat_texts" in row for row in blocked)
+    pairs = client.post("/scenarios", json={"add_agreements": [INDIA], "market": INDIA}).json()["top_pairs"]
+    assert any(pair["caveat_texts"] == whisky["caveat_texts"] for pair in pairs if pair["hs6"] == WHISKY)
 
 
 @pytest.mark.parametrize("path", ["/opportunities/top", "/opportunities/by-product/220830", "/opportunities/blocked"])

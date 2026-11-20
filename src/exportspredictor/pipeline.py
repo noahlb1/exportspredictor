@@ -1645,7 +1645,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(_rereach_latest(), flush=True)
         return
     if list(argv) == ["recaveat"]:
-        bundle = artefacts.load(artefacts.latest_folder(artefacts_dir()))
+        bundle = artefacts.load(artefacts.latest_folder(artefacts_dir()), tiers=())  # it marks every tier again
         marked = recaveat(bundle, volatile=real_volatile_products(bundle))
         print(json.dumps({k: v for k, v in marked.metadata[volatility.METADATA_KEY].items() if k != "products"}),
               flush=True)

@@ -73,7 +73,7 @@ The observed value of a UK Flow in a given year.
 _Avoid_: real exports, historic trade
 
 **Export Gap**:
-The mean, over the Gap Period, of Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals. With Market Reach in the Model Form, it is a Product-specific shortfall within a Market; a Market-wide shortfall shows in the Market's reach.
+The mean, over the Gap Period, of Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals. With Market Reach in the Model Form, it is specific to the Product within its Market; how widely the UK reaches the whole Market shows in the Market's reach.
 _Avoid_: untapped potential, headroom, shortfall
 
 **Gap Period**:

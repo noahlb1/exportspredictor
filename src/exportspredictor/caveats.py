@@ -6,9 +6,10 @@ A tier is one `CaveatTier` declaration in `TIERS`. Everything else reads the dec
   (`with_caveat_columns`, which also marks a saved Baseline again without retraining);
 - the rankings drop a tier's rows when asked (`rankings.rank_opportunities(hide=...)`);
 - the API serves the tiers at `/caveats`, adds each tier's column (and reason) to every ranking row and explanation,
-  and takes each tier's hide filter as a query parameter (`api.schemas.tiered`);
-- the app draws each tier's badge, Caveats column entry, hide filter, hidden-rows notice and caveat text from
-  `/caveats`.
+  with the row's caveat texts worded here (`caveat_texts`), and takes each tier's hide filter as a query parameter
+  (`api.schemas.tiered`);
+- the app draws each tier's badge, Caveats column entry, hide filter and hidden-rows notice from `/caveats`, and a
+  row's caveats from its `caveat_texts`.
 
 A tier is keyed on the Market (`iso3`), the Product (`hs6`) or the pair (both): its `flags` expression, and its
 `reason` expression if any, may read only its key's columns. `flags` and `reason` take a `CaveatContext`, so a tier
@@ -167,14 +168,17 @@ def restricted_pair_tier(prohibitions: tuple[Prohibition, ...] = PROHIBITIONS) -
         plural="Restricted Pairs",
         text=(
             "Restricted Pair: the Market prohibits imports of this Product outright. It is scored and ranked as "
-            "normal, but it is not an open lead."
+            "normal, but the UK cannot sell it there while the prohibition stands."
         ),
         key="pair",
         hide_param="hide_restricted",
         hide_description="Leave out Restricted Pairs (Products the Market prohibits outright, e.g. alcohol)",
         flags=lambda context: restricted_pair_expr(prohibitions),
         reason=lambda context: restriction_reason_expr(prohibitions),
-        row_text="Restricted Pair: {reason}. It is scored and ranked as normal, but it is not an open lead.",
+        row_text=(
+            "Restricted Pair: {reason}. It is scored and ranked as normal, but the UK cannot sell it there while the "
+            "prohibition stands."
+        ),
     )
 
 
@@ -182,6 +186,18 @@ SANCTIONED_MARKET = sanctioned_market_tier()
 RESTRICTED_PAIR = restricted_pair_tier()
 
 TIERS: tuple[CaveatTier, ...] = (FLAGGED_PRODUCT, REEXPORT_HUB, SANCTIONED_MARKET, RESTRICTED_PAIR)
+
+
+def caveat_texts(row: Mapping, tiers: Sequence[CaveatTier] = TIERS) -> list[str]:
+    """The caveat text of each tier one row is in, in tier order (`CaveatTier.caveat_text`, with the row's reason).
+
+    `row` holds each tier's column and, for a tier with reasons, its reason column, as API rows do.
+    """
+    return [
+        tier.caveat_text(row.get(tier.reason_column) if tier.reason_column else None)
+        for tier in tiers
+        if row.get(tier.column)
+    ]
 
 
 def with_caveat_columns[T: (pl.DataFrame, pl.LazyFrame)](

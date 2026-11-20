@@ -76,7 +76,7 @@ def test_alcoholic_beverages_into_markets_that_ban_them_are_restricted_pairs_and
     ]
     assert RESTRICTED_PAIR.caveat_text(marked["restricted_pair_reason"][0]) == (
         "Restricted Pair: Saudi Arabia prohibits imports of alcoholic beverages. It is scored and ranked as normal, "
-        "but it is not an open lead."
+        "but the UK cannot sell it there while the prohibition stands."
     )
 
 

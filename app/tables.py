@@ -324,6 +324,12 @@ def blocked_markets_columns(body: dict) -> dict:
     }
 
 
+def uplift_percent(raw: pd.DataFrame) -> pd.Series:
+    """Each Blocked Opportunity's uplift on Export Potential in percent (`blocked_opportunity_uplift` is a share);
+    blank where Actual Exports do not exceed Export Potential."""
+    return pd.Series(raw["blocked_opportunity_uplift"], dtype="float64") * 100
+
+
 def blocked_products_frame(rows: list[dict]) -> pd.DataFrame:
     """One Market's Blocked Opportunities: Product, value, its uplift on Export Potential (only where Actual Exports
     exceed Export Potential), Applied Tariff, Export Potential with a Trade Agreement (elsewhere) and Actual Exports,
@@ -333,7 +339,7 @@ def blocked_products_frame(rows: list[dict]) -> pd.DataFrame:
         {
             "Product": raw["description"],
             "Blocked Opportunity value": millions(raw["blocked_opportunity_value_usd"]),
-            "Uplift %": pd.Series(raw["blocked_opportunity_uplift"], dtype="float64") * 100,
+            "Uplift %": uplift_percent(raw),
             "Applied Tariff %": pd.Series(raw["applied_tariff_pct"], dtype="float64"),
             "Potential with agreement": millions(raw["potential_with_agreement_usd"]),
             "Actual Exports": millions(raw["baseline_actual_exports_usd"]),
@@ -389,9 +395,7 @@ def blocked_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
             "Region": raw["region"],
             f"Blocked Opportunity value, {year}, {word} ({unit})": raw["blocked_opportunity_value_usd"],
             # Only where Actual Exports exceed Export Potential, which then has no level with a Trade Agreement
-            f"Uplift on Export Potential, {year}, {word} (%)": pd.Series(
-                raw["blocked_opportunity_uplift"], dtype="float64"
-            ) * 100,
+            f"Uplift on Export Potential, {year}, {word} (%)": uplift_percent(raw),
             "Applied Tariff %": raw["applied_tariff_pct"],
             f"Export Potential, {year} ({unit})": raw["baseline_export_potential_usd"],
             f"Export Potential with a Trade Agreement, {year}, {word} ({unit})": raw["potential_with_agreement_usd"],

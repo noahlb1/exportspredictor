@@ -48,7 +48,7 @@ def test_a_default_run_trains_only_the_fold_and_test_year_models(default_run):
 
 
 OWN_PART = {
-    "event_backtests": {"lift", "event_backtest"},
+    "event_backtests": {"lift", "lift_without_market_reach", "event_backtest"},
     "constraint_comparison": {"monotone_constraints"},
 }
 

@@ -128,6 +128,7 @@ def create_app(
     app.state.clock = clock
     app.state.last_attempt = None
     app.state.load_error = None
+    app.state.tiers = tiers  # a Baseline without one of their columns is refused (`artefacts.load`)
 
     @app.get("/health", response_model=Health, response_model_exclude_none=True)
     def health(request: Request):
@@ -154,7 +155,6 @@ def create_app(
             usd_caption=USD_CAPTION,
             usd_unit=USD_UNIT,
             opportunity_types=list(OPPORTUNITY_TYPES),
-            caveats={tier.column: Caveat(badge=tier.badge, text=tier.text) for tier in tiers},
             last_tariff_year=LAST_TRAINS_YEAR,
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
@@ -397,8 +397,8 @@ def create_app(
 
 
 def _pick(model: type[BaseModel], row: dict) -> BaseModel:
-    """`model` built from the fields it declares, taken from a table row."""
-    return model(**{name: row[name] for name in model.model_fields})
+    """`model` built from the fields it declares, taken from a table row (fields the row lacks take their default)."""
+    return model(**{name: row[name] for name in model.model_fields if name in row})
 
 
 def _product(artefacts: store.Artefacts, hs6: str) -> ProductOut:
@@ -572,7 +572,7 @@ def _try_load(app: FastAPI) -> store.Artefacts | None:
         return None
     state.last_attempt = now
     try:
-        state.artefacts = store.load_latest(state.artefacts_root)
+        state.artefacts = store.load_latest(state.artefacts_root, tiers=state.tiers)
     except (store.ArtefactsNotFound, store.UnreadableArtefacts) as error:
         state.load_error = str(error)
         log.warning("%s; retrying at most every %.0f s", error, state.retry_seconds)

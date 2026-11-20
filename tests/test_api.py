@@ -52,13 +52,15 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     assert body["usd_unit"] == "USD, nominal"
     assert "nominal US dollars" in body["usd_caption"]
     assert body["opportunity_types"] == ["Expand", "New Market", "New Product"]
-    assert {field: caveat["badge"] for field, caveat in body["caveats"].items()} == {
+    caveats = {tier["column"]: tier for tier in client.get("/caveats").json()}
+    assert {field: caveat["badge"] for field, caveat in caveats.items()} == {
         "flagged_product": "Flagged Product",
         "reexport_hub": "Re-export Hub",
         "sanctioned_market": "Sanctioned Market",
         "restricted_pair": "Restricted Pair",
     }
-    assert all(caveat["text"].startswith(caveat["badge"]) for caveat in body["caveats"].values())
+    assert all(caveat["text"].startswith(caveat["badge"]) for caveat in caveats.values())
+    assert "caveats" not in body  # one source: /caveats
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
     assert body["last_tariff_year"] == 2021
     assert "carried forward from 2021" in body["tariff_carried_forward"]
@@ -158,6 +160,7 @@ def test_by_product_rows_have_the_documented_shape(client):
         "sanctioned_market_reason",
         "restricted_pair",
         "restricted_pair_reason",
+        "caveat_texts",
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",
@@ -457,6 +460,7 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "sanctioned_market_reason",
         "restricted_pair",
         "restricted_pair_reason",
+        "caveat_texts",
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",

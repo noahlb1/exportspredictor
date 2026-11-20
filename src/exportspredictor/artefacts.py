@@ -43,6 +43,7 @@ the lexically greatest one that holds a metadata file.
 
 import json
 import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -163,9 +164,22 @@ def save(artefacts: Artefacts, root: Path) -> Path:
     return folder
 
 
-def load(folder: Path) -> Artefacts:
-    """Load one artefact folder; `UnreadableArtefacts` if it is not a complete format-4 folder."""
-    return _load(folder, ARTEFACT_FORMAT, _TABLES)
+def load(folder: Path, *, tiers: Sequence | None = None) -> Artefacts:
+    """Load one artefact folder; `UnreadableArtefacts` if it is not a complete format-4 folder, or if its Baseline
+    lacks a column of one of `tiers` (default: every declared Caveat Tier, `caveats.TIERS`). `recaveat`, which marks
+    the Baseline again, reads it with `tiers=()`."""
+    bundle = _load(folder, ARTEFACT_FORMAT, _TABLES)
+    if tiers is None:
+        from exportspredictor.caveats import TIERS  # imported here: the caveat tables are not needed to load
+
+        tiers = TIERS
+    missing = [column for tier in tiers for column in tier.columns if column not in bundle.baseline.columns]
+    if missing:
+        raise UnreadableArtefacts(
+            f"{folder}'s Baseline lacks the Caveat Tier column(s) {', '.join(missing)}; mark it with the declared "
+            "Caveat Tiers with `python -m exportspredictor.pipeline recaveat`"
+        )
+    return bundle
 
 
 def load_format_3(folder: Path) -> Artefacts:
@@ -211,9 +225,9 @@ def latest_folder(root: Path) -> Path:
     return folders[-1]
 
 
-def load_latest(root: Path) -> Artefacts:
-    """Load the newest complete artefact folder under `root`."""
-    return load(latest_folder(root))
+def load_latest(root: Path, *, tiers: Sequence | None = None) -> Artefacts:
+    """Load the newest complete artefact folder under `root` (`load`, with the Caveat Tiers `tiers`)."""
+    return load(latest_folder(root), tiers=tiers)
 
 
 def copy_version(

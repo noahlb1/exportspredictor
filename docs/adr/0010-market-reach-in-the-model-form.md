@@ -25,9 +25,9 @@ The offset *does* read UK Flows into the target pair's own Market, in other Prod
 
 ## What an Export Gap now means
 
-Before, an Export Gap mixed two shortfalls: the UK under-selling one Product in a Market, and the UK under-selling *everything* in that Market. Market Reach moves the Market-wide part into Export Potential. A Market the UK reaches narrowly gets a lower Export Potential for all its Products, and a broadly reached Market a higher one. **An Export Gap is now a Product-specific shortfall within a Market.**
+Before, an Export Gap mixed two things: the UK under-selling one Product in a Market, and the UK under-selling *everything* in that Market. Market Reach moves the Market-wide part into Export Potential. A Market the UK reaches narrowly gets a lower Export Potential for all its Products, and a broadly reached Market a higher one. **An Export Gap is now specific to the Product within its Market.**
 
-The Market-wide shortfall is not hidden. The API serves each Market's reach (UK Products sent, imported, expected, offset) on the Market view and in the pair detail. The app shows it as one sentence in the Leaderboard's Market filter view and in the detail panel: "In 2023 the UK sent N Products to *Market*, which imported M from other Exporters; at the UK's usual reach across Markets, about E were expected." (The UK can send Products a Market imports from nobody else, so N can exceed M, as for the Falkland Islands.) The counts are over every UK grid pair of the reference year, so each fold's counts, which are four-fifths of a Market, are summed and divided by four. The language stays associational: the model associates broad UK reach into a Market with higher Export Potential there. Reach does not cause exports.
+The Market-wide part is not hidden. The API serves each Market's reach (UK Products sent, imported, expected, offset) on the Market view and in the pair detail. The app shows it as one sentence in the Leaderboard's Market filter view and in the detail panel: "In 2023 the UK sent N Products to *Market*, which imported M from other Exporters; at the UK's usual reach across Markets, about E were expected." (The UK can send Products a Market imports from nobody else, so N can exceed M, as for the Falkland Islands.) The counts are over every UK grid pair of the reference year, so each fold's counts, which are four-fifths of a Market, are summed and divided by four. The language stays associational: the model associates broad UK reach into a Market with higher Export Potential there. Reach does not cause exports.
 
 ## Where it lives
 
@@ -41,7 +41,7 @@ The Market-wide shortfall is not hidden. The API serves each Market's reach (UK 
 
 ## Considered Options
 
-- **A model feature.** A per-Market UK share as a feature would let the trees use it, but it would carry UK pair trade in other Products into every fold model. That breaks the leave-one-out rule for features, and the hold-out would then need the Market as its unit. Post-processing keeps the models as they are.
+- **A model feature.** A per-Market reach figure as a feature would let the trees use it, but it would carry UK pair trade in other Products into every fold model. That breaks the leave-one-out rule for features, and the hold-out would then need the Market as its unit. Post-processing keeps the models as they are.
 - **The open review's rank form** (observed share against the share the ranking expects). Lagged one year, it needs every pair's out-of-fold Export Potential of the previous year, which is one more scoring pass in serving. The review measured the two forms within 0.002 of each other.
 - **β = 1.** This gives +0.030 with almost no change in dollar accuracy. β = 4 widens the 10th–90th spread of the log residual above $10m from 3.09 to 3.74. β = 4 was chosen because the pre-registered rule picks on the Selection Measure, which [ADR 0008](0008-opportunity-ranking-is-the-one-objective.md) makes the one objective. β = 4 is the top of the grid.
 

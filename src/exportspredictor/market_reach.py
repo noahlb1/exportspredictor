@@ -18,8 +18,8 @@ the offset of Market m is learned from the UK pairs *outside* fold k in year t â
 
 where `sent` counts the Market's source pairs with a UK Flow, `imported` those whose Product
 the Market imports from any other Exporter (`log_demand_loo` > 0), the sums run over every
-Market's source pairs, and a is `PSEUDO_COUNT`. The first term is the Market's UK share,
-shrunk towards a half; the second is the UK's pooled share, the share expected of every
+Market's source pairs, and a is `PSEUDO_COUNT`. The first term is the share of the Products
+the Market imports that the UK sends there, shrunk towards a half; the second is the UK's pooled share, the share expected of every
 Market, so an offset of 0 means "as expected". `products_expected` is that pooled share
 times `imported`. A Market with no source pairs gets 0.
 
@@ -264,7 +264,8 @@ def pair_figures(
 
 
 def reach_text(sent: int, imported: int, expected: float, market: str, year: int) -> str:
-    """A Market's reach in one sentence, so a Market-wide shortfall stays visible beside Product-level Export Gaps.
+    """A Market's reach in one sentence, so a Market the UK reaches less widely than expected stays visible beside
+    Product-level Export Gaps.
 
     The UK can send Products the Market imports from no other Exporter, so `sent` may exceed `imported`."""
     return (
