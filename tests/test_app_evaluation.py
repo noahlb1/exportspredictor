@@ -243,4 +243,4 @@ def test_page_says_what_market_reach_changes(page, fixture_artefacts):
 
     assert effect["text"] in _text(page)
     assert "Lift" in list(table["Figure"])
-    assert list(table["With Market Reach"])[0] == pytest.approx(effect["selection_measure"]["with"])
+    assert table["With Market Reach"].iloc[0] == pytest.approx(effect["selection_measure"]["with"])
