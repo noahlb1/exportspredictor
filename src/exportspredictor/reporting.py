@@ -23,7 +23,7 @@ from matplotlib.figure import Figure
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.caveats import TIERS, CaveatTier
-from exportspredictor.evaluation import NOT_RUN, relabelled
+from exportspredictor.evaluation import NOT_RUN, large_markets_beside_earlier, relabelled
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
 
@@ -129,6 +129,17 @@ def ranking_by_version(bundle: Artefacts) -> Chart | NotRun:
         [Bar(r["name"], 0.0, r[column], colours[r["kind"]], f"{r[column]:.3f}") for r in rows if r[column] is not None],
     ))
 
+
+
+def large_markets_by_version(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """The test year's tie-proof UK ranking on the largest importing Markets: this version, the earlier versions
+    re-scored from their saved scores, and the Naive Baseline (`evaluation.large_markets_beside_earlier`)."""
+    rows = large_markets_beside_earlier(bundle.evaluation or {})
+    if not rows:
+        return NotRun("The measure on the largest Markets")
+    return pl.DataFrame(
+        [{"version": row["name"], **{f"{n} largest Markets": value for n, value in row["markets"].items()}} for row in rows]
+    )
 
 
 # A best round under this means the stopping rule, not the configuration, decided the Arm
