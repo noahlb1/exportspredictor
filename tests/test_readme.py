@@ -14,8 +14,9 @@ def _checklist() -> str:
 
 
 def _page_titles() -> list[str]:
-    pages = [REPO / "app" / "Home.py", *sorted((REPO / "app" / "pages").glob("*.py"))]
-    return [re.search(r'st\.title\("([^"]+)"\)', page.read_text(encoding="utf-8")).group(1) for page in pages]
+    """The title of every page the router (app/Home.py) declares."""
+    router = (REPO / "app" / "Home.py").read_text(encoding="utf-8")
+    return re.findall(r'st\.Page\([^)]*title="([^"]+)"', router)
 
 
 def test_checklist_names_every_app_page():

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- The loading mark: the logo's ship and tile (logo.svg), riding up and down and rocking a little,
+       with the wave line lengthened and sliding one wavelength per loop. -->
+  <defs><clipPath id="tile"><rect width="64" height="64" rx="14"/></clipPath></defs>
+  <g clip-path="url(#tile)">
+    <rect width="64" height="64" fill="#2a78d6"/>
+    <g transform="translate(0 -3)">
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="0 1.5;0 -3;0 1.5" dur="1.8s" repeatCount="indefinite"/>
+        <g>
+          <animateTransform attributeName="transform" type="rotate" values="-3 32 46;3 32 46;-3 32 46" dur="1.8s" begin="-0.45s" repeatCount="indefinite"/>
+          <path d="M7 42h50l-7 10H13z" fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M9 38V26.5a1.5 1.5 0 0 1 1.5-1.5h5a1.5 1.5 0 0 1 1.5 1.5V38z" fill="#fff"/>
+          <g fill="#fff" opacity=".55">
+            <rect x="21" y="30" width="9.5" height="7.5" rx="1.5"/>
+            <rect x="32.5" y="30" width="9.5" height="7.5" rx="1.5"/>
+            <rect x="44" y="30" width="9.5" height="7.5" rx="1.5"/>
+            <rect x="21" y="20.5" width="9.5" height="7.5" rx="1.5"/>
+          </g>
+          <rect x="32.5" y="20.5" width="9.5" height="7.5" rx="1.5" fill="#fff"/>
+        </g>
+      </g>
+      <path d="M-26.2 60q4-3 8.3 0t8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0 8.3 0" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" opacity=".5">
+        <animateTransform attributeName="transform" type="translate" values="0 0;16.6 0" dur="1.2s" repeatCount="indefinite"/>
+      </path>
+    </g>
+  </g>
+</svg>

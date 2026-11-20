@@ -3,18 +3,15 @@
 The fixture Baseline (2024) has UK Trade Agreements with Japan and Canada, none with India.
 """
 
-from pathlib import Path
-
 import httpx
 import pytest
 import streamlit
+from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
 from app import client
 
-APP_DIR = Path(__file__).resolve().parents[1] / "app"
-SCENARIOS = APP_DIR / "pages" / "4_Scenarios.py"
-PRODUCT_TO_MARKETS = APP_DIR / "pages" / "1_Product_to_Markets.py"
+SCENARIOS = "pages/scenarios.py"
 
 
 @pytest.fixture
@@ -24,9 +21,7 @@ def api_url(fixture_api_url):
 
 def _scenarios_page(monkeypatch, api_url) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(SCENARIOS), default_timeout=30)
-    page.run()
-    return page
+    return run_page(SCENARIOS)
 
 
 def test_a_preset_scenario_shows_an_associational_summary_and_markets(monkeypatch, api_url):

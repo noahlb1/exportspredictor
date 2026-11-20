@@ -1,6 +1,7 @@
 """The app talks to the model only through the API over HTTP (CLAUDE.md "Shape"): no app file imports the package."""
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,9 @@ def test_no_app_file_imports_the_package(path):
     assert imported == [], f"{path.name} imports {imported}; read it from the API instead"
 
 
-def test_every_page_has_its_own_sidebar_number():
-    numbers = [page.name.split("_", 1)[0] for page in sorted((APP_DIR / "pages").glob("*.py"))]
+def test_the_router_declares_every_page_file():
+    # With st.navigation, Streamlit ignores app/pages/: a page file the router does not declare is unreachable.
+    router = (APP_DIR / "Home.py").read_text(encoding="utf-8")
+    declared = set(re.findall(r'st\.Page\(\s*"([^"]+)"', router))
 
-    assert len(numbers) == len(set(numbers)), numbers
+    assert declared == {f"pages/{page.name}" for page in (APP_DIR / "pages").glob("*.py")}

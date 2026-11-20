@@ -6,17 +6,17 @@ The fixture Baseline has UK Trade Agreements with Japan and Canada, none with In
 import io
 import re
 from dataclasses import replace
-from pathlib import Path
 
 import httpx
 import pandas as pd
 import pytest
 import streamlit
+from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
 from exportspredictor import artefacts as store
 
-PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "3_Blocked_Opportunities.py"
+PAGE = "pages/blocked_opportunities.py"
 VALUE = "Blocked Opportunity value, illustrative (USD, nominal)"
 # Wording that would read a Blocked Opportunity value as a cause or a forecast.
 CAUSAL = re.compile(
@@ -41,9 +41,7 @@ def downloads(monkeypatch):
 
 def _page(monkeypatch, api_url: str) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(PAGE), default_timeout=30)
-    page.run()
-    return page
+    return run_page(PAGE)
 
 
 def _metrics(page: AppTest) -> dict[str, str]:
@@ -54,7 +52,7 @@ def test_the_page_ranks_every_uk_pair_by_blocked_opportunity_value(monkeypatch, 
     page = _page(monkeypatch, fixture_api_url)
 
     assert not page.exception
-    assert [title.value for title in page.title] == ["Blocked Opportunities"]
+    assert page.header[0].value == "Blocked Opportunities"
     table = page.dataframe[0].value
     assert len(table) == 20
     values = list(table[VALUE])
@@ -106,8 +104,7 @@ def test_every_caption_uses_associational_language(monkeypatch, fixture_api_url)
 
 def test_the_leaderboard_no_longer_offers_a_blocked_ranking(monkeypatch, fixture_api_url):
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", fixture_api_url)
-    home = AppTest.from_file(str(PAGE.parents[1] / "Home.py"), default_timeout=30)
-    home.run()
+    home = run_page()
 
     assert home.radio(key="rank_by").options == ["Export Gap", "Relative Export Gap"]
 

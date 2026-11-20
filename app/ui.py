@@ -1,4 +1,4 @@
-"""Shared page furniture: cached API reads, the persistent banner, pickers and the ranking table.
+"""Shared page pieces: cached API reads, pickers and the ranking table (the frame around each page is `app.frame`).
 
 The Leaderboard, the Blocked Opportunities page and both ranking pages render through `ranking_filters` and `show_ranking`, so a ranking option,
 column or row link is added here once.
@@ -73,30 +73,6 @@ def scenario_note(note: dict) -> None:
 def caveats() -> dict[str, tuple[str, str]]:
     """Caveat badges (ADR 0005): the row field that sets each, its badge and what it means."""
     return {field: (caveat["badge"], caveat["text"]) for field, caveat in labels()["caveats"].items()}
-
-
-def banner() -> dict | None:
-    """Show the Baseline-year and caveat banner and the page's one currency caption.
-
-    Returns health, or None if the API is down.
-    """
-    try:
-        health = client.get("/health")
-    except client.ApiUnavailable as error:
-        st.error(
-            f"The API is unavailable: {error} "
-            "Start everything with `podman compose up`, or for development run `uv run uvicorn api.main:app`. "
-            "Then reload this page."
-        )
-        return None
-    st.info(
-        f"Baseline year {health['baseline_year']} (provisional data). "
-        f"Export Gaps are {health['gap_period_label']}s. "
-        "Figures are associations the model has learned, not causes. "
-        f"Model version {health['artefact_version']}."
-    )
-    st.caption(labels()["usd_caption"])
-    return health
 
 
 def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True) -> dict:
@@ -329,7 +305,7 @@ def show_leaderboard(body: dict, file_name: str) -> None:
     show_ranking(body, PAIR_COLUMNS, file_name=file_name)
 
 
-WHY_PAGE_PATH = "/Why"  # the URL path Streamlit gives app/pages/5_Why.py
+WHY_PAGE_PATH = "/Why"  # the URL path the router (app/Home.py) gives app/pages/why.py
 
 
 def why_link(hs6: str, iso3: str) -> str:

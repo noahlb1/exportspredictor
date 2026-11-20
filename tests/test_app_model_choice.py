@@ -1,23 +1,22 @@
 """The Model Evaluation page's "How the model was chosen" section, asserted against the API's values."""
 
 from dataclasses import replace
-from pathlib import Path
 
 import httpx
 import pytest
+from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
 from exportspredictor import artefacts as store
 from exportspredictor import evaluation
 
-PAGE = Path(__file__).resolve().parents[1] / "app" / "pages" / "6_Model_Evaluation.py"
+PAGE = "pages/model_evaluation.py"
 SECTION = "How the model was chosen"
 
 
 def _run(monkeypatch, url: str) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", url)
-    page = AppTest.from_file(str(PAGE), default_timeout=30)
-    page.run()
+    page = run_page(PAGE)
     assert not page.exception
     return page
 
