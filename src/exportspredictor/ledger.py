@@ -48,11 +48,11 @@ FINGERPRINT_KEYS = (
     "zero_sampling_rate",
     "uk_zero_sampling_rate",
     "zero_sampling_seed",
+    "feature_set",
     "market_reach",  # Market Reach's form, β, pseudo-count and lag (`market_reach.settings`, ADR 0010)
 )
-# Keys added after the ledger was seeded: absent (or null) in a version's metadata, they are left out of the hash,
-# so the earlier reads keep their fingerprints.
-_ADDED_KEYS = ("market_reach",)
+# Keys added after versions were read: hashed only when set, so an earlier version keeps its fingerprint.
+LATER_KEYS = ("feature_set", "market_reach")
 
 
 class TestYearAlreadyRead(RuntimeError):
@@ -79,9 +79,7 @@ def fingerprint(metadata: Mapping) -> str:
     """A short hash of the configuration in `metadata` (`FINGERPRINT_KEYS`); version names and timings are left out."""
     seed = (metadata.get("model_params") or {}).get("seed")
     config = {
-        key: metadata.get(key)
-        for key in FINGERPRINT_KEYS
-        if key not in _ADDED_KEYS or metadata.get(key) is not None
+        key: metadata.get(key) for key in FINGERPRINT_KEYS if key not in LATER_KEYS or metadata.get(key)
     } | {"seed": seed}
     # The Model Form's fitted Market Reach (its reference year and rescale constant) is computed from the data and
     # the models, so a rebuild of the same configuration could differ in the last digits; its settings are hashed

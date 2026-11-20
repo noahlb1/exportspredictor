@@ -41,6 +41,9 @@ refuses it, and `real_data` refuses it before opening a file.
     uv run python -m exportspredictor.loop product-detail  # #74: three Product features, one experiment each (three models)
     uv run python -m exportspredictor.loop constraints  # #75: the monotone constraints on (cached) and off (one model)
     uv run python -m exportspredictor.loop confirm  # #76: the best arm beside v2 on all five folds (fold 0 cached)
+    # #127, with EXPORTSPREDICTOR_FEATURE_SET=exporter_count: the best so far retrained on the rebuilt
+    # files, then the Exporter count against it, both with Market Reach (two models)
+    uv run python -m exportspredictor.loop exporter-count
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -83,7 +86,17 @@ name, so to re-run an arm, give it a new name; the file is written only by the l
 Markets), shares this folder and results file, but its models are cached under their own keys:
 the set is part of the cache key, so a base arm on rebuilt files trains afresh instead of reusing
 the original's model. The Exporter count is not in `features.FEATURES`; an arm tries it by naming
-it in `features`.
+it in `features`. An experiment on rebuilt files passes `base_arm` to `Loop.run_experiment`: the best
+so far is retrained on those files and the arms are decided against it (a paired comparison), and the
+section records the feature set, which `served_configuration` hands the pipeline (it refuses to build
+from other files).
+
+**Market Reach** (#124) is the scoring field `market_reach_beta`: an arm with it multiplies each
+held-out UK pair's Export Potential by exp(beta · offset) of its Market, learned on this fold's
+complement in the year before (`LoopData.reach_source`, the same feature set's UK grid), and records
+its measures without Reach under `without_market_reach`. The rescaling constant is computed per
+scored table, so pooling several folds' Reach scores ranks with a slightly different constant per
+fold; a five-fold figure should re-pool the folds' plain scores with one constant, as #124 did.
 
 **Pitfalls.**
 
@@ -113,6 +126,7 @@ from exportspredictor.loop.arms import (
     BLEND_GRID,
     BLEND_WEIGHTS,
     CONSTRAINTS_EXPERIMENT,
+    EXPORTER_COUNT_EXPERIMENT,
     FIXTURE_LOOP,
     KEYED_FIELDS,
     LOWER_ZERO_RATE,
@@ -122,6 +136,7 @@ from exportspredictor.loop.arms import (
     NOISE_FLOOR,
     NOISE_SEEDS,
     PATIENCE,
+    REBUILT_BASE,
     SCOPE_EXPERIMENTS,
     SCORING_FIELDS,
     SELECT_EXPERIMENT,
@@ -142,6 +157,7 @@ from exportspredictor.loop.arms import (
     constraint_arms,
     count_experiments,
     experiment_label,
+    exporter_count_arms,
     models_trained_by,
     product_detail_arm,
     product_detail_experiment,
@@ -177,6 +193,7 @@ from exportspredictor.loop.runner import (
     TwoPart,
     log_progress,
     naive_margin,
+    run_exporter_count,
     run_product_detail,
 )
 from exportspredictor.loop.selection import (
@@ -212,6 +229,7 @@ __all__ = [
     "CONFIRMED_NAIVE_WEIGHT",
     "CONSTRAINTS_EXPERIMENT",
     "DIAGNOSTICS",
+    "EXPORTER_COUNT_EXPERIMENT",
     "FIXTURE_LOOP",
     "KEYED_FIELDS",
     "LOWER_ZERO_RATE",
@@ -224,6 +242,7 @@ __all__ = [
     "NOISE_SEEDS",
     "NO_MEASURE",
     "PATIENCE",
+    "REBUILT_BASE",
     "RECHECK",
     "RECORDED",
     "RESULTS_FILE",
@@ -263,6 +282,7 @@ __all__ = [
     "current_win_threshold",
     "decide",
     "experiment_label",
+    "exporter_count_arms",
     "fixture_data",
     "fixture_ranking",
     "load",
@@ -280,6 +300,7 @@ __all__ = [
     "read_results",
     "real_data",
     "recheck_results",
+    "run_exporter_count",
     "run_product_detail",
     "save_recheck",
     "save_results",

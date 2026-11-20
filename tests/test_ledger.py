@@ -150,3 +150,13 @@ def test_market_reachs_fitted_constant_does_not_change_the_fingerprint():
 def test_a_configuration_without_market_reach_keeps_its_fingerprint():
     # The fingerprint of METADATA as the ledger computed it before Market Reach existed (ticket #122's form).
     assert ledger.fingerprint({**METADATA, "market_reach": None}) == ledger.fingerprint(METADATA)
+
+
+def test_rebuilt_feature_files_are_a_new_version_and_the_original_files_keep_their_fingerprint():
+    """#127: the gravity fill changes the features' values, not their names, so the feature set is fingerprinted."""
+    metadata = {"source": "BACI", "test_year": 2023, "features": ["a"], "model_params": {"seed": 0}}
+
+    original = ledger.fingerprint({**metadata, "feature_set": ""})
+
+    assert original == ledger.fingerprint(metadata)  # versions recorded before the key existed
+    assert ledger.fingerprint({**metadata, "feature_set": "exporter_count"}) != original
