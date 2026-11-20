@@ -65,6 +65,23 @@ def baseline_year_scores(history: pl.DataFrame, baseline_year: int) -> pl.DataFr
     )
 
 
+def with_baseline_actual_exports(
+    pairs: pl.DataFrame, history: pl.DataFrame, baseline_year: int, name: str = "baseline_actual_exports_usd"
+) -> pl.DataFrame:
+    """`pairs` (with hs6 and iso3) plus the Baseline year's UK Actual Exports from the yearly history, as `name`.
+
+    A pair with no Flow in the Baseline year gets 0, whether its history row holds 0 or it has no row. Row order is
+    kept. Pages that show Baseline-year figures (Scenarios, Blocked Opportunities) read Actual Exports here, not the
+    Gap Period mean.
+    """
+    year = history.filter(pl.col("year") == baseline_year).select(
+        "hs6", "iso3", pl.col("actual_exports_usd").alias(name)
+    )
+    return pairs.join(year, on=["hs6", "iso3"], how="left", maintain_order="left").with_columns(
+        pl.col(name).fill_null(0.0)
+    )
+
+
 EXPAND, NEW_MARKET, NEW_PRODUCT = OPPORTUNITY_TYPES = ("Expand", "New Market", "New Product")
 
 

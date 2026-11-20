@@ -57,8 +57,29 @@ def test_top_pairs_are_sorted_by_scenario_effect(client):
         "effect_share",
         "baseline_tariff_pct",
         "scenario_tariff_pct",
+        "baseline_actual_exports_usd",
         "blocked_opportunity",
     }
+
+
+def test_scenario_pairs_carry_baseline_year_actual_exports_from_the_yearly_history(client, fixture_artefacts):
+    history = fixture_artefacts.history
+    year = fixture_artefacts.baseline_year
+    exports = {
+        (hs6, iso3): value
+        for hs6, iso3, value in history.filter(history["year"] == year)
+        .select("hs6", "iso3", "actual_exports_usd")
+        .iter_rows()
+    }
+
+    body = _scenario(client, {"add_agreements": ["IND"], "remove_agreements": ["JPN"]})
+
+    pairs = [*body["top_pairs"], *body["blocked_opportunities"]]
+    assert pairs
+    for row in pairs:
+        assert row["baseline_actual_exports_usd"] == pytest.approx(exports.get((row["hs6"], row["iso3"]), 0.0))
+    assert any(row["baseline_actual_exports_usd"] == 0 for row in pairs)  # a pair with no Flow that year shows 0
+    assert any(row["baseline_actual_exports_usd"] > 0 for row in pairs)
 
 
 def test_a_preset_scenario_succeeds(client):

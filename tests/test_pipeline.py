@@ -16,6 +16,7 @@ from exportspredictor.features import (
 )
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
+from exportspredictor.gap_period import with_baseline_actual_exports
 from exportspredictor.loop import NAIVE_EXPERIMENT, SELECTION_MEASURE_TEXT
 from exportspredictor.pipeline import build_artefacts, fixture_training, refresh
 from exportspredictor.prediction import blend
@@ -53,6 +54,17 @@ def test_baseline_actual_exports_are_the_gap_period_mean_with_missing_years_as_z
     flows = uk.filter(pl.col("hs6") == "851712", pl.col("importer") == "JPN", pl.col("value_usd") > 0)
     assert flows.height == 2
     assert phones_to_japan["actual_exports_usd"] == pytest.approx(flows["value_usd"].sum() / 3)
+
+
+def test_baseline_year_actual_exports_are_zero_for_a_pair_missing_from_the_history():
+    history = pl.DataFrame(
+        {"hs6": ["220830", "220830"], "iso3": ["JPN", "JPN"], "year": [2023, 2024], "actual_exports_usd": [5.0, 7.0]}
+    )
+    pairs = pl.DataFrame({"hs6": ["851712", "220830"], "iso3": ["JPN", "JPN"]})
+
+    shown = with_baseline_actual_exports(pairs, history, 2024)
+
+    assert shown.rows() == [("851712", "JPN", 0.0), ("220830", "JPN", 7.0)]
 
 
 def test_metadata_records_the_gap_period_and_the_baseline_year(artefacts):

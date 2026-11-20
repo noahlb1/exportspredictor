@@ -74,7 +74,7 @@ from exportspredictor.exclusions import (
     not_ranked_message,
 )
 from exportspredictor.explain import UnknownPair, explain_pair
-from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
 from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.illustrative import ILLUSTRATIVE, ILLUSTRATIVE_TEXT, scenario_note
 from exportspredictor.lookups import search_products
@@ -420,6 +420,13 @@ def scenario_response(
     blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
     total = result.total()
+
+    def shown(rows: pl.DataFrame) -> list[dict]:
+        """The top `limit` rows, each with its Baseline-year Actual Exports."""
+        return with_baseline_actual_exports(
+            rows.head(request.limit), artefacts.history, artefacts.baseline_year
+        ).to_dicts()
+
     return ScenarioResponse(
         **_metadata(artefacts),
         scenario=ScenarioIn.model_validate(asdict(result.scenario)),
@@ -433,8 +440,8 @@ def scenario_response(
         .head(request.limit)
         .join(products, on="hs6", how="left", maintain_order="left")
         .to_dicts(),
-        top_pairs=top.head(request.limit).to_dicts(),
-        blocked_opportunities=blocked.head(request.limit).to_dicts(),
+        top_pairs=shown(top),
+        blocked_opportunities=shown(blocked),
         blocked_count=blocked.height,
         clipped_pairs=result.clipped_pairs,
         note=scenario_note(artefacts),
