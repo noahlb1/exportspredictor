@@ -83,3 +83,16 @@ def test_the_rebuild_table_says_the_notebook_reads_saved_results_and_how_long_it
 
 def test_the_rebuild_section_names_the_command_that_refreshes_the_notebook_s_outputs():
     assert "uv run python scripts/rebuild.py --only notebook" in _rebuild_section()
+
+
+def test_checklist_states_the_app_is_designed_for_1280_px_and_not_for_phones():
+    checklist = _checklist()
+    assert "1280 px" in checklist
+    assert "phones" in checklist.lower()
+
+
+def test_checklist_mentions_no_removed_page():
+    checklist = _checklist()
+    removed = ["Why?", "Product to Markets", "Product → Markets", "Market to Products", "Market → Products"]
+    named = [title for title in removed if title in checklist]
+    assert not named, f"The README checklist still names removed pages: {named}"

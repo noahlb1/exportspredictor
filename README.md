@@ -89,7 +89,7 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 
 ## Manual UI checklist
 
-Run this before a release, against `podman compose up` with real artefacts. Tick each item.
+Run this before a release, against `podman compose up` with real artefacts, in a browser window 1280 px wide or wider (the app is designed for 1280 px and wider; phones are unsupported). Each item names its page and what to click. Tick each item.
 
 **UK Exports Predictor (every page)**
 - [ ] The menu lists four pages, Leaderboard, Blocked Opportunities, Scenarios and Model Evaluation, with no group headings, and the app opens on the Leaderboard.
