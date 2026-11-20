@@ -64,6 +64,7 @@ from exportspredictor.features import (
 )
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
+from exportspredictor.gravity import GDP_GAPS
 from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.prediction import (
     MIN_PREDICTION_USD,
@@ -212,6 +213,13 @@ LIMITATIONS = [
         "text": "Sanctions, embargoes, quotas, licensing and product standards are not model inputs. A Market under "
         "sanctions can still show a large Export Gap: Russia ranks high for UK whisky because the model sees "
         "its fundamentals, not the sanctions in force since 2022. Check such Markets before acting on them.",
+    },
+    {
+        "title": "No GDP for some small Markets",
+        "text": "GDP comes from the World Bank, the IMF and CEPII, and for small territories they miss from UN, "
+        "Statistics Netherlands and CIA World Factbook figures. No source gives one for "
+        + ", ".join(sorted(GDP_GAPS.values()))
+        + ", so the model reads their size from their trade alone, and their Export Potential is less reliable.",
     },
 ]
 
