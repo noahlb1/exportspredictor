@@ -156,6 +156,8 @@ Gains are on folds 3–4, with the adjustment's weight chosen on folds 0–2 by 
 
 ### 1. A UK Market reach offset
 
+*Tested by #124 ([market-reach-2022.md](market-reach-2022.md)): the lagged share form under the tie-proof measure, +0.0406 pooled at β 4; adopted.*
+
 **What it is.** For each Market, the share of Products the UK sends there, observed against what the ranking expects, learned from UK pairs in the *other* folds only:
 
 offset(Market) = log((UK Flows + 5) ÷ (pairs + 10)) − log((summed within-Product rank of Export Potential + 5) ÷ (pairs + 10)),

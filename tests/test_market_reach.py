@@ -113,3 +113,7 @@ def test_the_pre_registered_settings_are_fixed_in_code():
     assert market_reach.BETA_GRID == (0.0, 0.5, 1.0, 2.0, 4.0)
     assert market_reach.PSEUDO_COUNT == 5.0
     assert market_reach.LAG_YEARS == 1
+
+
+def test_the_adopted_beta_comes_from_the_pre_registered_grid():
+    assert market_reach.CHOSEN_BETA in market_reach.BETA_GRID

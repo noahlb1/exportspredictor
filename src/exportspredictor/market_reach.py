@@ -31,7 +31,8 @@ into the target Market in other Products, which a feature may not use.
 **The adoption gate.** β comes from `BETA_GRID`, chosen on folds 0–2 of 2022 under the
 tie-proof Selection Measure, and is kept only if it beats the Win Threshold on the pooled
 five-fold 2022 grid (`scripts/research/market_reach_2022/`). `FORM`, `BETA_GRID`,
-`PSEUDO_COUNT` and `LAG_YEARS` were committed before any result was read (#124).
+`PSEUDO_COUNT` and `LAG_YEARS` were committed before any result was read (#124, ed982b0);
+the experiment chose and adopted `CHOSEN_BETA` (`docs/research/market-reach-2022.md`).
 
 The model associates broad UK reach into a Market with higher Export Potential there; it
 does not say that reach causes exports.
@@ -46,6 +47,9 @@ FORM = "share"  # the open review's share form (its rank-expectation form is the
 BETA_GRID = (0.0, 0.5, 1.0, 2.0, 4.0)
 PSEUDO_COUNT = 5.0
 LAG_YEARS = 1
+# Chosen from BETA_GRID on folds 0–2 of 2022 and adopted on the five-fold check (+0.0406 against a Win
+# Threshold of 0.008869): docs/research/market-reach-2022.md.
+CHOSEN_BETA = 4.0
 DEMAND = "log_demand_loo"  # the Market's imports of the Product from Exporters other than the UK (log1p)
 TABLE_COLUMNS = ("fold", "importer", "products_sent", "products_imported", "products_expected", "offset")
 
