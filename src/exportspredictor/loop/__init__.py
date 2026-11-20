@@ -77,6 +77,14 @@ rows and decision, `best` and `confirmation` (all measured with the old measure)
 Threshold, and the re-scored best so far that `best` now holds). `load()` reads it. A re-run skips arms by
 name, so to re-run an arm, give it a new name; the file is written only by the loop.
 
+**Feature sets.** `real_data` reads the feature set `EXPORTSPREDICTOR_FEATURE_SET` names
+(`features.FEATURE_SETS`; the original `features_V202601` when unset). A rebuilt set, such as
+`exporter_count` (#126: the Exporter count stored as a candidate feature, and GDP filled for small
+Markets), shares this folder and results file, but its models are cached under their own keys:
+the set is part of the cache key, so a base arm on rebuilt files trains afresh instead of reusing
+the original's model. The Exporter count is not in `features.FEATURES`; an arm tries it by naming
+it in `features`.
+
 **Pitfalls.**
 
 - Rounds stop on the selection measure of the *model alone*, while an arm that blends is

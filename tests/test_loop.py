@@ -145,6 +145,34 @@ def test_a_scoring_only_arm_trains_no_model(data, tmp_path, monkeypatch):
     assert row["selection_measure"] is not None
 
 
+def test_a_model_cached_on_one_feature_set_is_never_reused_on_another(data, tmp_path):
+    """Rebuilt feature files (#126) share the loop's folder: an arm on them trains its own model."""
+    original = loop.Loop(data, loop.FIXTURE_LOOP, tmp_path).noise_floor()["arms"][0]
+    rebuilt = replace(data, feature_set="exporter_count")
+
+    results = loop.Loop(rebuilt, loop.FIXTURE_LOOP, tmp_path).run_experiment(
+        "rebuilt base", [loop.Arm("base on rebuilt files", {})]
+    )
+
+    row = results["experiments"]["rebuilt base"]["arms"][0]
+    assert row["trained"] is True
+    assert row["training_key"] != original["training_key"]
+
+
+def test_the_real_loop_reads_the_feature_set_the_environment_names(derived_data_root, monkeypatch):
+    features.build(derived_data_root, years=[2021, 2022], rate=1.0)
+    monkeypatch.setenv(features.FEATURE_SET_ENV, "exporter_count")
+    (derived_data_root / "derived" / "country_year_filled.parquet").write_bytes(
+        (derived_data_root / "derived" / "country_year.parquet").read_bytes()
+    )
+    folder = features.build(derived_data_root, years=[2021, 2022], rate=1.0)
+
+    real = loop.real_data(derived_data_root)
+
+    assert real.feature_set == "exporter_count"
+    assert real.data.grid == folder / "uk_grid_2022.parquet"
+
+
 def test_an_experiment_that_would_train_more_than_six_models_is_refused_before_training_any(data, monkeypatch):
     lp = loop.Loop(data, loop.FIXTURE_LOOP)
     lp.noise_floor()

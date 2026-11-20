@@ -298,7 +298,10 @@ class Loop:
 
     def _fingerprint(self) -> dict:
         rows = self.data.data
+        # A rebuilt feature set keys its own models; the original's keys are unchanged.
+        feature_set = {"feature_set": self.data.feature_set} if self.data.feature_set else {}
         return {
+            **feature_set,
             "training_years": sorted(rows.training),
             "validation_year": rows.validation_year,
             "built_zero_rate": rows.built_zero_rate,
