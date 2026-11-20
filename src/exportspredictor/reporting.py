@@ -22,6 +22,7 @@ from matplotlib.figure import Figure
 
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
+from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.evaluation import NOT_RUN, relabelled
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
@@ -202,6 +203,28 @@ def round_count(bundle: Artefacts) -> pl.DataFrame | NotRun:
     return pl.DataFrame(rows, schema={
         "model": pl.String, "chosen_on": pl.String, "rounds_chosen": pl.Int64, "rounds_trained": pl.Int64,
     })
+
+
+def caveat_tier_reach(
+    bundle: Artefacts, *, tops: tuple[int, ...] = (1_000, 10_000), tiers: tuple[CaveatTier, ...] = TIERS
+) -> pl.DataFrame:
+    """How many Opportunities each Caveat Tier covers in the Baseline (ADR 0005), and how many of them are in the
+    top `tops` of the Leaderboard's default ranking (largest Export Gap first, ties by hs6 and iso3)."""
+    ranked = (
+        bundle.baseline.filter(pl.col("export_gap_usd") > 0)
+        .sort(["export_gap_usd", "hs6", "iso3"], descending=[True, False, False])
+        .with_row_index("rank", offset=1)
+    )
+    return pl.DataFrame(
+        [
+            {
+                "Caveat Tier": tier.badge,
+                "Opportunities": int(ranked[tier.column].sum()),
+                **{f"in top {top:,}": int(ranked.filter(pl.col("rank") <= top)[tier.column].sum()) for top in tops},
+            }
+            for tier in tiers
+        ]
+    )
 
 
 def test_year_ledger(path: Path = LEDGER_PATH) -> pl.DataFrame:

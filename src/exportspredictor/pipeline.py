@@ -72,7 +72,12 @@ from exportspredictor import (
     search,
 )
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
-from exportspredictor.caveats import CaveatContext, with_caveat_columns
+from exportspredictor.caveats import (
+    TIERS,
+    CaveatContext,
+    CaveatTier,
+    with_caveat_columns,
+)
 from exportspredictor.exclusions import (
     EXCLUSIONS,
     drop_excluded,
@@ -1139,6 +1144,18 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
     return replace(bundle, metadata=metadata)
 
 
+def recaveat(bundle: Artefacts, *, version: str | None = None, tiers: Sequence[CaveatTier] = TIERS) -> Artefacts:
+    """A new version of a saved bundle whose Baseline is marked again with the declared Caveat Tiers; no retraining.
+
+    Each tier's columns are replaced in place or added (`caveats.with_caveat_columns`, for the bundle's Baseline
+    year); every other column, table and model is reused. Use it when a tier is added or its table changes, such as
+    a sanctions regime or prohibition in `restrictions`.
+    """
+    baseline = with_caveat_columns(bundle.baseline, CaveatContext(bundle.baseline_year), tiers=tiers)
+    metadata = {**bundle.metadata, "version": version or new_version(), "refreshed_from": bundle.version}
+    return replace(bundle, metadata=metadata, baseline=baseline)
+
+
 _RANGE_COLUMNS = ["potential_range_low_usd", "potential_range_high_usd", "uncertain_opportunity"]
 
 
@@ -1256,7 +1273,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     `python -m exportspredictor.pipeline refresh` instead saves a refreshed copy of the newest
     saved bundle (`refresh`), in seconds. `python -m exportspredictor.pipeline rerange` saves a
     copy of the newest bundle with its Potential Range recomputed (`rerange`), in a few minutes
-    on the CPU. `python -m exportspredictor.pipeline compare` saves a
+    on the CPU. `python -m exportspredictor.pipeline recaveat` saves a copy whose Baseline is marked again with
+    the declared Caveat Tiers (`recaveat`). `python -m exportspredictor.pipeline compare` saves a
     copy of the newest bundle with the v1 comparison and gain ladder added (`add_v1_comparison`).
 
     The training run and `compare` read the test year: each records the read in the test-year
@@ -1281,6 +1299,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if list(argv) == ["rerange"]:
         print(_rerange_latest(), flush=True)
+        return
+    if list(argv) == ["recaveat"]:
+        marked = recaveat(artefacts.load(artefacts.latest_folder(artefacts_dir())))
+        saved = artefacts.save(marked, artefacts_dir())
+        governance.write_model_card(marked, saved)
+        print(saved, flush=True)
         return
     bundle = build_real_artefacts(parts=parse_parts(argv), test_year_ledger=test_year_ledger)
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}

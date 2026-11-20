@@ -73,8 +73,8 @@ def _get(client, path: str, **params) -> dict:
 def test_the_api_serves_every_declared_tier(client):
     tiers = _get(client, "/caveats")
 
-    assert [tier["column"] for tier in tiers] == ["flagged_product", "reexport_hub", "test_market", "test_pair"]
-    market = tiers[2]
+    assert [tier["column"] for tier in tiers] == [*(tier.column for tier in TIERS), "test_market", "test_pair"]
+    market, pair = tiers[-2:]
     assert market == {
         "column": "test_market",
         "badge": "Test Market",
@@ -85,7 +85,7 @@ def test_the_api_serves_every_declared_tier(client):
         "reason_column": None,
         "row_text": None,
     }
-    assert tiers[3]["reason_column"] == "test_pair_reason" and tiers[3]["row_text"] == "Test Pair: {reason}."
+    assert pair["reason_column"] == "test_pair_reason" and pair["row_text"] == "Test Pair: {reason}."
     assert _get(client, "/labels")["caveats"]["test_market"]["badge"] == "Test Market"
 
 
@@ -118,7 +118,7 @@ def test_the_hide_filter_drops_rows_of_the_market_from_a_market_ranking(client):
 
 
 def test_an_undeclared_hide_filter_is_refused(client):
-    assert client.get("/opportunities/top", params={"hide_sanctioned": True}).status_code == 422
+    assert client.get("/opportunities/top", params={"hide_undeclared": True}).status_code == 422
 
 
 @pytest.fixture(scope="module")

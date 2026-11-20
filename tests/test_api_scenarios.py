@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
+from exportspredictor.caveats import TIERS
 
 FIXTURE_HS6 = "220830"
 
@@ -62,6 +63,7 @@ def test_top_pairs_are_sorted_by_scenario_effect(client):
         "scenario_tariff_pct",
         "baseline_actual_exports_usd",
         "blocked_opportunity",
+        *(column for tier in TIERS for column in tier.columns),  # each Caveat Tier's, as on ranking rows
     }
 
 

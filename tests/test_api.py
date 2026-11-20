@@ -55,6 +55,8 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     assert {field: caveat["badge"] for field, caveat in body["caveats"].items()} == {
         "flagged_product": "Flagged Product",
         "reexport_hub": "Re-export Hub",
+        "sanctioned_market": "Sanctioned Market",
+        "restricted_pair": "Restricted Pair",
     }
     assert all(caveat["text"].startswith(caveat["badge"]) for caveat in body["caveats"].values())
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
@@ -151,6 +153,10 @@ def test_by_product_rows_have_the_documented_shape(client):
         "blocked_opportunity",
         "flagged_product",
         "reexport_hub",
+        "sanctioned_market",
+        "sanctioned_market_reason",
+        "restricted_pair",
+        "restricted_pair_reason",
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",
@@ -427,6 +433,10 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "opportunity_type",
         "flagged_product",
         "reexport_hub",
+        "sanctioned_market",
+        "sanctioned_market_reason",
+        "restricted_pair",
+        "restricted_pair_reason",
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",

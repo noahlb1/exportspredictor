@@ -7,9 +7,11 @@ table's rows, "not run" where a part is absent), not for how a chart looks.
 from dataclasses import replace
 from html import escape
 
+import polars as pl
 import pytest
 
 from exportspredictor import reporting
+from exportspredictor.caveats import CaveatContext, with_caveat_columns
 
 
 def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlier_versions(fixture_artefacts):
@@ -222,3 +224,22 @@ def test_the_model_card_excerpt_is_its_headline_and_its_contents_with_a_link_to_
         assert heading[3:] in excerpt, heading
     assert str(path.name) in excerpt
     assert "## Limitations" not in excerpt  # later sections are listed, not shown
+
+
+def test_each_caveat_tier_s_reach_counts_its_opportunities_overall_and_in_the_top_of_the_ranking(fixture_artefacts):
+    baseline = pl.DataFrame({
+        "hs6": ["220830", "220830", "870323", "711319", "300490"],
+        "iso3": ["SAU", "RUS", "RUS", "HKG", "JPN"],
+        "export_gap_usd": [500.0, 400.0, 300.0, -50.0, 100.0],
+    })
+    bundle = replace(fixture_artefacts, baseline=with_caveat_columns(baseline, CaveatContext(baseline_year=2024)))
+
+    reach = reporting.caveat_tier_reach(bundle, tops=(1, 3))
+
+    assert reach.columns == ["Caveat Tier", "Opportunities", "in top 1", "in top 3"]
+    assert reach.rows() == [
+        ("Flagged Product", 0, 0, 0),  # the jewellery to Hong Kong is not an Opportunity
+        ("Re-export Hub", 0, 0, 0),
+        ("Sanctioned Market", 2, 0, 2),
+        ("Restricted Pair", 1, 1, 1),
+    ]
