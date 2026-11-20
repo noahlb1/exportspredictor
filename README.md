@@ -133,10 +133,13 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds, and the summary shows the total change, the change per Market and the top Products gaining, phrased as associations.
 - [ ] Run the CPTPP preset: it shows a non-zero Scenario Effect (the 2024 Baseline has no UK CPTPP membership).
 - [ ] Blocked Opportunities unlocked by the Scenario are listed, and changing the thresholds changes the list.
-- [ ] Pick a Market in the drill-down: its most affected Product–Market pairs are listed, largest effect first.
+- [ ] The builder sits in a box at the top and the page shows no result until **Run Scenario** is pressed. Change a control after a run: a line says the controls differ from the result shown.
+- [ ] Click a Market row in Change per Market: the pairs most affected in that Market are listed under it, largest effect first; the top Market is selected on open.
+- [ ] Click a pair in the drill-down or in Blocked Opportunities: a box under that table shows its Baseline and Scenario Export Potential, the Scenario Effect and both Applied Tariffs. Its link opens the Leaderboard on that Product and Market.
+- [ ] The tables are in $ millions with the unit stated once above them, and the Blocked Opportunities table has a Baseline-year Actual Exports column.
 - [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
 - [ ] In tariff mode, set a tariff above the highest one in training for one Market (e.g. 5000% for the USA; on the real artefact the training range ends at 3,000%): the Scenario Effect is never a rise, and the page says the effect flattens beyond the training range. Removing a Trade Agreement (e.g. with Japan) shows the restored 2021 MFN tariff in the pair tables.
-- [ ] The page states the EU–Japan Event Backtest result (predicted against observed) above the Scenario choice.
+- [ ] After a run, the page states the EU–Japan Event Backtest result (predicted against observed) beside the Scenario Effect.
 
 **Why?**
 - [ ] On the Leaderboard with one Product or one Market chosen, click **Why?** on a row: the Why? page opens for that Product and Market.
