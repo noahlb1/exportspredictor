@@ -12,11 +12,13 @@ Products with reasons (`excluded_products`), which the API serves at `/products/
 
 Flagged Products (the rest of Sector 71) and Re-export Hubs are the other two tiers of
 ADR 0005. They stay in training, scoring and rankings. Their lists and caveat text are
-here; `caveats.TIERS` declares them as Caveat Tiers, which mark the Baseline with the
+here, except the volatile and one-off Flagged Products, which `volatility` derives from the
+training years' Flows; `caveats.TIERS` declares them as Caveat Tiers, which mark the Baseline with the
 boolean `flagged_product` and `reexport_hub` columns, so Advisors see their caveats and
 can hide them.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import polars as pl
@@ -113,9 +115,17 @@ FLAGGED_PRODUCT_PREFIXES = (
     "7113", "7114", "7115", "7116", "7117",
 )
 FLAGGED_PRODUCT_CAVEAT = (
-    "Flagged Product: precious stones, jewellery and other Sector 71 goods. Their recorded values are "
-    "volatile and entrepôt-driven, so treat the Export Potential with caution."
+    "Flagged Product: UK exports of this Product are volatile, one-off or entrepôt-driven (precious stones and "
+    "jewellery of Sector 71, Products whose UK exports swing widely from year to year, and Products sold in a few "
+    "large contracts), so treat the Export Potential with caution: what looks unmet may be timing rather than "
+    "lasting potential."
 )
+# A Flagged Product row's caveat text, naming its reason: SECTOR_71_REASON here, or a reason of `volatility`.
+FLAGGED_PRODUCT_ROW_CAVEAT = (
+    "Flagged Product ({reason}): treat the Export Potential with caution, as what looks unmet may be timing rather "
+    "than lasting potential."
+)
+SECTOR_71_REASON = "Sector 71: precious stones and jewellery, whose recorded values are volatile and entrepôt-driven"
 REEXPORT_HUBS = frozenset({"NLD", "BEL", "IRL", "HKG", "SGP", "ARE", "CHE", "LUX"})
 REEXPORT_HUB_CAVEAT = (
     "Re-export Hub: this Market re-exports much of what it imports, so part of its demand belongs "
@@ -124,9 +134,19 @@ REEXPORT_HUB_CAVEAT = (
 
 
 def flagged_product_expr(column: str = "hs6") -> pl.Expr:
-    """True where the row's Product is a Flagged Product."""
+    """True where the row's Product is a Sector 71 Flagged Product (the volatility rule's are in `volatility`)."""
     code = _code(column)
     return pl.any_horizontal(code.str.starts_with(p) for p in FLAGGED_PRODUCT_PREFIXES)
+
+
+def flagged_product_reason_expr(reasons: Mapping[str, str], column: str = "hs6") -> pl.Expr:
+    """Each row's Flagged Product reason: Sector 71's, else the Product's in `reasons` (hs6 -> reason), else null."""
+    code = _code(column)
+    other = (
+        code.replace_strict(dict(reasons), default=None, return_dtype=pl.String) if reasons
+        else pl.lit(None, pl.String)
+    )
+    return pl.when(flagged_product_expr(column)).then(pl.lit(SECTOR_71_REASON)).otherwise(other)
 
 
 def reexport_hub_expr(column: str = "iso3") -> pl.Expr:
@@ -140,7 +160,7 @@ def flag_columns(hs6: str = "hs6", iso3: str = "iso3") -> list[pl.Expr]:
 
 
 def is_flagged_product(hs6: str) -> bool:
-    """Whether `hs6` is a Flagged Product."""
+    """Whether `hs6` is a Sector 71 Flagged Product (the volatility rule's are in `volatility`)."""
     return hs6.startswith(FLAGGED_PRODUCT_PREFIXES)
 
 

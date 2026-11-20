@@ -58,7 +58,7 @@ def test_the_declared_tiers_mark_the_baseline_as_before():
     marked = with_caveat_columns(ROWS, CONTEXT)
 
     assert marked.columns == [
-        "hs6", "iso3", "flagged_product", "reexport_hub", "sanctioned_market", "sanctioned_market_reason",
+        "hs6", "iso3", "flagged_product", "flagged_product_reason", "reexport_hub", "sanctioned_market", "sanctioned_market_reason",
         "restricted_pair", "restricted_pair_reason",
     ]
     assert marked["flagged_product"].to_list() == [True, False, False, False]
