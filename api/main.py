@@ -32,7 +32,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.schemas import (
+    BlockedMarket,
     BlockedOpportunities,
+    BlockedOpportunity,
     BlockedQuery,
     BlockedSummary,
     Caveat,
@@ -85,6 +87,7 @@ from exportspredictor.rankings import (
     DEFAULT_MIN_POTENTIAL_USD,
     MIN_POTENTIAL_USD_OPTIONS,
     RANK_BY,
+    blocked_opportunities,
     rank_opportunities,
     ranking,
 )
@@ -203,13 +206,30 @@ def create_app(
     def top(query: Annotated[LeaderboardQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
         """The Leaderboard: every UK Product–Market pair ranked (or one Market's, or one Product's), with a summary of
         the filtered pairs. An unknown Market or Product answers 404, as does an Excluded Product, with its reason."""
-        return Leaderboard(**_leaderboard(artefacts, query, LeaderboardSummary), rank_by=query.rank_by)
+        return Leaderboard(**_leaderboard(artefacts, query), rank_by=query.rank_by)
 
     @app.get("/opportunities/blocked", response_model=BlockedOpportunities)
     def blocked(query: Annotated[BlockedQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
-        """The Blocked Opportunities page: every UK pair ranked by Blocked Opportunity value, with a summary."""
+        """The Blocked Opportunities page: only Blocked Opportunities (default thresholds), ranked by Blocked Opportunity
+        value, in Baseline-year figures, with a summary and per-Market totals over every filtered one. An unknown
+        Product answers 404, as does an Excluded Product, with its reason."""
+        if query.product is not None:
+            _product(artefacts, query.product)
+        found = blocked_opportunities(
+            artefacts,
+            hs6=query.product,
+            sector=query.sector,
+            region=query.region,
+            min_value_usd=query.min_value_usd,
+            hide_flagged=query.hide_flagged,
+            hide_hubs=query.hide_hubs,
+            limit=query.limit,
+        )
         return BlockedOpportunities(
-            **_leaderboard(artefacts, query, BlockedSummary),
+            **_metadata(artefacts),
+            summary=BlockedSummary(**found.summary),
+            markets=[_pick(BlockedMarket, row) for row in found.markets.iter_rows(named=True)],
+            opportunities=[_pick(BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)],
             rank_by=BLOCKED.name,
             order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
             note=scenario_note(artefacts),
@@ -378,8 +398,8 @@ def _filters(query: RankingQuery) -> dict:
     }
 
 
-def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, summary_model: type[BaseModel]) -> dict:
-    """The fields the Leaderboard and the Blocked Opportunities page share: metadata, summary and top rows."""
+def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery) -> dict:
+    """The Leaderboard's fields: metadata, summary and top rows."""
     if query.market is not None:
         _market(artefacts, query.market)
     if query.product is not None:
@@ -387,7 +407,7 @@ def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, summary_mo
     ranked = ranking(artefacts, hs6=query.product, iso3=query.market, limit=query.limit, **_filters(query))
     return {
         **_metadata(artefacts),
-        "summary": summary_model(**ranked.summary),
+        "summary": LeaderboardSummary(**ranked.summary),
         "opportunities": [_pick(LeaderboardOpportunity, row) for row in ranked.rows.iter_rows(named=True)],
     }
 

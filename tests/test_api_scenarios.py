@@ -5,11 +5,14 @@ India; Japan and Canada are CPTPP members, and the UK is in no Trading Bloc.
 """
 
 import re
+from dataclasses import replace
 
+import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
 from api.main import create_app
+from exportspredictor import artefacts as store
 
 FIXTURE_HS6 = "220830"
 
@@ -148,96 +151,159 @@ def test_by_product_ranks_by_export_gap_by_default(client):
     assert gaps == sorted(gaps, reverse=True)
 
 
+# --- The Blocked Opportunities read (#109), on the Blocked world (`conftest.blocked_artefacts`) ------------------
+
+WHISKY, JEWELLERY, CARS, CRUDE_OIL = "220830", "711319", "870323", "270900"
+# The Blocked world's Blocked Opportunities (see `conftest.blocked_artefacts`): jewellery is the Flagged Product and
+# Hong Kong the Re-export Hub.
+BLOCKED_PAIRS = {(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG"), (CARS, "HKG")}
+
+
+@pytest.fixture(scope="module")
+def blocked_client(blocked_artefacts_dir):
+    with TestClient(create_app(blocked_artefacts_dir)) as client:
+        yield client
+
+
 def _blocked(client, **params) -> dict:
     response = client.get("/opportunities/blocked", params=params)
     assert response.status_code == 200, response.text
     return response.json()
 
 
-def _blocked_summary(rows: list[dict]) -> dict:
-    return {
-        "pairs": len(rows),
-        "positive_export_gap_usd": pytest.approx(sum(max(r["export_gap_usd"], 0) for r in rows)),
-        "blocked_opportunities": sum(r["blocked_opportunity"] for r in rows),
-        "blocked_opportunity_value_usd": pytest.approx(sum(r["blocked_opportunity_value_usd"] for r in rows if r["blocked_opportunity"])),
+def _totals(rows: list[dict]) -> tuple[dict, list[dict]]:
+    """The summary and per-Market totals of `rows`, summed here."""
+    summary = {
+        "blocked_opportunities": len(rows),
+        "blocked_opportunity_value_usd": pytest.approx(sum(row["blocked_opportunity_value_usd"] for row in rows)),
     }
+    markets: dict[str, dict] = {}
+    for row in rows:
+        market = markets.setdefault(
+            row["iso3"],
+            {"iso3": row["iso3"], "market": row["market"], "blocked_opportunities": 0, "values": []},
+        )
+        market["blocked_opportunities"] += 1
+        market["values"].append(row["blocked_opportunity_value_usd"])
+    totals = [
+        {
+            "iso3": market["iso3"],
+            "market": market["market"],
+            "blocked_opportunities": market["blocked_opportunities"],
+            "blocked_opportunity_value_usd": pytest.approx(sum(market["values"])),
+        }
+        for market in sorted(markets.values(), key=lambda market: -sum(market["values"]))
+    ]
+    return summary, totals
 
 
-def test_blocked_ranks_every_uk_pair_by_blocked_opportunity_value_with_a_summary(client):
-    body = _blocked(client)
+def test_the_blocked_read_returns_only_blocked_opportunities_ranked_by_value(blocked_client, client):
+    body = _blocked(blocked_client)
 
     rows = body["opportunities"]
+    assert {(row["hs6"], row["iso3"]) for row in rows} == BLOCKED_PAIRS
+    assert all(row["blocked_opportunity"] for row in rows)
     values = [row["blocked_opportunity_value_usd"] for row in rows]
-    assert len(rows) == 20
     assert values == sorted(values, reverse=True)
-    assert values[0] > 0
-    assert rows[0]["iso3"] in {"IND", "HKG"}  # the fixture Markets without a UK Trade Agreement
-    assert body["rank_by"] == "blocked"
-    assert body["gap_years"] == [2022, 2024]
-    assert body["summary"] == _blocked_summary(rows)
+    assert (rows[0]["hs6"], rows[0]["iso3"]) == (WHISKY, "IND")
     assert body["order"]["title"] == "Blocked Opportunity value"
     assert "associates" in body["order"]["description"]
+    # The unscaled fixture's values are all under the $1M threshold: no Blocked Opportunity at all.
+    empty = _blocked(client)
+    assert empty["opportunities"] == [] and empty["markets"] == []
+    assert empty["summary"] == {"blocked_opportunities": 0, "blocked_opportunity_value_usd": 0}
 
 
-def test_blocked_rows_have_the_leaderboard_row_fields(client):
-    blocked = _blocked(client)["opportunities"][0]
-    top = client.get("/opportunities/top").json()["opportunities"][0]
+def test_the_summary_and_per_market_totals_are_sums_over_the_returned_rows(blocked_client):
+    body = _blocked(blocked_client)
 
-    assert set(blocked) == set(top)
-
-
-def test_blocked_value_is_zero_where_a_trade_agreement_is_in_force(client):
-    rows = _blocked(client)["opportunities"]
-
-    with_agreement = [row for row in rows if row["trade_agreement"]]
-    assert {row["iso3"] for row in with_agreement} == {"JPN", "CAN"}
-    assert {row["blocked_opportunity_value_usd"] for row in with_agreement} == {0}
-    assert not any(row["blocked_opportunity"] for row in with_agreement)
-    assert all(row["blocked_opportunity_value_usd"] >= 0 for row in rows)  # monotone: adding an agreement never lowers
+    summary, markets = _totals(body["opportunities"])
+    assert body["summary"] == summary
+    assert body["markets"] == markets
+    # India's two (whisky and jewellery) total more than Hong Kong's two (jewellery and cars).
+    assert [(market["iso3"], market["blocked_opportunities"]) for market in body["markets"]] == [("IND", 2), ("HKG", 2)]
 
 
 @pytest.mark.parametrize(
     ("params", "keep"),
     [
-        ({"sector": "22"}, lambda row: row["sector"] == "22"),
+        ({"product": JEWELLERY}, lambda row: row["hs6"] == JEWELLERY),
+        ({"sector": "87"}, lambda row: row["sector"] == "87"),
         ({"region": "South Asia"}, lambda row: row["region"] == "South Asia"),
-        ({"market": "IND"}, lambda row: row["iso3"] == "IND"),
-        ({"opportunity_type": "Expand"}, lambda row: row["opportunity_type"] == "Expand"),
-        ({"min_gap_usd": 5000}, lambda row: row["export_gap_usd"] >= 5000),
-        ({"trade_agreement": False}, lambda row: not row["trade_agreement"]),
+        ({"min_value_usd": 5e6}, lambda row: row["blocked_opportunity_value_usd"] >= 5e6),
         ({"hide_flagged": True}, lambda row: not row["flagged_product"]),
         ({"hide_hubs": True}, lambda row: not row["reexport_hub"]),
     ],
     ids=lambda value: "-".join(f"{k}={v}" for k, v in value.items()) if isinstance(value, dict) else "",
 )
-def test_every_blocked_filter_keeps_exactly_the_matching_rows_and_the_summary_follows(client, params, keep):
-    everything = _blocked(client)["opportunities"]
-    body = _blocked(client, **params)
+def test_each_filter_narrows_the_rows_summary_and_totals_together(blocked_client, params, keep):
+    everything = _blocked(blocked_client)["opportunities"]
+    body = _blocked(blocked_client, **params)
 
     expected = [row for row in everything if keep(row)]
+    assert 0 < len(expected) < len(everything)
     assert body["opportunities"] == expected
-    assert body["summary"] == _blocked_summary(expected)
+    summary, markets = _totals(expected)
+    assert body["summary"] == summary
+    assert body["markets"] == markets
 
 
-def test_blocked_limit_keeps_the_top_but_not_the_summary(client):
-    everything = _blocked(client)["opportunities"]
-    top = _blocked(client, limit=2)
+def test_a_limit_keeps_the_top_rows_but_not_the_summary_or_totals(blocked_client):
+    everything = _blocked(blocked_client)
+    top = _blocked(blocked_client, limit=2)
 
-    assert top["opportunities"] == everything[:2]
-    assert top["summary"] == _blocked_summary(everything)
+    assert top["opportunities"] == everything["opportunities"][:2]
+    assert top["summary"] == everything["summary"] and top["markets"] == everything["markets"]
 
 
-def test_blocked_rejects_another_order_an_unknown_market_or_filter(client):
-    assert client.get("/opportunities/blocked", params={"rank_by": "gap"}).status_code == 422
-    assert client.get("/opportunities/blocked", params={"market": "XYZ"}).status_code == 404
-    assert client.get("/opportunities/blocked", params={"colour": "red"}).status_code == 422
+def test_potential_with_agreement_is_baseline_export_potential_plus_the_value(blocked_client):
+    rows = _blocked(blocked_client)["opportunities"]
+
+    for row in rows:
+        baseline = blocked_client.get(f"/explain/{row['hs6']}/{row['iso3']}").json()["baseline_export_potential_usd"]
+        assert row["baseline_export_potential_usd"] == pytest.approx(baseline)
+        assert row["potential_with_agreement_usd"] == pytest.approx(baseline + row["blocked_opportunity_value_usd"])
+
+
+def test_baseline_year_actual_exports_match_the_history_with_0_where_there_is_no_flow(blocked_artefacts, tmp_path):
+    # Jewellery in Hong Kong loses its Baseline-year history row, as a pair with no Flow that year can.
+    history = blocked_artefacts.history
+    year = blocked_artefacts.baseline_year
+    no_flow = (pl.col("hs6") == JEWELLERY) & (pl.col("iso3") == "HKG") & (pl.col("year") == year)
+    store.save(replace(blocked_artefacts, history=history.filter(~no_flow)), tmp_path)
+    exports = {
+        (row["hs6"], row["iso3"]): row["actual_exports_usd"]
+        for row in history.filter(pl.col("year") == year).iter_rows(named=True)
+    }
+
+    with TestClient(create_app(tmp_path)) as client:
+        rows = _blocked(client)["opportunities"]
+
+    shown = {(row["hs6"], row["iso3"]): row["baseline_actual_exports_usd"] for row in rows}
+    assert shown[(JEWELLERY, "HKG")] == 0
+    for pair in BLOCKED_PAIRS - {(JEWELLERY, "HKG")}:
+        assert shown[pair] == pytest.approx(exports[pair]) and shown[pair] > 0
+    # Baseline-year figures, not the Gap Period means the Leaderboard shows.
+    assert any(row["baseline_actual_exports_usd"] != pytest.approx(row["actual_exports_usd"]) for row in rows)
+
+
+def test_the_blocked_read_refuses_an_order_a_market_or_an_unknown_filter(blocked_client):
+    for params in ({"rank_by": "gap"}, {"market": "IND"}, {"opportunity_type": "Expand"}, {"colour": "red"}):
+        assert blocked_client.get("/opportunities/blocked", params=params).status_code == 422, params
+
+
+def test_the_blocked_read_answers_404_for_an_unknown_or_excluded_product(blocked_client):
+    unknown = blocked_client.get("/opportunities/blocked", params={"product": "999999"})
+    excluded = blocked_client.get("/opportunities/blocked", params={"product": CRUDE_OIL})
+
+    assert unknown.status_code == 404
+    assert excluded.status_code == 404 and "Excluded Product" in excluded.json()["detail"]
 
 
 def test_blocked_value_matches_a_scenario_adding_that_agreement(client):
-    ranked = _blocked(client, market="IND", sector="22")["opportunities"]
+    [india] = client.get("/opportunities/top", params={"product": FIXTURE_HS6, "market": "IND"}).json()["opportunities"]
     scenario = client.post("/scenarios", json={"add_agreements": ["IND"]}).json()
 
-    [india] = ranked
     pair = next(row for row in scenario["top_pairs"] if row["hs6"] == FIXTURE_HS6)
     assert india["blocked_opportunity_value_usd"] == pytest.approx(pair["effect_usd"])
 

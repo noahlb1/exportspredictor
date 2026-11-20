@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import polars as pl
@@ -110,6 +111,42 @@ def live_api():
 def fixture_api_url(fixture_artefacts_dir):
     """The API serving the fixture artefacts for the whole session (for Streamlit page tests)."""
     with serve_api(fixture_artefacts_dir) as url:
+        yield url
+
+
+# Every amount of the Baseline and the yearly history is multiplied by this in the Blocked world (`blocked_artefacts`).
+BLOCKED_WORLD_SCALE = 1000
+
+
+@pytest.fixture(scope="session")
+def blocked_artefacts(fixture_artefacts):
+    """The fixture artefacts with every Baseline and history amount × 1,000, so some pairs clear the $1M threshold.
+
+    The fixture's own Blocked Opportunity values are all under $1M, so it has no Blocked Opportunity. Scaled, it has
+    four, two in each Market without a UK Trade Agreement: whisky and jewellery in India, jewellery and cars in Hong
+    Kong. Cars in Hong Kong is the one whose Baseline-year Actual Exports are above Export Potential with a Trade
+    Agreement. Tariffs and fold models are unchanged.
+    """
+
+    def scaled(table: pl.DataFrame) -> pl.DataFrame:
+        return table.with_columns(pl.col(r"^.*_usd$") * BLOCKED_WORLD_SCALE)
+
+    return replace(
+        fixture_artefacts, baseline=scaled(fixture_artefacts.baseline), history=scaled(fixture_artefacts.history)
+    )
+
+
+@pytest.fixture(scope="session")
+def blocked_artefacts_dir(blocked_artefacts, tmp_path_factory):
+    root = tmp_path_factory.mktemp("blocked_artefacts")
+    store.save(blocked_artefacts, root)
+    return root
+
+
+@pytest.fixture(scope="session")
+def blocked_api_url(blocked_artefacts_dir):
+    """The API serving the Blocked world (`blocked_artefacts`) for the whole session."""
+    with serve_api(blocked_artefacts_dir) as url:
         yield url
 
 

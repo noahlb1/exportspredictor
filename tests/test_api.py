@@ -22,6 +22,16 @@ def client(fixture_artefacts_dir):
         yield client
 
 
+BLOCKED_READ = "/opportunities/blocked"
+
+
+@pytest.fixture(scope="module")
+def blocked_client(blocked_artefacts_dir):
+    """The API over the Blocked world (`conftest.blocked_artefacts`): the fixture alone has no Blocked Opportunity."""
+    with TestClient(create_app(blocked_artefacts_dir)) as client:
+        yield client
+
+
 def test_health_reports_version_format_baseline_year_and_gap_period_once_loaded(client):
     response = client.get("/health")
 
@@ -532,7 +542,7 @@ def test_asking_for_an_excluded_product_returns_404_with_its_reason(client, path
 
 @pytest.mark.parametrize("iso3", ["JPN", "CAN", "IND", "HKG"])
 def test_no_ranking_contains_an_excluded_product(client, iso3):
-    for path, params in [(f"/opportunities/by-market/{iso3}", {}), ("/opportunities/blocked", {"market": iso3})]:
+    for path, params in [(f"/opportunities/by-market/{iso3}", {}), ("/opportunities/top", {"market": iso3})]:
         body = client.get(path, params=params).json()
 
         hs6s = {row["hs6"] for row in body["opportunities"]}
@@ -1157,10 +1167,10 @@ def test_the_sectors_read_lists_each_sector_with_products_by_code_and_name(clien
 
 
 @pytest.mark.parametrize(
-    "path", ["/opportunities/top", "/opportunities/blocked", "/opportunities/by-market/JPN"]
+    "path", ["/opportunities/top", BLOCKED_READ, "/opportunities/by-market/JPN"]
 )
-def test_every_ranking_row_carries_its_sector_name(client, path):
-    rows = client.get(path).json()["opportunities"]
+def test_every_ranking_row_carries_its_sector_name(client, blocked_client, path):
+    rows = (blocked_client if path == BLOCKED_READ else client).get(path).json()["opportunities"]
 
     assert rows
     whisky = [row for row in rows if row["hs6"] == FIXTURE_HS6]
@@ -1202,7 +1212,7 @@ def test_the_leaderboard_product_filter_answers_404_for_an_unknown_or_excluded_p
 
 RANKING_READS = [
     "/opportunities/top",
-    "/opportunities/blocked",
+    BLOCKED_READ,
     f"/opportunities/by-product/{FIXTURE_HS6}",
     "/opportunities/by-market/JPN",
 ]
@@ -1215,8 +1225,8 @@ def test_every_ranking_read_accepts_a_limit_of_6000_and_refuses_6001(client, pat
 
 
 @pytest.mark.parametrize("path", RANKING_READS)
-def test_every_ranking_row_carries_the_baseline_applied_tariff_in_percent(client, path):
-    rows = client.get(path).json()["opportunities"]
+def test_every_ranking_row_carries_the_baseline_applied_tariff_in_percent(client, blocked_client, path):
+    rows = (blocked_client if path == BLOCKED_READ else client).get(path).json()["opportunities"]
 
     assert rows and all("applied_tariff_pct" in row for row in rows)
     # The fixture's tariffs: India charges 150% on whisky; Japan, with a UK Trade Agreement, charges nothing.
@@ -1227,18 +1237,19 @@ def test_every_ranking_row_carries_the_baseline_applied_tariff_in_percent(client
         assert tariffs[(FIXTURE_HS6, "JPN")] == 0.0
 
 
-def test_the_applied_tariff_is_null_where_it_is_unknown(fixture_artefacts, tmp_path):
-    unknown = (pl.col("hs6") == FIXTURE_HS6) & (pl.col("iso3") == "CAN")
-    features = fixture_artefacts.baseline_features.with_columns(
+def test_the_applied_tariff_is_null_where_it_is_unknown(blocked_artefacts, tmp_path):
+    # Whisky in India, a Blocked Opportunity in the Blocked world, has no known tariff here.
+    unknown = (pl.col("hs6") == FIXTURE_HS6) & (pl.col("iso3") == "IND")
+    features = blocked_artefacts.baseline_features.with_columns(
         log_applied_tariff=pl.when(unknown).then(None).otherwise(pl.col("log_applied_tariff"))
     )
-    store.save(replace(fixture_artefacts, baseline_features=features), tmp_path)
+    store.save(replace(blocked_artefacts, baseline_features=features), tmp_path)
 
     with TestClient(create_app(tmp_path)) as constructed:
         for path in RANKING_READS:
             rows = constructed.get(path).json()["opportunities"]
             tariffs = {(row.get("hs6", FIXTURE_HS6), row.get("iso3", "JPN")): row["applied_tariff_pct"] for row in rows}
-            assert tariffs.get((FIXTURE_HS6, "CAN"), None) is None
+            assert tariffs.get((FIXTURE_HS6, "IND"), None) is None
             assert any(tariff is not None for tariff in tariffs.values())
 
 
