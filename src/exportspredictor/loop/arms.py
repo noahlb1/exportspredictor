@@ -255,7 +255,7 @@ EXPERIMENT_NUMBERS = {
 }
 NAIVE_ARM_NUMBERS = {BLEND: 1, STARTING_POINT: 2}
 # What a decision is called where it is shown, where its recorded name is not the Glossary's.
-EXPERIMENT_DISPLAY_NAMES = {NAIVE_EXPERIMENT: "Naive Baseline"}
+EXPERIMENT_DISPLAY_NAMES = {NAIVE_EXPERIMENT: "Naive Baseline", EXPORTER_COUNT_EXPERIMENT: "Exporter count"}
 
 
 def experiment_numbers(name: str, arms: Sequence[str]) -> tuple[int, ...]:
