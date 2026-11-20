@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 
 import numpy as np
+import polars as pl
 import pytest
 import xgboost as xgb
 from polars.testing import assert_frame_equal
@@ -35,6 +36,18 @@ def test_an_older_folder_is_read_under_the_glossary_column_names(fixture_artefac
     store.save(replace(fixture_artefacts, baseline=older), tmp_path)
 
     assert_frame_equal(store.load_latest(tmp_path).baseline, fixture_artefacts.baseline)
+
+
+def test_a_version_from_before_the_share_was_stored_reads_it_from_its_baseline(fixture_artefacts, tmp_path):
+    # Spec #113 "Totals understate": versions saved before the figure was stored still serve it.
+    metadata = {key: value for key, value in fixture_artefacts.metadata.items()
+                if key != "potential_share_of_actual_exports"}
+    two_pairs = fixture_artefacts.baseline.head(2).with_columns(
+        export_potential_usd=pl.Series([30e6, 40e6]), actual_exports_usd=pl.Series([50e6, 50e6])
+    )
+    store.save(replace(fixture_artefacts, metadata=metadata, baseline=two_pairs), tmp_path)
+
+    assert store.load_latest(tmp_path).potential_share_of_actual_exports == pytest.approx(0.7)
 
 
 def test_load_latest_picks_the_newest_version(fixture_artefacts, tmp_path):

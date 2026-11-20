@@ -63,6 +63,16 @@ def _stale(page: AppTest) -> list[str]:
     return [element.value for element in [*page.info, *page.warning] if "Run Scenario" in element.value]
 
 
+def test_the_summed_scenario_effect_carries_the_totals_note(monkeypatch, api_url):
+    # Spec #113 "Totals understate": every summed figure is read against the artefact's share of Actual Exports.
+    note = httpx.get(f"{api_url}/labels").json()["totals_note"]["text"]
+
+    page = _run_cptpp(monkeypatch, api_url)
+
+    assert "of Actual Exports" in note
+    assert any(note in element.value for element in page.caption)
+
+
 def test_the_page_is_empty_until_a_scenario_is_run(monkeypatch, api_url):
     page = _scenarios_page(monkeypatch, api_url)
 

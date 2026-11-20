@@ -1,5 +1,5 @@
 """Plain-text pieces shared by every report the package words: year spans, numbers that may be missing,
-and the caution line every app page shows under its heading.
+the caution line every app page shows under its heading and the note beside every summed figure.
 
 Money has its own module (`currency.format_usd`); the Gap Period's label is `gap_period.label`.
 """
@@ -14,6 +14,20 @@ OPPORTUNITY_TYPE_HELP = (
     "Expand: the UK already exports the Product to this Market. New Market: the UK exports the Product, "
     "but not to this Market. New Product: the UK exports the Product to no Market (over the Gap Period)."
 )
+
+
+def totals_note(share: float | None, gap_period_label: str) -> str:
+    """The note beside every sum of Export Potential, Export Gaps or Blocked Opportunity values (spec #113, "Totals
+    understate"): Export Potential is a median-type estimate, so its sum falls short of Actual Exports. `share` is the
+    artefact's `potential_share_of_actual_exports`; None words the note without a figure."""
+    reaches = (
+        "falls short of their Actual Exports" if share is None
+        else f"comes to about {share:.0%} of Actual Exports ({gap_period_label})"
+    )
+    return (
+        "Export Potential is a median-type estimate: summed over every UK Product–Market pair, it "
+        f"{reaches}. Read totals as relative sizes, not as dollars the UK could add."
+    )
 
 
 def term_definitions(gap_period_label: str) -> dict[str, str]:

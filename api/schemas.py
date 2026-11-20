@@ -80,6 +80,14 @@ class CaveatTierOut(BaseModel):
     row_text: str | None  # a flagged row's caveat text, with "{reason}" for its reason; `text` when absent
 
 
+class TotalsNote(BaseModel):
+    """Export Potential is a median-type estimate: summed, it falls short of Actual Exports."""
+
+    # Summed Export Potential over summed Actual Exports, every UK pair, Gap Period means; from the artefact
+    potential_share_of_actual_exports: float | None
+    text: str  # the note, naming the share
+
+
 class Labels(BaseModel):
     """Wording and options the app shows, each defined once in the package."""
 
@@ -96,6 +104,7 @@ class Labels(BaseModel):
     # those that name the Gap Period take its label from the artefact (`wording.term_definitions`)
     terms: dict[str, str]
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
+    totals_note: TotalsNote  # beside every summed figure (spec #113, "Totals understate")
 
 
 class MarketOut(BaseModel):
@@ -258,8 +267,11 @@ class BlockedOpportunity(LeaderboardOpportunity):
 
     baseline_export_potential_usd: float  # Baseline Export Potential (the Baseline year's)
     baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
-    # Export Potential with a Trade Agreement: Baseline Export Potential plus the Blocked Opportunity value (Illustrative)
-    potential_with_agreement_usd: float
+    # Export Potential with a Trade Agreement: Baseline Export Potential plus the Blocked Opportunity value (Illustrative);
+    # None where Actual Exports exceed Baseline Export Potential (spec #113), where the uplift below is given instead
+    potential_with_agreement_usd: float | None
+    # The Blocked Opportunity value as a share of Baseline Export Potential, only where Actual Exports exceed it
+    blocked_opportunity_uplift: float | None
 
 
 class BlockedOpportunities(_Ranking):

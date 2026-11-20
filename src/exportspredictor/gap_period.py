@@ -54,6 +54,18 @@ def export_gaps(yearly: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def potential_share_of_actual_exports(gaps: pl.DataFrame) -> float | None:
+    """Summed Export Potential as a share of summed Actual Exports, over every pair of `gaps` (Gap Period means).
+
+    Export Potential blends two skewed estimates geometrically, so it is a median-type figure and its sum falls short
+    of summed Actual Exports (about 70% on 2022, `docs/research/open-review-2022.md`). Every page that sums Export
+    Potential, Export Gaps or Blocked Opportunity values states this share (spec #113, "Totals understate"). None where
+    the pairs have no Actual Exports.
+    """
+    actual = float(gaps["actual_exports_usd"].sum())
+    return float(gaps["export_potential_usd"].sum()) / actual if actual > 0 else None
+
+
 def baseline_year_scores(history: pl.DataFrame, baseline_year: int) -> pl.DataFrame:
     """One year's UK scores from the yearly history: hs6, iso3, export_potential_usd, export_gap_usd.
 

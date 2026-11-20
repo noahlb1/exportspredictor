@@ -4,7 +4,9 @@ Layout of `<root>/<version>/`:
 
     metadata.json      artefact_format, version, baseline_year, gap_years, n_folds, features,
                        model_form (`prediction.ModelForm`), ranking_experiments (the selection
-                       measure, the noise floor and the experiment results that chose the form), ...
+                       measure, the noise floor and the experiment results that chose the form),
+                       potential_share_of_actual_exports (summed Export Potential over summed Actual
+                       Exports, Gap Period means; versions without it compute it from the Baseline), ...
                        (free-form beyond those)
     models/fold_<k>.ubj
     baseline.parquet   one row per UK Product–Market pair: Gap Period means of Export Potential,
@@ -44,6 +46,7 @@ from pathlib import Path
 import polars as pl
 import xgboost as xgb
 
+from exportspredictor.gap_period import potential_share_of_actual_exports
 from exportspredictor.prediction import ModelForm
 
 METADATA_FILE = "metadata.json"
@@ -112,6 +115,15 @@ class Artefacts:
     @property
     def baseline_year(self) -> int:
         return self.metadata["baseline_year"]
+
+    @property
+    def potential_share_of_actual_exports(self) -> float | None:
+        """Summed Export Potential as a share of summed Actual Exports over the Baseline's pairs (Gap Period means):
+        the metadata's `potential_share_of_actual_exports`, or, for a version saved before it was stored, the same
+        figure from the Baseline (`gap_period.potential_share_of_actual_exports`)."""
+        if "potential_share_of_actual_exports" in self.metadata:
+            return self.metadata["potential_share_of_actual_exports"]
+        return potential_share_of_actual_exports(self.baseline)
 
     @property
     def gap_years(self) -> tuple[int, int]:
