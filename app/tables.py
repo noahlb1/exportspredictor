@@ -9,10 +9,11 @@ columns stay numeric, so they sort as numbers. The unit is said once above the t
 heading. A CSV keeps full dollars and every column: build it from the undivided rows (`leaderboard_csv`).
 Summary figures, sentences and panel metrics keep the adaptive form of `app.format.format_usd`.
 
-A table whose rows are chosen by clicking any value is `pick_row`: it tints the chosen row and remembers its id.
+A table whose rows are chosen by clicking any value is `pick_row` (the top row until one is clicked) or
+`pick_row_if_chosen` (no row until one is clicked): it tints the chosen row and remembers its id.
 """
 
-from collections.abc import Callable, Hashable, Iterable
+from collections.abc import Callable, Iterable
 
 import pandas as pd
 import streamlit as st
@@ -30,7 +31,7 @@ ONE_DECIMAL = "{:.1f}"  # how a $ millions or percent column reads in a `pick_ro
 
 def pick_row(
     table: pd.DataFrame,
-    ids: list[Hashable],
+    ids: list[object],
     *,
     key: str,
     remembered: str,
@@ -48,11 +49,41 @@ def pick_row(
     numeric column its Styler format (e.g. `ONE_DECIMAL` for $ millions). `dataframe` goes to `st.dataframe`
     (`column_order`, `column_config`, `height`).
     """
+    at = _pick(table, ids, key=key, remembered=remembered, formats=formats, fallback=0, dataframe=dataframe)
+    assert at is not None  # the top row stands in for no choice
+    return at
+
+
+def pick_row_if_chosen(
+    table: pd.DataFrame,
+    ids: list[object],
+    *,
+    key: str,
+    remembered: str,
+    formats: dict[str, str | Callable],
+    **dataframe: object,
+) -> int | None:
+    """`pick_row` for a table where no row is chosen until one is clicked: the chosen row's position, or None (and no
+    row tinted) while the remembered id is unset or not among `ids`. `table` may be empty."""
+    return _pick(table, ids, key=key, remembered=remembered, formats=formats, fallback=None, dataframe=dataframe)
+
+
+def _pick(
+    table: pd.DataFrame,
+    ids: list[object],
+    *,
+    key: str,
+    remembered: str,
+    formats: dict[str, str | Callable],
+    fallback: int | None,
+    dataframe: dict[str, object],
+) -> int | None:
     chosen = st.session_state.get(remembered)
-    at = ids.index(chosen) if chosen in ids else 0
+    at = ids.index(chosen) if chosen in ids else fallback
     st.session_state[f"{key}_ids"] = ids  # what a click on row n means, for `_remember`
     styled = table.style.format({column: f for column, f in formats.items() if column in table}, na_rep="")
-    styled = styled.set_properties(subset=pd.IndexSlice[[table.index[at]], :], **TINT)  # type: ignore[arg-type]
+    if at is not None:
+        styled = styled.set_properties(subset=pd.IndexSlice[[table.index[at]], :], **TINT)  # type: ignore[arg-type]
     st.dataframe(
         styled,
         hide_index=True,

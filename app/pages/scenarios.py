@@ -4,25 +4,28 @@ The page reads top to bottom (spec #103, "Scenarios"): the builder in a box, the
 the summary, the three figures beside the Illustrative note, Change per Market, the pairs most affected in the
 selected Market, Top Products gaining and Blocked Opportunities.
 
-Clicking a row selects it. The page remembers the choice in session state, so a test can set it as a click does:
-`scenario_market` (ISO3; the top Market when unset or not in the result) drives the drill-down, and
-`scenario_drill_pair` / `scenario_blocked_pair` (`{"hs6", "iso3"}`) open a pair's box under that table.
+Clicking any value selects its row and tints it, as on the other pages (`app.tables.pick_row`). The page remembers
+the choice in session state, so a test can set it as a click does: `scenario_market` (ISO3; the top Market when unset
+or not in the result) drives the drill-down, and `scenario_drill_pair` / `scenario_blocked_pair` (`{"hs6", "iso3"}`)
+open a pair's box under that table; no pair is selected until one is clicked.
 """
 
 import hashlib
 import json
-from collections.abc import Callable
 
 import pandas as pd
 import streamlit as st
 
 from app import client
-from app.format import format_change, format_usd
+from app.format import format_change, format_usd, tariff_text
 from app.frame import page
 from app.tables import (
+    ONE_DECIMAL,
     millions,
     millions_unit,
     money_column,
+    pick_row,
+    pick_row_if_chosen,
     product_column,
     tariff_column,
 )
@@ -37,6 +40,16 @@ MARKET = "scenario_market"
 DRILL_PAIR = "scenario_drill_pair"
 BLOCKED_PAIR = "scenario_blocked_pair"
 LEADERBOARD = "pages/leaderboard.py"
+# How each numeric column reads in a click-to-select table (a Styler's formats replace the column config's).
+FORMATS = {
+    "Scenario Effect": ONE_DECIMAL,
+    "Effect, % of Baseline": "{:.1%}",
+    "Baseline": ONE_DECIMAL,
+    "Scenario": ONE_DECIMAL,
+    "Actual Exports": ONE_DECIMAL,
+    "Tariff, Baseline %": ONE_DECIMAL,
+    "Tariff, Scenario %": ONE_DECIMAL,
+}
 
 
 def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str, str], defaults: dict) -> dict:
@@ -160,62 +173,22 @@ def pairs_frame(rows: list[dict], *, with_market: bool, with_exports: bool) -> p
     return frame
 
 
-def remember(key: str, table_key: str, rows: list[dict], fields: tuple[str, ...]) -> Callable[[], None]:
-    """The callback of a row click: remember the clicked row's `fields` under `key` (None when it is unselected).
-    One field is remembered as its value, several as a dict."""
-
-    def callback() -> None:
-        picked = st.session_state[table_key]["selection"]["rows"]
-        if not picked:
-            st.session_state[key] = None
-            return
-        row = rows[picked[0]]
-        st.session_state[key] = row[fields[0]] if len(fields) == 1 else {field: row[field] for field in fields}
-
-    return callback
-
-
-def selectable(frame: pd.DataFrame, config: dict, key: str, chosen: int | None, on_select: Callable) -> None:
-    """A table whose rows a click selects, one at a time; `chosen` is the row selected when it first draws."""
-    st.dataframe(
-        frame,
-        hide_index=True,
-        column_config=config,
-        key=key,
-        on_select=on_select,
-        selection_mode="single-row",
-        selection_default={"selection": {"rows": [] if chosen is None else [chosen]}},
-    )
-
-
-def position(rows: list[dict], pair: dict | None) -> int | None:
-    """Where the remembered pair is among `rows`, or None."""
-    if not pair:
-        return None
-    return next(
-        (i for i, row in enumerate(rows) if (row["hs6"], row["iso3"]) == (pair.get("hs6"), pair.get("iso3"))), None
-    )
-
-
 def pair_table(rows: list[dict], key: str, table_key: str, year: int, *, with_market: bool, with_exports: bool) -> None:
-    """A table of pairs with click-to-select, and the chosen pair's box under it."""
+    """A table of pairs where clicking any value chooses a pair (remembered under `key` as {"hs6", "iso3"}), and the
+    chosen pair's box under it. No pair is chosen until one is clicked."""
     if not rows:
         st.info("No pairs to list.")
         return
-    chosen = position(rows, st.session_state.get(key))
-    selectable(
+    chosen = pick_row_if_chosen(
         pairs_frame(rows, with_market=with_market, with_exports=with_exports),
-        columns(year),
-        table_key,
-        chosen,
-        remember(key, table_key, rows, ("hs6", "iso3")),
+        [{"hs6": row["hs6"], "iso3": row["iso3"]} for row in rows],
+        key=table_key,
+        remembered=key,
+        formats=FORMATS,
+        column_config=columns(year),
     )
     if chosen is not None:
         pair_box(rows[chosen])
-
-
-def tariff_text(value: float | None) -> str:
-    return "not known" if value is None else f"{value:.1f}%"
 
 
 def pair_box(row: dict) -> None:
@@ -272,22 +245,21 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
 
     st.caption(
         f"Amounts in {millions_unit()}, for the Baseline year {year}. Scenario Effects are {word}. "
-        "Click a row to select it."
+        "Click any value to select its row."
     )
 
     st.subheader("Change per Market")
     changed = result["markets"]
     isos = [market["iso3"] for market in changed]
-    iso3 = st.session_state.get(MARKET)
-    if iso3 not in isos:
-        iso3 = isos[0]
     market_table = effects(changed, {"market": "Market"})
     market_table["Pairs changed"] = [market["pairs"] for market in changed]
-    markets_key = f"markets_{run_key}"
-    selectable(market_table, config, markets_key, isos.index(iso3), remember(MARKET, markets_key, changed, ("iso3",)))
+    at = pick_row(
+        market_table, list(isos), key=f"markets_{run_key}", remembered=MARKET, formats=FORMATS, column_config=config
+    )
+    iso3 = isos[at]
 
     st.subheader(f"Pairs most affected in {market_names.get(iso3, iso3)}")
-    # Ask for this Market's own top pairs: a global top list can miss smaller Markets.
+    # Ask for this Market's own most affected pairs: those of every Market together can leave a smaller Market out.
     drill_body = {**json.loads(shown), "market": iso3, "limit": DRILL_DOWN_ROWS}
     try:
         drilled = run_scenario(json.dumps(drill_body, sort_keys=True), client.api_url())
@@ -306,7 +278,7 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     st.caption(
         f"{result['blocked_count']:,} pairs have a Scenario Effect of at least "
         f"{result['thresholds']['min_effect_share']:.0%} of Baseline Export Potential and at least "
-        f"${result['thresholds']['min_effect_usd']:,.0f}, whatever their Actual Exports. The largest "
+        f"{format_usd(result['thresholds']['min_effect_usd'])}, whatever their Actual Exports. The largest "
         f"{ROWS} are listed."
     )
     blocked_key = f"blocked_{run_key}"
