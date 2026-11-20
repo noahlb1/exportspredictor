@@ -4,9 +4,9 @@ A page of its own, apart from the Leaderboard, because a Blocked Opportunity is 
 the missing Trade Agreement already holds its Export Potential down. The Export Gap does not appear here; every
 figure is for the Baseline year.
 
-One cached read (`/opportunities/blocked`) gives every filtered Blocked Opportunity (up to `READ_LIMIT`) with the
-summary and per-Market totals. Left, the Markets table, largest total first; clicking any value chooses a Market,
-remembered under `MARKET`. Right, the chosen Market's Products, every one of them, and under it the detail panel
+One cached read (`/opportunities/blocked`) gives every filtered Blocked Opportunity (up to `app.ui.read_limit()`),
+the summary, the per-Market totals and the default thresholds. Left, the Markets table, largest total first; clicking
+any value chooses a Market, remembered under `MARKET`. Right, the chosen Market's Products, every one of them, and under it the detail panel
 (`app.panel`) of the chosen Product, remembered as (HS6, ISO3) under `PAIR`. Until one is chosen, or when the chosen
 one is not shown, the top row is. Filters are `app.filters.blocked_filters`, kept apart from the Leaderboard's.
 """
@@ -27,7 +27,7 @@ from app.tables import (
     millions_unit,
     pick_row,
 )
-from app.ui import READ_LIMIT, caveats, fetch, illustrative, labels, scenario_note
+from app.ui import caveats, fetch, illustrative, labels, read_limit, scenario_note
 
 MARKET = "blocked_market"  # the chosen Market, ISO3
 PAIR = "blocked_pair"  # the chosen Blocked Opportunity, (HS6, ISO3)
@@ -40,12 +40,12 @@ ABOVE_WITH_AGREEMENT = (
 
 
 def _explain(row: dict) -> None:
-    """The chosen Blocked Opportunity's panel: the Barrier first, then three Baseline-year figures, then the shared
-    panel from its facts table on, without the Export Gap."""
+    """The chosen Blocked Opportunity's panel: the Barrier first, in a box headed by the pair, then what the pair is and
+    its caveats, three Baseline-year figures, and the shared panel from its facts table on, without the Export Gap."""
     body = panel.explanation(row)
-    panel.opening(row, body)
     above = row["baseline_actual_exports_usd"] > row["potential_with_agreement_usd"]
-    panel.barrier(row, body, note=ABOVE_WITH_AGREEMENT if above else None)
+    panel.barrier(row, body, note=ABOVE_WITH_AGREEMENT if above else None, titled=True)
+    panel.opening(row, body, titled=False)
     year, word = body["baseline_year"], illustrative()
     potential, with_agreement, actual = st.columns(3)
     potential.metric(
@@ -108,8 +108,7 @@ with page(
     )
     try:
         filters = blocked_filters()
-        thresholds = fetch("/scenarios/thresholds", client.api_url())
-        body = fetch("/opportunities/blocked", client.api_url(), **filters.params, limit=READ_LIMIT)
+        body = fetch("/opportunities/blocked", client.api_url(), **filters.params, limit=read_limit())
     except client.NotFound as error:
         # An Excluded Product chosen in the search (or named in a link): its reason, and no list.
         st.warning(str(error))
@@ -121,7 +120,7 @@ with page(
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
     else:
-        summary, rows, year = body["summary"], body["opportunities"], body["baseline_year"]
+        summary, rows, year, thresholds = body["summary"], body["opportunities"], body["baseline_year"], body["thresholds"]
         count, word = summary["blocked_opportunities"], illustrative()
         in_force = "; ".join(filters.named) if filters.named else "No filters"
         st.markdown(
