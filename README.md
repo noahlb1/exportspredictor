@@ -116,7 +116,6 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] Each filter you set appears in the page's URL (Product as its HS6 code, Market as its ISO3 code; defaults left out). Copy the URL into a fresh browser tab: the same filters and rows appear. A link naming one Product and one Market (e.g. `?product=220830&market=JPN`) leaves that one pair.
 - [ ] Set some filters, open another page from the menu and come back: the filters are still set.
 - [ ] **Reset filters** restores the full ranking and clears the filters from the URL.
-- [ ] "Excluded Products" under the filters lists each Excluded Product with its reason.
 - [ ] Each Leaderboard row shows its Potential Range as "low–high". No ranking page (Leaderboard, Blocked Opportunities) shows an "Uncertain Opportunity" badge or a filter for it; the Flagged Product and Re-export Hub badges and their hide filters are unchanged.
 - [ ] Export the Leaderboard to CSV and open it, unfiltered and with one Product or one Market chosen: the columns and rows match the table on screen.
 - [ ] Click **Why?** on a Leaderboard row: the Why? page opens for that pair and shows its Opportunity Type.
@@ -148,6 +147,8 @@ Run this before a release, against `podman compose up` with real artefacts. Tick
 - [ ] The Why? page shows a range bar with Export Potential and Actual Exports marked on the Potential Range, described in plain words (comparable pairs, never a confidence interval), saying whether Actual Exports lie below, inside or above it; no Uncertain Opportunity warning is shown.
 
 **Model Evaluation**
+- [ ] Four figures open the page: the rank correlation for UK pairs with the Naive Baseline's beside it, the share of Actual Exports inside the Potential Range against its 80% target, size-matched Lift, and ranking stability. Every section below is folded except "How accurate is the model?" and "Known limitations".
+- [ ] The "Excluded Products" section, just above "Known limitations", says how many Products are left out and why, lists each reason with its number of Products, and holds the full list (HS6, Product, Sector by name, reason) in an expander. No ranking page (Leaderboard, Blocked Opportunities) shows an Excluded Products list.
 - [ ] The plain-English accuracy headline renders, green if the model beats the naive baseline and amber with a plain warning if it does not, with the test year and the non-UK training sample stated below it.
 - [ ] The metric tables (model against naive baseline) render for UK pairs and for all Exporters.
 - [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
