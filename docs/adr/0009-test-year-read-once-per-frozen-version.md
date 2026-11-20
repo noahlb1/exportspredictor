@@ -10,7 +10,7 @@ A version is identified by its **configuration fingerprint** (`exportspredictor.
 
 ## The ledger
 
-`docs/test-year-ledger.csv` records every read of the test year: date, version, fingerprint, what was read, the command, whether it was an override, and the record it comes from. It starts with the three reads made before the ledger existed, each citing its source record:
+`docs/test-year-ledger.csv` records every read of the test year: date, version, fingerprint, what was read, the command, whether it was an override, the record it comes from, its kind (`evaluation` or `re-score`) and its status (`started` or `completed`). A file written before the last two columns existed reads as completed evaluations. It starts with the three reads made before the ledger existed, each citing its source record:
 
 - **v1** (17 Nov 2026, `python -m exportspredictor.evaluation`). The same test-year models re-scored 2023 the same day to add the income breakdown, Lift and the Event Backtests.
 - **v2** (18 Nov 2026, `python -m exportspredictor.pipeline`). A throwaway smoke run came before it, and the v1 comparison with its gain ladder after it, on the same test-year models.
@@ -21,6 +21,10 @@ None of these re-reads changed a choice. They are recorded under their version's
 ## How it is enforced
 
 Every command that reads the test year records the read in the ledger before it opens the year (`ledger.record_read`). This covers the pipeline's evaluation, `pipeline compare`, `python -m exportspredictor.evaluation` and `python -m exportspredictor.backtests` (Lift's outcome year is 2023). If the ledger already holds the fingerprint, the command refuses. `--read-test-year-again` overrides the refusal, and the override is recorded as a read like any other, marked as an override. The ledger is committed with the work that made the read, so the number of reads is visible in the repo, the notebook and the history.
+
+A read is one row, written `started` before the year is opened and marked `completed` in place once its figures are saved (`ledger.complete_read`, after the artefact is written). A run that crashes in between saved no figures, so nothing of the test year came out of it that the version could use. A re-run of the same fingerprint takes over the started row and completes it, with no override and no second row. A completed read is refused like any other.
+
+**Re-scoring saved scores is its own kind of read.** Measuring earlier versions' saved test-year scores again under a new measure (the tie-proof Selection Measure, spec #113) trains, predicts and selects nothing, but it still produces new test-year figures. So it is logged as a `re-score` row (`ledger.record_rescore`). Its fingerprint hashes the measure and the fingerprints of the versions re-scored, so the same re-score is refused a second time like any read, and it never collides with those versions' own `evaluation` rows.
 
 ## Considered Options
 
@@ -34,4 +38,4 @@ Every command that reads the test year records the read in the ledger before it 
 - **A new setting must join `FINGERPRINT_KEYS`.** A new feature changes `features` and is covered. A new kind of setting, such as a Market Reach offset, is not covered until its metadata key is added.
 - **The fingerprint is checked after the fold models are trained.** The round count and the sampling rate it hashes are known only then. Fold models are cached by their settings, so a refused re-run of the same configuration costs minutes, not a retraining.
 - **Library calls choose.** `build_artefacts` (the fixture) records nothing unless given a ledger. `build_real_artefacts`, `add_v1_comparison` and the `add_to_latest` commands must be given one, or `None` on purpose, as the tests on synthetic data do.
-- **Spec #113's new version reads 2023 once**, after it is frozen, and reports its figures beside v1, v2 and the Blend.
+- **Spec #113's new version reads 2023 once**, after it is frozen, and reports its figures beside v1, v2 and the Blend on both the old and the tie-proof measure. The earlier versions' tie-proof figures come from re-scoring their saved scores, a second ledger row of kind `re-score`.

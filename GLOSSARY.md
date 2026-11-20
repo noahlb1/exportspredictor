@@ -163,7 +163,7 @@ A short hash of the settings that decide a version's test-year models and how th
 _Avoid_: version hash, model ID
 
 **Test-year Ledger**:
-The record of every read of the test year: date, version, Configuration Fingerprint, what was read and the command. A fingerprint already in it is refused a second read unless overridden, and the override is recorded too (ADR 0009).
+The record of every read of the test year: date, version, Configuration Fingerprint, what was read, the command, its kind (an evaluation, or a re-score of earlier versions' saved scores under a new measure) and its status (started, then completed once its figures are saved). A fingerprint already completed in it is refused a second read unless overridden, and the override is recorded too (ADR 0009).
 _Avoid_: audit log, read log
 
 ### Scenarios

@@ -292,8 +292,10 @@ def _earlier_lines(block: dict | None) -> list[str]:
     return [
         f"**{block['text']}**",
         "",
-        "| Version | UK ranking, old measure | UK ranking, tie-proof | Size-matched Lift | Lift | "
-        "Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |",
+        (
+            "| Version | UK ranking, old measure | UK ranking, tie-proof | Size-matched Lift | Lift | "
+            "Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |"
+        ),
         "| --- | --- | --- | --- | --- | --- | --- |",
         *[
             f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'uk_ranking_tie_proof', '.3f')} | "

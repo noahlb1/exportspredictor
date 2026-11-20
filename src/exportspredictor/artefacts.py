@@ -170,7 +170,8 @@ def load(folder: Path, *, tiers: Sequence | None = None) -> Artefacts:
     the Baseline again, reads it with `tiers=()`."""
     bundle = _load(folder, ARTEFACT_FORMAT, _TABLES)
     if tiers is None:
-        from exportspredictor.caveats import TIERS  # imported here: the caveat tables are not needed to load
+        # Imported here: the caveat tables are not needed to load a bundle.
+        from exportspredictor.caveats import TIERS
 
         tiers = TIERS
     missing = [column for tier in tiers for column in tier.columns if column not in bundle.baseline.columns]
