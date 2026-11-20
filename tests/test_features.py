@@ -4,6 +4,8 @@ Rows and features are built through the package's public functions on the fixtur
 then the world's Flows are perturbed to show what each feature does and does not see.
 """
 
+import math
+
 import polars as pl
 import pytest
 
@@ -94,6 +96,54 @@ def test_demand_features_leave_out_the_target_exporter(world):
     assert not _same(before, after, 1, ["log_demand_loo"])
 
 
+def _exporter_count(frame: pl.DataFrame) -> list[float]:
+    """The Exporter count of each row, back from its log."""
+    return [round(math.expm1(v), 6) for v in frame["log_exporters_loo"]]
+
+
+def test_the_exporter_count_is_the_other_exporters_supplying_the_product_to_the_market(world):
+    # Whisky into Japan in 2023 comes from Germany, France and the USA; the UK sends none.
+    # Into India it comes from the UK, France and the USA; Germany sends none.
+    keys = [TARGET, ("DEU", "JPN", WHISKY), ("DEU", "IND", WHISKY), ("FRA", "IND", WHISKY)]
+
+    assert _exporter_count(_features_for(world, world.flows, keys)) == [3, 2, 3, 2]
+
+
+def test_the_exporter_count_never_counts_the_rows_own_flow(world):
+    keys = [TARGET, ("DEU", "JPN", WHISKY)]
+    before = _features_for(world, world.flows, keys)
+    # The UK starts sending whisky to Japan: the UK row is unchanged, Germany's row counts one more.
+    after = _features_for(world, _set_flows(world.flows, {TARGET: 9e9}), keys)
+
+    assert _exporter_count(before) == [3, 2]
+    assert _exporter_count(after) == [3, 3]
+
+
+def test_the_exporter_count_of_a_uk_row_never_contains_a_uk_flow(world):
+    """Every UK Flow in the world removed: no UK row's Exporter count moves, other Exporters' rows do."""
+    no_uk = world.flows.with_columns(
+        value_usd=pl.when(pl.col("exporter") == UK).then(0.0).otherwise(pl.col("value_usd"))
+    )
+    year_flows, year_no_uk = world.flows.filter(pl.col("year") == YEAR), no_uk.filter(pl.col("year") == YEAR)
+    grid = uk_grid(year_flows, UK).with_columns(value_usd=pl.lit(0.0))  # the grid's own Flows removed too
+    before = build_features(uk_grid(year_flows, UK), year_flows, world.sources)
+    after = build_features(grid, year_no_uk, world.sources)
+
+    assert before["log_exporters_loo"].null_count() == 0
+    assert before["log_exporters_loo"].to_list() == after["log_exporters_loo"].to_list()
+    canada = [(UK, OTHER_MARKET, WHISKY), ("DEU", OTHER_MARKET, WHISKY)]
+    assert _exporter_count(_features_for(world, world.flows, canada)) == [3, 3]
+    assert _exporter_count(_features_for(world, no_uk, canada)) == [3, 2]
+
+
+def test_the_exporter_count_is_a_candidate_feature_with_no_monotone_constraint():
+    """It is stored beside the features for the experiment loop to try as an Arm (spec #113), not yet a
+    model input, and it is not a policy feature."""
+    assert "log_exporters_loo" in features.CANDIDATE_FEATURES
+    assert "log_exporters_loo" not in FEATURES
+    assert "log_exporters_loo" not in features.MONOTONE_CONSTRAINTS
+
+
 def test_no_feature_is_built_from_the_pairs_trade_in_other_products(world):
     """Moving the UK's other-Product exports from Japan to Canada leaves UK–Japan whisky unchanged.
 
@@ -113,7 +163,7 @@ def test_no_feature_is_built_from_the_pairs_trade_in_other_products(world):
     before = _features_for(world, world.flows, [TARGET])
     after = _features_for(world, _set_flows(world.flows, moves), [TARGET])
 
-    assert _same(before, after, 0, [f for f in FEATURES if f != "relatedness"])
+    assert _same(before, after, 0, [f for f in [*FEATURES, *features.CANDIDATE_FEATURES] if f != "relatedness"])
 
 
 # --- Training rows: non-zero Flows plus sampled relevant zeros ----------------------------
