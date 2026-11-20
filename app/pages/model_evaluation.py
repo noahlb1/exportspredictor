@@ -5,7 +5,8 @@ import streamlit as st
 
 from app import client
 from app.format import number_text, years_text
-from app.ui import banner, fetch, labels
+from app.frame import page
+from app.ui import fetch, labels
 
 SCOPES = {
     "uk_out_of_fold": "UK Product–Market pairs (each scored by the fold model that never saw it)",
@@ -242,9 +243,7 @@ def _show_event_backtest(backtest: dict, names: dict[str, str], note: dict | Non
         )
 
 
-st.title("Model Evaluation")
-
-if banner() is not None:
+with page("Model Evaluation", "How accurate the model is, where it is weak, and what it cannot tell you."):
     try:
         report = fetch("/evaluation", client.api_url())
     except client.NotFound as error:

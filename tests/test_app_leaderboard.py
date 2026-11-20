@@ -1,15 +1,15 @@
-"""The Leaderboard on Home, run with AppTest against a live local API on fixture artefacts."""
+"""The Leaderboard, the app's default page, run with AppTest through the router against a live local API on
+fixture artefacts."""
 
 import io
 import re
-from pathlib import Path
 
 import pandas as pd
 import pytest
 import streamlit
+from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
-HOME = Path(__file__).resolve().parents[1] / "app" / "Home.py"
 GAP = "Export Gap, 2022–2024 average (USD, nominal)"
 RELATIVE = "Relative Export Gap, 2022–2024 average"
 RANGE = "Potential Range, 2022–2024 average (USD, nominal)"
@@ -31,9 +31,7 @@ def downloads(monkeypatch):
 
 def _home(monkeypatch, api_url: str) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(HOME), default_timeout=30)
-    page.run()
-    return page
+    return run_page()
 
 
 def _metrics(page: AppTest) -> dict[str, str]:

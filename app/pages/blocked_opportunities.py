@@ -9,9 +9,9 @@ import streamlit as st
 
 from app import client
 from app.format import format_usd
+from app.frame import page
 from app.ui import (
     ROWS_SHOWN,
-    banner,
     excluded_products_list,
     fetch,
     illustrative,
@@ -20,11 +20,13 @@ from app.ui import (
     show_leaderboard,
 )
 
-st.title("Blocked Opportunities")
-if banner() is not None:
+with page(
+    "Blocked Opportunities",
+    "UK Product–Market pairs where the model associates adding a UK Trade Agreement, and removing the tariff, "
+    "with a material rise in Export Potential.",
+):
     st.markdown(
-        "UK Product–Market pairs where the model associates adding a UK Trade Agreement, and removing the tariff, "
-        "with a material rise in Export Potential. A missing agreement is a Barrier the model has learned to associate with lower "
+        "A missing agreement is a Barrier the model has learned to associate with lower "
         "Export Potential, so these pairs need not show an Export Gap; they point to trade-policy work rather "
         "than export promotion. Each Blocked Opportunity value is a tendency the model has learned, not a forecast."
     )

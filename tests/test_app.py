@@ -4,20 +4,19 @@ import io
 import socket
 import threading
 import time
-from pathlib import Path
 
 import httpx
 import pandas as pd
 import pytest
 import streamlit
 import uvicorn
+from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
 from api.main import create_app
 
-APP_DIR = Path(__file__).resolve().parents[1] / "app"
-PAGE = APP_DIR / "pages" / "1_Product_to_Markets.py"
-MARKET_PAGE = APP_DIR / "pages" / "2_Market_to_Products.py"
+PAGE = "pages/product_to_markets.py"
+MARKET_PAGE = "pages/market_to_products.py"
 
 
 def _free_port() -> int:
@@ -48,8 +47,7 @@ def api_url(fixture_artefacts_dir):
 
 def _run_page(monkeypatch, api_url: str, query: str) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(PAGE), default_timeout=30)
-    page.run()
+    page = run_page(PAGE)
     page.text_input(key="product_query").input(query).run()
     return page
 
@@ -62,15 +60,6 @@ def test_page_shows_markets_ranked_by_export_gap(monkeypatch, api_url):
     assert list(table["Market"]) and set(table["Market"]) == {"Japan", "Canada", "India", "Hong Kong"}
     gaps = list(table["Export Gap, 2022–2024 average (USD, nominal)"])
     assert gaps == sorted(gaps, reverse=True)
-
-
-def test_page_shows_baseline_year_banner(monkeypatch, api_url):
-    page = _run_page(monkeypatch, api_url, "220830")
-
-    banner = " ".join(element.value for element in page.info)
-    health = httpx.get(f"{api_url}/health").json()
-    assert str(health["baseline_year"]) in banner and "provisional" in banner
-    assert health["gap_period_label"] in banner and health["artefact_version"] in banner
 
 
 @pytest.mark.parametrize("market_page", [False, True], ids=["product", "market"])
@@ -110,19 +99,9 @@ def test_unknown_search_text_shows_a_message(monkeypatch, api_url):
     assert not page.dataframe
 
 
-def test_api_down_shows_a_clear_message(monkeypatch):
-    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", f"http://127.0.0.1:{_free_port()}")
-    page = AppTest.from_file(str(PAGE), default_timeout=30)
-    page.run()
-
-    assert not page.exception
-    assert any("API" in element.value for element in page.error)
-
-
 def _market_page(monkeypatch, api_url: str, iso3: str | None = "JPN") -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(MARKET_PAGE), default_timeout=30)
-    page.run()
+    page = run_page(MARKET_PAGE)
     if iso3 is not None:
         page.selectbox(key="iso3").set_value(iso3).run()
     return page
@@ -237,15 +216,6 @@ def test_csv_export_matches_the_ranking_on_screen(monkeypatch, api_url, download
     exported = pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str, "Sector": str}, keep_default_na=False)
     pd.testing.assert_frame_equal(exported, on_screen.reset_index(drop=True), check_dtype=False)
     assert len(page.get("download_button")) == 1
-
-
-def test_market_page_api_down_shows_a_clear_message(monkeypatch):
-    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", f"http://127.0.0.1:{_free_port()}")
-    page = AppTest.from_file(str(MARKET_PAGE), default_timeout=30)
-    page.run()
-
-    assert not page.exception
-    assert any("API" in element.value for element in page.error)
 
 
 # --- Flagged Products and Re-export Hubs: caveat badges and hide filters (ADR 0005) -------

@@ -4,19 +4,19 @@ import re
 import socket
 import threading
 import time
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 import uvicorn
+from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
 from api.main import create_app
 
-APP_DIR = Path(__file__).resolve().parents[1] / "app"
-WHY = APP_DIR / "pages" / "5_Why.py"
-PRODUCT_TO_MARKETS = APP_DIR / "pages" / "1_Product_to_Markets.py"
+WHY = "pages/why.py"
+PRODUCT_TO_MARKETS = "pages/product_to_markets.py"
+MARKET_TO_PRODUCTS = "pages/market_to_products.py"
 
 
 @pytest.fixture(scope="module")
@@ -47,11 +47,7 @@ def _free_port() -> int:
 
 def _why(monkeypatch, api_url: str, **query) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(WHY), default_timeout=30)
-    for key, value in query.items():
-        page.query_params[key] = value
-    page.run()
-    return page
+    return run_page(WHY, query=query)
 
 
 def test_why_page_explains_the_pair_named_in_the_link(monkeypatch, api_url):
@@ -119,8 +115,7 @@ def test_why_page_unknown_pair_shows_a_message(monkeypatch, api_url):
 
 def test_product_to_markets_rows_link_to_why(monkeypatch, api_url):
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(PRODUCT_TO_MARKETS), default_timeout=30)
-    page.run()
+    page = run_page(PRODUCT_TO_MARKETS)
     page.text_input(key="product_query").input("220830").run()
 
     table = page.dataframe[0].value
@@ -134,8 +129,7 @@ def test_product_to_markets_rows_link_to_why(monkeypatch, api_url):
 
 def test_market_to_products_rows_link_to_why(monkeypatch, api_url):
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(PRODUCT_TO_MARKETS.with_name("2_Market_to_Products.py")), default_timeout=30)
-    page.run()
+    page = run_page(MARKET_TO_PRODUCTS)
     page.selectbox(key="iso3").set_value("JPN").run()
 
     table = page.dataframe[0].value

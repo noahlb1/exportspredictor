@@ -3,8 +3,8 @@
 import streamlit as st
 
 from app import client
+from app.frame import page
 from app.ui import (
-    banner,
     excluded_products_list,
     fetch,
     market_picker,
@@ -12,9 +12,7 @@ from app.ui import (
     show_ranking,
 )
 
-st.title("Market → Products")
-
-if banner() is not None:
+with page("Market → Products", "Products ranked by the UK's Export Gap in one Market."):
     try:
         filters = ranking_filters()
     except client.ApiUnavailable as error:

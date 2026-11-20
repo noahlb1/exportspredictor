@@ -91,11 +91,14 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 
 Run this before a release, against `podman compose up` with real artefacts. Tick each item.
 
-**UK Exports Predictor (home page)**
-- [ ] The page loads, and the banner states the Baseline year, that it is provisional, that Export Gaps are 2022–2024 averages, and the model version.
-- [ ] Every page has one caption, "Values are nominal US dollars, as reported by BACI", and no page shows a pound sign or a currency switch.
+**UK Exports Predictor (every page)**
+- [ ] The menu lists four pages, Leaderboard, Blocked Opportunities, Scenarios and Model Evaluation, with no group headings, and the app opens on the Leaderboard.
+- [ ] The logo tile (a white container ship on a blue square) sits alone at the top of the sidebar, shows in a collapsed sidebar, and is the browser-tab icon.
+- [ ] The app follows the computer's light or dark mode: in light mode, near-black text on a light page with a sidebar that stands apart; in dark mode, light text on a warm near-black page. Check captions, charts and the info, warning and error boxes in both.
+- [ ] Click something slow (e.g. a filter on the real Leaderboard): after a short delay the logo's ship rides the waves in the middle of the page until the app is done.
+- [ ] Every page shows, under its heading and introduction, the grey line "Figures are associations the model has learned, not causes or forecasts.", and, after a divider at the foot of the page, a grey footer stating the Baseline year (provisional data), that Export Gaps are 2022–2024 averages, "Values are nominal US dollars, as reported by BACI", and the model version. There is no blue banner, and no page shows a pound sign or a currency switch.
 - [ ] Stop the API (`podman compose stop api`) and reload: within a few seconds, every page shows a clear "API is unavailable" message instead of an error or a spinner. Start it again with `podman compose start api` and wait for <http://localhost:8000/health> to answer before reloading.
-- [ ] The Leaderboard opens on Home without searching, listing UK Product–Market pairs by Export Gap, largest first, with no Excluded Product (e.g. no crude oil or gold) among them.
+- [ ] The Leaderboard opens without searching, listing UK Product–Market pairs by Export Gap, largest first, with no Excluded Product (e.g. no crude oil or gold) among them.
 - [ ] On the real artefact (about 1.16 M pairs), the Leaderboard loads, and responds to each filter change, within about a second.
 - [ ] The summary row shows the number of pairs and the total positive Export Gap ("2022–2024 average"); both change with the filters.
 - [ ] Each row shows its Opportunity Type (Expand, New Market or New Product), its Relative Export Gap, whether a UK Trade Agreement is in force, and any Flagged Product or Re-export Hub badge.

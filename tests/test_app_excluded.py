@@ -1,21 +1,17 @@
 """Excluded Products in the Streamlit app: the list with reasons, and what a search for one shows."""
 
-from pathlib import Path
-
 import pytest
+from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
-APP_DIR = Path(__file__).resolve().parents[1] / "app"
-PRODUCT_PAGE = APP_DIR / "pages" / "1_Product_to_Markets.py"
-MARKET_PAGE = APP_DIR / "pages" / "2_Market_to_Products.py"
+PRODUCT_PAGE = "pages/product_to_markets.py"
+MARKET_PAGE = "pages/market_to_products.py"
 CRUDE_OIL = "270900"  # the fixture world's Excluded Product
 
 
-def _page(monkeypatch, api_url: str, path: Path) -> AppTest:
+def _page(monkeypatch, api_url: str, path: str) -> AppTest:
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = AppTest.from_file(str(path), default_timeout=30)
-    page.run()
-    return page
+    return run_page(path)
 
 
 @pytest.mark.parametrize("path", [PRODUCT_PAGE, MARKET_PAGE])

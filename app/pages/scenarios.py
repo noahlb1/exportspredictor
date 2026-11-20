@@ -7,9 +7,9 @@ import streamlit as st
 
 from app import client
 from app.format import format_change
+from app.frame import page
 from app.ui import (
     SECTORS,
-    banner,
     fetch,
     illustrative,
     labels,
@@ -17,8 +17,6 @@ from app.ui import (
     scenario_note,
     usd_unit,
 )
-
-st.title("Scenarios")
 
 PRESET = "Trading Bloc preset"
 CUSTOM = "Custom Trade Agreements"
@@ -47,7 +45,10 @@ def table(rows: list[dict], columns: dict[str, str]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=list(columns)).rename(columns=columns)
 
 
-if banner() is not None:
+with page(
+    "Scenarios",
+    "Re-predict UK Export Potential under a Trading Bloc preset, custom Trade Agreements or a tariff change.",
+):
     try:
         presets = fetch("/scenarios/presets", client.api_url())
         markets = fetch("/markets", client.api_url())

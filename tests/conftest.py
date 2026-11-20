@@ -4,10 +4,12 @@ import socket
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
 import polars as pl
 import pytest
 import uvicorn
+from streamlit.testing.v1 import AppTest
 
 from api.main import create_app
 from exportspredictor import artefacts as store
@@ -17,6 +19,33 @@ from exportspredictor.pipeline import Parts, build_artefacts
 
 FIXTURE_VERSION = "fixture-test"
 TAIWAN_BACI = "S19"  # BACI's code for Taiwan ("Other Asia, nes")
+APP_ROUTER = Path(__file__).resolve().parents[1] / "app" / "Home.py"
+
+
+def run_page(page: str | None = None, *, query: dict[str, str] | None = None) -> AppTest:
+    """Open one app page as a visitor does, through the router (`app/Home.py`), against the API that
+    `EXPORTSPREDICTOR_API_URL` names.
+
+    `run_page()` opens the default page (the Leaderboard); `run_page("pages/scenarios.py")` switches to another
+    page, with `query` as its URL parameters. Returns the AppTest after the page's run.
+    """
+    app = AppTest.from_file(str(APP_ROUTER), default_timeout=30)
+    if page is not None:
+        app.run()  # registers the router's pages, so switch_page can find them
+        app.switch_page(page)
+    app.query_params.update(query or {})
+    return app.run()
+
+
+@pytest.fixture
+def open_page(monkeypatch):
+    """`run_page` against the API at a given URL: `open_page(api_url, "pages/scenarios.py")`."""
+
+    def open_(api_url: str, page: str | None = None, *, query: dict[str, str] | None = None) -> AppTest:
+        monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
+        return run_page(page, query=query)
+
+    return open_
 
 
 @pytest.fixture(scope="session")

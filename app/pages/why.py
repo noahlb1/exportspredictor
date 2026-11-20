@@ -9,8 +9,8 @@ import streamlit as st
 
 from app import client
 from app.format import format_usd, years_text
+from app.frame import page
 from app.ui import (
-    banner,
     fetch,
     labels,
     potential_range_bar,
@@ -20,8 +20,6 @@ from app.ui import (
 )
 
 TOP_FACTORS = 8
-
-st.title("Why?")
 
 
 def _pair() -> tuple[str | None, str | None]:
@@ -39,7 +37,7 @@ def _pair() -> tuple[str | None, str | None]:
     return hs6, iso3
 
 
-if banner() is not None:
+with page("Why?", "Which factors raised or lowered one UK Product–Market pair's Export Potential."):
     hs6, iso3 = _pair()
     if hs6 and iso3:
         try:
