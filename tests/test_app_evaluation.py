@@ -30,6 +30,34 @@ def page(monkeypatch, live_api, fixture_artefacts_dir):
         yield _run(monkeypatch, url)
 
 
+def test_page_opens_with_four_figures_from_the_evaluation(page, fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    headline, coverage, stability = report["headline"], report["potential_range"], report["stability"]
+    figures = {metric.label: metric for metric in page.metric}
+
+    assert list(figures) == [
+        "Rank correlation, UK pairs", "Inside the Potential Range", "Size-matched Lift", "Ranking stability",
+    ]
+    rank = figures["Rank correlation, UK pairs"]
+    assert rank.value == f"{headline['model']:.2f}"
+    assert f"{headline['naive']:.2f}" in rank.delta and "Naive Baseline" in rank.delta
+    inside = figures["Inside the Potential Range"]
+    assert inside.value == f"{coverage['coverage']:.0%}" and f"{coverage['target']:.0%}" in inside.delta
+    assert figures["Size-matched Lift"].value == f"{report['lift']['size_matched']['lift']:.2f}"
+    steady = figures["Ranking stability"]
+    assert steady.value == f"{stability['spearman_potential']:.2f}"
+    assert f"{stability['top_overlap']:.0%}" in steady.delta
+
+
+def test_every_section_is_folded_but_accuracy_and_the_known_limitations(page):
+    sections = {e.label: e.proto.expanded for e in page.expander if not e.label.startswith("All ")}
+    labels = list(sections)
+
+    assert labels[0] == "How accurate is the model?" and labels[-2:] == ["Excluded Products", "Known limitations"]
+    assert "Stability of the rankings" in labels and "How the model was chosen" in labels
+    assert {label for label, open_ in sections.items() if open_} == {"How accurate is the model?", "Known limitations"}
+
+
 def test_page_shows_a_plain_english_headline_against_the_naive_baseline(page, fixture_artefacts):
     headline = fixture_artefacts.evaluation["headline"]
     shown = page.success if headline["beats_naive"] else page.warning

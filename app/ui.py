@@ -151,23 +151,6 @@ def show_caveats(row: dict) -> None:
             st.warning(caveat)
 
 
-def excluded_products_list() -> None:
-    """The Excluded Products and the reason for each, in an expander under the ranking filters."""
-    excluded = fetch("/products/excluded", client.api_url())
-    with st.expander(f"Excluded Products ({len(excluded)}): why some Products are never ranked"):
-        st.caption(
-            "These Products are left out of training, scoring and every ranking, because their recorded "
-            "trade follows bullion-market, pipeline or grid geography the model cannot see, or is unreliable. "
-            "Their trade still counts in every country and world total."
-        )
-        table = pd.DataFrame(excluded, columns=["hs6", "description", "sector", "reason"])
-        # A static table, so the page's interactive dataframes are only its rankings.
-        st.table(
-            table.rename(columns={"hs6": "HS6", "description": "Product", "sector": "Sector", "reason": "Reason"})
-            .set_index("HS6")
-        )
-
-
 @st.cache_data(ttl=300, show_spinner=False)
 def run_scenario(body_json: str, api_url: str) -> dict:
     """Cached Scenario run; `body_json` is the request body as sorted JSON (the cache key)."""

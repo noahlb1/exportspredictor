@@ -13,7 +13,6 @@ from app.frame import page
 from app.ui import (
     ROWS_SHOWN,
     blocked_filters,
-    excluded_products_list,
     fetch,
     illustrative,
     scenario_note,
@@ -37,7 +36,6 @@ with page(
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
     else:
-        excluded_products_list()
         summary = body["summary"]
         pairs_column, count_column, value_column = st.columns(3)
         pairs_column.metric("Product–Market pairs", f"{summary['pairs']:,}")
