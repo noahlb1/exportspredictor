@@ -62,7 +62,7 @@ def _three_steps() -> None:
     """Three bordered steps telling a first-time visitor how to read the page, with Got it to close them."""
     if not st.session_state.get(STEPS, True):
         return
-    columns = st.columns([4, 4, 4, 1], vertical_alignment="center")
+    columns = st.columns([4, 4, 4, 1.5], vertical_alignment="center")  # room for "Got it" at 1280 px
     for column, (title, text) in zip(columns, STEP_TEXTS, strict=False):
         with column.container(border=True):
             st.markdown(f"**{title}** {text}")

@@ -19,7 +19,13 @@ import streamlit as st
 from app import client
 from app.format import format_change, format_usd
 from app.frame import page
-from app.tables import millions, millions_unit, money_column, tariff_column
+from app.tables import (
+    millions,
+    millions_unit,
+    money_column,
+    product_column,
+    tariff_column,
+)
 from app.ui import fetch, illustrative, labels, run_scenario, scenario_note
 
 PRESET = "Trading Bloc preset"
@@ -102,7 +108,7 @@ def columns(year: int) -> dict:
     """Column config of the Scenario tables: short headings, each with a tooltip; money in $ millions."""
     word = illustrative().capitalize()
     return {
-        "Product": st.column_config.TextColumn("Product", help="The Product (HS6, 2012 edition)."),
+        "Product": product_column(),
         "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to."),
         "Scenario Effect": money_column(
             "Scenario Effect",
