@@ -68,9 +68,7 @@ class Ledger:
     @classmethod
     def for_command(cls, command: str, argv: Sequence[str], path: Path = LEDGER_PATH) -> "Ledger":
         """The repo's ledger for a command line: `OVERRIDE_FLAG` among `argv` allows a second read."""
-        override = OVERRIDE_FLAG in argv
-        words = [command, *(arg for arg in argv)]
-        return cls(path=path, command=" ".join(words), override=override)
+        return cls(path=path, command=" ".join([command, *argv]), override=OVERRIDE_FLAG in argv)
 
 
 def fingerprint(metadata: Mapping) -> str:
