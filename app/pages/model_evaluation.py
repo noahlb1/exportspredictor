@@ -164,6 +164,18 @@ def _show_potential_range(coverage: dict) -> None:
         f"half of them, per Exporter. Coverage near {coverage['target']:.0%} for every Exporter supports the "
         f"assumption that UK pairs vary as other Exporters' pairs do; it does not prove it."
     )
+    if coverage.get("by_size"):
+        by_size = pd.DataFrame(
+            [
+                {"Size of Export Potential": row["size"], "Coverage": row["coverage"], "Rows": row["rows"]}
+                for row in coverage["by_size"]
+            ]
+        )
+        st.dataframe(by_size, hide_index=True)
+        st.caption(
+            "The same held-out check by size of Export Potential: a large pair's range is calibrated on pairs of "
+            "similar size, so coverage near the target at every size means the range fits large pairs as well as small."
+        )
 
 
 def _show_model_choice(choice: dict) -> None:

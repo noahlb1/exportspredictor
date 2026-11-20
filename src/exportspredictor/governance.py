@@ -19,12 +19,13 @@ import polars as pl
 
 from exportspredictor import comparison
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.conformal import coverage_text
+from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.evaluation import (
     LIMITATIONS,
     parts_not_run,
     range_limitations,
     result_limitations,
+    size_coverage_limitations,
 )
 from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
@@ -89,8 +90,8 @@ DECISIONS = [
      "sets the tariff to 0, and removing one restores the 2021 MFN rate. Tariffs beyond the training range are "
      "clipped, so the Scenario Effect of a very large hike flattens.")),
     ("Potential Range calibrated on other Exporters, never the UK (ADR 0007)",
-     ("An 80% split-conformal range, calibrated within 20 bands of Export Potential on other top-100 Exporters' "
-     "2024 rows. UK residuals are the Export Gaps the model exists to find, so calibrating on them would make every "
+     ("An 80% split-conformal range, calibrated within 20 bands of Export Potential (the top band split at "
+     "$10m, $100m and $1bn) on other top-100 Exporters' 2024 rows. UK residuals are the Export Gaps the model exists to find, so calibrating on them would make every "
      "gap look normal. An Opportunity whose Actual Exports lie inside its range is an Uncertain Opportunity.")),
     ("Features kept by an ablation on 2022",
      ("Relatedness, Market import growth, the re-export ratio and the Applied Tariff were each removed in turn from "
@@ -204,7 +205,8 @@ def model_card(artefacts: Artefacts) -> dict:
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
         "limitations": [
             *result_limitations(metadata, report), *_benchmark_limitations(artefacts.ppml_benchmark),
-            *range_limitations(artefacts.potential_range_bands), *LIMITATIONS,
+            *range_limitations(artefacts.potential_range_bands),
+            *size_coverage_limitations(report.get("potential_range")), *LIMITATIONS,
         ],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
@@ -411,7 +413,7 @@ def _ci(interval, *, percent: bool = False) -> str:
 
 
 # A per-Exporter coverage more than this far from the target is reported as too wide or too narrow.
-RANGE_COVERAGE_TOLERANCE = 0.05
+RANGE_COVERAGE_TOLERANCE = COVERAGE_TOLERANCE
 
 
 def range_coverage_by_exporter(potential_range: dict, tolerance: float = RANGE_COVERAGE_TOLERANCE) -> pl.DataFrame:
@@ -442,7 +444,18 @@ def _potential_range(potential_range: dict | None) -> dict | None:
     if not potential_range or potential_range.get("uncertain_opportunity_share") is None:
         return None
     keys = ("coverage", "target", "opportunities", "uncertain_opportunities", "uncertain_opportunity_share")
-    return {key: potential_range[key] for key in keys} | {"text": coverage_text(potential_range)}
+    return {key: potential_range[key] for key in keys} | {
+        "text": coverage_text(potential_range), "by_size": potential_range.get("by_size"),
+    }
+
+
+def _size_lines(by_size: list[dict] | None) -> list[str]:
+    """The held-out coverage by size of Export Potential as a Markdown table; none for older versions."""
+    if not by_size:
+        return []
+    return ["", "| Size of Export Potential | Held-out rows | Coverage |", "| --- | --- | --- |", *[
+        f"| {row['size']} | {row['rows']:,} | {number_text(row['coverage'], '.0%')} |" for row in by_size
+    ]]
 
 
 def _range_review(potential_range: dict | None) -> dict | None:
@@ -519,7 +532,8 @@ def render_model_card(card: dict) -> str:
     lines += ["## Illustrative Scenario Effects", "", *_illustrative_lines(card["illustrative"]), ""]
     lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
     lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
-        "text", "The artefact records no Potential Range coverage for this version."), ""]
+        "text", "The artefact records no Potential Range coverage for this version."),
+        *_size_lines((card["potential_range"] or {}).get("by_size")), ""]
     lines += ["## Metrics", "", "| Metric | Model | Reference (Naive Baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
     lines += [
         f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
