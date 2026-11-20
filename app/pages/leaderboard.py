@@ -128,7 +128,7 @@ with page(
         if pairs > READ_LIMIT:
             shown = f"Top {len(rows):,} of {pairs:,} pairs: narrow them down with the filters to show them all."
         else:
-            shown = f"{len(rows):,} pairs shown of {pairs:,}."
+            shown = f"{len(rows):,} pair{'' if len(rows) == 1 else 's'} shown of {pairs:,}."
         line.markdown(
             f"**{in_force}.** {shown} "
             f"Total positive Export Gap, {body['gap_period_label']}: {format_usd(summary['positive_export_gap_usd'])}."

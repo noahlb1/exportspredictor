@@ -65,7 +65,7 @@ def _wide(page: AppTest) -> AppTest:
 
 
 def _active_filters(page: AppTest) -> str:
-    [line] = [element.value for element in page.main.markdown if "pairs shown of" in element.value]
+    [line] = [element.value for element in page.main.markdown if " shown of " in element.value]
     return line
 
 
@@ -114,6 +114,12 @@ def test_the_active_filters_line_states_the_counts_and_the_total_positive_export
 
     line = _active_filters(page)
     assert "Market: Japan" in line and "5 pairs shown of 5" in line
+
+
+def test_the_active_filters_line_says_pair_for_one_pair(monkeypatch, fixture_api_url):
+    page = _home(monkeypatch, fixture_api_url, product="220830", market="JPN")
+
+    assert "1 pair shown of 1." in _active_filters(page)
 
 
 # --- Product search -----------------------------------------------------------------------------
