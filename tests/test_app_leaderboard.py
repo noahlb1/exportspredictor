@@ -3,17 +3,23 @@ fixture artefacts: its sidebar filters (Product search and Market included), the
 the active-filters line, the table and the CSV."""
 
 import io
+import json
 import re
+from dataclasses import replace
 
+import httpx
 import pandas as pd
+import polars as pl
 import pytest
 import streamlit
-from conftest import run_page
+from conftest import run_page, serve_api
 from streamlit.testing.v1 import AppTest
 
-GAP = "Export Gap, 2022–2024 average (USD, nominal)"
-RELATIVE = "Relative Export Gap, 2022–2024 average"
-RANGE = "Potential Range, 2022–2024 average (USD, nominal)"
+from exportspredictor import artefacts as store
+
+GAP = "Export Gap"  # $ millions
+RELATIVE = "Relative Export Gap"
+RANGE = "Potential Range"  # hidden by default
 WHISKY = "220830"
 JEWELLERY = "711319"  # the fixture's Flagged Product; Hong Kong is its Re-export Hub
 CRUDE_OIL = "270900"  # the fixture world's Excluded Product
@@ -88,7 +94,7 @@ def test_the_active_filters_line_states_the_counts_and_the_total_positive_export
     page = _home(monkeypatch, fixture_api_url)
 
     line = _active_filters(page)
-    gaps = list(_table(page)[GAP])
+    gaps = [gap * 1e6 for gap in _table(page)[GAP]]  # the table's $ millions, back in dollars
     assert "No filters" in line and "20 pairs shown of 20" in line
     positive = sum(gap for gap in gaps if gap > 0)
     assert f"${positive / 1e3:,.1f}k" in line and "Total positive Export Gap" in line
@@ -243,7 +249,7 @@ def test_rows_show_caveat_badges_and_the_hide_filters_are_off_by_default(monkeyp
 def test_each_row_shows_whether_a_uk_trade_agreement_is_in_force(monkeypatch, fixture_api_url):
     table = _table(_home(monkeypatch, fixture_api_url, product=WHISKY))
 
-    assert dict(zip(table["Market"], table["UK Trade Agreement in force"], strict=True)) == {
+    assert dict(zip(table["Market"], table["UK Trade Agreement"], strict=True)) == {
         "Japan": "Yes",
         "Canada": "Yes",
         "India": "No",
@@ -323,24 +329,101 @@ def test_filters_persist_for_the_session_across_pages(monkeypatch, fixture_api_u
 
 # --- The table and the CSV -----------------------------------------------------------------------
 
+SHOWN_COLUMNS = [
+    "Product",
+    "Market",
+    "Export Gap",
+    "Export Potential",
+    "Actual Exports",
+    "Applied Tariff %",
+    "Relative Export Gap",
+    "UK Trade Agreement",
+    "Blocked Opportunity value",
+    "Blocked Opportunity",
+    "Caveats",
+]
+HIDDEN_COLUMNS = ["Opportunity Type", "Potential Range", "HS6", "Sector", "Region"]
+MONEY = ["Export Gap", "Export Potential", "Actual Exports", "Blocked Opportunity value"]
 
-def test_ranking_values_are_labelled_as_gap_period_averages(monkeypatch, fixture_api_url):
-    columns = list(_table(_home(monkeypatch, fixture_api_url)).columns)
 
-    for value in ("Export Potential", "Actual Exports", "Export Gap"):
-        assert f"{value}, 2022–2024 average (USD, nominal)" in columns
-    # The Blocked Opportunity value is a 2024 Scenario Effect, not an average, and Illustrative.
-    assert "Blocked Opportunity value, illustrative (USD, nominal)" in columns
+def _column_config(page: AppTest) -> dict:
+    """Each column's config, by the heading it configures."""
+    config = json.loads(page.dataframe[0].proto.columns)
+    return {value.get("label") or key.removeprefix("name:"): value for key, value in config.items()}
+
+
+def _api_rows(api_url: str, **params) -> list[dict]:
+    return httpx.get(f"{api_url}/opportunities/top", params=params).json()["opportunities"]
+
+
+def test_the_default_columns_are_shown_in_order_and_the_others_hidden(monkeypatch, fixture_api_url):
+    page = _home(monkeypatch, fixture_api_url)
+
+    order = list(page.dataframe[0].proto.column_order)
+    assert [column for column in order if column != "Why?"] == SHOWN_COLUMNS
+    assert set(HIDDEN_COLUMNS) <= set(_table(page).columns)  # in the data, offered by Show/hide columns
+    assert not set(HIDDEN_COLUMNS) & set(order)
+    assert not any(config.get("pinned") for config in _column_config(page).values())
+
+
+def test_money_columns_are_numeric_dollar_millions_with_the_unit_stated_once(monkeypatch, fixture_api_url):
+    page = _home(monkeypatch, fixture_api_url)
+
+    table = _table(page)
+    rows = {(row["hs6"], row["market"]): row for row in _api_rows(fixture_api_url)}
+    for _, shown in table.iterrows():
+        row = rows[(shown["HS6"], shown["Market"])]
+        assert shown["Export Gap"] == pytest.approx(row["export_gap_usd"] / 1e6)
+        assert shown["Export Potential"] == pytest.approx(row["export_potential_usd"] / 1e6)
+        assert shown["Actual Exports"] == pytest.approx(row["actual_exports_usd"] / 1e6)
+        assert shown["Blocked Opportunity value"] == pytest.approx(row["blocked_opportunity_value_usd"] / 1e6)
+    config = _column_config(page)
+    for column in MONEY:
+        assert pd.api.types.is_float_dtype(table[column])  # numeric, so they sort as numbers
+        assert config[column]["type_config"]["format"] == "%.1f"
+    assert len([text for text in _texts(page) if "$ millions" in text]) == 1
+    assert not any("USD" in column for column in table.columns)  # the unit is not in the headings
+
+
+def test_short_headings_carry_tooltips_and_the_four_terms_use_the_apis_wording(monkeypatch, fixture_api_url):
+    page = _home(monkeypatch, fixture_api_url)
+
+    terms = httpx.get(f"{fixture_api_url}/labels").json()["terms"]
+    helps = {name: config.get("help") for name, config in _column_config(page).items()}
+    assert all(helps.get(column) for column in [*SHOWN_COLUMNS, *HIDDEN_COLUMNS])
+    assert helps["Export Potential"] == terms["export_potential"]
+    assert helps["Actual Exports"] == terms["actual_exports"]
+    assert helps["Export Gap"] == terms["export_gap"]
+    assert helps["Opportunity Type"] == terms["opportunity_type"]
+
+
+def test_each_row_shows_the_applied_tariff_in_percent(monkeypatch, fixture_api_url):
+    table = _table(_home(monkeypatch, fixture_api_url, product=WHISKY))
+
+    tariffs = dict(zip(table["Market"], table["Applied Tariff %"], strict=True))
+    assert tariffs["India"] == pytest.approx(150.0, rel=1e-5) and tariffs["Japan"] == 0.0
 
 
 @pytest.mark.parametrize("query", [{}, {"product": WHISKY}, {"market": "JPN"}], ids=["all", "product", "market"])
-def test_csv_export_matches_the_leaderboard_on_screen(monkeypatch, fixture_api_url, downloads, query):
+def test_the_csv_holds_every_filtered_row_in_full_dollars_with_every_column(
+    monkeypatch, fixture_api_url, downloads, query
+):
     page = _home(monkeypatch, fixture_api_url, **query)
 
-    on_screen = _table(page).drop(columns="Why?")  # links are navigation, not data
-    # keep_default_na: a row without caveats exports an empty Caveats cell, not a missing value
-    exported = pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str, "Sector": str}, keep_default_na=False)
-    pd.testing.assert_frame_equal(exported, on_screen.reset_index(drop=True), check_dtype=False)
+    exported = pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str}, keep_default_na=False)
+    rows = _api_rows(fixture_api_url, **query)
+    assert list(zip(exported["HS6"], exported["Market"], strict=True)) == [(r["hs6"], r["market"]) for r in rows]
+    for column, field in [
+        ("Export Gap, 2022–2024 average (USD, nominal)", "export_gap_usd"),
+        ("Export Potential, 2022–2024 average (USD, nominal)", "export_potential_usd"),
+        ("Actual Exports, 2022–2024 average (USD, nominal)", "actual_exports_usd"),
+        ("Blocked Opportunity value, 2024, illustrative (USD, nominal)", "blocked_opportunity_value_usd"),
+        ("Potential Range low, 2022–2024 average (USD, nominal)", "potential_range_low_usd"),
+        ("Potential Range high, 2022–2024 average (USD, nominal)", "potential_range_high_usd"),
+    ]:
+        assert list(exported[column]) == pytest.approx([row[field] for row in rows]), column
+    others = set(_table(page).columns) - {"Why?", *MONEY, "Potential Range"}
+    assert others <= set(exported.columns)  # every other column, under its table heading
 
 
 def test_the_leaderboard_shows_each_potential_range_but_no_uncertain_opportunity_badge_or_filter(
@@ -350,8 +433,89 @@ def test_the_leaderboard_shows_each_potential_range_but_no_uncertain_opportunity
 
     table = _table(page)
     ranges = list(table[RANGE])
-    assert all(re.fullmatch(r"\$[0-9.,]+(bn|m|k)?–\$[0-9.,]+(bn|m|k)?", text) for text in ranges)
+    assert all(re.fullmatch(r"-?[0-9.,]+–[0-9.,]+", text) for text in ranges)  # $ millions, low–high
     # The fixture has Uncertain Opportunities among these rows; the badge marked almost every row, so it is gone
     assert not table["Caveats"].str.contains("Uncertain Opportunity").any()
     assert not any("Uncertain Opportunit" in caption.value for caption in page.caption)
     assert not any("Uncertain" in checkbox.label for checkbox in page.checkbox)
+
+
+# --- Long rankings: the top 500, Show all up to 6,000 ------------------------------------------------
+
+
+def _many_pairs(fixture_artefacts, root, products: int):
+    """The fixture artefacts with `products` more Products, each a copy of whisky's UK pairs ranked below them."""
+    codes = [f"9{i:05d}" for i in range(products)]
+
+    def copies(table: pl.DataFrame, **changed) -> pl.DataFrame:
+        template = table.filter(pl.col("hs6") == WHISKY)
+        extra = [template.with_columns(hs6=pl.lit(code), **changed) for code in codes]
+        return pl.concat([table, *extra], how="vertical_relaxed")
+
+    many = replace(
+        fixture_artefacts,
+        baseline=copies(fixture_artefacts.baseline, export_gap_usd=pl.lit(-1e9)),
+        baseline_features=copies(fixture_artefacts.baseline_features),
+        products=copies(fixture_artefacts.products, description=pl.lit("Constructed product")),
+    )
+    store.save(many, root)
+    return root
+
+
+@pytest.fixture(scope="module")
+def several_hundred_api(fixture_artefacts, tmp_path_factory):
+    """620 UK pairs: more than 500, no more than 6,000."""
+    with serve_api(_many_pairs(fixture_artefacts, tmp_path_factory.mktemp("many"), 150)) as url:
+        yield url
+
+
+@pytest.fixture(scope="module")
+def too_many_api(fixture_artefacts, tmp_path_factory):
+    """6,420 UK pairs: more than 6,000."""
+    with serve_api(_many_pairs(fixture_artefacts, tmp_path_factory.mktemp("too_many"), 1600)) as url:
+        yield url
+
+
+def test_show_all_is_offered_only_when_the_ranking_has_501_to_6000_pairs(
+    monkeypatch, fixture_api_url, several_hundred_api, too_many_api
+):
+    assert not _home(monkeypatch, fixture_api_url).toggle  # 20 pairs: every one shown
+    assert not _home(monkeypatch, too_many_api).toggle  # 6,420 pairs: too many to show
+
+    page = _home(monkeypatch, several_hundred_api)
+    assert len(_table(page)) == 500 and "500 pairs shown of 620" in _active_filters(page)
+
+    page.toggle(key="show_all").set_value(True).run()
+
+    assert len(_table(page)) == 620 and "620 pairs shown of 620" in _active_filters(page)
+    assert page.query_params.get("show_all") == "true"
+
+
+def test_show_all_turns_off_when_the_filtered_count_leaves_the_range(monkeypatch, several_hundred_api):
+    page = _home(monkeypatch, several_hundred_api, show_all="true")
+    assert page.toggle(key="show_all").value is True and len(_table(page)) == 620
+
+    page.sidebar.selectbox(key="market").set_value("JPN").run()  # 151 pairs
+
+    assert not page.toggle and "show_all" not in page.query_params
+    page.sidebar.selectbox(key="market").set_value(None).run()
+    assert page.toggle(key="show_all").value is False and len(_table(page)) == 500
+
+
+def test_reset_filters_switches_show_all_off(monkeypatch, several_hundred_api):
+    page = _home(monkeypatch, several_hundred_api, show_all="true")
+
+    page.sidebar.button(key="reset_filters").click().run()
+
+    assert page.toggle(key="show_all").value is False and len(_table(page)) == 500
+    assert page.query_params == {}
+
+
+def test_above_6000_pairs_the_page_shows_the_top_500_and_points_to_the_filters(monkeypatch, too_many_api, downloads):
+    page = _home(monkeypatch, too_many_api)
+
+    assert len(_table(page)) == 500
+    texts = " ".join(_texts(page))
+    assert "top 500 of 6,420 pairs" in texts.lower() and "filters" in texts
+    assert len(pd.read_csv(io.StringIO(downloads[-1]), dtype={"HS6": str})) == 6000
+    assert "top 6,000 of 6,420" in texts.lower()

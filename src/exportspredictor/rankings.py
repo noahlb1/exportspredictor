@@ -14,7 +14,12 @@ import polars as pl
 
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
-from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, is_blocked, tariff_percent
+from exportspredictor.scenarios import (
+    DEFAULT_MIN_SHARE,
+    DEFAULT_MIN_USD,
+    is_blocked,
+    tariff_percent,
+)
 from exportspredictor.sectors import with_sector_names
 
 # The most rows a ranking read returns: enough for one Market's or one Product's full ranking, never the full grid.

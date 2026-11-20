@@ -25,15 +25,12 @@ _VALUES = {
 # The values that are Gap Period means; the Blocked Opportunity value is the Baseline year's, and its
 # heading says it is illustrative instead.
 _GAP_PERIOD_MEANS = ("export_potential", "actual_exports", "export_gap")
-ROWS_SHOWN = 500  # the top of a Leaderboard-style ranking sent to the page; its summary covers every filtered pair
+ROWS_SHOWN = 500  # the top of a Leaderboard-style ranking shown on the page; its summary covers every filtered pair
+READ_LIMIT = 6000  # the most rows a ranking read returns (the API refuses more): the CSV and Show all hold these
 # The row fields that name each row of the Leaderboard and the Blocked Opportunities page, and their headings.
 PAIR_COLUMNS = {"hs6": "HS6", "description": "Product", "sector": "Sector", "market": "Market", "region": "Region"}
 
 
-OPPORTUNITY_TYPE_HELP = (
-    "Expand: the UK already exports the Product to this Market. New Market: the UK exports the Product, "
-    "but not to this Market. New Product: the UK exports the Product to no Market (over the Gap Period)."
-)
 # The Trade Agreement filter: any pair, or only pairs with or without a UK Trade Agreement in force.
 _AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
 
@@ -46,8 +43,15 @@ def fetch(path: str, api_url: str, **params) -> Any:
 
 
 def labels() -> dict:
-    """The API's wording and options (`/labels`): unit and caption, Opportunity Types, caveats, last tariff year."""
+    """The API's wording and options (`/labels`): unit and caption, Opportunity Types, caveats, last tariff year,
+    caution line and term definitions."""
     return fetch("/labels", client.api_url())
+
+
+def term(name: str) -> str:
+    """What a term means, worded by the API (`/labels` `terms`): `export_potential`, `actual_exports`,
+    `export_gap` or `opportunity_type`. Those that name the Gap Period carry the artefact's label."""
+    return labels()["terms"][name]
 
 
 def usd_unit() -> str:
@@ -105,7 +109,7 @@ def blocked_filters() -> dict:
         [None, *labels()["opportunity_types"]],
         format_func=lambda kind: "All Opportunity Types" if kind is None else kind,
         key=f"{key}opportunity_type",
-        help=OPPORTUNITY_TYPE_HELP,
+        help=term("opportunity_type"),
     )
     trade_agreement = agreement_column.selectbox(
         "UK Trade Agreement in force",
@@ -221,7 +225,7 @@ def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: st
         column_config={
             **{heading: st.column_config.NumberColumn(format="localized") for heading in headings.values()},
             relative: st.column_config.NumberColumn(format="percent"),
-            "Opportunity Type": st.column_config.TextColumn(help=OPPORTUNITY_TYPE_HELP),
+            "Opportunity Type": st.column_config.TextColumn(help=term("opportunity_type")),
             "Why?": why_column(),
         },
     )

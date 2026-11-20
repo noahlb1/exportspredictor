@@ -11,6 +11,8 @@ writes its displayed label (a Market's name), not its code.
 - A URL that names none (a return from another page through the menu) leaves the filters as they were: they persist
   for the session, and the page writes them back to the URL.
 
+Show all (`show_all`, the toggle above the table) is kept in the URL the same way, though it is not a filter.
+
 The widget keys are the parameter names (plus `product_query`, the search text, which is not in the URL). The
 Blocked Opportunities page keeps its own filter state under other keys.
 """
@@ -23,9 +25,19 @@ import streamlit as st
 
 from app import client
 from app.format import format_usd
-from app.ui import OPPORTUNITY_TYPE_HELP, caveats, fetch, labels, rank_orders, usd_unit
+from app.ui import (
+    READ_LIMIT,
+    ROWS_SHOWN,
+    caveats,
+    fetch,
+    labels,
+    rank_orders,
+    term,
+    usd_unit,
+)
 
 QUERY = "product_query"  # the Product search text; the chosen Product's HS6 code is the `product` parameter
+SHOW_ALL = "show_all"  # Show all: every filtered row (501 to 6,000) instead of the top 500; not an API filter
 _WRITTEN = "_leaderboard_url"  # the parameters this page last wrote to the URL
 _AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
 _YES_NO = {"yes": True, "no": False}
@@ -57,6 +69,7 @@ PARAMS = [
     Param("hide_hubs", to_url=lambda value: _TRUE, from_url=lambda text: text == _TRUE),
     Param("rank_by"),
     Param("min_potential_usd", to_url=_number, from_url=float),
+    Param(SHOW_ALL, to_url=lambda value: _TRUE, from_url=lambda text: text == _TRUE),
 ]
 
 
@@ -77,6 +90,7 @@ def _defaults() -> dict[str, Any]:
         "hide_hubs": False,
         "rank_by": next(iter(orders)),
         "min_potential_usd": minimums[0] if minimums else None,
+        SHOW_ALL: False,
     }
 
 
@@ -146,7 +160,7 @@ def leaderboard_filters() -> Filters:
             [None, *labels()["opportunity_types"]],
             format_func=lambda kind: "All Opportunity Types" if kind is None else kind,
             key="opportunity_type",
-            help=OPPORTUNITY_TYPE_HELP,
+            help=term("opportunity_type"),
             persist_state="session",
         )
         trade_agreement = st.selectbox(
@@ -195,16 +209,40 @@ def leaderboard_filters() -> Filters:
         "rank_by": rank_by,
         # Kept (and in the URL) only while the order uses it
         "min_potential_usd": min_potential_usd if options else defaults["min_potential_usd"],
+        SHOW_ALL: st.session_state[SHOW_ALL],  # its control sits above the table (`show_all`)
     }
     _write_url(values, defaults)
     params = {
-        **{name: value for name, value in values.items() if value is not None and name != "min_potential_usd"},
+        **{
+            name: value
+            for name, value in values.items()
+            if value is not None and name not in ("min_potential_usd", SHOW_ALL)
+        },
         "min_potential_usd": min_potential_usd,
         "hide_flagged": hide_flagged or None,
         "hide_hubs": hide_hubs or None,
     }
     named = _named(values, sectors, orders, options)
     return Filters({name: value for name, value in params.items() if value is not None}, named, found)
+
+
+def show_all(pairs: int) -> bool:
+    """The Show all control, for a filtered ranking of `pairs` pairs: whether to show every row read.
+
+    It is drawn only when the ranking has more than `ROWS_SHOWN` pairs and no more than `READ_LIMIT`; outside that
+    range it disappears and turns off (in the session and the URL). It is kept in the URL like the filters, and Reset
+    filters switches it off.
+    """
+    if ROWS_SHOWN < pairs <= READ_LIMIT:
+        return st.toggle(f"Show all {pairs:,} pairs", key=SHOW_ALL, persist_state="session")
+    if st.session_state.get(SHOW_ALL):
+        st.session_state[SHOW_ALL] = False
+        if SHOW_ALL in st.query_params:
+            del st.query_params[SHOW_ALL]
+        st.session_state[_WRITTEN] = {
+            name: value for name, value in st.session_state.get(_WRITTEN, {}).items() if name != SHOW_ALL
+        }
+    return False
 
 
 def _product_search() -> tuple[str | None, bool]:
