@@ -1,7 +1,5 @@
 """The one ranking query both Opportunity views use: filters, order, limit and flags."""
 
-import polars as pl
-import pytest
 
 from exportspredictor import rankings
 
