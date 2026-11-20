@@ -272,6 +272,24 @@ def test_evaluation_serves_the_limitations_the_artefact_shows(client, fixture_ar
     assert "Trained on a sample of other Exporters' Flows" in limitations
 
 
+def test_evaluation_serves_the_measure_on_the_largest_importing_markets(client, fixture_artefacts):
+    large = client.get("/evaluation").json()["large_markets"]
+
+    assert large == fixture_artefacts.evaluation["large_markets"]
+    assert [row["markets"] for row in large["rows"]] == [30, 60]
+
+
+def test_evaluation_of_an_artefact_without_the_largest_markets_measure_serves_none(fixture_artefacts, tmp_path):
+    from dataclasses import replace
+
+    older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
+    store.save(replace(fixture_artefacts, evaluation=older), tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        body = client.get("/evaluation").json()
+
+    assert body["large_markets"] is None
+
+
 def test_evaluation_is_404_when_the_artefact_has_none(fixture_artefacts, tmp_path):
     from dataclasses import replace
 

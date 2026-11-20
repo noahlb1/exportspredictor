@@ -26,6 +26,9 @@ Two scopes are evaluated:
 - `uk_out_of_fold`: the UK's full Product × Market grid of the test year, each pair scored
   by the fold model that held it out (ADR 0001).
 
+Beside the headline, `large_markets` gives the same measure on the UK's 30 and 60 largest
+importing Markets (`large_markets`); nothing is chosen on it.
+
 Each is broken down by Sector (HS2 chapter) and by the Importer's region, weakest first.
 Excluded Products are never measured (ADR 0005), and each scope is also split by
 `tariff_imputed` into rows with an observed Applied Tariff and rows carrying 2021 forward
@@ -65,6 +68,7 @@ from exportspredictor.features import (
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.gravity import GDP_GAPS
+from exportspredictor.large_markets import large_markets_report
 from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.prediction import (
     MIN_PREDICTION_USD,
@@ -841,6 +845,7 @@ def evaluate(
         "of that Product, each leaving the Flow itself out.",
         "accuracy": accuracy_by_scope,
         "headline": headline(accuracy_by_scope[HEADLINE_SCOPE]["overall"], year),
+        "large_markets": large_markets_report(drop_excluded(scored_grid), flows, year, predictors=_PREDICTORS),
         "tariff_split_text": tariff_split_text(accuracy_by_scope, year),
         "stability": stable,
     }

@@ -142,6 +142,35 @@ def test_page_states_the_non_uk_training_sample(monkeypatch, live_api, fixture_a
     assert "30%" in _text(page)
 
 
+def _largest_markets_table(page: AppTest):
+    return next(element.value for element in page.dataframe if "Markets measured" in element.value.columns)
+
+
+def test_page_shows_the_measure_on_the_largest_importing_markets_beside_the_headline(page, fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    headline, (top30, top60) = report["headline"], report["large_markets"]["rows"]
+    table = _largest_markets_table(page)
+
+    assert list(table["Markets measured"]) == ["Every Market (the headline)", "30 largest importers",
+                                                "60 largest importers"]
+    assert list(table["Model"]) == [f"{headline['model']:.2f}", f"{top30['model']:.2f}", f"{top60['model']:.2f}"]
+    assert list(table["Naive Baseline"]) == [f"{headline['naive']:.2f}", f"{top30['naive']:.2f}",
+                                             f"{top60['naive']:.2f}"]
+    assert report["large_markets"]["text"] in _text(page)
+
+
+def test_page_shows_n_a_for_an_artefact_without_the_largest_markets_measure(
+    monkeypatch, live_api, fixture_artefacts, tmp_path
+):
+    older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
+    store.save(replace(fixture_artefacts, evaluation=older), tmp_path)
+
+    with live_api(tmp_path) as url:
+        table = _largest_markets_table(_run(monkeypatch, url))
+
+    assert list(table["Model"])[1:] == ["n/a", "n/a"] and list(table["Naive Baseline"])[1:] == ["n/a", "n/a"]
+
+
 def test_page_says_so_when_the_artefact_has_no_evaluation(monkeypatch, live_api, fixture_artefacts, tmp_path):
     store.save(replace(fixture_artefacts, evaluation=None), tmp_path)
 
