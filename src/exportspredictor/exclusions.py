@@ -95,6 +95,15 @@ def excluded_products(products: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def reason_counts(excluded: pl.DataFrame) -> pl.DataFrame:
+    """How many Excluded Products each reason leaves out (reason, products), most first; ties keep table order."""
+    return (
+        excluded.group_by("reason", maintain_order=True)
+        .len(name="products")
+        .sort("products", descending=True, maintain_order=True)
+    )
+
+
 # --- Flagged Products and Re-export Hubs: scored and ranked as normal, shown with a caveat ---
 
 # The rest of Sector 71 after the exclusions (HS4 codes), as listed in ADR 0005.

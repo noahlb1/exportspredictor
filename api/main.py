@@ -40,6 +40,7 @@ from api.schemas import (
     Caveat,
     Evaluation,
     ExcludedProductOut,
+    ExcludedReasonOut,
     Explanation,
     FactorOut,
     Health,
@@ -74,6 +75,7 @@ from exportspredictor.exclusions import (
     FLAGGED_PRODUCT_CAVEAT,
     REEXPORT_HUB_CAVEAT,
     not_ranked_message,
+    reason_counts,
 )
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
@@ -85,6 +87,7 @@ from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
     BLOCKED,
     DEFAULT_MIN_POTENTIAL_USD,
+    MAX_ROWS,
     MIN_POTENTIAL_USD_OPTIONS,
     RANK_BY,
     blocked_opportunities,
@@ -161,6 +164,7 @@ def create_app(
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
             caution=CAUTION,
             terms=term_definitions(gap_period_label(artefacts.gap_years)),
+            max_rows=MAX_ROWS,
         )
 
     @app.get("/products", response_model=list[ProductMatch])
@@ -179,6 +183,12 @@ def create_app(
         """The Excluded Products (ADR 0005), each with the reason it is left out, by HS6 code."""
         excluded = with_sector_names(artefacts.excluded_products)
         return [_pick(ExcludedProductOut, row) for row in excluded.iter_rows(named=True)]
+
+    @app.get("/products/excluded/reasons", response_model=list[ExcludedReasonOut])
+    def excluded_reasons(artefacts: store.Artefacts = Depends(loaded)):
+        """Each reason Products are excluded for, with how many it leaves out, most first."""
+        counted = reason_counts(artefacts.excluded_products)
+        return [_pick(ExcludedReasonOut, row) for row in counted.iter_rows(named=True)]
 
     @app.get("/sectors", response_model=list[SectorOut])
     def sectors(artefacts: store.Artefacts = Depends(loaded)):
@@ -213,8 +223,7 @@ def create_app(
         """The Blocked Opportunities page: only Blocked Opportunities (default thresholds), ranked by Blocked Opportunity
         value, in Baseline-year figures, with a summary and per-Market totals over every filtered one. An unknown
         Product answers 404, as does an Excluded Product, with its reason."""
-        if query.product is not None:
-            _product(artefacts, query.product)
+        _check_product(artefacts, query.product)
         found = blocked_opportunities(
             artefacts,
             hs6=query.product,
@@ -230,6 +239,7 @@ def create_app(
             summary=BlockedSummary(**found.summary),
             markets=[_pick(BlockedMarket, row) for row in found.markets.iter_rows(named=True)],
             opportunities=[_pick(BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)],
+            thresholds=Thresholds(),
             rank_by=BLOCKED.name,
             order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
             note=scenario_note(artefacts),
@@ -365,6 +375,12 @@ def _product(artefacts: store.Artefacts, hs6: str) -> ProductOut:
     return _pick(ProductOut, with_sector_names(found).row(0, named=True))
 
 
+def _check_product(artefacts: store.Artefacts, hs6: str | None) -> None:
+    """A read's one-Product filter: 404 for an unknown or Excluded Product (with its reason); nothing when unset."""
+    if hs6 is not None:
+        _product(artefacts, hs6)
+
+
 def _market(artefacts: store.Artefacts, iso3: str) -> MarketOut:
     """The Market, or 404."""
     found = artefacts.markets.filter(pl.col("iso3") == iso3)
@@ -402,8 +418,7 @@ def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery) -> dict:
     """The Leaderboard's fields: metadata, summary and top rows."""
     if query.market is not None:
         _market(artefacts, query.market)
-    if query.product is not None:
-        _product(artefacts, query.product)
+    _check_product(artefacts, query.product)
     ranked = ranking(artefacts, hs6=query.product, iso3=query.market, limit=query.limit, **_filters(query))
     return {
         **_metadata(artefacts),
