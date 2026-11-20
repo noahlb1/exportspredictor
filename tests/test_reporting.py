@@ -27,6 +27,17 @@ def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlie
     assert str(block["test_year"]) in chart.title
 
 
+def test_the_ranking_by_version_draws_the_tie_proof_measure_once_earlier_versions_are_re_scored(fixture_artefacts):
+    block = fixture_artefacts.evaluation["earlier_versions"]
+
+    chart = reporting.ranking_by_version(fixture_artefacts)
+
+    rows = {row["name"]: row["uk_ranking_tie_proof"] for row in chart.data.iter_rows(named=True)}
+    expected = {row["name"]: row["uk_ranking_tie_proof"] for row in block["rows"] + block["naive"]}
+    assert rows == pytest.approx(expected)
+    assert "tie-proof" in chart.title
+
+
 def test_a_chart_is_a_static_matplotlib_svg_image_naming_each_row(fixture_artefacts):
     chart = reporting.ranking_by_version(fixture_artefacts)
 

@@ -225,3 +225,22 @@ def test_page_states_the_share_of_opportunities_inside_their_potential_range(pag
         f"({coverage['uncertain_opportunity_share']:.0%})" in text and "inside their Potential Range" in text.split(share)[1]
         for text in stated
     )
+
+
+def test_page_sets_the_large_market_measures_beside_earlier_versions(page, fixture_artefacts):
+    v1 = {row["markets"]: row["model"]
+          for row in fixture_artefacts.evaluation["rescored_earlier_versions"]["v1"]["large_markets"]}
+    table = next(element.value for element in page.dataframe if "30 largest Markets" in element.value.columns)
+
+    rows = {row["Version"]: row for row in table.to_dict("records")}
+    assert rows["v1"]["30 largest Markets"] == pytest.approx(v1[30])
+    assert rows["v1"]["60 largest Markets"] == pytest.approx(v1[60])
+
+
+def test_page_says_what_market_reach_changes(page, fixture_artefacts):
+    effect = fixture_artefacts.evaluation["market_reach_effect"]
+    table = next(element.value for element in page.dataframe if "Without Market Reach" in element.value.columns)
+
+    assert effect["text"] in _text(page)
+    assert "Lift" in list(table["Figure"])
+    assert list(table["With Market Reach"])[0] == pytest.approx(effect["selection_measure"]["with"])

@@ -369,6 +369,42 @@ class LargeMarkets(BaseModel):
     text: str
 
 
+class LargeMarketsByVersion(BaseModel):
+    """One version's tie-proof UK ranking on the largest importing Markets (`evaluation.large_markets_beside_earlier`):
+    this version, the earlier versions re-scored from their saved scores, and this run's Naive Baseline."""
+
+    name: str
+    markets: dict[int, float | None]  # count of largest Markets (30, 60) -> figure; None where not measured
+
+
+class WithAndWithout(BaseModel):
+    with_: float | None = Field(alias="with")
+    without: float | None
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class LargeMarketsWithAndWithout(WithAndWithout):
+    markets: int
+
+
+class LiftWithAndWithout(WithAndWithout):
+    size_matched_with: float | None
+    size_matched_without: float | None
+
+
+class MarketReachEffect(BaseModel):
+    """What Market Reach, the change this version keeps, does to the test-year figures (`evaluation.market_reach_effect`)."""
+
+    selection_measure: WithAndWithout
+    old_measure: WithAndWithout
+    large_markets: list[LargeMarketsWithAndWithout]
+    lift: LiftWithAndWithout | None = None
+    uk_pair_coverage: WithAndWithout | None = None
+    scenario_effects: str
+    text: str
+
+
 class Stability(BaseModel):
     years: list[int]
     pairs: int
@@ -588,6 +624,9 @@ class Evaluation(BaseModel):
     accuracy: dict[str, ScopeAccuracy]  # "all_exporters" and "uk_out_of_fold"
     headline: Headline
     large_markets: LargeMarkets | None = None  # None for a version evaluated before #123
+    # This version beside the earlier versions re-scored from their saved scores (#128); None before.
+    large_markets_by_version: list[LargeMarketsByVersion] | None = None
+    market_reach_effect: MarketReachEffect | None = None  # None for a version without Market Reach
     tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None
