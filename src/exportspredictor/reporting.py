@@ -227,6 +227,17 @@ def caveat_tier_reach(
     )
 
 
+def flagged_products_by_reason(bundle: Artefacts) -> pl.DataFrame:
+    """How many Flagged Products each reason covers in the Baseline (Sector 71, volatile or one-off; ADR 0005), and
+    their Opportunities (positive Export Gap); most Products first."""
+    return (
+        bundle.baseline.filter("flagged_product")
+        .group_by(Reason="flagged_product_reason")
+        .agg(Products=pl.col("hs6").n_unique(), Opportunities=(pl.col("export_gap_usd") > 0).sum().cast(pl.Int64))
+        .sort(["Products", "Opportunities", "Reason"], descending=[True, True, False])
+    )
+
+
 def test_year_ledger(path: Path = LEDGER_PATH) -> pl.DataFrame:
     """Every read of the test year, oldest first, from the Test-year Ledger file alone (ADR 0009); nothing
     of the test year is read. Each row's source record stays in the file's `record` column."""

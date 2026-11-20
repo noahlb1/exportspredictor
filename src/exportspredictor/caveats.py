@@ -16,7 +16,7 @@ can depend on the Baseline year (a sanctions regime in force that year) or, once
 other inputs the pipeline holds.
 
 To add a tier: declare it (its membership usually lives in a module of its own, as Flagged Products and Re-export
-Hubs live in `exclusions`, and Sanctioned Markets and Restricted Pairs in `restrictions`), append it to `TIERS`, add
+Hubs live in `exclusions` and `volatility`, and Sanctioned Markets and Restricted Pairs in `restrictions`), append it to `TIERS`, add
 its term to GLOSSARY.md, and write an artefact version whose Baseline carries its columns
 (`python -m exportspredictor.pipeline recaveat`, which applies `with_caveat_columns` to the saved Baseline). No API
 or app code changes.
@@ -24,16 +24,18 @@ or app code changes.
 Excluded Products are not a tier: they are left out of scoring and rankings altogether (`exclusions`).
 """
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Literal
 
 import polars as pl
 
 from exportspredictor.exclusions import (
     FLAGGED_PRODUCT_CAVEAT,
+    FLAGGED_PRODUCT_ROW_CAVEAT,
     REEXPORT_HUB_CAVEAT,
     flagged_product_expr,
+    flagged_product_reason_expr,
     reexport_hub_expr,
 )
 from exportspredictor.restrictions import (
@@ -56,6 +58,9 @@ class CaveatContext:
     """What a tier's membership may depend on besides a row's key."""
 
     baseline_year: int
+    # Products flagged by the volatility rule (`volatility.VolatileProducts.reasons`, hs6 -> reason), read from the
+    # UK's exports in the training years; Sector 71 is flagged whatever this holds.
+    flagged_product_reasons: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -110,8 +115,12 @@ FLAGGED_PRODUCT = CaveatTier(
     text=FLAGGED_PRODUCT_CAVEAT,
     key="product",
     hide_param="hide_flagged",
-    hide_description="Leave out Flagged Products (volatile, entrepôt-driven values)",
-    flags=lambda context: flagged_product_expr(),
+    hide_description="Leave out Flagged Products (volatile, one-off or entrepôt-driven values)",
+    flags=lambda context: flagged_product_expr() | pl.col("hs6").cast(pl.String).is_in(
+        list(context.flagged_product_reasons)
+    ),
+    reason=lambda context: flagged_product_reason_expr(context.flagged_product_reasons),
+    row_text=FLAGGED_PRODUCT_ROW_CAVEAT,
 )
 REEXPORT_HUB = CaveatTier(
     column="reexport_hub",
