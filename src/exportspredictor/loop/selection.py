@@ -5,12 +5,16 @@ from collections.abc import Mapping, Sequence
 
 import polars as pl
 
-from exportspredictor.evaluation import MIN_RANKED_ROWS, TWEEDIE_POWER, tweedie_deviance
-from exportspredictor.experiments import spearman_within_product
+from exportspredictor.evaluation import TWEEDIE_POWER, tweedie_deviance
+from exportspredictor.selection_measure import (
+    selection_measure,
+    within_product_correlations,
+)
 
 SELECTION_MEASURE_TEXT = (
     "Mean over Products of the Spearman correlation between Export Potential and Actual Exports across "
-    "Markets, on the held-out fold's UK pairs in the validation year, every non-Excluded Product"
+    "Markets, ties in Export Potential broken in a fixed pseudo-random order, on the held-out fold's UK pairs "
+    "in the validation year, every non-Excluded Product"
 )
 
 # The one measure every choice is made on (ADR 0008), and the diagnostics reported beside it.
@@ -61,19 +65,19 @@ def measures(grid: pl.DataFrame, validation: pl.DataFrame | None, prediction: st
     `grid` is the held-out UK grid of the validation year (hs6, value_usd); `validation`
     its training rows (value_usd, weight) for the deviance (None: no deviance, as for a rank).
     """
-    within = _within_product(grid, prediction, pl.col("value_usd"))
+    within = within_product_correlations(grid, prediction)
     weights = grid.group_by("hs6").agg(_uk=pl.col("value_usd").cast(pl.Float64).sum())
     weighted = within.join(weights, on="hs6", how="left")
     total = float(weighted["_uk"].sum()) if weighted.height else 0.0
     top = grid.with_columns(_rank=pl.col(prediction).rank("ordinal", descending=True).over("hs6"))
     uk_value = float(grid["value_usd"].cast(pl.Float64).sum())
     return {
-        SELECTION_MEASURE: spearman_within_product(grid, prediction),
-        "non_zero_spearman": _mean(_within_product(grid.filter(pl.col("value_usd") > 0), prediction, pl.col("value_usd"))),
-        "zero_vs_non_zero_spearman": _mean(
-            _within_product(grid, prediction, (pl.col("value_usd") > 0).cast(pl.Float64))
+        SELECTION_MEASURE: selection_measure(grid, prediction),
+        "non_zero_spearman": selection_measure(grid.filter(pl.col("value_usd") > 0), prediction),
+        "zero_vs_non_zero_spearman": selection_measure(
+            grid.with_columns(_any_flow=(pl.col("value_usd") > 0).cast(pl.Float64)), prediction, target="_any_flow"
         ),
-        "value_weighted_spearman": float((weighted["_rho"] * weighted["_uk"]).sum() / total) if total > 0 else None,
+        "value_weighted_spearman": float((weighted["rho"] * weighted["_uk"]).sum() / total) if total > 0 else None,
         "top_ten_share": (
             float(top.filter(pl.col("_rank") <= TOP_MARKETS)["value_usd"].cast(pl.Float64).sum() / uk_value)
             if uk_value > 0 else None
@@ -86,18 +90,6 @@ def measures(grid: pl.DataFrame, validation: pl.DataFrame | None, prediction: st
         "ranked_products": within.height,
     }
 
-
-def _within_product(rows: pl.DataFrame, prediction: str, target: pl.Expr) -> pl.DataFrame:
-    """Per Product with at least MIN_RANKED_ROWS rows, the Spearman correlation of `prediction` and `target`."""
-    return (
-        rows.group_by("hs6")
-        .agg(_n=pl.len(), _rho=pl.corr(pl.col(prediction), target, method="spearman"))
-        .filter((pl.col("_n") >= MIN_RANKED_ROWS) & pl.col("_rho").is_not_nan() & pl.col("_rho").is_not_null())
-    )
-
-
-def _mean(within: pl.DataFrame) -> float | None:
-    return float(within["_rho"].mean()) if within.height else None
 
 
 def rank_average_measures(grid: pl.DataFrame) -> dict:
