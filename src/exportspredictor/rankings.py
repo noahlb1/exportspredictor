@@ -14,8 +14,16 @@ import polars as pl
 
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
-from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, is_blocked
+from exportspredictor.scenarios import (
+    DEFAULT_MIN_SHARE,
+    DEFAULT_MIN_USD,
+    is_blocked,
+    tariff_percent,
+)
 from exportspredictor.sectors import with_sector_names
+
+# The most rows a ranking read returns: enough for one Market's or one Product's full ranking, never the full grid.
+MAX_ROWS = 6000
 
 
 @dataclass(frozen=True)
@@ -92,7 +100,8 @@ def rank_opportunities(
     Exports and Export Gap as Gap Period means with the Relative Export Gap and the
     Opportunity Type, the Baseline year's Export Potential and the Blocked Opportunity value
     in nominal USD, flags a Blocked Opportunity at the default thresholds against the Baseline
-    year (`blocked_opportunity`), and carries the Baseline's `flagged_product` and
+    year (`blocked_opportunity`), gives the Baseline Applied Tariff in percent from the Baseline policy features
+    (`applied_tariff_pct`, null where unknown), and carries the Baseline's `flagged_product` and
     `reexport_hub` caveat flags (ADR 0005) and its Potential Range with the `uncertain_opportunity`
     (Uncertain Opportunity) flag (ADR 0007).
 
@@ -111,7 +120,9 @@ def rank_opportunities(
     if opportunity_type is not None and opportunity_type not in OPPORTUNITY_TYPES:
         raise ValueError(f"Unknown Opportunity Type: {opportunity_type}")
     rows = artefacts.baseline
-    policy = artefacts.baseline_features.select("hs6", "iso3", pl.col("trade_agreement") == 1)
+    policy = artefacts.baseline_features.select(
+        "hs6", "iso3", pl.col("trade_agreement") == 1, applied_tariff_pct=tariff_percent()
+    )
     if hs6 is not None:
         rows, policy = (t.filter(pl.col("hs6") == hs6) for t in (rows, policy))
     if iso3 is not None:

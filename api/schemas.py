@@ -10,6 +10,7 @@ from exportspredictor.rankings import (
     BLOCKED,
     DEFAULT_MIN_POTENTIAL_USD,
     DEFAULT_RANK_BY,
+    MAX_ROWS,
     RANK_BY,
 )
 from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, PRESETS
@@ -65,6 +66,9 @@ class Labels(BaseModel):
     # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
     illustrative: Caveat
     caution: str  # the grey line under every page heading: figures are associations, not causes or forecasts
+    # What Export Potential, Actual Exports, Export Gap and Opportunity Type mean, by row field, for tooltips;
+    # those that name the Gap Period take its label from the artefact (`wording.term_definitions`)
+    terms: dict[str, str]
 
 
 class MarketOut(BaseModel):
@@ -119,7 +123,7 @@ class RankingQuery(BaseModel):
         description="rank_by=relative only: rank only pairs whose Export Potential is at least this, in USD "
         f"(default {DEFAULT_MIN_POTENTIAL_USD:,.0f})",
     )
-    limit: int | None = Field(None, ge=1, description="Keep only the top rows")
+    limit: int | None = Field(None, ge=1, le=MAX_ROWS, description=f"Keep only the top rows (at most {MAX_ROWS:,})")
 
 
 class LeaderboardQuery(RankingQuery):
@@ -154,6 +158,7 @@ class _Values(BaseModel):
     potential_range_low_usd: float
     potential_range_high_usd: float
     uncertain_opportunity: bool  # an Uncertain Opportunity: an Opportunity whose Actual Exports lie inside its range
+    applied_tariff_pct: float | None  # the Baseline Applied Tariff in percent (Baseline policy features); None where unknown
 
 
 class MarketOpportunity(_Values):

@@ -91,7 +91,7 @@ from exportspredictor.rankings import (
 from exportspredictor.sectors import sectors as sectors_of
 from exportspredictor.sectors import with_sector_names
 from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
-from exportspredictor.wording import CAUTION
+from exportspredictor.wording import CAUTION, term_definitions
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -142,9 +142,9 @@ def create_app(
         )
 
     @app.get("/labels", response_model=Labels)
-    def labels():
-        """The wording and options the app shows: unit, Opportunity Types, caveats, the last tariff year and the
-        caution line under every page heading."""
+    def labels(artefacts: store.Artefacts = Depends(loaded)):
+        """The wording and options the app shows: unit, Opportunity Types, caveats, the last tariff year, the
+        caution line under every page heading and the term definitions (with the artefact's Gap Period)."""
         return Labels(
             usd_caption=USD_CAPTION,
             usd_unit=USD_UNIT,
@@ -157,6 +157,7 @@ def create_app(
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
             caution=CAUTION,
+            terms=term_definitions(gap_period_label(artefacts.gap_years)),
         )
 
     @app.get("/products", response_model=list[ProductMatch])
