@@ -122,7 +122,7 @@ Run this before a release, against `podman compose up` with real artefacts, in a
 - [ ] The page opens on **Table and detail**: a three-column table (Product, Market, Export Gap, all three in view at 1280 px) beside a detail panel already explaining the top row. Click any value of another row: that whole row is tinted, and the panel explains its pair and starts from its top.
 - [ ] Switch to **Wide table**: the table shows the wide columns (Applied Tariff % among them), the same pair stays selected and tinted, and its detail sits under the table. Switch back: still the same pair.
 - [ ] Open `?product=902214&market=JPN` and switch to **Wide table**: Actual Exports of $18,882 show as `0.0` (a value under $50,000 rounds to 0.0 in $ millions), and the column still sorts as numbers.
-- [ ] Choose the Market USA (5,138 pairs) and turn on **Show all**: a row click answers in about a second (1.4–1.7 s on the served version, measured in #111).
+- [ ] Choose the Market USA (5,138 pairs) and turn on **Show all**: a row click answers in about a second.
 - [ ] The first visit shows three steps (Read the ranking, Open a row, Narrow it down) above the table; **Got it** closes them, and **What is this?** beside the heading brings them back.
 
 **Blocked Opportunities**
