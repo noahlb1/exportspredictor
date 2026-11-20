@@ -1,7 +1,7 @@
-"""Shared page pieces: cached API reads, pickers and the ranking table (the frame around each page is `app.frame`).
+"""Shared page pieces: cached API reads and the ranking table (the frame around each page is `app.frame`).
 
-The Leaderboard, the Blocked Opportunities page and both ranking pages render through `ranking_filters` and `show_ranking`, so a ranking option,
-column or row link is added here once.
+The Leaderboard and the Blocked Opportunities page render through `show_ranking`, so a column or row link is added
+here once. The Leaderboard's filters are `app.filters`; the Blocked Opportunities page's are `blocked_filters`.
 """
 
 import json
@@ -14,7 +14,7 @@ import streamlit as st
 from app import client
 from app.format import format_usd
 
-# HS2 chapters of the 2012 edition (chapter 77 is reserved and unused).
+# HS2 chapters of the 2012 edition (chapter 77 is reserved and unused), for the Scenarios page's tariff Sectors.
 SECTORS = [f"{chapter:02d}" for chapter in range(1, 98) if chapter != 77]
 _VALUES = {
     "export_potential": "Export Potential",
@@ -75,77 +75,58 @@ def caveats() -> dict[str, tuple[str, str]]:
     return {field: (caveat["badge"], caveat["text"]) for field, caveat in labels()["caveats"].items()}
 
 
-def ranking_filters(*, market_filter: bool = False, rank_by_toggle: bool = True) -> dict:
-    """The ranking order and filters, shared by the Leaderboard and both ranking pages.
+BLOCKED_KEYS = "blocked_"  # the Blocked Opportunities page's widget keys start so, apart from the Leaderboard's
 
-    Returns the API query parameters that are set: `rank_by` (with `min_potential_usd`, chosen
-    from the API's options, when the order ranks only pairs above a minimum Export Potential),
-    `sector`, `region`, `opportunity_type`, `trade_agreement`, `min_gap_usd`, and
-    `hide_flagged` / `hide_hubs` when ticked (both off by default). With `market_filter`
-    (the Leaderboard), one Market can be chosen too (`market`). Without `rank_by_toggle` (the
-    Blocked Opportunities page, which has one order) no `rank_by` is offered or returned.
+
+def blocked_filters() -> dict:
+    """The Blocked Opportunities page's filters, under its own widget keys (`BLOCKED_KEYS`), so they keep their own
+    state apart from the Leaderboard's.
+
+    Returns the API query parameters that are set: `sector`, `region`, `market`, `opportunity_type`,
+    `trade_agreement`, `min_gap_usd`, and `hide_flagged` / `hide_hubs` when ticked (both off by default).
     """
+    key = BLOCKED_KEYS
     markets = fetch("/markets", client.api_url())
     regions = sorted({market["region"] for market in markets})
+    sectors = {sector["code"]: sector["name"] for sector in fetch("/sectors", client.api_url())}
     sector_column, region_column, gap_column = st.columns(3)
     sector = sector_column.selectbox(
-        "Sector (HS2 chapter)", [None, *SECTORS], format_func=lambda s: "All Sectors" if s is None else s, key="sector"
+        "Sector", [None, *sectors], format_func=lambda s: "All Sectors" if s is None else sectors[s], key=f"{key}sector"
     )
     region = region_column.selectbox(
-        "Market region", [None, *regions], format_func=lambda r: "All regions" if r is None else r, key="region"
+        "Market region", [None, *regions], format_func=lambda r: "All regions" if r is None else r, key=f"{key}region"
     )
     min_gap_usd = gap_column.number_input(
-        f"Minimum Export Gap ({usd_unit()})", value=None, step=1_000_000.0, key="min_gap_usd"
+        f"Minimum Export Gap ({usd_unit()})", value=None, step=1_000_000.0, key=f"{key}min_gap_usd"
     )
     type_column, agreement_column, market_column = st.columns(3)
     opportunity_type = type_column.selectbox(
         "Opportunity Type",
         [None, *labels()["opportunity_types"]],
         format_func=lambda kind: "All Opportunity Types" if kind is None else kind,
-        key="opportunity_type",
+        key=f"{key}opportunity_type",
         help=OPPORTUNITY_TYPE_HELP,
     )
     trade_agreement = agreement_column.selectbox(
         "UK Trade Agreement in force",
         list(_AGREEMENT_CHOICES),
         format_func=_AGREEMENT_CHOICES.get,
-        key="trade_agreement",
+        key=f"{key}trade_agreement",
     )
-    market = None
-    if market_filter:
-        names = {m["iso3"]: m["name"] for m in markets if region is None or m["region"] == region}
-        market = market_column.selectbox(
-            "Market",
-            [None, *sorted(names, key=names.get)],
-            format_func=lambda iso3: "All Markets" if iso3 is None else names[iso3],
-            key="market",
-        )
+    names = {m["iso3"]: m["name"] for m in markets if region is None or m["region"] == region}
+    market = market_column.selectbox(
+        "Market",
+        [None, *sorted(names, key=names.get)],
+        format_func=lambda iso3: "All Markets" if iso3 is None else names[iso3],
+        key=f"{key}market",
+    )
     caveat = caveats()
     flagged_column, hubs_column = st.columns(2)
     hide_flagged = flagged_column.checkbox(
-        "Hide Flagged Products", key="hide_flagged", help=caveat["flagged_product"][1]
+        "Hide Flagged Products", key=f"{key}hide_flagged", help=caveat["flagged_product"][1]
     )
-    hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key="hide_hubs", help=caveat["reexport_hub"][1])
-    rank_by = min_potential_usd = options = None
-    if rank_by_toggle:
-        orders = rank_orders()
-        order_column, minimum_column = st.columns(2)
-        rank_by = order_column.radio(
-            "Rank by", list(orders), format_func=lambda name: orders[name]["title"], key="rank_by", horizontal=True
-        )
-        options = orders[rank_by].get("min_potential_usd_options")
-    if options:
-        min_potential_usd = minimum_column.selectbox(
-            f"Only pairs with Export Potential of at least ({usd_unit()})",
-            options,
-            index=options.index(orders[rank_by]["default_min_potential_usd"]),
-            format_func=format_usd,
-            key="min_potential_usd",
-            help="Every pair with no Actual Exports has a Relative Export Gap of 100%, so small pairs are left out.",
-        )
+    hide_hubs = hubs_column.checkbox("Hide Re-export Hubs", key=f"{key}hide_hubs", help=caveat["reexport_hub"][1])
     params = {
-        "rank_by": rank_by,
-        "min_potential_usd": min_potential_usd,
         "sector": sector,
         "region": region,
         "market": market,
@@ -168,40 +149,6 @@ def show_caveats(row: dict) -> None:
     for field, (_, caveat) in caveats().items():
         if row[field]:
             st.warning(caveat)
-
-
-def product_picker(sector: str | None = None) -> str | None:
-    """Search Products by HS6 code or words and pick one. Returns the chosen hs6, or None.
-
-    With a `sector`, only that Sector's Products are offered.
-    """
-    query = st.text_input(
-        "Search Products by HS6 code (2012 edition) or words, e.g. 851712 or smartphone",
-        key="product_query",
-    ).strip()
-    if not query:
-        return None
-    try:
-        found = fetch("/products", client.api_url(), q=query)
-    except client.ApiUnavailable as error:
-        st.error(f"The API is unavailable: {error}")
-        return None
-    found = [product for product in found if sector is None or product["sector"] == sector]
-    if not found:
-        in_sector = f" in Sector {sector}" if sector else ""
-        st.warning(f"No Product matches '{query}'{in_sector}. Try an HS6 code or another word.")
-        return None
-    # Excluded Products are found and marked; choosing one shows the API's 404 with its reason.
-    descriptions = {
-        product["hs6"]: product["description"] + (" (Excluded Product)" if product["excluded"] else "")
-        for product in found
-    }
-    return st.selectbox(
-        "Product",
-        list(descriptions),
-        format_func=lambda hs6: f"{hs6} – {descriptions[hs6]}",
-        key="hs6",
-    )
 
 
 def excluded_products_list() -> None:
@@ -231,15 +178,6 @@ def run_scenario(body_json: str, api_url: str) -> dict:
 def rank_orders() -> dict[str, dict]:
     """The ranking orders the API accepts as `rank_by`, by name: title and description."""
     return {order["name"]: order for order in fetch("/opportunities/rank-by", client.api_url())}
-
-
-def market_picker(region: str | None = None) -> str | None:
-    """Pick a Market by name, from one region if given. Returns its ISO3 code, or None."""
-    markets = [m for m in fetch("/markets", client.api_url()) if region is None or m["region"] == region]
-    names = {market["iso3"]: market["name"] for market in markets}
-    return st.selectbox(
-        "Market", list(names), index=None, format_func=names.get, placeholder="Choose a Market", key="iso3"
-    )
 
 
 def show_ranking(body: dict, columns: dict[str, str], file_name: str, *, hs6: str | None = None, iso3: str | None = None) -> None:

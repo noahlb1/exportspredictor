@@ -14,7 +14,6 @@ from app.ui import (
     fetch,
     labels,
     potential_range_bar,
-    product_picker,
     show_caveats,
     usd_unit,
 )
@@ -28,9 +27,14 @@ def _pair() -> tuple[str | None, str | None]:
     if params.get("hs6") and params.get("iso3"):
         return params["hs6"], params["iso3"]
     st.caption("Open Why? from a ranking row, or pick a Product and a Market.")
-    hs6 = product_picker()
-    if not hs6:
+    query = st.text_input("Search Products by HS6 code or words, e.g. 851712 or smartphone", key="why_product_query")
+    found = fetch("/products", client.api_url(), q=query.strip()) if query.strip() else []
+    if query.strip() and not found:
+        st.warning(f"No Product matches '{query.strip()}'. Try an HS6 code or another word.")
+    if not found:
         return None, None
+    descriptions = {product["hs6"]: product["description"] for product in found}
+    hs6 = st.selectbox("Product", list(descriptions), format_func=lambda code: f"{code} – {descriptions[code]}", key="why_hs6")
     markets = fetch("/markets", client.api_url())
     names = {market["iso3"]: market["name"] for market in markets}
     iso3 = st.selectbox("Market", list(names), format_func=names.get, index=None, key="why_market")

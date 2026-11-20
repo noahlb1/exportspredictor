@@ -12,10 +12,10 @@ from app.format import format_usd
 from app.frame import page
 from app.ui import (
     ROWS_SHOWN,
+    blocked_filters,
     excluded_products_list,
     fetch,
     illustrative,
-    ranking_filters,
     scenario_note,
     show_leaderboard,
 )
@@ -31,7 +31,7 @@ with page(
         "than export promotion. Each Blocked Opportunity value is a tendency the model has learned, not a forecast."
     )
     try:
-        filters = ranking_filters(market_filter=True, rank_by_toggle=False)
+        filters = blocked_filters()
         thresholds = fetch("/scenarios/thresholds", client.api_url())
         body = fetch("/opportunities/blocked", client.api_url(), **filters, limit=ROWS_SHOWN)
     except client.ApiUnavailable as error:
