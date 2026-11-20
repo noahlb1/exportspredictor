@@ -30,6 +30,7 @@ from app.ui import (
     ROWS_SHOWN,
     caveats,
     fetch,
+    labels,
     rank_orders,
     read_limit,
 )
@@ -135,6 +136,7 @@ with page(
         )
         order = rank_orders()[body["rank_by"]]
         st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']}")
+        st.caption(labels()["totals_note"]["text"])  # beside the summed Export Gap (spec #113)
         if not rows:
             st.info("No Opportunities match these filters.")
         else:
