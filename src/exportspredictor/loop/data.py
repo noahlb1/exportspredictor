@@ -10,7 +10,7 @@ import polars as pl
 from exportspredictor import baci, experiments
 from exportspredictor.evaluation import naive_from_totals
 from exportspredictor.experiments import Data
-from exportspredictor.features import features_dir, fit_product_detail
+from exportspredictor.features import feature_set, features_dir, fit_product_detail
 from exportspredictor.paths import data_dir
 
 RESULTS_FILE = "results.json"
@@ -30,6 +30,9 @@ class LoopData:
     # Product features finer than Sector, fitted on the training years (`features.fit_product_detail`);
     # read only by an arm whose features include one of them.
     product_detail: Callable[[], pl.DataFrame] | None = None
+    # The feature set the rows come from (`features.feature_set`); "" is the original build. A
+    # model cached on one set is never reused on another (`Loop`'s cache key).
+    feature_set: str = ""
 
     @property
     def validation_year(self) -> int:
@@ -97,10 +100,14 @@ def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR) -
 
 
 def real_data(root: Path | None = None, *, validation_year: int = experiments.VALIDATION_YEAR) -> LoopData:
-    """Every Product's rows from `features.build()`'s files, and the validation year's Flows; never a later year."""
+    """Every Product's rows from `features.build()`'s files, and the validation year's Flows; never a later year.
+
+    The files are those of the feature set `features.FEATURE_SET_ENV` names (the original by default).
+    """
     experiments._check_years([validation_year])
     root = Path(root or data_dir())
-    folder = features_dir(root)
+    name = feature_set()
+    folder = features_dir(root, feature_set_name=name)
     settings = json.loads((folder / "features.json").read_text(encoding="utf-8"))
     rows = Data(
         training={y: folder / f"training_{y}.parquet" for y in settings["years"] if y < validation_year},
@@ -128,7 +135,7 @@ def real_data(root: Path | None = None, *, validation_year: int = experiments.VA
 
     return LoopData(
         data=rows, flows=flows, zero_seed=settings.get("zero_sampling_seed", 0), world_products=world_exports,
-        product_detail=product_detail,
+        product_detail=product_detail, feature_set=name,
     )
 
 

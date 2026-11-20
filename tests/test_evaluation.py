@@ -435,6 +435,16 @@ def test_log_scale_bands_have_no_fixed_width_limitation():
     assert evaluation.range_limitations(bands) == []
 
 
+def test_the_markets_no_source_gives_a_gdp_are_a_known_limitation():
+    from exportspredictor import gravity
+
+    gaps = [item for item in evaluation.LIMITATIONS if item["title"] == "No GDP for some small Markets"]
+
+    assert len(gaps) == 1
+    for name in gravity.GDP_GAPS.values():
+        assert name in gaps[0]["text"], name
+
+
 def _by_size(*coverages) -> dict:
     labels = ["under $2m", "$2m–10m", "$10m–100m", "over $100m"]
     return {"target": 0.8, "by_size": [
