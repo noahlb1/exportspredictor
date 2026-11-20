@@ -1030,7 +1030,10 @@ def add_to_latest(
         year_flows=lambda year: load_year_flows(year, load_sources(root)[1], root),
     )
     report = {**bundle.evaluation, **result}
-    return store.copy_version(source, artefacts_root, metadata=new, evaluation=report)
+    folder = store.copy_version(source, artefacts_root, metadata=new, evaluation=report)
+    if test_year_ledger is not None:  # the figures are saved: the read is completed (ADR 0009)
+        ledger.complete_read(test_year_ledger, ledger.fingerprint(new))
+    return folder
 
 
 if __name__ == "__main__":

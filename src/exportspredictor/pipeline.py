@@ -354,6 +354,20 @@ def build_artefacts(
     return replace(bundle, ppml_benchmark=_timed_benchmark(panel, bundle))
 
 
+def save_version(bundle: Artefacts, root: Path, *, test_year_ledger: ledger.Ledger | None) -> Path:
+    """Save a built bundle under `root` and mark its test-year read completed in `test_year_ledger` (ADR 0009).
+
+    The read was recorded as started by the build; it is completed only once its figures are saved, so a build
+    that crashed before this point is re-run without an override. `None`: no read was recorded.
+    """
+    from exportspredictor import artefacts as store
+
+    folder = store.save(bundle, root)
+    if test_year_ledger is not None:
+        ledger.complete_read(test_year_ledger, ledger.fingerprint(bundle.metadata))
+    return folder
+
+
 def _timed_benchmark(panel: pl.DataFrame, bundle: Artefacts) -> dict:
     """The PPML benchmark of `bundle` (`ppml.benchmark`) with the seconds it took."""
     started = time.perf_counter()
@@ -1254,7 +1268,10 @@ def add_v1_comparison(
         lift_settings=backtest_plan.lift, device=device, non_uk_rate=metadata["non_uk_sampling_rate"],
         seed=metadata["model_params"].get("seed", 0), ladder_cache=ladder_dir(root),
     )
-    return store.copy_version(source, artefacts_root, metadata=copied, evaluation=report)
+    folder = store.copy_version(source, artefacts_root, metadata=copied, evaluation=report)
+    if test_year_ledger is not None:
+        ledger.complete_read(test_year_ledger, ledger.fingerprint(copied))
+    return folder
 
 
 def _history(uk_flows: pl.DataFrame, yearly: pl.DataFrame) -> pl.DataFrame:
@@ -1588,7 +1605,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     bundle = build_real_artefacts(parts=parse_parts(argv), test_year_ledger=test_year_ledger)
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}
     print(json.dumps(summary), flush=True)
-    folder = artefacts.save(bundle, artefacts_dir())
+    folder = save_version(bundle, artefacts_dir(), test_year_ledger=test_year_ledger)
     print(folder, flush=True)
     # The notebook reads the model card and writes none (#88), so the run that saves the version writes it.
     print(governance.write_model_card(bundle, folder), flush=True)

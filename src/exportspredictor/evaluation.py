@@ -997,7 +997,10 @@ def add_to_latest(
     test_models = real_test_models(bundle, root, device=device)
     report = evaluate_real(bundle, test_models, root)
     report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
-    return store.copy_version(source, artefacts_root, metadata=metadata, evaluation=report)
+    folder = store.copy_version(source, artefacts_root, metadata=metadata, evaluation=report)
+    if test_year_ledger is not None:  # the figures are saved: the read is completed (ADR 0009)
+        ledger.complete_read(test_year_ledger, ledger.fingerprint(metadata))
+    return folder
 
 
 if __name__ == "__main__":
