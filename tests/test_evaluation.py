@@ -600,3 +600,36 @@ def test_the_kept_change_s_effect_on_the_ranking_is_reported_beside_the_served_f
     assert effect["uk_pair_coverage"]["with"] == report["potential_range"]["uk_pair_coverage"]["with_market_reach"]
     assert "leaves Scenario Effects unchanged" in effect["text"] and "Event Backtests" in effect["text"]
     assert "not a forecast" in effect["text"]
+
+
+def test_test_year_models_on_another_feature_set_are_cached_apart(tmp_path):
+    # The Blend's settings (artefact 20261118T185910Z) cached its test-year models under this key; a build with the
+    # same settings on the rebuilt `exporter_count` files must not read them (#128).
+    metadata = {
+        "validation_year": 2022, "tuning_years": [2012], "params": {"max_depth": 12}, "rounds": 1453, "n_folds": 5,
+        "non_uk_sampling_rate": 0.5894, "zero_sampling_rate": 0.05, "model_params": {"seed": 0}, "baseline_year": 2024,
+    }
+    original = evaluation.test_models_dir(tmp_path, metadata)
+
+    assert evaluation.test_models_dir(tmp_path, metadata | {"feature_set": ""}) == original
+    assert evaluation.test_models_dir(tmp_path, metadata | {"feature_set": None}) == original
+    assert evaluation.test_models_dir(tmp_path, metadata | {"feature_set": "exporter_count"}) != original
+
+
+def test_re_scoring_saved_scores_with_flows_adds_the_large_market_measures():
+    # Two Products in four Markets; DDD imports least, so on the 3 largest Markets only AAA, BBB and CCC are ranked.
+    saved = pl.DataFrame({
+        "hs6": ["010101"] * 4 + ["020202"] * 4, "importer": ["AAA", "BBB", "CCC", "DDD"] * 2,
+        "value_usd": [30.0, 20.0, 10.0, 99.0, 10.0, 20.0, 30.0, 99.0],
+        "export_potential_usd": [3.0, 2.0, 1.0, 0.5, 3.0, 2.0, 1.0, 0.5],
+    })
+    flows = pl.DataFrame({
+        "exporter": ["DEU"] * 4, "importer": ["AAA", "BBB", "CCC", "DDD"], "hs6": ["010101"] * 4,
+        "value_usd": [500.0, 400.0, 300.0, 1.0],
+    })
+
+    figures = evaluation.rescore_saved({"v1": saved}, flows=flows, counts=(3,))["v1"]
+
+    # On AAA, BBB and CCC, Product 010101 is ranked in the right order (+1) and 020202 in reverse (-1): the mean is 0.
+    assert figures["large_markets"] == [{"markets": 3, "model": pytest.approx(0.0)}]
+    assert "large_markets" not in evaluation.rescore_saved({"v1": saved})["v1"]

@@ -114,7 +114,7 @@ from exportspredictor.gap_period import (
 )
 from exportspredictor.lookups import market_lookup
 from exportspredictor.paths import data_dir
-from exportspredictor.prediction import ModelForm, reach_multiplier
+from exportspredictor.prediction import MODEL_ALONE, ModelForm, reach_multiplier
 from exportspredictor.rankings import DEFAULT_MIN_POTENTIAL_USD
 from exportspredictor.scenarios import (
     DEFAULT_MIN_SHARE,
@@ -258,6 +258,7 @@ def build_artefacts(
     parts: Parts = Parts(),
     ranking_results: dict | None = None,
     test_year_ledger: ledger.Ledger | None = None,
+    rescore: "Rescore | None" = None,
 ) -> Artefacts:
     """Tune, train fold models and score the Baseline for every UK pair of the fixture world.
 
@@ -272,7 +273,8 @@ def build_artefacts(
     `ranking_results` are the experiment loop's results whose chosen form is served (default:
     the fixture's own tiny loop, `loop.fixture_ranking`). With `test_year_ledger`, the test-year
     evaluation is recorded there first and refused if its configuration was read before (ADR 0009);
-    without it the fixture's test year is read unrecorded.
+    without it the fixture's test year is read unrecorded. With `rescore` (`fixture_rescore`), earlier versions'
+    saved test-year scores are re-scored in the same run, recorded as their own read (`rescore_earlier_versions`).
     """
     flows, sources = world.flows, world.sources
     baseline_year = baseline_year or int(flows["year"].max())
@@ -335,6 +337,8 @@ def build_artefacts(
         parts=parts,
         year_flows=flows_of_year,
     )
+    if rescore is not None:
+        report = rescore_earlier_versions(report, rescore, test_year_ledger, version=metadata["version"])
     bundle = Artefacts(
         metadata=metadata,
         fold_models=trained.models,
@@ -359,13 +363,17 @@ def save_version(bundle: Artefacts, root: Path, *, test_year_ledger: ledger.Ledg
     """Save a built bundle under `root` and mark its test-year read completed in `test_year_ledger` (ADR 0009).
 
     The read was recorded as started by the build; it is completed only once its figures are saved, so a build
-    that crashed before this point is re-run without an override. `None`: no read was recorded.
+    that crashed before this point is re-run without an override. So is the re-score of earlier versions' saved
+    scores the build recorded (`rescore_earlier_versions`). `None`: no read was recorded.
     """
     from exportspredictor import artefacts as store
 
     folder = store.save(bundle, root)
     if test_year_ledger is not None:
         ledger.complete_read(test_year_ledger, ledger.fingerprint(bundle.metadata))
+        rescored = (bundle.evaluation or {}).get(RESCORE_FINGERPRINT)
+        if rescored:  # the earlier versions' re-score, recorded by the same run
+            ledger.complete_read(test_year_ledger, rescored)
     return folder
 
 
@@ -473,6 +481,7 @@ def build_real_artefacts(
     ranking_results: dict | None = None,
     ppml_years: Sequence[int] = ppml.YEARS,
     test_year_ledger: ledger.Ledger | None,
+    rescore: "Rescore | None" = None,
 ) -> Artefacts:
     """Tune, train and score on the real per-year feature files written by `features.build()`.
 
@@ -488,7 +497,9 @@ def build_real_artefacts(
     The model form served is the one the experiment loop chose, read from `ranking_results`,
     by default the saved loop results (`loop.load`). The PPML benchmark (`parts.ppml_benchmark`) is fitted
     on the Flows of `ppml_years` only. The test-year read is recorded in `test_year_ledger` and refused
-    if its configuration was read before (ADR 0009); it must be given, as `None` only on synthetic data.
+    if its configuration was read before (ADR 0009); it must be given, as `None` only on synthetic data. With
+    `rescore` (`real_rescore`), v1's, v2's and the Blend's saved test-year scores are re-scored in the same run under
+    the tie-proof Selection Measure, recorded as their own read (`rescore_earlier_versions`).
     """
     root = Path(root or data_dir())
     folder = features_dir(root)
@@ -589,6 +600,8 @@ def build_real_artefacts(
         year_flows=flows_of_year,
         earlier_reported=True,
     )
+    if rescore is not None:
+        report = rescore_earlier_versions(report, rescore, test_year_ledger, version=metadata["version"])
     bundle = Artefacts(
         metadata=metadata,
         fold_models=trained.models,
@@ -1135,6 +1148,135 @@ def _record_test_year_read(test_year_ledger: ledger.Ledger | None, metadata: dic
     ledger.record_read(test_year_ledger, metadata, read="; ".join(read))
 
 
+# Where a report keeps the fingerprint of the re-score its build recorded, so `save_version` completes that row too.
+RESCORE_FINGERPRINT = "rescore_fingerprint"
+
+
+@dataclass(frozen=True)
+class Rescore:
+    """Earlier versions whose saved test-year UK scores a build re-scores under the tie-proof Selection Measure.
+
+    `fingerprints` maps each `earlier_versions` row name ("v1", "v2", "Blend") to that version's configuration
+    fingerprint in the test-year ledger. `scores()` loads the saved scores (`evaluation.rescore_saved`'s tables);
+    it is called only after the re-score is recorded. `flows()` gives every Exporter's Flows of the test year, which
+    rank the largest Markets for the large-Market measures. `reported` says whether the report lists v2's and the
+    Blend's reported figures (real runs) or not (the fixture).
+    """
+
+    fingerprints: Mapping[str, str]
+    scores: Callable[[], Mapping[str, pl.DataFrame]]
+    flows: Callable[[], pl.DataFrame]
+    reported: bool = True
+
+
+def rescore_earlier_versions(
+    report: dict, rescore: Rescore, test_year_ledger: ledger.Ledger | None, *, version: str
+) -> dict:
+    """`report` with earlier versions' saved test-year scores re-scored on both measures (ADR 0009).
+
+    The re-score is recorded in `test_year_ledger` first as its own read (`ledger.record_rescore`, kind `re-score`,
+    under `version`) and refused if it was made before; `save_version` completes it with the build's own read.
+    Nothing is trained or chosen. Without a ledger it is unrecorded (synthetic data).
+    """
+    out = dict(report)
+    if test_year_ledger is not None:
+        row = ledger.record_rescore(
+            test_year_ledger, measure=evaluation.TIE_PROOF_MEASURE, fingerprints=rescore.fingerprints.values(),
+            version=version,
+        )
+        out[RESCORE_FINGERPRINT] = row["fingerprint"]
+    rescored = evaluation.rescore_saved(rescore.scores(), flows=rescore.flows())
+    for name, figures in rescored.items():
+        print(f"Re-scored {name}'s saved {report['test_year']} scores: {figures}", flush=True)
+    if rescore.reported:
+        return evaluation.with_rescored_earlier_versions(out, rescored)
+    return evaluation.with_rescored_earlier_versions(out, rescored, v2=None, blend=None)
+
+
+def saved_v1_scores(frozen: comparison.Frozen) -> pl.DataFrame:
+    """v1's saved test-year UK scores (its frozen `uk_grid`, out-of-fold), as `evaluation.rescore_saved` reads them."""
+    return frozen.tables["uk_grid"].select(
+        pl.col("hs6").cast(pl.String),
+        importer=pl.col("iso3").cast(pl.String),
+        value_usd=pl.col("actual_exports_usd").cast(pl.Float64),
+        export_potential_usd=pl.col("export_potential_usd").cast(pl.Float64),
+    )
+
+
+# The fixture's stand-in fingerprint for its synthetic frozen v1.
+FIXTURE_V1_FINGERPRINT = "fixture-v1"
+
+
+def fixture_rescore(world: World) -> Rescore:
+    """The fixture's re-score: its synthetic frozen v1's saved scores (`fixture_v1_frozen`)."""
+    return Rescore(
+        fingerprints={"v1": FIXTURE_V1_FINGERPRINT},
+        scores=lambda: {"v1": saved_v1_scores(fixture_v1_frozen(world))},
+        flows=lambda: world.flows.filter(pl.col("year") == FIXTURE_V1_MANIFEST["test_year"]),
+        reported=False,
+    )
+
+
+# v2's artefact; its test-year models are the Blend's (one saved set), which the re-score reads.
+V2_ARTEFACT = "20261118T100524Z"
+
+
+def real_rescore(root: Path | None = None, artefacts_root: Path | None = None, *, test_year: int = 2023) -> Rescore:
+    """The real re-score of v1, v2 and the Blend (`evaluation.EARLIER_FINGERPRINTS`).
+
+    v1's scores were saved as a table (`freeze`: its frozen `uk_grid`). v2's and the Blend's were saved as their
+    test-year fold models (one set, cached under `evaluation.test_models_dir`; the Blend is v2's model blended
+    with the Naive Baseline), so their scores are regenerated from those saved models on the original feature
+    files' UK grid of the test year: out-of-fold, v2 alone and the Blend in its saved Model Form. Nothing is
+    trained. The old measure of each should match what the version reported, which checks the regeneration.
+    Each artefact's fingerprint and every file are checked here, before anything of the test year is loaded.
+    """
+    from exportspredictor.paths import artefacts_dir
+
+    root = Path(root or data_dir())
+    artefacts_root = Path(artefacts_root or artefacts_dir())
+    fingerprints = evaluation.EARLIER_FINGERPRINTS
+    metadata = {
+        name: json.loads((artefacts_root / folder / "metadata.json").read_text(encoding="utf-8"))
+        for name, folder in (("Blend", evaluation.BLEND_REPORTED["version"]), ("v2", V2_ARTEFACT))
+    }
+    for name, meta in metadata.items():
+        if ledger.fingerprint(meta) != fingerprints[name]:
+            raise ValueError(f"{name}'s artefact {meta['version']} is not the configuration the ledger read")
+    models_dir = evaluation.test_models_dir(root, metadata["Blend"])
+    if evaluation.test_models_dir(root, metadata["v2"]) != models_dir:
+        raise ValueError("v2's and the Blend's test-year models are not the same saved set")
+    grid_file = features_dir(root, feature_set_name="") / f"uk_grid_{test_year}.parquet"
+    v1_folder = freeze.v1_folder(artefacts_root)
+    for path in (models_dir / evaluation.TEST_MODELS_FILE, grid_file, v1_folder):
+        if not Path(path).exists():
+            raise ValueError(f"The re-score of the earlier versions needs {path}")
+    blend = ModelForm.from_dict(metadata["Blend"]["model_form"])
+    loaded: dict[int, pl.DataFrame] = {}
+
+    def flows() -> pl.DataFrame:
+        if test_year not in loaded:
+            loaded[test_year] = load_year_flows(test_year, load_sources(root)[1], root)
+        return loaded[test_year]
+
+    def scores() -> dict[str, pl.DataFrame]:
+        test_models = evaluation.TestModels.load(models_dir)
+        if test_models.test_year != test_year:
+            raise ValueError(f"The saved models in {models_dir} are for {test_models.test_year}, not {test_year}")
+        grid = evaluation.naive_potential(pl.read_parquet(grid_file), flows())
+        out = {"v1": saved_v1_scores(comparison.load_frozen(v1_folder))}
+        for name, form in (("v2", MODEL_ALONE), ("Blend", blend)):
+            scored = evaluation.score_rows(
+                grid, test_models.models, test_models.transform, UK, features=test_models.features, form=form
+            )
+            out[name] = scored.select(
+                pl.col("hs6").cast(pl.String), pl.col("importer").cast(pl.String), "value_usd", "export_potential_usd"
+            )
+        return out
+
+    return Rescore(fingerprints=fingerprints, scores=scores, flows=flows)
+
+
 def _v1_comparison(
     v1: comparison.Inputs,
     test_models: evaluation.TestModels,
@@ -1653,7 +1795,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         governance.write_model_card(marked, saved)
         print(saved, flush=True)
         return
-    bundle = build_real_artefacts(parts=parse_parts(argv), test_year_ledger=test_year_ledger)
+    bundle = build_real_artefacts(parts=parse_parts(argv), test_year_ledger=test_year_ledger, rescore=real_rescore())
     summary = {k: bundle.metadata[k] for k in ("version", "params", "rounds", "tuning_seconds", "training_seconds")}
     print(json.dumps(summary), flush=True)
     folder = save_version(bundle, artefacts_dir(), test_year_ledger=test_year_ledger)

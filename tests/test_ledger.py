@@ -291,3 +291,63 @@ def test_a_re_score_under_another_measure_or_of_other_versions_is_another_read()
     assert ledger.rescore_fingerprint("tie-proof", reversed(keys)) == first
     assert ledger.rescore_fingerprint("other", keys) != first
     assert ledger.rescore_fingerprint("tie-proof", keys[:2]) != first
+
+
+def _build_with_rescore(world, tuned, book: Ledger):
+    from exportspredictor.pipeline import fixture_rescore
+
+    return build_artefacts(
+        world, version="ledger", search_results=tuned["search"], ranking_results=tuned["ranking_experiments"],
+        test_year_ledger=book, rescore=fixture_rescore(world),
+    )
+
+
+def test_the_build_re_scores_earlier_versions_saved_scores_as_a_second_row_of_the_same_run(
+    fixture_world, fixture_artefacts, tmp_path
+):
+    tuned, book = fixture_artefacts.metadata, _book(tmp_path, command="build_artefacts")
+    bundle = _build_with_rescore(fixture_world, tuned, book)
+
+    rows = ledger.read_ledger(book.path)
+    assert rows["kind"].to_list() == ["evaluation", "re-score"]
+    assert rows["status"].to_list() == ["started", "started"]
+    assert rows["version"].to_list() == ["ledger", "ledger"]
+    v1 = next(row for row in bundle.evaluation["earlier_versions"]["rows"] if row["name"] == "v1")
+    assert v1["uk_ranking_tie_proof"] is not None
+    assert "not yet re-scored" not in bundle.evaluation["earlier_versions"]["text"]
+
+    save_version(bundle, tmp_path / "artefacts", test_year_ledger=book)
+    assert ledger.read_ledger(book.path)["status"].to_list() == ["completed", "completed"]
+    with pytest.raises(TestYearAlreadyRead):
+        _build_with_rescore(fixture_world, tuned, book)
+    assert ledger.read_ledger(book.path).height == 2
+
+
+def test_a_re_run_after_a_crash_completes_both_rows_of_the_read(fixture_world, fixture_artefacts, tmp_path):
+    tuned, book = fixture_artefacts.metadata, _book(tmp_path, command="build_artefacts")
+    _build_with_rescore(fixture_world, tuned, book)  # crashed before saving
+
+    rerun = _build_with_rescore(fixture_world, tuned, book)
+    save_version(rerun, tmp_path / "artefacts", test_year_ledger=book)
+
+    rows = ledger.read_ledger(book.path)
+    assert rows["kind"].to_list() == ["evaluation", "re-score"]
+    assert rows["status"].to_list() == ["completed", "completed"]
+    assert rows["override"].to_list() == [False, False]
+
+
+def test_the_earlier_versions_saved_scores_can_be_found_before_the_re_score_is_recorded():
+    # Checks the artefacts, saved test-year models and feature files the real re-score reads; loads nothing of 2023.
+    from exportspredictor import evaluation
+    from exportspredictor.pipeline import V2_ARTEFACT, real_rescore
+
+    for version in (evaluation.BLEND_REPORTED["version"], V2_ARTEFACT):
+        if not (artefacts_dir() / version / "metadata.json").exists():
+            pytest.skip(f"No saved version {version} in {artefacts_dir()}")
+    try:
+        rescore = real_rescore()
+    except ValueError as error:
+        if "needs" in str(error):
+            pytest.skip(str(error))
+        raise
+    assert rescore.fingerprints == evaluation.EARLIER_FINGERPRINTS

@@ -651,3 +651,16 @@ def test_an_event_backtest_refuses_fold_models_trained_after_the_event(fixture_w
 
     with pytest.raises(backtests.LeakageError):
         backtests.event_backtest(chunks, EVENT, late, high_income=None, resamples=10)
+
+
+def test_backtest_models_on_another_feature_set_are_cached_apart(tmp_path, monkeypatch):
+    # The Blend's Lift and Event Backtest models were trained on the original files; a build on the rebuilt
+    # `exporter_count` files with the same settings must not read them (#128).
+    from exportspredictor.features import FEATURE_SET_ENV
+
+    monkeypatch.delenv(FEATURE_SET_ENV, raising=False)
+    original = backtests.cache_dir(tmp_path)
+    assert original == tmp_path / "derived" / "backtest_models"
+
+    monkeypatch.setenv(FEATURE_SET_ENV, "exporter_count")
+    assert backtests.cache_dir(tmp_path) == tmp_path / "derived" / "backtest_models_exporter_count"

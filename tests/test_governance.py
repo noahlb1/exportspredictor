@@ -487,3 +487,20 @@ def test_model_card_reports_potential_range_coverage_by_size(card, fixture_artef
     assert "| Size of Export Potential | Held-out rows | Coverage |" in section
     for row in saved:
         assert f"| {row['size']} | {row['rows']:,} |" in section
+
+
+def test_model_card_reports_what_market_reach_changes(card, fixture_artefacts):
+    effect = fixture_artefacts.evaluation["market_reach_effect"]
+
+    section = _section(governance.render_model_card(card), "## What Market Reach changes")
+    assert effect["text"] in section
+    assert "Lift" in section and "Scenario Effects" in section
+
+
+def test_model_card_sets_the_large_market_measures_beside_earlier_versions(card, fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    v1 = {row["markets"]: row["model"] for row in report["rescored_earlier_versions"]["v1"]["large_markets"]}
+
+    section = _section(governance.render_model_card(card), "## Headline")
+    assert "| Version | 30 largest Markets | 60 largest Markets |" in section
+    assert f"| v1 | {v1[30]:.3f} | {v1[60]:.3f} |" in section

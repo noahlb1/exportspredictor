@@ -16,7 +16,7 @@ from api.main import create_app
 from exportspredictor import artefacts as store
 from exportspredictor import baci, policy, tariffs
 from exportspredictor.fixture import build_world
-from exportspredictor.pipeline import Parts, build_artefacts
+from exportspredictor.pipeline import Parts, build_artefacts, fixture_rescore
 
 FIXTURE_VERSION = "fixture-test"
 TAIWAN_BACI = "S19"  # BACI's code for Taiwan ("Other Asia, nes")
@@ -56,7 +56,9 @@ def fixture_world():
 
 @pytest.fixture(scope="session")
 def fixture_artefacts(fixture_world):
-    return build_artefacts(fixture_world, version=FIXTURE_VERSION, parts=Parts.every())
+    return build_artefacts(
+        fixture_world, version=FIXTURE_VERSION, parts=Parts.every(), rescore=fixture_rescore(fixture_world)
+    )
 
 
 @pytest.fixture(scope="session")
