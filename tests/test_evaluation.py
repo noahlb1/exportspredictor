@@ -478,6 +478,17 @@ def test_a_blend_s_ranking_limitation_says_dollar_values_deserve_more_caution_th
     assert "dollar values with more caution than rankings" in text
 
 
+def test_a_ranking_well_above_the_naive_baseline_is_not_called_slightly_better():
+    # As the headline words it (`NARROW_MARGIN`): 0.600 against 0.514 is better, not only slightly better.
+    limits = evaluation.result_limitations({"model_form": {"form": "blend", "naive_weight": 0.3}}, _headline_report(0.600, 0.514))
+
+    titles = {x["title"]: x["text"] for x in limits}
+    assert "Only slightly better than a naive ranking for UK pairs" not in titles
+    text = titles["Ranks Markets better than it sizes them"]
+    assert "0.60" in text and "0.51" in text
+    assert "dollar values with more caution than rankings" in text
+
+
 def test_the_model_alone_s_ranking_limitation_still_says_its_value_is_in_the_size():
     limits = evaluation.result_limitations({}, _headline_report())
 
@@ -633,3 +644,18 @@ def test_re_scoring_saved_scores_with_flows_adds_the_large_market_measures():
     # On AAA, BBB and CCC, Product 010101 is ranked in the right order (+1) and 020202 in reverse (-1): the mean is 0.
     assert figures["large_markets"] == [{"markets": 3, "model": pytest.approx(0.0)}]
     assert "large_markets" not in evaluation.rescore_saved({"v1": saved})["v1"]
+
+
+def test_the_large_market_measures_list_earlier_versions_newest_first():
+    report = {
+        "model_form": {"form": "blend", "naive_weight": 0.3},
+        "large_markets": {"rows": [{"markets": 30, "model": 0.57, "naive": 0.36}]},
+        "rescored_earlier_versions": {
+            name: {"large_markets": [{"markets": 30, "model": value}]}
+            for name, value in (("v1", 0.51), ("v2", 0.54), ("Blend", 0.52))
+        },
+    }
+
+    rows = evaluation.large_markets_beside_earlier(report)
+
+    assert [row["name"] for row in rows][1:] == ["Blend", "v2", "v1", evaluation.NAIVE_THIS_RUN]

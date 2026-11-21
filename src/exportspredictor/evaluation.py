@@ -295,7 +295,9 @@ def result_limitations(metadata: dict, report: dict) -> list[dict]:
             "first, and treat dollar values with more caution than rankings."
             if blend else "Its value is mostly in the size of Export Potential, not its order."
         )
-        limits.append({"title": "Only slightly better than a naive ranking for UK pairs",
+        narrow = headline["model"] - headline["naive"] < NARROW_MARGIN  # as the headline words the margin
+        limits.append({"title": "Only slightly better than a naive ranking for UK pairs" if narrow
+                       else "Ranks Markets better than it sizes them",
                        "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
                        f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share times "
                        f"each Market's imports. {trade_off}"})
@@ -745,7 +747,9 @@ def large_markets_beside_earlier(report: Mapping) -> list[dict] | None:
     this = {row["markets"]: row["model"] for row in large["rows"]}
     naive = {row["markets"]: row.get("naive") for row in large["rows"]}
     rows = [{"name": version_name(report.get("model_form")), "markets": this}]
-    for name, figures in (report.get("rescored_earlier_versions") or {}).items():
+    rescored = report.get("rescored_earlier_versions") or {}
+    order = [name for name in EARLIER_FINGERPRINTS if name in rescored] + [n for n in rescored if n not in EARLIER_FINGERPRINTS]
+    for name, figures in ((name, rescored[name]) for name in order):  # newest first, as `earlier_versions` lists them
         measured = {row["markets"]: row["model"] for row in figures.get("large_markets") or []}
         rows.append({"name": name, "markets": {n: measured.get(n) for n in this}})
     return [*rows, {"name": NAIVE_THIS_RUN, "markets": naive}]
