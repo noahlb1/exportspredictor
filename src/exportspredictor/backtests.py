@@ -999,10 +999,12 @@ REAL_PLAN = Plan(
 
 
 def cache_dir(root: Path | None = None) -> Path:
-    """Where real backtest models are cached under the data root."""
-    from exportspredictor.features import features_dir
+    """Where real backtest models are cached under the data root: apart per feature set (`features.feature_set`), as
+    the models' cache keys hold their settings but not the files they were trained on."""
+    from exportspredictor.features import feature_set, features_dir
 
-    return features_dir(root).parent / "backtest_models"
+    name = feature_set()
+    return features_dir(root).parent / ("backtest_models" + (f"_{name}" if name else ""))
 
 
 def add_to_latest(

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import polars as pl
 
-from exportspredictor import comparison
+from exportspredictor import comparison, evaluation
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.evaluation import (
@@ -199,6 +199,8 @@ def model_card(artefacts: Artefacts) -> dict:
         "not_run": parts_not_run(report, artefacts.ppml_benchmark) if report else [],
         "v1_comparison": _comparison_summary(report.get("v1_comparison"), comparison.version_name(report)),
         "earlier_versions": report.get("earlier_versions"),
+        "large_markets": evaluation.large_markets_beside_earlier(report),
+        "market_reach_effect": report.get("market_reach_effect"),
         "traded_away": traded_away(report.get("earlier_versions")),
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
         "potential_range": _potential_range(report.get("potential_range")),
@@ -542,12 +544,14 @@ def render_model_card(card: dict) -> str:
     Form and the Illustrative label), and ends with the frozen v1 comparison as a short reported result."""
     lines = [f"# Model card: UK Exports Predictor, version {card['version']}", "",
              f"**Owner:** {card['owner']}", ""]
-    lines += ["## Headline", "", *_headline_lines(card), ""]
+    lines += ["## Headline", "", *_headline_lines(card), "", *_large_market_lines(card.get("large_markets"))]
     if card.get("traded_away"):
         lines += [card["traded_away"]["text"], ""]
     lines += ["## Model Form", "", card["model_form"]["text"], "", f"**Model:** {card['model']}", "",
               card["round_count"]["text"], ""]
     lines += ["## Illustrative Scenario Effects", "", *_illustrative_lines(card["illustrative"]), ""]
+    if card.get("market_reach_effect"):
+        lines += ["## What Market Reach changes", "", card["market_reach_effect"]["text"], ""]
     lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
     lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
         "text", "The artefact records no Potential Range coverage for this version."),
@@ -588,6 +592,24 @@ def render_model_card(card: dict) -> str:
     lines += ["## Frozen results", "", ("Reported once and no longer extended: they decided v2, not the served "
               "Model Form (ADR 0008)."), "", "### Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
     return "\n".join(lines)
+
+
+def _large_market_lines(rows: list[dict] | None) -> list[str]:
+    """The tie-proof UK ranking on the largest Markets, this version beside earlier versions (none: no lines)."""
+    if not rows:
+        return []
+    counts = list(rows[0]["markets"])
+    return [
+        "The same tie-proof ranking on the Markets that import the most (no choice was made on these):",
+        "",
+        "| Version | " + " | ".join(f"{n} largest Markets" for n in counts) + " |",
+        "| --- |" + " --- |" * len(counts),
+        *[
+            f"| {row['name']} | " + " | ".join(number_text(row["markets"].get(n), ".3f") for n in counts) + " |"
+            for row in rows
+        ],
+        "",
+    ]
 
 
 def _comparison_lines(summary: dict | None) -> list[str]:

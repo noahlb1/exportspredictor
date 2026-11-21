@@ -478,6 +478,17 @@ def test_a_blend_s_ranking_limitation_says_dollar_values_deserve_more_caution_th
     assert "dollar values with more caution than rankings" in text
 
 
+def test_a_ranking_well_above_the_naive_baseline_is_not_called_slightly_better():
+    # As the headline words it (`NARROW_MARGIN`): 0.600 against 0.514 is better, not only slightly better.
+    limits = evaluation.result_limitations({"model_form": {"form": "blend", "naive_weight": 0.3}}, _headline_report(0.600, 0.514))
+
+    titles = {x["title"]: x["text"] for x in limits}
+    assert "Only slightly better than a naive ranking for UK pairs" not in titles
+    text = titles["Ranks Markets better than it sizes them"]
+    assert "0.60" in text and "0.51" in text
+    assert "dollar values with more caution than rankings" in text
+
+
 def test_the_model_alone_s_ranking_limitation_still_says_its_value_is_in_the_size():
     limits = evaluation.result_limitations({}, _headline_report())
 
@@ -600,3 +611,51 @@ def test_the_kept_change_s_effect_on_the_ranking_is_reported_beside_the_served_f
     assert effect["uk_pair_coverage"]["with"] == report["potential_range"]["uk_pair_coverage"]["with_market_reach"]
     assert "leaves Scenario Effects unchanged" in effect["text"] and "Event Backtests" in effect["text"]
     assert "not a forecast" in effect["text"]
+
+
+def test_test_year_models_on_another_feature_set_are_cached_apart(tmp_path):
+    # The Blend's settings (artefact 20261118T185910Z) cached its test-year models under this key; a build with the
+    # same settings on the rebuilt `exporter_count` files must not read them (#128).
+    metadata = {
+        "validation_year": 2022, "tuning_years": [2012], "params": {"max_depth": 12}, "rounds": 1453, "n_folds": 5,
+        "non_uk_sampling_rate": 0.5894, "zero_sampling_rate": 0.05, "model_params": {"seed": 0}, "baseline_year": 2024,
+    }
+    original = evaluation.test_models_dir(tmp_path, metadata)
+
+    assert evaluation.test_models_dir(tmp_path, metadata | {"feature_set": ""}) == original
+    assert evaluation.test_models_dir(tmp_path, metadata | {"feature_set": None}) == original
+    assert evaluation.test_models_dir(tmp_path, metadata | {"feature_set": "exporter_count"}) != original
+
+
+def test_re_scoring_saved_scores_with_flows_adds_the_large_market_measures():
+    # Two Products in four Markets; DDD imports least, so on the 3 largest Markets only AAA, BBB and CCC are ranked.
+    saved = pl.DataFrame({
+        "hs6": ["010101"] * 4 + ["020202"] * 4, "importer": ["AAA", "BBB", "CCC", "DDD"] * 2,
+        "value_usd": [30.0, 20.0, 10.0, 99.0, 10.0, 20.0, 30.0, 99.0],
+        "export_potential_usd": [3.0, 2.0, 1.0, 0.5, 3.0, 2.0, 1.0, 0.5],
+    })
+    flows = pl.DataFrame({
+        "exporter": ["DEU"] * 4, "importer": ["AAA", "BBB", "CCC", "DDD"], "hs6": ["010101"] * 4,
+        "value_usd": [500.0, 400.0, 300.0, 1.0],
+    })
+
+    figures = evaluation.rescore_saved({"v1": saved}, flows=flows, counts=(3,))["v1"]
+
+    # On AAA, BBB and CCC, Product 010101 is ranked in the right order (+1) and 020202 in reverse (-1): the mean is 0.
+    assert figures["large_markets"] == [{"markets": 3, "model": pytest.approx(0.0)}]
+    assert "large_markets" not in evaluation.rescore_saved({"v1": saved})["v1"]
+
+
+def test_the_large_market_measures_list_earlier_versions_newest_first():
+    report = {
+        "model_form": {"form": "blend", "naive_weight": 0.3},
+        "large_markets": {"rows": [{"markets": 30, "model": 0.57, "naive": 0.36}]},
+        "rescored_earlier_versions": {
+            name: {"large_markets": [{"markets": 30, "model": value}]}
+            for name, value in (("v1", 0.51), ("v2", 0.54), ("Blend", 0.52))
+        },
+    }
+
+    rows = evaluation.large_markets_beside_earlier(report)
+
+    assert [row["name"] for row in rows][1:] == ["Blend", "v2", "v1", evaluation.NAIVE_THIS_RUN]

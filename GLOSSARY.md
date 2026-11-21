@@ -62,6 +62,10 @@ _Avoid_: flag type, warning level
 How close a Product is to the Products an Exporter already exports competitively, judged by which Products tend to be exported competitively together across the world.
 _Avoid_: density, product space, proximity
 
+**Exporter count**:
+How many other Exporters have a non-zero Flow of a Product into a Market in a year, leaving out the row's own Exporter (and the UK from every UK row). A candidate feature: tried as an Arm on 2022 and dropped, because it did not beat the Win Threshold.
+_Avoid_: supplier count, competitor count
+
 ### Prediction
 
 **Export Potential**:
@@ -131,7 +135,7 @@ _Avoid_: comparison country, untreated unit
 ### Model selection
 
 **Selection Measure**:
-The one measure every modelling choice is made on: the mean over Products of the rank correlation between Export Potential and Actual Exports across Markets, for held-out UK pairs in the validation year. Ties in Export Potential are broken in a fixed pseudo-random order (a stable hash of the Product and the Market), and tied Actual Exports (the zeros) share their average rank, so tying the bottom of a ranking can never raise it. Every other metric is reported beside it, never chosen on.
+The one measure every modelling choice is made on: the mean over Products of the rank correlation between Export Potential and Actual Exports across Markets, for held-out UK pairs in the validation year. Ties in Export Potential are broken in a fixed pseudo-random order (a stable hash of the Product and the Market), and tied Actual Exports (the zeros) share their average rank, so tying the bottom of a ranking can never raise it. Every other metric is reported beside it, never chosen on. The measure before ties were broken, where tied Export Potential also shared its average rank, is the **old measure**: it is reported only to set a version beside earlier versions, which reported it.
 _Avoid_: objective, score, headline (the headline is the same measure on the test year)
 
 **Arm**:

@@ -680,3 +680,10 @@ def test_a_best_so_far_that_changed_how_zero_cells_are_sampled_is_refused():
         loop.served_configuration(_results({**SELECTED, "zero_rate": 0.02}))
     with pytest.raises(ValueError, match="Zero Cells"):
         loop.served_configuration(_results({**SELECTED, "uk_zeros_sampled": True}))
+
+
+def test_the_exporter_count_experiment_is_shown_in_the_glossary_s_words():
+    # Not one of the research note's seven numbered experiments (its own note: exporter-count-2022.md).
+    assert loop.experiment_label(loop.EXPORTER_COUNT_EXPERIMENT, ["base on rebuilt files", "+ log_exporters_loo"]) == (
+        "Exporter count"
+    )

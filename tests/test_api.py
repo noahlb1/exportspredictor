@@ -271,8 +271,7 @@ def test_evaluation_serves_the_limitations_the_artefact_shows(client, fixture_ar
     # The artefact's bands are log offsets (ADR 0007, amended), so no fixed dollar width is reported,
     assert "The Potential Range is a fixed width in dollars" not in limitations
     # but what its results show is, as on the model card
-    headline = "Does not beat" if not fixture_artefacts.evaluation["headline"]["beats_naive"] else "Only slightly better"
-    assert any(title.startswith(headline) for title in limitations)
+    assert any(title.startswith(("Does not beat", "Only slightly better", "Ranks Markets better")) for title in limitations)
     assert "Trained on a sample of other Exporters' Flows" in limitations
 
 
@@ -1404,3 +1403,22 @@ def test_the_pair_detail_serves_its_markets_reach_and_the_offset_applied_to_it(c
     assert {k: body["market_reach"][k] for k in market} == market
     assert body["market_reach"]["pair_offset"] == pytest.approx(applied)
     assert body["market_reach"]["pair_multiplier"] == pytest.approx(math.exp(reach.beta * applied))
+
+
+def test_evaluation_serves_what_market_reach_changes(client, fixture_artefacts):
+    effect = client.get("/evaluation").json()["market_reach_effect"]
+    saved = fixture_artefacts.evaluation["market_reach_effect"]
+
+    assert effect["text"] == saved["text"]
+    assert effect["selection_measure"] == saved["selection_measure"]
+    assert effect["lift"] == saved["lift"]
+    assert effect["uk_pair_coverage"] == saved["uk_pair_coverage"]
+
+
+def test_evaluation_serves_the_large_market_measures_beside_earlier_versions(client, fixture_artefacts):
+    rows = client.get("/evaluation").json()["large_markets_by_version"]
+    v1 = {row["markets"]: row["model"] for row in fixture_artefacts.evaluation["rescored_earlier_versions"]["v1"]["large_markets"]}
+
+    by_name = {row["name"]: row for row in rows}
+    assert by_name["v1"]["markets"] == {"30": v1[30], "60": v1[60]}
+    assert rows[0]["name"].startswith("This version")

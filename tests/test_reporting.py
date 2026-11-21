@@ -27,6 +27,17 @@ def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlie
     assert str(block["test_year"]) in chart.title
 
 
+def test_the_ranking_by_version_draws_the_tie_proof_measure_once_earlier_versions_are_re_scored(fixture_artefacts):
+    block = fixture_artefacts.evaluation["earlier_versions"]
+
+    chart = reporting.ranking_by_version(fixture_artefacts)
+
+    rows = {row["name"]: row["uk_ranking_tie_proof"] for row in chart.data.iter_rows(named=True)}
+    expected = {row["name"]: row["uk_ranking_tie_proof"] for row in block["rows"] + block["naive"]}
+    assert rows == pytest.approx(expected)
+    assert "tie-proof" in chart.title
+
+
 def test_a_chart_is_a_static_matplotlib_svg_image_naming_each_row(fixture_artefacts):
     chart = reporting.ranking_by_version(fixture_artefacts)
 
@@ -264,3 +275,24 @@ def test_flagged_products_are_counted_by_reason(fixture_artefacts):
         (ONE_OFF_REASON, 1, 1),
     ]
     assert counts.columns == ["Reason", "Products", "Opportunities"]
+
+
+def test_the_large_market_measures_by_version_list_this_version_earlier_versions_and_the_naive_baseline(
+    fixture_artefacts,
+):
+    report = fixture_artefacts.evaluation
+    v1 = {row["markets"]: row["model"] for row in report["rescored_earlier_versions"]["v1"]["large_markets"]}
+
+    table = reporting.large_markets_by_version(fixture_artefacts)
+
+    rows = {row["version"]: row for row in table.iter_rows(named=True)}
+    assert rows["v1"]["30 largest Markets"] == pytest.approx(v1[30])
+    assert rows["v1"]["60 largest Markets"] == pytest.approx(v1[60])
+    assert table["version"][0].startswith("This version")
+
+
+def test_a_version_without_large_market_measures_shows_not_run(fixture_artefacts):
+    from dataclasses import replace
+
+    older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
+    assert isinstance(reporting.large_markets_by_version(replace(fixture_artefacts, evaluation=older)), reporting.NotRun)

@@ -9,7 +9,12 @@ import math
 import pytest
 import xgboost
 
-from exportspredictor.pipeline import Parts, build_artefacts, parse_parts
+from exportspredictor.pipeline import (
+    Parts,
+    build_artefacts,
+    fixture_rescore,
+    parse_parts,
+)
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +36,7 @@ def _run(world, tuned, monkeypatch, parts: Parts):
         patch.setattr(xgboost, "train", counting)
         bundle = build_artefacts(
             world, version="parts", search_results=tuned["search"], ranking_results=tuned["ranking_experiments"],
-            parts=parts,
+            parts=parts, rescore=fixture_rescore(world),  # as the session fixture artefacts are built
         )
     return bundle, len(trained)
 

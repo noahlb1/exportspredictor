@@ -68,7 +68,11 @@ from exportspredictor.features import (
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
 from exportspredictor.gravity import GDP_GAPS
-from exportspredictor.large_markets import large_markets_report
+from exportspredictor.large_markets import (
+    LARGE_MARKET_COUNTS,
+    large_markets_report,
+    restricted_measures,
+)
 from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.prediction import (
     MIN_PREDICTION_USD,
@@ -291,7 +295,9 @@ def result_limitations(metadata: dict, report: dict) -> list[dict]:
             "first, and treat dollar values with more caution than rankings."
             if blend else "Its value is mostly in the size of Export Potential, not its order."
         )
-        limits.append({"title": "Only slightly better than a naive ranking for UK pairs",
+        narrow = headline["model"] - headline["naive"] < NARROW_MARGIN  # as the headline words the margin
+        limits.append({"title": "Only slightly better than a naive ranking for UK pairs" if narrow
+                       else "Ranks Markets better than it sizes them",
                        "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
                        f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share times "
                        f"each Market's imports. {trade_off}"})
@@ -639,9 +645,13 @@ def old_measure(scored_grid: pl.DataFrame) -> dict:
     return {name: legacy_selection_measure(rows, column) for name, column in _PREDICTORS.items()}
 
 
-def rescore_saved(scores: Mapping[str, pl.DataFrame]) -> dict[str, dict]:
+def rescore_saved(
+    scores: Mapping[str, pl.DataFrame], *, flows: pl.DataFrame | None = None, counts: Sequence[int] = LARGE_MARKET_COUNTS
+) -> dict[str, dict]:
     """Earlier versions' saved test-year UK scores on both measures: name -> `uk_ranking` (the old measure, which
-    should match what the version reported) and `uk_ranking_tie_proof` (the Selection Measure).
+    should match what the version reported) and `uk_ranking_tie_proof` (the Selection Measure). With `flows` (every
+    Exporter's Flows of the test year), also `large_markets`: the Selection Measure on the `counts` largest
+    importing Markets, as this version's `large_markets` block measures the headline.
 
     Each table holds one row per UK Product and Market (`hs6`, `importer`, `value_usd`, `export_potential_usd`).
     Nothing is trained, predicted or chosen. The caller records the re-score in the test-year ledger first
@@ -650,11 +660,20 @@ def rescore_saved(scores: Mapping[str, pl.DataFrame]) -> dict[str, dict]:
     """
     out = {}
     for name, table in scores.items():
-        rows = drop_excluded(table.with_columns(pl.col("hs6").cast(pl.String), pl.col("importer").cast(pl.String)))
+        # Ties are broken by the same key as this version's headline (`_ROW_MARKET`: the UK as Exporter).
+        rows = drop_excluded(table.with_columns(
+            pl.col("hs6").cast(pl.String), pl.col("importer").cast(pl.String), exporter=pl.lit(baci.UK)
+        ))
         out[name] = {
             "uk_ranking": legacy_selection_measure(rows, "export_potential_usd"),
-            "uk_ranking_tie_proof": selection_measure(rows, "export_potential_usd"),
+            "uk_ranking_tie_proof": selection_measure(rows, "export_potential_usd", market=_ROW_MARKET),
         }
+        if flows is not None:
+            large = restricted_measures(
+                rows, flows, "export_potential_usd", counts=counts,
+                measure=lambda part, column: selection_measure(part, column, market=_ROW_MARKET),
+            )
+            out[name]["large_markets"] = [{"markets": n, "model": large[n]} for n in counts]
     return out
 
 
@@ -716,6 +735,24 @@ def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED, blend: dict
     beats = head["model"] is not None and head["naive"] is not None and head["model"] > head["naive"]
     block = {"test_year": year, "rows": rows, "naive": naive, "beats_naive": beats}
     return {**block, "text": _earlier_versions_text(block)}
+
+
+def large_markets_beside_earlier(report: Mapping) -> list[dict] | None:
+    """The tie-proof UK ranking on the largest importing Markets, this version beside the earlier versions re-scored
+    from their saved scores (`rescore_saved` with Flows) and this run's Naive Baseline: one row per version, `name`
+    and `markets` (count of Markets -> figure, None where not measured). None when the report has no `large_markets`."""
+    large = report.get("large_markets")
+    if not large:
+        return None
+    this = {row["markets"]: row["model"] for row in large["rows"]}
+    naive = {row["markets"]: row.get("naive") for row in large["rows"]}
+    rows = [{"name": version_name(report.get("model_form")), "markets": this}]
+    rescored = report.get("rescored_earlier_versions") or {}
+    order = [name for name in EARLIER_FINGERPRINTS if name in rescored] + [n for n in rescored if n not in EARLIER_FINGERPRINTS]
+    for name, figures in ((name, rescored[name]) for name in order):  # newest first, as `earlier_versions` lists them
+        measured = {row["markets"]: row["model"] for row in figures.get("large_markets") or []}
+        rows.append({"name": name, "markets": {n: measured.get(n) for n in this}})
+    return [*rows, {"name": NAIVE_THIS_RUN, "markets": naive}]
 
 
 def _earlier_versions_text(block: dict) -> str:
@@ -1115,10 +1152,12 @@ def report_settings(metadata: dict) -> dict:
 
 
 def test_models_dir(root: Path, metadata: dict) -> Path:
-    """Where real test-year models are cached under the data root, keyed by their training settings."""
+    """Where real test-year models are cached under the data root, keyed by their training settings and feature set."""
     from exportspredictor.features import features_dir
 
     settings = {**report_settings(metadata), "model_params": metadata["model_params"], "test_year": metadata["baseline_year"] - 1}
+    if metadata.get("feature_set"):  # trained on another feature set's files; the original set keeps its keys
+        settings["feature_set"] = metadata["feature_set"]
     key = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()[:12]
     return features_dir(root).parent / "test_models" / f"{settings['test_year']}_{key}"
 

@@ -44,6 +44,30 @@ def _largest_markets_table(headline: dict, large: dict | None) -> pd.DataFrame:
     )
 
 
+def _large_markets_by_version(rows: list[dict]) -> pd.DataFrame:
+    """The tie-proof UK ranking on the largest Markets, one row per version, with the counts the API reports."""
+    return pd.DataFrame(
+        [{"Version": row["name"], **{f"{n} largest Markets": value for n, value in row["markets"].items()}}
+         for row in rows]
+    )
+
+
+def _market_reach_table(effect: dict) -> pd.DataFrame:
+    """What Market Reach changes: each figure with it and without it, as the API reports them."""
+    rows = [("UK ranking, tie-proof", effect["selection_measure"]), ("UK ranking, old measure", effect["old_measure"])]
+    rows += [(f"UK ranking, {row['markets']} largest Markets", row) for row in effect["large_markets"]]
+    if effect.get("lift"):
+        lift = effect["lift"]
+        rows += [("Lift", lift),
+                 ("Size-matched Lift", {"with": lift["size_matched_with"], "without": lift["size_matched_without"]})]
+    if effect.get("uk_pair_coverage"):
+        rows.append(("UK pairs inside their Potential Range", effect["uk_pair_coverage"]))
+    return pd.DataFrame(
+        [{"Figure": name, "With Market Reach": figures["with"], "Without Market Reach": figures["without"]}
+         for name, figures in rows]
+    )
+
+
 def _breakdown_table(rows: list[dict], label: str) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -377,6 +401,13 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
                 large["text"] if large else "The measure on the largest importing Markets was not computed for this "
                 "version: it is reported from the next evaluation of the test year."
             )
+            if report.get("large_markets_by_version"):
+                st.markdown("**The same tie-proof measure on the largest Markets, beside earlier versions**")
+                st.dataframe(_large_markets_by_version(report["large_markets_by_version"]), hide_index=True)
+                st.caption(
+                    "Earlier versions are measured on their own saved scores of the same year; no choice was made on "
+                    "these figures."
+                )
             st.caption(
                 f"Measured on {test_year}, a year the model never saw: the models were trained on "
                 f"{years_text(training_years)} with settings tuned on {report['validation_year']}, so "
@@ -387,6 +418,12 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
 
         with _section("How the model was chosen"):
             _show_model_choice(report["model_choice"])
+
+        if report.get("market_reach_effect"):
+            with _section("What Market Reach changes"):
+                effect = report["market_reach_effect"]
+                st.markdown(effect["text"])
+                st.dataframe(_market_reach_table(effect), hide_index=True)
 
         with _section(f"Accuracy in {test_year}"):
             for scope, label in SCOPES.items():

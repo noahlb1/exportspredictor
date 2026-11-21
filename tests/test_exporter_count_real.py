@@ -11,7 +11,8 @@ import pytest
 from exportspredictor import baci, features, gravity
 
 SET = "exporter_count"
-YEAR = 2022  # the validation year: the set is built up to it, so the test year is never read
+YEAR = 2022  # the validation year, which #126 checked the set on
+BASELINE_YEAR = 2024  # #128 rebuilt the set up to the Baseline year, to serve it
 
 
 @pytest.fixture(scope="module")
@@ -22,15 +23,15 @@ def built():
     return folder
 
 
-def test_the_set_records_its_features_constraints_gravity_and_stops_before_the_test_year(built):
+def test_the_set_records_its_features_constraints_gravity_and_reaches_the_baseline_year(built):
     settings = json.loads((built / features.SETTINGS_FILE).read_text(encoding="utf-8"))
 
     assert settings["feature_set"] == SET
     assert settings["candidate_features"] == ["log_exporters_loo"]
     assert "log_exporters_loo" not in settings["monotone_constraints"]
-    assert max(settings["years"]) == YEAR
+    assert max(settings["years"]) == BASELINE_YEAR
     assert settings["gravity"]["country_year"] == gravity.COUNTRY_YEAR_FILLED
-    assert not (built / "training_2023.parquet").exists()
+    assert (built / f"training_{BASELINE_YEAR}.parquet").exists()
 
 
 def test_every_scored_market_has_a_gdp_except_those_no_source_covers(built):

@@ -67,7 +67,12 @@ from exportspredictor import market_reach, scenarios
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
-from exportspredictor.evaluation import known_limitations, parts_not_run, served_report
+from exportspredictor.evaluation import (
+    known_limitations,
+    large_markets_beside_earlier,
+    parts_not_run,
+    served_report,
+)
 from exportspredictor.exclusions import not_ranked_message, reason_counts
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
@@ -309,6 +314,7 @@ def create_app(
             limitations=known_limitations(artefacts),
             model_choice=how_chosen(artefacts.metadata, artefacts.evaluation),
             event_backtest_note=event_backtest_note(artefacts.metadata, artefacts.evaluation),
+            large_markets_by_version=large_markets_beside_earlier(artefacts.evaluation),
             not_run=parts_not_run(artefacts.evaluation, artefacts.ppml_benchmark),
         )
 
