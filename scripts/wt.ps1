@@ -27,10 +27,21 @@ if (-not $uv) {
         Select-Object -First 1).FullName
 }
 
+# Every shell call starts in the main checkout, so a relative path in a worktree's command can write
+# there unseen. Warn when this run leaves the main checkout's working tree changed.
+$watchMain = (Resolve-Path $checkout).Path -ne (Resolve-Path $main).Path
+if ($watchMain) { $mainBefore = @(git -C $main status --porcelain) }
+
 Push-Location $checkout
 try {
     & $uv run @args
     exit $LASTEXITCODE
 } finally {
     Pop-Location
+    if ($watchMain) {
+        $changed = @(git -C $main status --porcelain | Where-Object { $mainBefore -notcontains $_ })
+        if ($changed) {
+            Write-Warning "The main checkout ($main) changed during this run; a command wrote there instead of this worktree:`n$($changed -join "`n")"
+        }
+    }
 }
