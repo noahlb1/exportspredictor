@@ -659,3 +659,15 @@ def test_the_large_market_measures_list_earlier_versions_newest_first():
     rows = evaluation.large_markets_beside_earlier(report)
 
     assert [row["name"] for row in rows][1:] == ["Blend", "v2", "v1", evaluation.NAIVE_THIS_RUN]
+
+
+def test_a_market_reach_effect_saved_with_flat_size_matched_lift_reads_nested(report):
+    # Version 20261120T221726Z saved Lift's size-matched pair as flat keys; it is read in today's shape, not rewritten.
+    effect = report["market_reach_effect"]
+    lift = effect["lift"]
+    flat = {"with": lift["with"], "without": lift["without"],
+            "size_matched_with": lift["size_matched"]["with"], "size_matched_without": lift["size_matched"]["without"]}
+    saved = {**report, "market_reach_effect": {**effect, "lift": flat}}
+
+    assert evaluation.relabelled(saved)["market_reach_effect"]["lift"] == lift
+    assert saved["market_reach_effect"]["lift"] == flat

@@ -141,9 +141,14 @@ def large_markets_by_version(bundle: Artefacts) -> pl.DataFrame | NotRun:
     rows = large_markets_beside_earlier(bundle.evaluation or {})
     if not rows:
         return NotRun("The measure on the largest Markets")
-    return pl.DataFrame(
-        [{"version": row["name"], **{f"{n} largest Markets": value for n, value in row["markets"].items()}} for row in rows]
-    )
+    return pl.DataFrame([{"version": row["name"], **row["columns"]} for row in rows])
+
+
+def market_reach_effect(bundle: Artefacts) -> str:
+    """What Market Reach changes on the test year (`evaluation.market_reach_effect`), as saved, or the line saying
+    it was not run for a version without Market Reach."""
+    effect = (bundle.evaluation or {}).get("market_reach_effect")
+    return repr(NotRun("Market Reach")) if effect is None else effect["text"]
 
 
 # A best round under this means the stopping rule, not the configuration, decided the Arm

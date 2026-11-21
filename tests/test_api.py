@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
-from exportspredictor import conformal, illustrative, loop
+from exportspredictor import conformal, evaluation, illustrative, loop
 from exportspredictor.fixture import PRODUCTS
 from exportspredictor.pipeline import build_artefacts
 
@@ -270,8 +270,15 @@ def test_evaluation_serves_the_limitations_the_artefact_shows(client, fixture_ar
     limitations = {item["title"]: item["text"] for item in body["limitations"]}
     # The artefact's bands are log offsets (ADR 0007, amended), so no fixed dollar width is reported,
     assert "The Potential Range is a fixed width in dollars" not in limitations
-    # but what its results show is, as on the model card
-    assert any(title.startswith(("Does not beat", "Only slightly better", "Ranks Markets better")) for title in limitations)
+    # but what its results show is, as on the model card: the ranking titled by its margin over the Naive Baseline
+    headline = fixture_artefacts.evaluation["headline"]
+    if not headline["beats_naive"]:
+        expected = "Does not beat a naive ranking for UK pairs"
+    elif headline["model"] - headline["naive"] < evaluation.NARROW_MARGIN:
+        expected = "Only slightly better than a naive ranking for UK pairs"
+    else:
+        expected = "Ranks Markets better than it sizes them"
+    assert expected in limitations
     assert "Trained on a sample of other Exporters' Flows" in limitations
 
 
@@ -1422,3 +1429,5 @@ def test_evaluation_serves_the_large_market_measures_beside_earlier_versions(cli
     by_name = {row["name"]: row for row in rows}
     assert by_name["v1"]["markets"] == {"30": v1[30], "60": v1[60]}
     assert rows[0]["name"].startswith("This version")
+    # Worded in the package, so the app shows the columns without naming them itself.
+    assert by_name["v1"]["columns"] == {"30 largest Markets": v1[30], "60 largest Markets": v1[60]}

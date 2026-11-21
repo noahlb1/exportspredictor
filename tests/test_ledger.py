@@ -339,9 +339,9 @@ def test_a_re_run_after_a_crash_completes_both_rows_of_the_read(fixture_world, f
 def test_the_earlier_versions_saved_scores_can_be_found_before_the_re_score_is_recorded():
     # Checks the artefacts, saved test-year models and feature files the real re-score reads; loads nothing of 2023.
     from exportspredictor import evaluation
-    from exportspredictor.pipeline import V2_ARTEFACT, real_rescore
+    from exportspredictor.pipeline import real_rescore
 
-    for version in (evaluation.BLEND_REPORTED["version"], V2_ARTEFACT):
+    for version in (evaluation.BLEND_REPORTED["version"], evaluation.V2_REPORTED["version"]):
         if not (artefacts_dir() / version / "metadata.json").exists():
             pytest.skip(f"No saved version {version} in {artefacts_dir()}")
     try:
@@ -351,3 +351,27 @@ def test_the_earlier_versions_saved_scores_can_be_found_before_the_re_score_is_r
             pytest.skip(str(error))
         raise
     assert rescore.fingerprints == evaluation.EARLIER_FINGERPRINTS
+
+
+def test_a_re_score_whose_old_measure_differs_from_what_the_version_reported_is_refused(
+    fixture_world, fixture_artefacts
+):
+    # The old measure of re-scored saved scores must reproduce the figure the version reported (ADR 0009).
+    from dataclasses import replace
+
+    from exportspredictor.pipeline import fixture_rescore, rescore_earlier_versions
+
+    rescore = fixture_rescore(fixture_world)
+    saved = rescore.scores()["v1"]
+    shuffled = saved.with_columns(pl.col("export_potential_usd").reverse())
+    report = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "rescored_earlier_versions"}
+
+    rescore_earlier_versions(report, rescore, None, version="ledger")  # the saved scores as they are pass
+    with pytest.raises(ValueError, match="v1"):
+        rescore_earlier_versions(report, replace(rescore, scores=lambda: {"v1": shuffled}), None, version="ledger")
+
+
+def test_the_served_report_does_not_carry_the_ledger_s_re_score_fingerprint(fixture_world, fixture_artefacts, tmp_path):
+    bundle = _build_with_rescore(fixture_world, fixture_artefacts.metadata, _book(tmp_path, command="build_artefacts"))
+
+    assert "rescore_fingerprint" not in bundle.evaluation

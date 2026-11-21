@@ -45,11 +45,8 @@ def _largest_markets_table(headline: dict, large: dict | None) -> pd.DataFrame:
 
 
 def _large_markets_by_version(rows: list[dict]) -> pd.DataFrame:
-    """The tie-proof UK ranking on the largest Markets, one row per version, with the counts the API reports."""
-    return pd.DataFrame(
-        [{"Version": row["name"], **{f"{n} largest Markets": value for n, value in row["markets"].items()}}
-         for row in rows]
-    )
+    """The tie-proof UK ranking on the largest Markets, one row per version, in the columns the API labels."""
+    return pd.DataFrame([{"Version": row["name"], **row["columns"]} for row in rows])
 
 
 def _market_reach_table(effect: dict) -> pd.DataFrame:
@@ -57,9 +54,7 @@ def _market_reach_table(effect: dict) -> pd.DataFrame:
     rows = [("UK ranking, tie-proof", effect["selection_measure"]), ("UK ranking, old measure", effect["old_measure"])]
     rows += [(f"UK ranking, {row['markets']} largest Markets", row) for row in effect["large_markets"]]
     if effect.get("lift"):
-        lift = effect["lift"]
-        rows += [("Lift", lift),
-                 ("Size-matched Lift", {"with": lift["size_matched_with"], "without": lift["size_matched_without"]})]
+        rows += [("Lift", effect["lift"]), ("Size-matched Lift", effect["lift"]["size_matched"])]
     if effect.get("uk_pair_coverage"):
         rows.append(("UK pairs inside their Potential Range", effect["uk_pair_coverage"]))
     return pd.DataFrame(

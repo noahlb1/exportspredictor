@@ -292,7 +292,15 @@ def test_the_large_market_measures_by_version_list_this_version_earlier_versions
 
 
 def test_a_version_without_large_market_measures_shows_not_run(fixture_artefacts):
-    from dataclasses import replace
-
     older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
     assert isinstance(reporting.large_markets_by_version(replace(fixture_artefacts, evaluation=older)), reporting.NotRun)
+
+
+def test_what_market_reach_changes_is_the_saved_sentence_or_a_not_run_line(fixture_artefacts):
+    saved = fixture_artefacts.evaluation["market_reach_effect"]["text"]
+    without = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "market_reach_effect"}
+
+    assert reporting.market_reach_effect(fixture_artefacts) == saved
+    assert reporting.market_reach_effect(replace(fixture_artefacts, evaluation=without)) == (
+        "Market Reach: not run for this version."
+    )

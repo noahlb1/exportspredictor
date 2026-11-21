@@ -249,11 +249,11 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
 
 
 # UK-pair coverage further than this below the Potential Range's target is a known limitation (spec #113 story 13).
-UK_PAIR_SHORTFALL = 0.05
+UK_PAIR_COVERAGE_TOLERANCE = 0.05
 
 
 def uk_pair_coverage_limitations(metadata: dict, potential_range: dict | None) -> list[dict]:
-    """When fewer UK pairs than the target, less `UK_PAIR_SHORTFALL`, have their Gap Period Actual Exports inside
+    """When fewer UK pairs than the target, less `UK_PAIR_COVERAGE_TOLERANCE`, have their Gap Period Actual Exports inside
     their Potential Range. Read from the report's `uk_pair_coverage`, or, for a version upgraded by `rereach`, its
     metadata's `market_reach_pair_coverage`; none for a version that records neither."""
     found = (potential_range or {}).get("uk_pair_coverage")
@@ -265,7 +265,7 @@ def uk_pair_coverage_limitations(metadata: dict, potential_range: dict | None) -
     else:
         return []
     target = (potential_range or {}).get("target", COVERAGE)
-    if coverage is None or round(target - coverage, 9) <= UK_PAIR_SHORTFALL:
+    if coverage is None or round(target - coverage, 9) <= UK_PAIR_COVERAGE_TOLERANCE:
         return []
     return [{
         "title": "The Potential Range holds fewer UK pairs than its target",
@@ -628,13 +628,19 @@ _SAVED_NAMES = {
 _SAVED_THIS_VERSION = "This version ("
 
 
+def model_form_label(model_form: Mapping | None) -> str:
+    """A saved Model Form (`ModelForm.to_dict`) in a few words: "Blend", "model alone", each "with Market Reach"
+    where it has one."""
+    form = (model_form or {}).get("form", "model alone")
+    name = "Blend" if form == "blend" else form
+    return f"{name} with Market Reach" if (model_form or {}).get("market_reach") else name
+
+
 def version_name(model_form: Mapping | None) -> str:
     """This version's row in `earlier_versions`: the Blend (GLOSSARY.md) when it serves one without Market Reach,
     else this version named by its Model Form, so a new version is never confused with the earlier Blend."""
-    form = (model_form or {}).get("form", "model alone")
-    if (model_form or {}).get("market_reach"):
-        return f"{_SAVED_THIS_VERSION}{'Blend' if form == 'blend' else 'model alone'} with Market Reach)"
-    return "Blend" if form == "blend" else f"{_SAVED_THIS_VERSION}{form})"
+    label = model_form_label(model_form)
+    return label if label == "Blend" else f"{_SAVED_THIS_VERSION}{label})"
 
 
 def old_measure(scored_grid: pl.DataFrame) -> dict:
@@ -734,25 +740,46 @@ def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED, blend: dict
         rows.append({"name": "v1", **measures("v1", v1)})
     beats = head["model"] is not None and head["naive"] is not None and head["model"] > head["naive"]
     block = {"test_year": year, "rows": rows, "naive": naive, "beats_naive": beats}
-    return {**block, "text": _earlier_versions_text(block)}
+    return with_v1_lift({**block, "text": _earlier_versions_text(block)}, report.get("v1_comparison"))
+
+
+def with_v1_lift(block: dict | None, v1_comparison: Mapping | None) -> dict | None:
+    """An `earlier_versions` block whose v1 row has the Lift and size-matched Lift the v1 comparison measured for v1
+    (on the same test year). A block saved before v1's row carried them is filled when read; others are unchanged."""
+    lifts = {m["metric"]: m.get("v1") for m in (v1_comparison or {}).get("secondary", [])
+             if m.get("metric") in ("lift", "size_matched_lift")}
+    if block is None or not lifts:
+        return block
+    rows = [{**row, **{k: v for k, v in lifts.items() if row.get(k) is None}} if row["name"] == "v1" else row
+            for row in block["rows"]]
+    return {**block, "rows": rows}
 
 
 def large_markets_beside_earlier(report: Mapping) -> list[dict] | None:
     """The tie-proof UK ranking on the largest importing Markets, this version beside the earlier versions re-scored
-    from their saved scores (`rescore_saved` with Flows) and this run's Naive Baseline: one row per version, `name`
-    and `markets` (count of Markets -> figure, None where not measured). None when the report has no `large_markets`."""
+    from their saved scores (`rescore_saved` with Flows) and this run's Naive Baseline: one row per version, `name`,
+    `markets` (count of Markets -> figure, None where not measured) and `columns` (the same figures by their column
+    label, `large_markets_label`, for every table that shows them). None when the report has no `large_markets`."""
     large = report.get("large_markets")
     if not large:
         return None
     this = {row["markets"]: row["model"] for row in large["rows"]}
     naive = {row["markets"]: row.get("naive") for row in large["rows"]}
-    rows = [{"name": version_name(report.get("model_form")), "markets": this}]
+    rows = [(version_name(report.get("model_form")), this)]
     rescored = report.get("rescored_earlier_versions") or {}
     order = [name for name in EARLIER_FINGERPRINTS if name in rescored] + [n for n in rescored if n not in EARLIER_FINGERPRINTS]
     for name, figures in ((name, rescored[name]) for name in order):  # newest first, as `earlier_versions` lists them
         measured = {row["markets"]: row["model"] for row in figures.get("large_markets") or []}
-        rows.append({"name": name, "markets": {n: measured.get(n) for n in this}})
-    return [*rows, {"name": NAIVE_THIS_RUN, "markets": naive}]
+        rows.append((name, {n: measured.get(n) for n in this}))
+    return [
+        {"name": name, "markets": markets, "columns": {large_markets_label(n): v for n, v in markets.items()}}
+        for name, markets in [*rows, (NAIVE_THIS_RUN, naive)]
+    ]
+
+
+def large_markets_label(markets: int) -> str:
+    """The column label of the measure on the `markets` largest importing Markets."""
+    return f"{markets} largest Markets"
 
 
 def _earlier_versions_text(block: dict) -> str:
@@ -803,12 +830,14 @@ def _saved_earlier_versions_text(block: dict) -> str:
 def relabelled(report: dict) -> dict:
     """A saved evaluation report with today's names (the Blend, the Naive Baseline; GLOSSARY.md) in its
     headline and `earlier_versions` block, worded again from their saved figures. Nothing is recomputed, keys keep their
-    names and the saved report is not changed. `comparison.relabelled` also rewords the v1 comparison."""
+    names and the saved report is not changed. v1's row takes the Lift its saved comparison holds (`with_v1_lift`).
+    `comparison.relabelled` also rewords the v1 comparison."""
     saved = report.get("headline")
     if saved and saved.get("model") is not None and report.get("test_year") is not None:
         worded = headline({f"model_{HEADLINE_METRIC}": saved["model"], f"naive_{HEADLINE_METRIC}": saved["naive"]},
                           report["test_year"])
         report = {**report, "headline": {**saved, "text": worded["text"]}}
+    report = _with_nested_size_matched_lift(report)
     block = report.get("earlier_versions")
     if not block:
         return report
@@ -817,7 +846,20 @@ def relabelled(report: dict) -> dict:
         this = {**this, "name": version_name(report.get("model_form"))}
     naive = [{**row, "name": _SAVED_NAMES.get(row["name"], row["name"])} for row in block["naive"]]
     block = {**block, "rows": [this, *others], "naive": naive}
+    block = with_v1_lift(block, report.get("v1_comparison"))
     return {**report, "earlier_versions": {**block, "text": _earlier_versions_text(block)}}
+
+
+def _with_nested_size_matched_lift(report: dict) -> dict:
+    """`market_reach_effect` with Lift's size-matched pair nested (`size_matched`: with, without), as reports saved
+    before it was (version 20261120T221726Z: `size_matched_with`, `size_matched_without`) are read."""
+    effect = report.get("market_reach_effect")
+    lift = (effect or {}).get("lift") or {}
+    if "size_matched_with" not in lift:
+        return report
+    nested = {"with": lift["with"], "without": lift["without"],
+              "size_matched": {"with": lift["size_matched_with"], "without": lift["size_matched_without"]}}
+    return {**report, "market_reach_effect": {**effect, "lift": nested}}
 
 
 def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STABILITY_TOP_N) -> dict:
@@ -1086,7 +1128,7 @@ def market_reach_effect(report: dict) -> dict | None:
     if lift and plain:
         block["lift"] = {
             "with": lift["lift"], "without": plain["lift"],
-            "size_matched_with": lift["size_matched"]["lift"], "size_matched_without": plain["size_matched"]["lift"],
+            "size_matched": {"with": lift["size_matched"]["lift"], "without": plain["size_matched"]["lift"]},
         }
     coverage = (report.get("potential_range") or {}).get("uk_pair_coverage")
     if coverage:
@@ -1110,8 +1152,8 @@ def market_reach_effect_text(block: dict, test_year: int) -> str:
     if "lift" in block:
         lift = block["lift"]
         parts.append(
-            f"Lift is {pair(lift, '.2f')} (size-matched {number_text(lift['size_matched_with'], '.2f')} against "
-            f"{number_text(lift['size_matched_without'], '.2f')}), each held-out Exporter scaled by its own Market Reach."
+            f"Lift is {pair(lift, '.2f')} (size-matched {number_text(lift['size_matched']['with'], '.2f')} against "
+            f"{number_text(lift['size_matched']['without'], '.2f')}), each held-out Exporter scaled by its own Market Reach."
         )
     if "uk_pair_coverage" in block:
         parts.append(
