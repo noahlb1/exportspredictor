@@ -15,7 +15,9 @@ the row's own Flow left out, as the model's supply and demand features are):
   Lower is better.
 - **Spearman rank correlation within each Product**, averaged over Products: how well
   the ranking of Flows within a Product matches reality. Higher is better. This is how
-  Advisors use the model (Markets ranked for one Product), so it is the headline.
+  Advisors use the model (Markets ranked for one Product), so it is the headline. It is
+  the Selection Measure (`selection_measure`): ties in a prediction are broken by a stable
+  hash, so tied predictions cannot raise it.
 
 Two scopes are evaluated:
 
@@ -23,6 +25,9 @@ Two scopes are evaluated:
   zero cells). UK rows are scored out-of-fold; other rows by the mean of the fold models.
 - `uk_out_of_fold`: the UK's full Product × Market grid of the test year, each pair scored
   by the fold model that held it out (ADR 0001).
+
+Beside the headline, `large_markets` gives the same measure on the UK's 30 and 60 largest
+importing Markets (`large_markets`); nothing is chosen on it.
 
 Each is broken down by Sector (HS2 chapter) and by the Importer's region, weakest first.
 Excluded Products are never measured (ADR 0005), and each scope is also split by
@@ -49,8 +54,8 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor import artefacts as store
-from exportspredictor import baci
-from exportspredictor.conformal import coverage_text
+from exportspredictor import baci, ledger, market_reach
+from exportspredictor.conformal import COVERAGE, COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import (
@@ -62,6 +67,12 @@ from exportspredictor.features import (
 )
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, train_fold_models
 from exportspredictor.gap_period import baseline_year_scores
+from exportspredictor.gravity import GDP_GAPS
+from exportspredictor.large_markets import (
+    LARGE_MARKET_COUNTS,
+    large_markets_report,
+    restricted_measures,
+)
 from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.prediction import (
     MIN_PREDICTION_USD,
@@ -69,13 +80,20 @@ from exportspredictor.prediction import (
     ModelForm,
     export_potential,
 )
+from exportspredictor.selection_measure import (
+    MIN_RANKED_ROWS,
+    legacy_selection_measure,
+    selection_measure,
+    with_tie_key,
+    within_product_correlations,
+)
 from exportspredictor.tariffs import LAST_TRAINS_YEAR
 from exportspredictor.training import Chunk, scan_chunks
 from exportspredictor.wording import number_text, rate_text
 
 TWEEDIE_POWER = 1.5
-# A Product (or Product within a group) needs this many rows for its rank correlation.
-MIN_RANKED_ROWS = 3
+# A row of every Exporter is one Product, Exporter and Importer: the tie key hashes all three.
+_ROW_MARKET = ("exporter", "importer")
 STABILITY_TOP_N = 1000
 TEST_MODELS_FILE = "test_models.json"
 METRICS = ["tweedie_deviance", "rmse_log", "spearman_within_product"]
@@ -205,6 +223,13 @@ LIMITATIONS = [
         "sanctions can still show a large Export Gap: Russia ranks high for UK whisky because the model sees "
         "its fundamentals, not the sanctions in force since 2022. Check such Markets before acting on them.",
     },
+    {
+        "title": "No GDP for some small Markets",
+        "text": "GDP comes from the World Bank, the IMF and CEPII, and for small territories they miss from UN, "
+        "Statistics Netherlands and CIA World Factbook figures. No source gives one for "
+        + ", ".join(sorted(GDP_GAPS.values()))
+        + ", so the model reads their size from their trade alone, and their Export Potential is less reliable.",
+    },
 ]
 
 
@@ -217,8 +242,40 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
     return [
         *result_limitations(artefacts.metadata, report),
         *range_limitations(artefacts.potential_range_bands),
+        *size_coverage_limitations(report.get("potential_range")),
+        *uk_pair_coverage_limitations(artefacts.metadata, report.get("potential_range")),
         *LIMITATIONS,
     ]
+
+
+# UK-pair coverage further than this below the Potential Range's target is a known limitation (spec #113 story 13).
+UK_PAIR_COVERAGE_TOLERANCE = 0.05
+
+
+def uk_pair_coverage_limitations(metadata: dict, potential_range: dict | None) -> list[dict]:
+    """When fewer UK pairs than the target, less `UK_PAIR_COVERAGE_TOLERANCE`, have their Gap Period Actual Exports inside
+    their Potential Range. Read from the report's `uk_pair_coverage`, or, for a version upgraded by `rereach`, its
+    metadata's `market_reach_pair_coverage`; none for a version that records neither."""
+    found = (potential_range or {}).get("uk_pair_coverage")
+    saved = metadata.get("market_reach_pair_coverage")
+    if found:
+        coverage, without = found["with_market_reach"], found["without_market_reach"]
+    elif saved:
+        coverage, without = saved["after"], saved["before"]
+    else:
+        return []
+    target = (potential_range or {}).get("target", COVERAGE)
+    if coverage is None or round(target - coverage, 9) <= UK_PAIR_COVERAGE_TOLERANCE:
+        return []
+    return [{
+        "title": "The Potential Range holds fewer UK pairs than its target",
+        "text": f"Only {coverage:.1%} of UK pairs have their Gap Period Actual Exports inside their Potential Range"
+        + ("" if without is None else f" ({without:.1%} without Market Reach)")
+        + f", against a target of {target:.0%}. The range is "
+        "calibrated on other Exporters' pairs (ADR 0007), and Market Reach moves UK Export Potential by a Market-wide "
+        "factor those pairs do not take (ADR 0010), so for UK pairs the range understates how far Actual Exports "
+        "vary around Export Potential.",
+    }]
 
 
 def result_limitations(metadata: dict, report: dict) -> list[dict]:
@@ -238,7 +295,9 @@ def result_limitations(metadata: dict, report: dict) -> list[dict]:
             "first, and treat dollar values with more caution than rankings."
             if blend else "Its value is mostly in the size of Export Potential, not its order."
         )
-        limits.append({"title": "Only slightly better than a naive ranking for UK pairs",
+        narrow = headline["model"] - headline["naive"] < NARROW_MARGIN  # as the headline words the margin
+        limits.append({"title": "Only slightly better than a naive ranking for UK pairs" if narrow
+                       else "Ranks Markets better than it sizes them",
                        "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
                        f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share times "
                        f"each Market's imports. {trade_off}"})
@@ -265,8 +324,12 @@ def result_limitations(metadata: dict, report: dict) -> list[dict]:
 
 
 def range_limitations(bands: pl.DataFrame) -> list[dict]:
-    """The Potential Range's offsets are dollars per band, so the top band gives every large pair one width."""
-    if bands.is_empty():
+    """For a version whose offsets are dollars per band, the top band gives every large pair one width.
+
+    Versions since the log-scale amendment of ADR 0007 store log offsets (`low_offset_log`), whose
+    range scales with Export Potential, and have no such limitation.
+    """
+    if bands.is_empty() or "low_offset_usd" not in bands.columns:
         return []
     top = bands.sort("min_export_potential_usd").row(-1, named=True)
     width = top["high_offset_usd"] - top["low_offset_usd"]
@@ -278,6 +341,37 @@ def range_limitations(bands: pl.DataFrame) -> list[dict]:
         f"it is an Uncertain Opportunity only when its Export Gap is under the band's lower offset, "
         f"{format_usd(-top['low_offset_usd'])}: for a large pair that means \"a small gap for its size\", not that "
         f"the model is unsure of it. A relative (log-scale) range is a candidate for a later version.",
+    }]
+
+
+def size_coverage_limitations(potential_range: dict | None) -> list[dict]:
+    """A size of Export Potential whose held-out Potential Range coverage (`conformal.coverage_report`'s
+    `by_size`) is more than `COVERAGE_TOLERANCE` from the target: the range is too narrow or too wide
+    for pairs of that size. Groups with no held-out rows, and versions without the breakdown, show none.
+    """
+    if not potential_range or not potential_range.get("by_size"):
+        return []
+    target = potential_range.get("target", 0.8)
+    missed = [row for row in potential_range["by_size"]
+              if row["coverage"] is not None and round(abs(row["coverage"] - target), 9) > COVERAGE_TOLERANCE]
+    if not missed:
+        return []
+
+    def listed(rows: list[dict]) -> str:
+        return ", ".join(f"{row['size']} ({row['coverage']:.0%} inside it)" for row in rows)
+
+    narrow = [row for row in missed if row["coverage"] < target]
+    wide = [row for row in missed if row["coverage"] > target]
+    parts = [
+        *([f"too narrow, so it understates their variation, for pairs with Export Potential {listed(narrow)}"]
+          if narrow else []),
+        *([f"too wide, so it overstates their variation, for pairs with Export Potential {listed(wide)}"]
+          if wide else []),
+    ]
+    return [{
+        "title": "The Potential Range misses its target for some sizes of pair",
+        "text": f"On a held-out half of the calibration rows, the range is {'; and '.join(parts)}. The target is "
+        f"{target:.0%} of Actual Exports inside the range, give or take {COVERAGE_TOLERANCE * 100:.0f} points.",
     }]
 
 
@@ -433,21 +527,16 @@ def _metrics(frame: pl.DataFrame, group: str) -> pl.DataFrame:
         **{f"{name}_rmse_log": _rmse_log(col) for name, col in _PREDICTORS.items()},
     )
     within = (
-        frame.group_by(group, "hs6")
-        .agg(
-            _n=pl.len(),
-            **{name: pl.corr(col, "value_usd", method="spearman") for name, col in _PREDICTORS.items()},
-        )
-        .filter(pl.col("_n") >= MIN_RANKED_ROWS)
-        .group_by(group)
-        .agg(
-            ranked_products=pl.len(),
-            **{
-                f"{name}_spearman_within_product": pl.col(name).filter(pl.col(name).is_not_nan()).mean()
-                for name in _PREDICTORS
-            },
+        frame.group_by(group, "hs6").len().filter(pl.col("len") >= MIN_RANKED_ROWS).group_by(group).agg(
+            ranked_products=pl.len()
         )
     )
+    keyed = with_tie_key(frame, market=_ROW_MARKET)  # hashed once for both predictors
+    for name, col in _PREDICTORS.items():
+        rho = within_product_correlations(keyed, col, by=[group]).group_by(group).agg(
+            pl.col("rho").mean().alias(f"{name}_spearman_within_product")
+        )
+        within = within.join(rho, on=group, how="left")
     return (
         sums.join(within, on=group, how="left")
         .with_columns(pl.col("ranked_products").fill_null(0))
@@ -514,6 +603,21 @@ V2_REPORTED = {
     "tweedie_deviance_all_exporters": 355.5288087632071,
     "tweedie_deviance_uk": 568.5883343927953,
 }
+# The Blend's 2023 figures, from its evaluation report (artefact 20261118T185910Z, the ledger's third read), on the
+# old measure: the version served before spec #113. Its naive baseline came from every Exporter's Flows, as this
+# run's does, so it is not listed apart.
+BLEND_REPORTED = {
+    "version": "20261118T185910Z",
+    "uk_ranking": 0.555192379963398,
+    "lift": 4.993143365742925,
+    "size_matched_lift": 0.760532455406604,
+    "tweedie_deviance_all_exporters": 433.76459865636,
+    "tweedie_deviance_uk": 566.3460040913492,
+}
+# The configuration fingerprints of the earlier versions the ledger was seeded with (`docs/test-year-ledger.csv`):
+# re-scoring their saved scores (`rescore_saved`) is recorded against them (`ledger.record_rescore`).
+EARLIER_FINGERPRINTS = {"Blend": "f4d0be3058fd", "v2": "f7cdd149f731", "v1": "a77726cf17b0"}
+TIE_PROOF_MEASURE = "tie-proof"  # the measure earlier versions' saved scores are re-scored under
 NAIVE_THIS_RUN = "Naive Baseline, every Exporter's Flows (this run)"
 NAIVE_AS_REPORTED_FOR_V2 = "Naive Baseline as reported for v2 (training rows' Flows)"
 # The names reports saved before review2 used, and today's (GLOSSARY.md), for `relabelled`.
@@ -524,45 +628,190 @@ _SAVED_NAMES = {
 _SAVED_THIS_VERSION = "This version ("
 
 
-def version_name(form: str) -> str:
-    """This version's row in `earlier_versions`: the Blend (GLOSSARY.md) when it serves one, else the model alone."""
-    return "Blend" if form == "blend" else f"{_SAVED_THIS_VERSION}{form})"
+def model_form_label(model_form: Mapping | None) -> str:
+    """A saved Model Form (`ModelForm.to_dict`) in a few words: "Blend", "model alone", each "with Market Reach"
+    where it has one."""
+    form = (model_form or {}).get("form", "model alone")
+    name = "Blend" if form == "blend" else form
+    return f"{name} with Market Reach" if (model_form or {}).get("market_reach") else name
 
 
-def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED) -> dict:
-    """The test year's UK ranking, size-matched Lift and Tweedie deviance beside v2's and v1's.
+def version_name(model_form: Mapping | None) -> str:
+    """This version's row in `earlier_versions`: the Blend (GLOSSARY.md) when it serves one without Market Reach,
+    else this version named by its Model Form, so a new version is never confused with the earlier Blend."""
+    label = model_form_label(model_form)
+    return label if label == "Blend" else f"{_SAVED_THIS_VERSION}{label})"
 
-    `report` is this version's evaluation report; v1's UK ranking is the v1 comparison's (the same
-    test-year rows). `v2` holds v2's reported figures (`V2_REPORTED`), or None where they do not
-    apply (the fixture). Both naive figures are listed, each named by the Flows it was computed from.
-    Whether the model beats the naive baseline is judged against this run's naive baseline.
+
+def old_measure(scored_grid: pl.DataFrame) -> dict:
+    """The headline on the old measure (`legacy_selection_measure`, average ranks for ties) for the model and the
+    Naive Baseline: what v1, v2 and the Blend reported on the test year, so this version stands beside them.
+    `scored_grid` is the UK's scored grid of the test year; Excluded Products are left out. Nothing is chosen on it."""
+    rows = drop_excluded(scored_grid)
+    return {name: legacy_selection_measure(rows, column) for name, column in _PREDICTORS.items()}
+
+
+def rescore_saved(
+    scores: Mapping[str, pl.DataFrame], *, flows: pl.DataFrame | None = None, counts: Sequence[int] = LARGE_MARKET_COUNTS
+) -> dict[str, dict]:
+    """Earlier versions' saved test-year UK scores on both measures: name -> `uk_ranking` (the old measure, which
+    should match what the version reported) and `uk_ranking_tie_proof` (the Selection Measure). With `flows` (every
+    Exporter's Flows of the test year), also `large_markets`: the Selection Measure on the `counts` largest
+    importing Markets, as this version's `large_markets` block measures the headline.
+
+    Each table holds one row per UK Product and Market (`hs6`, `importer`, `value_usd`, `export_potential_usd`).
+    Nothing is trained, predicted or chosen. The caller records the re-score in the test-year ledger first
+    (`ledger.record_rescore` with `EARLIER_FINGERPRINTS` and `TIE_PROOF_MEASURE`, ADR 0009) and puts the result in
+    the report with `with_rescored_earlier_versions`.
+    """
+    out = {}
+    for name, table in scores.items():
+        # Ties are broken by the same key as this version's headline (`_ROW_MARKET`: the UK as Exporter).
+        rows = drop_excluded(table.with_columns(
+            pl.col("hs6").cast(pl.String), pl.col("importer").cast(pl.String), exporter=pl.lit(baci.UK)
+        ))
+        out[name] = {
+            "uk_ranking": legacy_selection_measure(rows, "export_potential_usd"),
+            "uk_ranking_tie_proof": selection_measure(rows, "export_potential_usd", market=_ROW_MARKET),
+        }
+        if flows is not None:
+            large = restricted_measures(
+                rows, flows, "export_potential_usd", counts=counts,
+                measure=lambda part, column: selection_measure(part, column, market=_ROW_MARKET),
+            )
+            out[name]["large_markets"] = [{"markets": n, "model": large[n]} for n in counts]
+    return out
+
+
+def with_rescored_earlier_versions(
+    report: dict, rescored: Mapping[str, Mapping], *, v2: dict | None = V2_REPORTED, blend: dict | None = BLEND_REPORTED
+) -> dict:
+    """`report` with earlier versions' re-scored figures (`rescore_saved`, keyed by row name: "Blend", "v2", "v1")
+    and its `earlier_versions` block laid out again with them. The given report is not changed."""
+    out = {**report, "rescored_earlier_versions": {name: dict(figures) for name, figures in rescored.items()}}
+    return {**out, "earlier_versions": earlier_versions(out, v2=v2, blend=blend)}
+
+
+def earlier_versions(report: dict, *, v2: dict | None = V2_REPORTED, blend: dict | None = BLEND_REPORTED) -> dict:
+    """The test year's UK ranking, size-matched Lift and Tweedie deviance beside the Blend's, v2's and v1's.
+
+    Every row's `uk_ranking` is the old measure (average ranks for ties), the one every earlier version
+    reported, and `uk_ranking_tie_proof` the Selection Measure, so the two are never mixed. This version
+    has both (`report["old_measure"]` and its headline). An earlier version's tie-proof figure comes from
+    re-scoring its saved scores (`report["rescored_earlier_versions"]`, see `with_rescored_earlier_versions`)
+    and is None until then. `blend` and `v2` hold their reported figures (`BLEND_REPORTED`, `V2_REPORTED`),
+    or None where they do not apply (the fixture); v1's comes from the v1 comparison (the same test-year
+    rows, old measure). Both naive figures are listed, each named by the Flows it was computed from. Whether
+    the model beats the naive baseline is judged on the headline (tie-proof) against this run's.
+
+    A report without `old_measure` was saved before the two measures were told apart: its headline was the
+    old measure, and its rows hold `uk_ranking` only.
     """
     head, year = report["headline"], report["test_year"]
     overall = {scope: report["accuracy"][scope]["overall"] for scope in ("all_exporters", "uk_out_of_fold")}
     lift = report.get("lift") or {}
-    form = (report.get("model_form") or {}).get("form", "model alone")
+    old = report.get("old_measure")
+    rescored = report.get("rescored_earlier_versions") or {}
+
+    def measures(name: str, reported: float | None, tie_proof: float | None = None) -> dict:
+        if old is None:
+            return {"uk_ranking": reported}
+        return {"uk_ranking": reported,
+                "uk_ranking_tie_proof": (rescored.get(name) or {}).get("uk_ranking_tie_proof", tie_proof)}
+
     rows = [{
-        "name": version_name(form),
-        "uk_ranking": head["model"],
+        "name": version_name(report.get("model_form")),
+        **measures("this version", head["model"] if old is None else old["model"], head["model"]),
         "lift": lift.get("lift"),
         "size_matched_lift": (lift.get("size_matched") or {}).get("lift"),
         "tweedie_deviance_all_exporters": overall["all_exporters"]["model_tweedie_deviance"],
         "tweedie_deviance_uk": overall["uk_out_of_fold"]["model_tweedie_deviance"],
     }]
-    naive = [{"name": NAIVE_THIS_RUN, "uk_ranking": head["naive"]}]
+    naive = [{"name": NAIVE_THIS_RUN,
+              **measures("this run's naive", head["naive"] if old is None else old["naive"], head["naive"])}]
+    for name, reported in (("Blend", blend), ("v2", v2)):
+        if reported is not None:
+            figures = {k: v for k, v in reported.items() if k != "naive"}
+            rows.append({"name": name, **figures, **measures(name, reported["uk_ranking"])})
     if v2 is not None:
-        rows.append({"name": "v2", **{k: v for k, v in v2.items() if k != "naive"}})
-        naive.append({"name": NAIVE_AS_REPORTED_FOR_V2, "uk_ranking": v2["naive"]})
+        naive.append({"name": NAIVE_AS_REPORTED_FOR_V2, **measures("v2's naive", v2["naive"])})
     v1 = (report.get("v1_comparison") or {}).get("primary", {}).get("v1")
     if v1 is not None:
-        rows.append({"name": "v1", "uk_ranking": v1})
+        rows.append({"name": "v1", **measures("v1", v1)})
     beats = head["model"] is not None and head["naive"] is not None and head["model"] > head["naive"]
     block = {"test_year": year, "rows": rows, "naive": naive, "beats_naive": beats}
-    return {**block, "text": _earlier_versions_text(block)}
+    return with_v1_lift({**block, "text": _earlier_versions_text(block)}, report.get("v1_comparison"))
+
+
+def with_v1_lift(block: dict | None, v1_comparison: Mapping | None) -> dict | None:
+    """An `earlier_versions` block whose v1 row has the Lift and size-matched Lift the v1 comparison measured for v1
+    (on the same test year). A block saved before v1's row carried them is filled when read; others are unchanged."""
+    lifts = {m["metric"]: m.get("v1") for m in (v1_comparison or {}).get("secondary", [])
+             if m.get("metric") in ("lift", "size_matched_lift")}
+    if block is None or not lifts:
+        return block
+    rows = [{**row, **{k: v for k, v in lifts.items() if row.get(k) is None}} if row["name"] == "v1" else row
+            for row in block["rows"]]
+    return {**block, "rows": rows}
+
+
+def large_markets_beside_earlier(report: Mapping) -> list[dict] | None:
+    """The tie-proof UK ranking on the largest importing Markets, this version beside the earlier versions re-scored
+    from their saved scores (`rescore_saved` with Flows) and this run's Naive Baseline: one row per version, `name`,
+    `markets` (count of Markets -> figure, None where not measured) and `columns` (the same figures by their column
+    label, `large_markets_label`, for every table that shows them). None when the report has no `large_markets`."""
+    large = report.get("large_markets")
+    if not large:
+        return None
+    this = {row["markets"]: row["model"] for row in large["rows"]}
+    naive = {row["markets"]: row.get("naive") for row in large["rows"]}
+    rows = [(version_name(report.get("model_form")), this)]
+    rescored = report.get("rescored_earlier_versions") or {}
+    order = [name for name in EARLIER_FINGERPRINTS if name in rescored] + [n for n in rescored if n not in EARLIER_FINGERPRINTS]
+    for name, figures in ((name, rescored[name]) for name in order):  # newest first, as `earlier_versions` lists them
+        measured = {row["markets"]: row["model"] for row in figures.get("large_markets") or []}
+        rows.append((name, {n: measured.get(n) for n in this}))
+    return [
+        {"name": name, "markets": markets, "columns": {large_markets_label(n): v for n, v in markets.items()}}
+        for name, markets in [*rows, (NAIVE_THIS_RUN, naive)]
+    ]
+
+
+def large_markets_label(markets: int) -> str:
+    """The column label of the measure on the `markets` largest importing Markets."""
+    return f"{markets} largest Markets"
 
 
 def _earlier_versions_text(block: dict) -> str:
-    """The `earlier_versions` sentence, worded from the block's rows."""
+    """The `earlier_versions` sentence, worded from the block's rows: on both measures where it holds them."""
+    this, *others = block["rows"]
+    if "uk_ranking_tie_proof" not in this:
+        return _saved_earlier_versions_text(block)
+    naive = {row["name"]: row for row in block["naive"]}
+    verdict = "beats the Naive Baseline" if block["beats_naive"] else "does not beat the Naive Baseline"
+    reported = naive.get(NAIVE_AS_REPORTED_FOR_V2)
+    this_run = naive[NAIVE_THIS_RUN]
+
+    def figure(value: float | None) -> str:
+        return "not yet re-scored" if value is None else f"{value:.3f}"
+
+    old = ", ".join(f"{row['name']} {figure(row['uk_ranking'])}" for row in others)
+    tie_proof = ", ".join(f"{row['name']} {figure(row['uk_ranking_tie_proof'])}" for row in others)
+    return (
+        f"On {block['test_year']}, read once, the UK ranking of this version is {figure(this['uk_ranking_tie_proof'])} "
+        f"on the tie-proof Selection Measure and {figure(this['uk_ranking'])} on the old measure (where tied "
+        f"predictions share their average rank): it {verdict} ({figure(this_run['uk_ranking_tie_proof'])} tie-proof "
+        f"and {figure(this_run['uk_ranking'])} old, from every Exporter's Flows"
+        + (f"; {reported['uk_ranking']:.3f} old, as reported for v2" if reported is not None else "")
+        + ")."
+        + (f" Earlier versions on the old measure: {old}; on the tie-proof measure, from their saved scores: "
+           f"{tie_proof}." if others else "")
+        + " These are associations on one test year, not a forecast."
+    )
+
+
+def _saved_earlier_versions_text(block: dict) -> str:
+    """The sentence of a block saved before the two measures were told apart (one figure per row)."""
     this, *others = block["rows"]
     naive = {row["name"]: row["uk_ranking"] for row in block["naive"]}
     verdict = "beats the Naive Baseline" if block["beats_naive"] else "does not beat the Naive Baseline"
@@ -581,57 +830,59 @@ def _earlier_versions_text(block: dict) -> str:
 def relabelled(report: dict) -> dict:
     """A saved evaluation report with today's names (the Blend, the Naive Baseline; GLOSSARY.md) in its
     headline and `earlier_versions` block, worded again from their saved figures. Nothing is recomputed, keys keep their
-    names and the saved report is not changed. `comparison.relabelled` also rewords the v1 comparison."""
+    names and the saved report is not changed. v1's row takes the Lift its saved comparison holds (`with_v1_lift`).
+    `comparison.relabelled` also rewords the v1 comparison."""
     saved = report.get("headline")
     if saved and saved.get("model") is not None and report.get("test_year") is not None:
         worded = headline({f"model_{HEADLINE_METRIC}": saved["model"], f"naive_{HEADLINE_METRIC}": saved["naive"]},
                           report["test_year"])
         report = {**report, "headline": {**saved, "text": worded["text"]}}
+    report = _with_nested_size_matched_lift(report)
     block = report.get("earlier_versions")
     if not block:
         return report
-    form = (report.get("model_form") or {}).get("form", "model alone")
     this, *others = block["rows"]
     if this["name"].startswith(_SAVED_THIS_VERSION):
-        this = {**this, "name": version_name(form)}
+        this = {**this, "name": version_name(report.get("model_form"))}
     naive = [{**row, "name": _SAVED_NAMES.get(row["name"], row["name"])} for row in block["naive"]]
     block = {**block, "rows": [this, *others], "naive": naive}
+    block = with_v1_lift(block, report.get("v1_comparison"))
     return {**report, "earlier_versions": {**block, "text": _earlier_versions_text(block)}}
+
+
+def _with_nested_size_matched_lift(report: dict) -> dict:
+    """`market_reach_effect` with Lift's size-matched pair nested (`size_matched`: with, without), as reports saved
+    before it was (version 20261120T221726Z: `size_matched_with`, `size_matched_without`) are read."""
+    effect = report.get("market_reach_effect")
+    lift = (effect or {}).get("lift") or {}
+    if "size_matched_with" not in lift:
+        return report
+    nested = {"with": lift["with"], "without": lift["without"],
+              "size_matched": {"with": lift["size_matched_with"], "without": lift["size_matched_without"]}}
+    return {**report, "market_reach_effect": {**effect, "lift": nested}}
 
 
 def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STABILITY_TOP_N) -> dict:
     """How much UK rankings move between two years scored by the same models.
 
     Both tables hold hs6, iso3, export_potential_usd and export_gap_usd. Reports the mean
-    within-Product Spearman correlation of Export Potential and of Export Gap between the
-    years, and the share of the top `top_n` Opportunities (by Export Gap) shared by both.
+    within-Product rank correlation of Export Potential and of Export Gap between the years
+    (the Selection Measure's, ties in this year's figures broken by the tie key), and the share of the top `top_n` Opportunities (by Export Gap) shared by both.
     """
     columns = ["hs6", "iso3", "export_potential_usd", "export_gap_usd"]
     joined = current.select(columns).join(previous.select(columns), on=["hs6", "iso3"], suffix="_prev")
-    within = (
-        joined.group_by("hs6")
-        .agg(
-            _n=pl.len(),
-            potential=pl.corr("export_potential_usd", "export_potential_usd_prev", method="spearman"),
-            gap=pl.corr("export_gap_usd", "export_gap_usd_prev", method="spearman"),
-        )
-        .filter(pl.col("_n") >= MIN_RANKED_ROWS)
-    )
     n = max(1, min(top_n, joined.height))
     top_now = set(joined.top_k(n, by="export_gap_usd").select("hs6", "iso3").iter_rows())
     top_before = set(joined.top_k(n, by="export_gap_usd_prev").select("hs6", "iso3").iter_rows())
     return {
         "pairs": joined.height,
-        "spearman_potential": _mean_finite(within["potential"]),
-        "spearman_gap": _mean_finite(within["gap"]),
+        "spearman_potential": selection_measure(
+            joined, "export_potential_usd", target="export_potential_usd_prev", market="iso3"
+        ),
+        "spearman_gap": selection_measure(joined, "export_gap_usd", target="export_gap_usd_prev", market="iso3"),
         "top_n": n,
         "top_overlap": len(top_now & top_before) / n,
     }
-
-
-def _mean_finite(values: pl.Series) -> float | None:
-    finite = values.drop_nulls().filter(values.drop_nulls().is_not_nan())
-    return float(finite.mean()) if finite.len() else None
 
 
 # --- Test-year models and scoring -------------------------------------------------------
@@ -758,6 +1009,7 @@ def evaluate(
     settings: dict,
     flows: pl.DataFrame | None = None,
     form: ModelForm = MODEL_ALONE,
+    reach_source: pl.DataFrame | None = None,
 ) -> dict:
     """The evaluation report for the test year.
 
@@ -767,7 +1019,10 @@ def evaluate(
     `baseline_transform` the models that scored them, used for the stability check. `settings` (validation year, params, sampling rates, ...)
     is recorded in the report. `flows` are the test year's Flows the naive baseline is computed
     from (default: the non-zero Flows among `test_rows`); `form` is the model form the test-year
-    models are scored in (a blend takes that naive baseline).
+    models are scored in (a blend takes that naive baseline). A form with Market Reach is fitted
+    again for the test year (ADR 0010): its table from `reach_source`, the UK grid of the year
+    before the test year, and its rescale constant on `test_grid`, for the test-year models and,
+    for the stability check, for the Baseline models.
     """
     year = test_models.test_year
     if set(test_rows["year"].unique().to_list()) != {year} or set(test_grid["year"].unique().to_list()) != {year}:
@@ -779,15 +1034,34 @@ def evaluate(
         flows = test_rows.filter(pl.col("value_usd") > 0)
     flows = flows.select("exporter", "importer", "hs6", "value_usd")
     test_rows, test_grid = naive_potential(test_rows, flows), naive_potential(test_grid, flows)
+    previous_form = form
+    if form.market_reach is not None:
+        if reach_source is None:
+            raise ValueError("A Model Form with Market Reach needs the UK grid of the year before the test year")
+        beta = form.market_reach.beta
+        fitted = {
+            name: market_reach.fit(
+                form, models, transform.apply(test_grid), reach_source, scored_year=year, uk=uk, beta=beta
+            )
+            for name, models, transform in (
+                ("test", test_models.models, test_models.transform),
+                ("previous", baseline_models, baseline_transform),
+            )
+        }
+        form, previous_form = fitted["test"], fitted["previous"]
     scored_rows = score_rows(test_rows, test_models.models, test_models.transform, uk, form=form)
     scored_grid = score_rows(test_grid, test_models.models, test_models.transform, uk, form=form)
+    without = {}
+    if form.market_reach is not None:  # the kept change's effect on the ranking (`market_reach_effect`)
+        plain = score_rows(test_grid, test_models.models, test_models.transform, uk, form=form.without_market_reach())
+        without["without_market_reach"] = _ranking_figures(drop_excluded(plain), flows, year)
     accuracy_by_scope = {
         "all_exporters": accuracy(scored_rows, markets),
         "uk_out_of_fold": accuracy(scored_grid, markets),
     }
 
     previous = _uk_table(
-        score_out_of_fold(baseline_transform.apply(test_grid), list(baseline_models), uk=uk, form=form)
+        score_out_of_fold(baseline_transform.apply(test_grid), list(baseline_models), uk=uk, form=previous_form)
     )
     baseline_year = year + 1
     stable = stability(baseline, previous)
@@ -806,9 +1080,88 @@ def evaluate(
         "of that Product, each leaving the Flow itself out.",
         "accuracy": accuracy_by_scope,
         "headline": headline(accuracy_by_scope[HEADLINE_SCOPE]["overall"], year),
+        # The same on the old measure, for continuity with v1, v2 and the Blend (`earlier_versions`); nothing is chosen on it.
+        "old_measure": old_measure(scored_grid),
+        "large_markets": large_markets_report(drop_excluded(scored_grid), flows, year, predictors=_PREDICTORS),
         "tariff_split_text": tariff_split_text(accuracy_by_scope, year),
         "stability": stable,
+        **without,
     }
+
+
+def _ranking_figures(scored_grid: pl.DataFrame, flows: pl.DataFrame, year: int) -> dict:
+    """The model's headline (tie-proof), old-measure and large-Market figures on a scored UK grid of the test year."""
+    column = _PREDICTORS["model"]
+    large = large_markets_report(scored_grid, flows, year, predictors={"model": column, "naive": _PREDICTORS["naive"]})
+    return {
+        "headline_model": selection_measure(scored_grid, column, market=_ROW_MARKET),
+        "old_measure_model": legacy_selection_measure(scored_grid, column),
+        "large_markets": [{"markets": row["markets"], "model": row["model"]} for row in large["rows"]],
+    }
+
+
+# Why the Scenario Effect comparisons measure the model without Market Reach (ADR 0010).
+SCENARIO_EFFECTS_UNCHANGED = (
+    "Market Reach leaves Scenario Effects unchanged: it scales a pair's Export Potential with and without a Scenario "
+    "alike, so the Event Backtests and the PPML benchmark compare the model's Scenario Effects without it (ADR 0010)."
+)
+
+
+def market_reach_effect(report: dict) -> dict | None:
+    """What Market Reach, the change this version keeps (ADR 0010), does to the test-year figures: the served form
+    beside the same models without it, on the headline (tie-proof and old measure), the large-Market measures, Lift
+    (`lift` against `lift_without_market_reach`) and the Potential Range's coverage of UK pairs; Scenario Effects are
+    unchanged by it (`SCENARIO_EFFECTS_UNCHANGED`). None for a version without Market Reach."""
+    without = report.get("without_market_reach")
+    if without is None:
+        return None
+    large = {row["markets"]: row["model"] for row in (report.get("large_markets") or {}).get("rows", [])}
+    block: dict = {
+        "selection_measure": {"with": report["headline"]["model"], "without": without["headline_model"]},
+        "old_measure": {"with": (report.get("old_measure") or {}).get("model"), "without": without["old_measure_model"]},
+        "large_markets": [
+            {"markets": row["markets"], "with": large.get(row["markets"]), "without": row["model"]}
+            for row in without["large_markets"]
+        ],
+    }
+    lift, plain = report.get("lift"), report.get("lift_without_market_reach")
+    if lift and plain:
+        block["lift"] = {
+            "with": lift["lift"], "without": plain["lift"],
+            "size_matched": {"with": lift["size_matched"]["lift"], "without": plain["size_matched"]["lift"]},
+        }
+    coverage = (report.get("potential_range") or {}).get("uk_pair_coverage")
+    if coverage:
+        block["uk_pair_coverage"] = {"with": coverage["with_market_reach"], "without": coverage["without_market_reach"]}
+    block["scenario_effects"] = SCENARIO_EFFECTS_UNCHANGED
+    return {**block, "text": market_reach_effect_text(block, report["test_year"])}
+
+
+def market_reach_effect_text(block: dict, test_year: int) -> str:
+    """The `market_reach_effect` sentences, worded from its figures."""
+
+    def pair(figures: dict, fmt: str = ".3f") -> str:
+        return f"{number_text(figures['with'], fmt)} with it against {number_text(figures['without'], fmt)} without"
+
+    large = "; ".join(f"on the {row['markets']} largest Markets {pair(row)}" for row in block["large_markets"])
+    parts = [
+        f"Market Reach is the change this version keeps (ADR 0010). On {test_year}, the UK ranking is "
+        f"{pair(block['selection_measure'])} on the tie-proof Selection Measure ({pair(block['old_measure'])} on the "
+        f"old measure)" + (f"; {large}" if large else "") + ".",
+    ]
+    if "lift" in block:
+        lift = block["lift"]
+        parts.append(
+            f"Lift is {pair(lift, '.2f')} (size-matched {number_text(lift['size_matched']['with'], '.2f')} against "
+            f"{number_text(lift['size_matched']['without'], '.2f')}), each held-out Exporter scaled by its own Market Reach."
+        )
+    if "uk_pair_coverage" in block:
+        parts.append(
+            f"The Potential Range holds {pair(block['uk_pair_coverage'], '.0%')} of UK pairs' Gap Period Actual Exports."
+        )
+    parts.append(block["scenario_effects"])
+    parts.append("These are associations on one test year, not a forecast.")
+    return " ".join(parts)
 
 
 def _stability_text(result: dict, year: int, baseline_year: int) -> str:
@@ -841,10 +1194,12 @@ def report_settings(metadata: dict) -> dict:
 
 
 def test_models_dir(root: Path, metadata: dict) -> Path:
-    """Where real test-year models are cached under the data root, keyed by their training settings."""
+    """Where real test-year models are cached under the data root, keyed by their training settings and feature set."""
     from exportspredictor.features import features_dir
 
     settings = {**report_settings(metadata), "model_params": metadata["model_params"], "test_year": metadata["baseline_year"] - 1}
+    if metadata.get("feature_set"):  # trained on another feature set's files; the original set keeps its keys
+        settings["feature_set"] = metadata["feature_set"]
     key = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()[:12]
     return features_dir(root).parent / "test_models" / f"{settings['test_year']}_{key}"
 
@@ -895,6 +1250,7 @@ def evaluate_real(artefacts, test_models: TestModels, root: Path | None = None) 
         settings=report_settings(artefacts.metadata),
         flows=load_year_flows(year, load_sources(root)[1], root),
         form=artefacts.model_form,
+        reach_source=pl.read_parquet(folder / f"uk_grid_{year - market_reach.LAG_YEARS}.parquet"),
     )
 
 
@@ -913,22 +1269,38 @@ def markets_with_income(markets: pl.DataFrame, root: Path | None = None) -> pl.D
     return markets.join(income, on="iso3", how="left")
 
 
-def add_to_latest(root: Path | None = None, artefacts_root: Path | None = None, *, device: str = "cuda") -> Path:
+def add_to_latest(
+    root: Path | None = None,
+    artefacts_root: Path | None = None,
+    *,
+    device: str = "cuda",
+    test_year_ledger: ledger.Ledger | None,
+) -> Path:
     """Evaluate the newest artefact and save it again, with the report, as a new version.
 
     The Baseline models and tables are copied unchanged; only the test-year models are
-    trained (or read from the cache). Returns the new folder.
+    trained (or read from the cache). Returns the new folder. The read is recorded in
+    `test_year_ledger` first and refused if the newest version's configuration was read before
+    (ADR 0009); `None` only on synthetic data.
     """
     artefacts_root = Path(artefacts_root or artefacts_dir())
     source = store.latest_folder(artefacts_root)
     bundle = store.load(source)
+    metadata = {**bundle.metadata, "version": store.new_version(), "copied_from": bundle.version}
+    if test_year_ledger is not None:
+        ledger.record_read(test_year_ledger, metadata, read="test-year evaluation")
     started = time.perf_counter()
     test_models = real_test_models(bundle, root, device=device)
     report = evaluate_real(bundle, test_models, root)
     report["evaluation_seconds"] = round(time.perf_counter() - started, 2)
-    metadata = {**bundle.metadata, "version": store.new_version(), "copied_from": bundle.version}
-    return store.copy_version(source, artefacts_root, metadata=metadata, evaluation=report)
+    folder = store.copy_version(source, artefacts_root, metadata=metadata, evaluation=report)
+    if test_year_ledger is not None:  # the figures are saved: the read is completed (ADR 0009)
+        ledger.complete_read(test_year_ledger, ledger.fingerprint(metadata))
+    return folder
 
 
 if __name__ == "__main__":
-    print(add_to_latest(), flush=True)
+    import sys
+
+    command = ledger.Ledger.for_command("python -m exportspredictor.evaluation", sys.argv[1:])
+    print(add_to_latest(test_year_ledger=command), flush=True)

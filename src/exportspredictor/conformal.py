@@ -10,9 +10,14 @@ Market), as UK pairs are.
 
 Calibration is Mondrian: rows are split into `N_BANDS` equal-count bands of Export
 Potential, because Tweedie errors grow with the prediction, and a band with fewer than
-`MIN_BAND_ROWS` rows merges with its smaller neighbour (`fit_bands`). Each band's 10th and
-90th percentiles of signed residuals are its offsets; sampled Zero Cells count by their
-weight. The range is the offsets around Export Potential, clipped at $0 (`potential_range`).
+`MIN_BAND_ROWS` rows merges with its smaller neighbour (`fit_bands`). A band spanning more
+than tenfold is split at $10m, $100m and $1bn where each part keeps the minimum rows, so a
+large pair is calibrated on pairs of similar size. Residuals are on the
+log scale, log(1 + Actual Exports) − log(1 + Export Potential), so the range is a ratio of
+Export Potential, not a fixed number of dollars: dollar offsets gave every pair in the top
+band, from about $2m to over $1bn, the same width (ADR 0007, amended). Each band's 10th and
+90th percentiles of signed log residuals are its offsets; sampled Zero Cells count by their
+weight. The range is exp(log(1 + Export Potential) + offset) − 1, clipped at $0 (`potential_range`).
 For a UK pair they go around the Gap Period mean Export Potential, and an Opportunity
 whose Gap Period mean Actual Exports lie inside its range is an Uncertain Opportunity
 (`with_potential_range`).
@@ -49,7 +54,7 @@ def score_calibration(
 
     `rows` is a feature table from `features.training_rows` (untransformed). UK rows are
     dropped. Returns exporter, hs6, iso3 (strings), weight, fold, actual_exports_usd,
-    export_potential_usd and residual_usd (Actual Exports minus Export Potential).
+    export_potential_usd and residual_log (`log_residual`).
     """
     calibration = (
         transform.apply(rows.filter(pl.col("exporter").cast(pl.String) != uk))
@@ -69,7 +74,12 @@ def score_calibration(
         "fold",
         actual_exports_usd="value_usd",
         export_potential_usd=export_potential(calibration, models, form=form),
-    ).with_columns(residual_usd=pl.col("actual_exports_usd") - pl.col("export_potential_usd"))
+    ).with_columns(residual_log=log_residual(pl.col("actual_exports_usd"), pl.col("export_potential_usd")))
+
+
+def log_residual(actual: pl.Expr, potential: pl.Expr) -> pl.Expr:
+    """log(1 + Actual Exports) − log(1 + Export Potential): a ratio, so a band's offsets scale with the pair."""
+    return actual.log1p() - potential.log1p()
 
 
 def potential_range_text(low_usd: float, high_usd: float, actual_exports_usd: float, *, uncertain: bool) -> str:
@@ -92,16 +102,26 @@ N_BANDS = 20
 MIN_BAND_ROWS = 1000  # a parameter: the fixture world has far fewer calibration rows
 LOW_QUANTILE, HIGH_QUANTILE = 0.1, 0.9  # an 80% Potential Range
 COVERAGE = HIGH_QUANTILE - LOW_QUANTILE
+SCALE = "log"  # residuals and offsets are log(1 + dollars); earlier versions recorded none and used dollars
+# A band spanning more than tenfold in Export Potential is split at these edges (ADR 0007, amended),
+# so a $1bn pair is calibrated on large pairs, not on the $2m pairs at the bottom of the top band.
+MAX_BAND_SPAN = 10.0
+SPLIT_EDGES_USD = (1e7, 1e8, 1e9)
+# Held-out coverage is also reported by these sizes of Export Potential: (label, lower edge).
+SIZE_GROUPS = (("under $2m", 0.0), ("$2m–10m", 2e6), ("$10m–100m", 1e7), ("over $100m", 1e8))
+COVERAGE_TOLERANCE = 0.05  # a size group further than this from the target is a known limitation
 
 
 def fit_bands(scored: pl.DataFrame, *, n_bands: int = N_BANDS, min_rows: int = MIN_BAND_ROWS) -> pl.DataFrame:
     """The band offsets from scored calibration rows (`score_calibration`).
 
     Rows are sorted by Export Potential and cut into `n_bands` equal-count bands; while a
-    band holds fewer than `min_rows` rows it merges with its smaller neighbour. Returns one
+    band holds fewer than `min_rows` rows it merges with its smaller neighbour. A band whose
+    Export Potential spans more than tenfold is then split at $10m, $100m and $1bn, as long as
+    each part keeps `min_rows` rows (`_split`); a split band's lower edge is the split edge. Returns one
     row per band, by Export Potential: band, min_export_potential_usd (its lower edge; the
-    first band starts at $0), rows, low_offset_usd and high_offset_usd (the weighted 10th
-    and 90th percentiles of its residuals).
+    first band starts at $0), rows, low_offset_log and high_offset_log (the weighted 10th
+    and 90th percentiles of its log residuals, `log_residual`).
     """
     if scored.is_empty():
         raise ValueError("No calibration rows: the Potential Range needs other Exporters' Baseline-year rows")
@@ -122,20 +142,46 @@ def fit_bands(scored: pl.DataFrame, *, n_bands: int = N_BANDS, min_rows: int = M
             neighbour = smallest - 1 if sizes[smallest - 1] <= sizes[smallest + 1] else smallest + 1
         del starts[max(smallest, neighbour)]
     potential = rows["export_potential_usd"].to_numpy()
-    residual = rows["residual_usd"].to_numpy()
+    edges = {start: float(potential[start]) for start in starts[:-1]}
+    for start, end in pairwise(list(starts)):
+        edges |= _split(potential, start, end, min_rows)
+    starts = [*sorted(edges), n]
+    residual = rows["residual_log"].to_numpy()
     weight = rows["weight"].to_numpy()
     bands = []
     for b, (start, end) in enumerate(pairwise(starts)):
         low, high = _weighted_quantiles(residual[start:end], weight[start:end], (LOW_QUANTILE, HIGH_QUANTILE))
-        bands.append((b, 0.0 if b == 0 else float(potential[start]), end - start, low, high))
+        bands.append((b, 0.0 if b == 0 else edges[start], end - start, low, high))
     schema = {
         "band": pl.Int16,
         "min_export_potential_usd": pl.Float64,
         "rows": pl.Int64,
-        "low_offset_usd": pl.Float64,
-        "high_offset_usd": pl.Float64,
+        "low_offset_log": pl.Float64,
+        "high_offset_log": pl.Float64,
     }
     return pl.DataFrame(bands, schema=schema, orient="row")
+
+
+def _split(potential: np.ndarray, start: int, end: int, min_rows: int) -> dict[int, float]:
+    """Extra band starts, {row position: lower edge}, that split rows [start, end) at `SPLIT_EDGES_USD`.
+
+    Only a band whose Export Potential spans more than `MAX_BAND_SPAN` is split. A new band with
+    fewer than `min_rows` rows merges with the band above it; the topmost, with none above, merges
+    with the band below. `potential` is sorted.
+    """
+    if potential[end - 1] <= MAX_BAND_SPAN * potential[start]:
+        return {}
+    cuts = {int(np.searchsorted(potential, edge, side="left")): edge for edge in SPLIT_EDGES_USD}
+    cuts = {position: edge for position, edge in cuts.items() if start < position < end}
+    while cuts:
+        bounds = [start, *sorted(cuts), end]
+        sizes = np.diff(bounds)
+        small = next((i for i, size in enumerate(sizes) if size < min_rows), None)
+        if small is None:
+            break
+        # A band merging upwards loses its upper boundary; the topmost band loses its lower one.
+        del cuts[bounds[small + 1] if small < len(sizes) - 1 else bounds[small]]
+    return cuts
 
 
 def potential_range(
@@ -143,25 +189,30 @@ def potential_range(
 ) -> pl.DataFrame:
     """`table` with `band`, `potential_range_low_usd` and `potential_range_high_usd`.
 
-    Each row takes the offsets of the band its `potential` column falls in, added to that
-    Export Potential and clipped at $0. Row order is kept.
+    Each row takes the log offsets of the band its `potential` column falls in, applied to
+    log(1 + Export Potential) and turned back into dollars, clipped at $0. Row order is kept.
     """
-    edges = bands.select("band", "min_export_potential_usd", "low_offset_usd", "high_offset_usd")
+    edges = bands.select("band", "min_export_potential_usd", "low_offset_log", "high_offset_log")
     indexed = table.with_row_index("_row")
     banded = (
         indexed.select("_row", pl.col(potential).alias("_potential"))
         .sort("_potential")
         .join_asof(edges, left_on="_potential", right_on="min_export_potential_usd", strategy="backward")
         # Below the first edge ($0) only if negative; Tweedie predictions never are.
-        .with_columns(pl.col("band", "low_offset_usd", "high_offset_usd").fill_null(strategy="backward"))
+        .with_columns(pl.col("band", "low_offset_log", "high_offset_log").fill_null(strategy="backward"))
         .select(
             "_row",
             "band",
-            potential_range_low_usd=(pl.col("_potential") + pl.col("low_offset_usd")).clip(lower_bound=0.0),
-            potential_range_high_usd=(pl.col("_potential") + pl.col("high_offset_usd")).clip(lower_bound=0.0),
+            potential_range_low_usd=_shifted("low_offset_log"),
+            potential_range_high_usd=_shifted("high_offset_log"),
         )
     )
     return indexed.join(banded, on="_row", how="left").sort("_row").drop("_row")
+
+
+def _shifted(offset: str) -> pl.Expr:
+    """exp(log(1 + Export Potential) + offset) − 1, clipped at $0."""
+    return (pl.col("_potential").log1p() + pl.col(offset)).exp().sub(1.0).clip(lower_bound=0.0)
 
 
 def with_potential_range(baseline: pl.DataFrame, bands: pl.DataFrame) -> pl.DataFrame:
@@ -202,9 +253,10 @@ def coverage_report(
     The rows are halved by a hash of Exporter, Product and Market; bands are fitted on one
     half (with `min_rows` halved too, so the half keeps as many bands as the full set) and
     the share of the other half's rows whose Actual Exports fall inside their range is the
-    coverage, weighted as the bands are. Reported overall, per band and per Exporter, with
-    the `target` (80%). It checks the assumption that comparable pairs vary alike across
-    Exporters (ADR 0007).
+    coverage, weighted as the bands are. Reported overall, per band, per Exporter and by size of
+    Export Potential (`SIZE_GROUPS`; a group with no held-out rows has coverage None), with the
+    `target` (80%). It checks the assumption that comparable pairs vary alike across Exporters,
+    and that the range fits pairs of every size (ADR 0007).
     """
     keyed = scored.with_columns(_salt=pl.lit(_HALF_SALT)).rename({"fold": "_scoring_fold"})
     halves = assign_folds(keyed, 2, ("_salt", *EXPORTER_PAIR_KEYS)).rename({"fold": "_half", "_scoring_fold": "fold"})
@@ -220,7 +272,7 @@ def coverage_report(
         weight = rows["weight"].sum()
         return {
             "rows": rows.height,
-            "coverage": float((rows["covered"] * rows["weight"]).sum() / weight) if weight else float("nan"),
+            "coverage": float((rows["covered"] * rows["weight"]).sum() / weight) if weight else None,
         }
 
     return {
@@ -238,7 +290,21 @@ def coverage_report(
             {"exporter": exporter, **summary(checked.filter(pl.col("exporter") == exporter))}
             for exporter in sorted(checked["exporter"].unique())
         ],
+        "by_size": [
+            {"size": label, "min_export_potential_usd": edge, **summary(checked.filter(in_group))}
+            for (label, edge), in_group in zip(SIZE_GROUPS, _size_filters(), strict=True)
+        ],
     }
+
+
+def _size_filters() -> list[pl.Expr]:
+    """For each of `SIZE_GROUPS`, whether a row's Export Potential lies in it."""
+    potential = pl.col("export_potential_usd")
+    edges = [edge for _, edge in SIZE_GROUPS]
+    return [
+        (potential >= low) & (potential < high) if high is not None else potential >= low
+        for low, high in zip(edges, [*edges[1:], None], strict=True)
+    ]
 
 
 def _weighted_quantiles(values: np.ndarray, weights: np.ndarray, quantiles) -> list[float]:
@@ -252,13 +318,38 @@ def _weighted_quantiles(values: np.ndarray, weights: np.ndarray, quantiles) -> l
 def coverage_text(report: dict) -> str:
     """The Potential Range's held-out coverage and the share of Uncertain Opportunities, in one paragraph.
 
-    The Uncertain Opportunity is reported only as this share, never as a badge per row (ADR 0007).
+    The Uncertain Opportunity is reported only as this share, never as a badge per row (ADR 0007). A report with
+    `uk_pair_coverage` (built since spec #113's review) also says how many UK pairs' Actual Exports lie inside their
+    range, with Market Reach and without it.
     """
-    return (
+    text = (
         f"On a held-out half of the calibration rows ({report['held_out_rows']:,} other Exporters' rows), "
         f"{report['coverage']:.0%} of their Actual Exports fell inside their Potential Range, against a target of "
         f"{report['target']:.0%}. {report['uncertain_opportunities']:,} of the {report['opportunities']:,} "
         f"Opportunities ({report['uncertain_opportunity_share']:.0%}) have UK Actual Exports inside their "
         "Potential Range (Uncertain Opportunities): most Export Gaps are within the variation normally seen among "
-        "comparable pairs, so an Export Gap ranks a lead rather than proving one."
+        "comparable pairs, so an Export Gap says where to look rather than proving an Opportunity."
     )
+    uk = report.get("uk_pair_coverage")
+    if not uk or uk.get("with_market_reach") is None:
+        return text
+    without = uk.get("without_market_reach")
+    return text + (
+        f" Over every UK pair, {uk['with_market_reach']:.0%} of UK pairs have Gap Period Actual Exports inside their "
+        f"Potential Range" + ("" if without is None else f" ({without:.0%} without Market Reach)") + "."
+    )
+
+
+def pair_coverage(baseline: pl.DataFrame) -> float | None:
+    """The share of Baseline pairs whose Gap Period mean Actual Exports lie inside their Potential Range.
+
+    For UK pairs this is not the range's coverage (UK rows are never calibration rows, and a UK residual is its
+    Export Gap): it is a check that a change to UK Export Potential, such as Market Reach (ADR 0010), does not move
+    the range away from comparable UK-like pairs. None for an empty Baseline.
+    """
+    if baseline.is_empty():
+        return None
+    inside = (pl.col("actual_exports_usd") >= pl.col("potential_range_low_usd")) & (
+        pl.col("actual_exports_usd") <= pl.col("potential_range_high_usd")
+    )
+    return float(baseline.select(inside.mean()).item())

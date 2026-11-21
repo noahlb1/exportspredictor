@@ -1,5 +1,6 @@
 """Shared fixtures: one fixture world and one trained artefact bundle per test session."""
 
+import os
 import socket
 import threading
 import time
@@ -15,12 +16,23 @@ from streamlit.testing.v1 import AppTest
 from api.main import create_app
 from exportspredictor import artefacts as store
 from exportspredictor import baci, policy, tariffs
+from exportspredictor.features import FEATURE_SET_ENV
 from exportspredictor.fixture import build_world
-from exportspredictor.pipeline import Parts, build_artefacts
+from exportspredictor.pipeline import Parts, build_artefacts, fixture_rescore
 
 FIXTURE_VERSION = "fixture-test"
 TAIWAN_BACI = "S19"  # BACI's code for Taiwan ("Other Asia, nes")
 APP_ROUTER = Path(__file__).resolve().parents[1] / "app" / "Home.py"
+
+
+def pytest_configure(config):
+    """Run the suite on the original feature set, whatever the shell has selected.
+
+    A real build sets `EXPORTSPREDICTOR_FEATURE_SET` (e.g. `exporter_count`), and the fixture artefacts
+    refuse a set they weren't built on. Tests of a set select it themselves (`monkeypatch.setenv`, or
+    `feature_set_name=`). Cleared here, before any session fixture builds.
+    """
+    os.environ.pop(FEATURE_SET_ENV, None)
 
 
 def run_page(page: str | None = None, *, query: dict[str, str] | None = None) -> AppTest:
@@ -56,7 +68,9 @@ def fixture_world():
 
 @pytest.fixture(scope="session")
 def fixture_artefacts(fixture_world):
-    return build_artefacts(fixture_world, version=FIXTURE_VERSION, parts=Parts.every())
+    return build_artefacts(
+        fixture_world, version=FIXTURE_VERSION, parts=Parts.every(), rescore=fixture_rescore(fixture_world)
+    )
 
 
 @pytest.fixture(scope="session")
@@ -86,10 +100,10 @@ def fixture_artefacts_dir(fixture_artefacts, tmp_path_factory):
 
 
 @contextmanager
-def serve_api(root):
-    """Run the API on a free local port over an artefact root; yields its base URL."""
+def serve_api(root, **options):
+    """Run the API on a free local port over an artefact root (`options` go to `create_app`); yields its base URL."""
     port = free_port()
-    server = uvicorn.Server(uvicorn.Config(create_app(root), host="127.0.0.1", port=port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(create_app(root, **options), host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     while not server.started and thread.is_alive():

@@ -6,19 +6,28 @@ import numpy as np
 import polars as pl
 import pytest
 
+from exportspredictor import market_reach
 from exportspredictor.evaluation import naive_potential
 from exportspredictor.features import (
     FEATURES,
     POLICY_FEATURES,
     FeatureTransform,
     build_features,
+    training_rows,
     uk_grid,
 )
 from exportspredictor.fixture import UK
 from exportspredictor.folds import assign_folds
 from exportspredictor.gap_period import with_baseline_actual_exports
 from exportspredictor.loop import NAIVE_EXPERIMENT, SELECTION_MEASURE_TEXT
-from exportspredictor.pipeline import build_artefacts, fixture_training, refresh
+from exportspredictor.pipeline import (
+    FIXTURE_ZERO_SAMPLING_RATE,
+    build_artefacts,
+    exporter_scope,
+    fixture_training,
+    refresh,
+    rerange,
+)
 from exportspredictor.prediction import blend
 from exportspredictor.search import FIXTURE_SEARCH
 
@@ -115,10 +124,21 @@ def test_each_gap_years_uk_score_comes_from_the_fold_model_that_held_the_pair_ou
             model = artefacts.fold_models[fold]
             assert model.attr("held_out_fold") == str(fold)
             # The pair's fold model never trained on any of the pair's years (ADR 0001); the
-            # served blend takes its Export Potential with the year's naive baseline.
+            # served blend takes its Export Potential with the year's naive baseline, then the year's
+            # Market Reach scales every pair of one fold and Market alike (ADR 0010).
             model_alone = model.inplace_predict(rows.select(FEATURES).to_numpy().astype(np.float32))
             expected = blend(model_alone, rows["naive_usd"].to_numpy(), weight)
-            assert rows["export_potential_usd"].to_list() == pytest.approx(expected.tolist(), rel=1e-5)
+            ratios = rows.select("iso3", reach=rows["export_potential_usd"] / pl.Series(expected))
+            assert ratios.group_by("iso3").agg(spread=pl.col("reach").max() / pl.col("reach").min())[
+                "spread"
+            ].to_list() == pytest.approx([1.0] * ratios["iso3"].n_unique(), rel=1e-5)
+            if year == artefacts.baseline_year:
+                reach = artefacts.model_form.market_reach
+                offsets = rows.select("iso3").join(
+                    reach.table.filter(pl.col("fold") == fold), left_on="iso3", right_on="importer", how="left"
+                )["offset"].fill_null(0.0).to_numpy()
+                multiplier = np.exp(reach.beta * offsets) * reach.constant
+                assert ratios["reach"].to_list() == pytest.approx(multiplier.tolist(), rel=1e-5)
 
 
 def test_export_gap_is_potential_minus_actual(artefacts):
@@ -209,10 +229,12 @@ def test_metadata_records_the_device_and_the_search_and_training_time(artefacts)
 def test_the_artefact_serves_the_form_the_ranking_experiments_chose_and_records_them(artefacts):
     ranking = artefacts.metadata["ranking_experiments"]
 
-    assert artefacts.metadata["model_form"] == {
+    served = artefacts.metadata["model_form"]
+    assert {key: served[key] for key in ("form", "naive_weight")} == {
         "form": "blend",
         "naive_weight": ranking["best"]["settings"]["naive_weight"],
     }
+    assert served["market_reach"]["beta"] == market_reach.CHOSEN_BETA  # adopted on 2022 (#124, ADR 0010)
     assert ranking["selection_measure"] == SELECTION_MEASURE_TEXT
     assert {"selection_measures", "mean", "sd", "win_threshold"} <= set(ranking["noise_floor"])
     assert ranking["best"]["experiment"] == NAIVE_EXPERIMENT
@@ -275,6 +297,64 @@ def test_refresh_adds_derived_metadata_to_a_saved_bundle_without_retraining(arte
     assert refreshed.baseline is older.baseline
 
 
+def test_refresh_records_the_share_of_actual_exports_that_summed_export_potential_reaches(artefacts):
+    # Spec #113 "Totals understate": two pairs, $30m + $40m of Export Potential against $50m + $50m exported: 70%.
+    two_pairs = artefacts.baseline.head(2).with_columns(
+        export_potential_usd=pl.Series([30e6, 40e6]), actual_exports_usd=pl.Series([50e6, 50e6])
+    )
+
+    refreshed = refresh(replace(artefacts, baseline=two_pairs), version="refreshed")
+
+    assert refreshed.metadata["potential_share_of_actual_exports"] == pytest.approx(0.7)
+    assert refreshed.potential_share_of_actual_exports == pytest.approx(0.7)
+
+
+def test_the_pipeline_records_the_share_of_actual_exports_that_summed_export_potential_reaches(artefacts):
+    baseline = artefacts.baseline
+    expected = baseline["export_potential_usd"].sum() / baseline["actual_exports_usd"].sum()
+    assert artefacts.metadata["potential_share_of_actual_exports"] == pytest.approx(expected)
+
+
+def test_rerange_rebuilds_a_dollar_offset_range_as_the_pipeline_now_builds_it(world, artefacts):
+    # A version from before ADR 0007's log-scale amendment: dollar offsets and a range built from them.
+    older = replace(
+        artefacts,
+        potential_range_bands=pl.DataFrame({
+            "band": pl.Series([0], dtype=pl.Int16), "min_export_potential_usd": [0.0], "rows": [60],
+            "low_offset_usd": [-5.0], "high_offset_usd": [5.0],
+        }),
+        baseline=artefacts.baseline.with_columns(
+            potential_range_low_usd=pl.lit(0.0), potential_range_high_usd=pl.lit(1.0), uncertain_opportunity=False
+        ),
+        metadata={k: v for k, v in artefacts.metadata.items() if k != "potential_range"}
+        | {"potential_range": {k: v for k, v in artefacts.metadata["potential_range"].items() if k != "scale"}},
+    )
+    year = artefacts.baseline_year
+    year_flows = world.flows.filter(pl.col("year") == year)
+    calibration = build_features(
+        training_rows(year_flows, rate=FIXTURE_ZERO_SAMPLING_RATE, seed=0, uk=UK,
+                      exporters=exporter_scope(world.country_year, uk=UK)),
+        world.flows,
+        world.sources,
+    )
+
+    ranged = rerange(older, calibration, year_flows, version="reranged")
+
+    assert ranged.version == "reranged" and ranged.metadata["refreshed_from"] == "fixture-test"
+    assert ranged.metadata["potential_range"]["scale"] == "log"
+    assert ranged.fold_models is older.fold_models
+    assert ranged.potential_range_bands.equals(artefacts.potential_range_bands)
+    assert ranged.baseline.equals(artefacts.baseline)
+    saved, rebuilt = artefacts.evaluation["potential_range"], ranged.evaluation["potential_range"]
+    assert {k: v for k, v in rebuilt.items() if k not in ("uk_pair_coverage", "text")} == {
+        k: v for k, v in saved.items() if k not in ("uk_pair_coverage", "text")
+    }
+    # UK pairs' coverage is measured again with the new bands; without Market Reach it needs every Gap Period year's
+    # Market Reach table, which a saved version does not hold.
+    assert rebuilt["uk_pair_coverage"]["with_market_reach"] == saved["uk_pair_coverage"]["with_market_reach"]
+    assert rebuilt["uk_pair_coverage"]["without_market_reach"] is None
+
+
 # --- Excluded Products (ADR 0005) -----------------------------------------------------------
 
 def test_excluded_products_appear_in_no_baseline_history_or_scenario_row(artefacts):
@@ -316,3 +396,16 @@ def test_loop_results_validated_on_another_year_are_refused(world, artefacts):
 
     with pytest.raises(ValueError, match="validated on 2021"):
         build_artefacts(world, version="mismatch", search_results=artefacts.metadata["search"], ranking_results=ranking)
+
+
+def test_loop_results_chosen_on_another_feature_set_are_refused(world, artefacts):
+    """#127: the loop kept its configuration on the rebuilt `exporter_count` files; the build must read those."""
+    ranking = artefacts.metadata["ranking_experiments"]
+    rebuilt = {**ranking, "experiments": {**ranking["experiments"], "exporter count": {"feature_set": "exporter_count"}}}
+
+    with pytest.raises(ValueError, match="EXPORTSPREDICTOR_FEATURE_SET=exporter_count"):
+        build_artefacts(world, version="mismatch", search_results=artefacts.metadata["search"], ranking_results=rebuilt)
+
+
+def test_the_artefact_records_the_feature_set_it_was_built_from(artefacts):
+    assert artefacts.metadata["feature_set"] == ""  # the original files (the fixture's)

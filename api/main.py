@@ -20,7 +20,7 @@ gives the reason; it does not fall back to an older folder.
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -33,30 +33,23 @@ from pydantic import BaseModel
 
 from api.schemas import (
     BlockedMarket,
-    BlockedOpportunities,
-    BlockedOpportunity,
-    BlockedQuery,
     BlockedSummary,
     Caveat,
+    CaveatTierOut,
     Evaluation,
     ExcludedProductOut,
     ExcludedReasonOut,
-    Explanation,
     FactorOut,
     Health,
     HistoryOut,
     Labels,
-    Leaderboard,
-    LeaderboardOpportunity,
     LeaderboardQuery,
     LeaderboardSummary,
-    MarketOpportunities,
-    MarketOpportunity,
     MarketOut,
+    MarketReachOut,
+    PairMarketReachOut,
     PresetOut,
     ProductMatch,
-    ProductOpportunities,
-    ProductOpportunity,
     ProductOut,
     RankingQuery,
     RankOrderOut,
@@ -65,18 +58,22 @@ from api.schemas import (
     ScenarioResponse,
     SectorOut,
     Thresholds,
+    Tiered,
+    TotalsNote,
+    tiered,
 )
 from exportspredictor import artefacts as store
-from exportspredictor import scenarios
+from exportspredictor import market_reach, scenarios
+from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
-from exportspredictor.evaluation import known_limitations, parts_not_run, served_report
-from exportspredictor.exclusions import (
-    FLAGGED_PRODUCT_CAVEAT,
-    REEXPORT_HUB_CAVEAT,
-    not_ranked_message,
-    reason_counts,
+from exportspredictor.evaluation import (
+    known_limitations,
+    large_markets_beside_earlier,
+    parts_not_run,
+    served_report,
 )
+from exportspredictor.exclusions import not_ranked_message, reason_counts
 from exportspredictor.explain import UnknownPair, explain_pair
 from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
 from exportspredictor.gap_period import label as gap_period_label
@@ -97,7 +94,7 @@ from exportspredictor.rankings import (
 from exportspredictor.sectors import sectors as sectors_of
 from exportspredictor.sectors import with_sector_names
 from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
-from exportspredictor.wording import CAUTION, term_definitions
+from exportspredictor.wording import CAUTION, term_definitions, totals_note
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -116,8 +113,13 @@ def create_app(
     *,
     retry_seconds: float = RETRY_SECONDS,
     clock: Callable[[], float] = time.monotonic,
+    tiers: Sequence[CaveatTier] = TIERS,
 ) -> FastAPI:
+    """The API over the newest artefact under `artefacts_root`, serving the caveat `tiers` (the package's by default;
+    tests declare more). Every tier's columns must be on the artefact's Baseline."""
     root = Path(artefacts_root) if artefacts_root is not None else artefacts_dir()
+    tiers = tuple(tiers)
+    models = tiered(tiers)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -131,6 +133,7 @@ def create_app(
     app.state.clock = clock
     app.state.last_attempt = None
     app.state.load_error = None
+    app.state.tiers = tiers  # a Baseline without one of their columns is refused (`artefacts.load`)
 
     @app.get("/health", response_model=Health, response_model_exclude_none=True)
     def health(request: Request):
@@ -150,22 +153,42 @@ def create_app(
     @app.get("/labels", response_model=Labels)
     def labels(artefacts: store.Artefacts = Depends(loaded)):
         """The wording and options the app shows: unit, Opportunity Types, caveats, the last tariff year, the
-        caution line under every page heading and the term definitions (with the artefact's Gap Period)."""
+        caution line under every page heading, the term definitions (with the artefact's Gap Period) and the note beside
+        every summed figure, with the share of Actual Exports the artefact records."""
+        share = artefacts.potential_share_of_actual_exports
         return Labels(
             usd_caption=USD_CAPTION,
             usd_unit=USD_UNIT,
             opportunity_types=list(OPPORTUNITY_TYPES),
-            caveats={
-                "flagged_product": Caveat(badge="Flagged Product", text=FLAGGED_PRODUCT_CAVEAT),
-                "reexport_hub": Caveat(badge="Re-export Hub", text=REEXPORT_HUB_CAVEAT),
-            },
             last_tariff_year=LAST_TRAINS_YEAR,
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
             caution=CAUTION,
             terms=term_definitions(gap_period_label(artefacts.gap_years)),
             max_rows=MAX_ROWS,
+            totals_note=TotalsNote(
+                potential_share_of_actual_exports=share,
+                text=totals_note(share, gap_period_label(artefacts.gap_years)),
+            ),
         )
+
+    @app.get("/caveats", response_model=list[CaveatTierOut])
+    def caveats():
+        """The Caveat Tiers (ADR 0005), in display order: each one's row field, badge, caveat text, key, hide filter
+        parameter and, if it gives a reason per row, the row field holding it and the caveat text it goes into."""
+        return [
+            CaveatTierOut(
+                column=tier.column,
+                badge=tier.badge,
+                plural=tier.plural,
+                text=tier.text,
+                key=tier.key,
+                hide_param=tier.hide_param,
+                reason_column=tier.reason_column,
+                row_text=tier.row_text,
+            )
+            for tier in tiers
+        ]
 
     @app.get("/products", response_model=list[ProductMatch])
     def products(q: str = Query("", description="HS6 code (or prefix) or words"), limit: int = Query(20, ge=1, le=200), artefacts: store.Artefacts = Depends(loaded)):
@@ -212,14 +235,20 @@ def create_app(
             for o in RANK_BY.values()
         ]
 
-    @app.get("/opportunities/top", response_model=Leaderboard)
-    def top(query: Annotated[LeaderboardQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
+    @app.get("/opportunities/top", response_model=models.Leaderboard)
+    def top(
+        query: Annotated[models.LeaderboardQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
+        artefacts: store.Artefacts = Depends(loaded),
+    ):
         """The Leaderboard: every UK Product–Market pair ranked (or one Market's, or one Product's), with a summary of
         the filtered pairs. An unknown Market or Product answers 404, as does an Excluded Product, with its reason."""
-        return Leaderboard(**_leaderboard(artefacts, query), rank_by=query.rank_by)
+        return models.Leaderboard(**_leaderboard(artefacts, query, models, tiers), rank_by=query.rank_by)
 
-    @app.get("/opportunities/blocked", response_model=BlockedOpportunities)
-    def blocked(query: Annotated[BlockedQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
+    @app.get("/opportunities/blocked", response_model=models.BlockedOpportunities)
+    def blocked(
+        query: Annotated[models.BlockedQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
+        artefacts: store.Artefacts = Depends(loaded),
+    ):
         """The Blocked Opportunities page: only Blocked Opportunities (default thresholds), ranked by Blocked Opportunity
         value, in Baseline-year figures, with a summary and per-Market totals over every filtered one. An unknown
         Product answers 404, as does an Excluded Product, with its reason."""
@@ -230,32 +259,45 @@ def create_app(
             sector=query.sector,
             region=query.region,
             min_value_usd=query.min_value_usd,
-            hide_flagged=query.hide_flagged,
-            hide_hubs=query.hide_hubs,
+            hide=_hidden(query, tiers),
             limit=query.limit,
         )
-        return BlockedOpportunities(
+        return models.BlockedOpportunities(
             **_metadata(artefacts),
             summary=BlockedSummary(**found.summary),
             markets=[_pick(BlockedMarket, row) for row in found.markets.iter_rows(named=True)],
-            opportunities=[_pick(BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)],
+            opportunities=[_pick(models.BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)],
             thresholds=Thresholds(),
             rank_by=BLOCKED.name,
             order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
             note=scenario_note(artefacts),
         )
 
-    @app.get("/opportunities/by-product/{hs6}", response_model=ProductOpportunities)
-    def by_product(hs6: str, query: Annotated[RankingQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
+    @app.get("/opportunities/by-product/{hs6}", response_model=models.ProductOpportunities)
+    def by_product(
+        hs6: str,
+        query: Annotated[models.RankingQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
+        artefacts: store.Artefacts = Depends(loaded),
+    ):
         """Markets ranked for one Product."""
         product = _product(artefacts, hs6)
-        return ProductOpportunities(**_ranking(artefacts, query, MarketOpportunity, hs6=hs6), product=product)
+        return models.ProductOpportunities(
+            **_ranking(artefacts, query, models.MarketOpportunity, tiers, hs6=hs6), product=product
+        )
 
-    @app.get("/opportunities/by-market/{iso3}", response_model=MarketOpportunities)
-    def by_market(iso3: str, query: Annotated[RankingQuery, Query()], artefacts: store.Artefacts = Depends(loaded)):
+    @app.get("/opportunities/by-market/{iso3}", response_model=models.MarketOpportunities)
+    def by_market(
+        iso3: str,
+        query: Annotated[models.RankingQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
+        artefacts: store.Artefacts = Depends(loaded),
+    ):
         """Products ranked for one Market."""
         market = _market(artefacts, iso3)
-        return MarketOpportunities(**_ranking(artefacts, query, ProductOpportunity, iso3=iso3), market=market)
+        return models.MarketOpportunities(
+            **_ranking(artefacts, query, models.ProductOpportunity, tiers, iso3=iso3),
+            market=market,
+            market_reach=_market_reach(artefacts, market),
+        )
 
     @app.get("/evaluation", response_model=Evaluation)
     def evaluation(artefacts: store.Artefacts = Depends(loaded)):
@@ -272,10 +314,11 @@ def create_app(
             limitations=known_limitations(artefacts),
             model_choice=how_chosen(artefacts.metadata, artefacts.evaluation),
             event_backtest_note=event_backtest_note(artefacts.metadata, artefacts.evaluation),
+            large_markets_by_version=large_markets_beside_earlier(artefacts.evaluation),
             not_run=parts_not_run(artefacts.evaluation, artefacts.ppml_benchmark),
         )
 
-    @app.get("/explain/{hs6}/{iso3}", response_model=Explanation)
+    @app.get("/explain/{hs6}/{iso3}", response_model=models.Explanation)
     def explain(hs6: str, iso3: str, artefacts: store.Artefacts = Depends(loaded)):
         """Why? one pair's Export Potential: SHAP factors from its own fold model, plus history."""
         product, market = _product(artefacts, hs6), _market(artefacts, iso3)
@@ -292,15 +335,14 @@ def create_app(
                 "baseline_export_potential_usd",
                 "relative_export_gap",
                 "opportunity_type",
-                "flagged_product",
-                "reexport_hub",
+                *(column for tier in tiers for column in tier.columns),
                 "potential_range_low_usd",
                 "potential_range_high_usd",
                 "uncertain_opportunity",
             )
             .row(0, named=True)
         )
-        return Explanation(
+        return models.Explanation(
             **_metadata(artefacts),
             **values,
             potential_range_text=potential_range_text(
@@ -326,6 +368,7 @@ def create_app(
             ],
             history=[HistoryOut(**vars(h)) for h in explanation.history],
             tariff_caveat=explanation.tariff_caveat,
+            market_reach=_pair_market_reach(artefacts, market, explanation.fold),
         )
 
     @app.get("/scenarios/presets", response_model=list[PresetOut])
@@ -338,7 +381,7 @@ def create_app(
         """The default Blocked Opportunity thresholds."""
         return Thresholds()
 
-    @app.post("/scenarios", response_model=ScenarioResponse)
+    @app.post("/scenarios", response_model=models.ScenarioResponse)
     def run_scenario(request: ScenarioRequest, artefacts: store.Artefacts = Depends(loaded)):
         """Re-predict the Baseline with a preset, custom Trade Agreements or a tariff change (422 if invalid)."""
         if request.market is not None and artefacts.markets.filter(pl.col("iso3") == request.market).is_empty():
@@ -354,14 +397,14 @@ def create_app(
             )
         except scenarios.InvalidScenario as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        return scenario_response(result, request, artefacts)
+        return scenario_response(result, request, artefacts, models, tiers)
 
     return app
 
 
 def _pick(model: type[BaseModel], row: dict) -> BaseModel:
-    """`model` built from the fields it declares, taken from a table row."""
-    return model(**{name: row[name] for name in model.model_fields})
+    """`model` built from the fields it declares, taken from a table row (fields the row lacks take their default)."""
+    return model(**{name: row[name] for name in model.model_fields if name in row})
 
 
 def _product(artefacts: store.Artefacts, hs6: str) -> ProductOut:
@@ -399,7 +442,12 @@ def _metadata(artefacts: store.Artefacts) -> dict:
     }
 
 
-def _filters(query: RankingQuery) -> dict:
+def _hidden(query: BaseModel, tiers: tuple[CaveatTier, ...]) -> list[str]:
+    """The columns of the Caveat Tiers whose hide filter is on in `query`."""
+    return [tier.column for tier in tiers if getattr(query, tier.hide_param)]
+
+
+def _filters(query: RankingQuery, tiers: tuple[CaveatTier, ...]) -> dict:
     """The package's `rank_opportunities` arguments for a ranking query's filters and order."""
     return {
         "sector": query.sector,
@@ -407,29 +455,59 @@ def _filters(query: RankingQuery) -> dict:
         "opportunity_type": query.opportunity_type,
         "min_gap_usd": query.min_gap_usd,
         "trade_agreement": query.trade_agreement,
-        "hide_flagged": query.hide_flagged,
-        "hide_hubs": query.hide_hubs,
+        "hide": _hidden(query, tiers),
         "rank_by": query.rank_by,
         "min_potential_usd": query.min_potential_usd,
     }
 
 
-def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery) -> dict:
-    """The Leaderboard's fields: metadata, summary and top rows."""
+def _market_reach(artefacts: store.Artefacts, market: MarketOut) -> MarketReachOut | None:
+    """A Market's Market Reach for the Market view (ADR 0010); None where the artefact has none for it."""
+    reach = artefacts.model_form.market_reach
+    if reach is None or reach.table is None:
+        return None
+    figures = market_reach.market_figures(
+        reach.table, market.iso3, market=market.name, year=reach.reference_year, n_folds=len(artefacts.fold_models)
+    )
+    return None if figures is None else MarketReachOut(**figures)
+
+
+def _pair_market_reach(artefacts: store.Artefacts, market: MarketOut, fold: int) -> PairMarketReachOut | None:
+    """`_market_reach` with the offset the pair's own fold applies, for the pair detail."""
+    reach = artefacts.model_form.market_reach
+    if reach is None or reach.table is None:
+        return None
+    figures = market_reach.pair_figures(
+        reach.table, market.iso3, fold, market=market.name, year=reach.reference_year, beta=reach.beta,
+        n_folds=len(artefacts.fold_models),
+    )
+    return None if figures is None else PairMarketReachOut(**figures)
+
+
+def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, models: Tiered, tiers: tuple[CaveatTier, ...]) -> dict:
+    """The Leaderboard's fields: metadata, summary and top rows, and the filtered Market's reach."""
+    reach = None
     if query.market is not None:
-        _market(artefacts, query.market)
+        reach = _market_reach(artefacts, _market(artefacts, query.market))
     _check_product(artefacts, query.product)
-    ranked = ranking(artefacts, hs6=query.product, iso3=query.market, limit=query.limit, **_filters(query))
+    ranked = ranking(artefacts, hs6=query.product, iso3=query.market, limit=query.limit, **_filters(query, tiers))
     return {
         **_metadata(artefacts),
         "summary": LeaderboardSummary(**ranked.summary),
-        "opportunities": [_pick(LeaderboardOpportunity, row) for row in ranked.rows.iter_rows(named=True)],
+        "opportunities": [_pick(models.LeaderboardOpportunity, row) for row in ranked.rows.iter_rows(named=True)],
+        "market_reach": reach,
     }
 
 
-def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[BaseModel], **subject) -> dict:
+def _ranking(
+    artefacts: store.Artefacts,
+    query: RankingQuery,
+    row_model: type[BaseModel],
+    tiers: tuple[CaveatTier, ...],
+    **subject,
+) -> dict:
     """The fields the by-Product and by-Market views share: metadata and the ranked rows."""
-    rows = rank_opportunities(artefacts, **subject, **_filters(query), limit=query.limit)
+    rows = rank_opportunities(artefacts, **subject, **_filters(query, tiers), limit=query.limit)
     return {
         **_metadata(artefacts),
         "rank_by": query.rank_by,
@@ -438,11 +516,17 @@ def _ranking(artefacts: store.Artefacts, query: RankingQuery, row_model: type[Ba
 
 
 def scenario_response(
-    result: scenarios.ScenarioResult, request: ScenarioRequest, artefacts: store.Artefacts
+    result: scenarios.ScenarioResult,
+    request: ScenarioRequest,
+    artefacts: store.Artefacts,
+    models: Tiered,
+    tiers: tuple[CaveatTier, ...],
 ) -> ScenarioResponse:
-    """Totals, per-Market and per-Product effects, top pairs and Blocked Opportunities, in nominal USD."""
+    """Totals, per-Market and per-Product effects, top pairs and Blocked Opportunities, in nominal USD; each pair
+    carries its Caveat Tier columns from the Baseline."""
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
+    caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
     pairs = (
         result.pairs.with_columns(
             blocked_opportunity=scenarios.is_blocked(
@@ -451,6 +535,7 @@ def scenario_response(
         )
         .join(markets, on="iso3", how="left", maintain_order="left")
         .join(products, on="hs6", how="left", maintain_order="left")
+        .join(caveats, on=["hs6", "iso3"], how="left", maintain_order="left")
     )
     blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
@@ -462,7 +547,7 @@ def scenario_response(
             rows.head(request.limit), artefacts.history, artefacts.baseline_year
         ).to_dicts()
 
-    return ScenarioResponse(
+    return models.ScenarioResponse(
         **_metadata(artefacts),
         scenario=ScenarioIn.model_validate(asdict(result.scenario)),
         thresholds=_pick(Thresholds, request.model_dump()),
@@ -493,7 +578,7 @@ def _try_load(app: FastAPI) -> store.Artefacts | None:
         return None
     state.last_attempt = now
     try:
-        state.artefacts = store.load_latest(state.artefacts_root)
+        state.artefacts = store.load_latest(state.artefacts_root, tiers=state.tiers)
     except (store.ArtefactsNotFound, store.UnreadableArtefacts) as error:
         state.load_error = str(error)
         log.warning("%s; retrying at most every %.0f s", error, state.retry_seconds)

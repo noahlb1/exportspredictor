@@ -54,6 +54,16 @@ class ServedConfiguration:
     rounds_rule: str  # how `rounds` was taken from the loop's results
     non_uk_rate: float
     validation_year: int
+    # The feature files the loop last decided on (`features.feature_set`; "" is the original build).
+    # A data correction an experiment ran on (#127's gravity fill) is kept with it.
+    feature_set: str = ""
+
+
+def kept_feature_set(results: Mapping) -> str:
+    """The feature set of the last experiment that recorded one (an experiment with a base retrained on its
+    files, `Loop.run_experiment`'s `base_arm`), else "" (the original files)."""
+    recorded = [s["feature_set"] for s in results.get("experiments", {}).values() if "feature_set" in s]
+    return recorded[-1] if recorded else ""
 
 
 def served_configuration(results: Mapping) -> ServedConfiguration:
@@ -86,7 +96,7 @@ def served_configuration(results: Mapping) -> ServedConfiguration:
         rule = "the best arm's own rounds (no five-fold confirmation)"
     return ServedConfiguration(
         form=form, params=dict(best.params), rounds=int(rounds), rounds_rule=rule, non_uk_rate=best.non_uk_rate,
-        validation_year=results["validation_year"],
+        validation_year=results["validation_year"], feature_set=kept_feature_set(results),
     )
 
 

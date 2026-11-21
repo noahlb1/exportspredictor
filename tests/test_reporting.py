@@ -7,9 +7,13 @@ table's rows, "not run" where a part is absent), not for how a chart looks.
 from dataclasses import replace
 from html import escape
 
+import polars as pl
 import pytest
 
 from exportspredictor import reporting
+from exportspredictor.caveats import CaveatContext, with_caveat_columns
+from exportspredictor.exclusions import SECTOR_71_REASON
+from exportspredictor.volatility import ONE_OFF_REASON, VOLATILE_REASON
 
 
 def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlier_versions(fixture_artefacts):
@@ -21,6 +25,17 @@ def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlie
     expected = {row["name"]: row["uk_ranking"] for row in block["rows"] + block["naive"]}
     assert rows == pytest.approx(expected)
     assert str(block["test_year"]) in chart.title
+
+
+def test_the_ranking_by_version_draws_the_tie_proof_measure_once_earlier_versions_are_re_scored(fixture_artefacts):
+    block = fixture_artefacts.evaluation["earlier_versions"]
+
+    chart = reporting.ranking_by_version(fixture_artefacts)
+
+    rows = {row["name"]: row["uk_ranking_tie_proof"] for row in chart.data.iter_rows(named=True)}
+    expected = {row["name"]: row["uk_ranking_tie_proof"] for row in block["rows"] + block["naive"]}
+    assert rows == pytest.approx(expected)
+    assert "tie-proof" in chart.title
 
 
 def test_a_chart_is_a_static_matplotlib_svg_image_naming_each_row(fixture_artefacts):
@@ -222,3 +237,70 @@ def test_the_model_card_excerpt_is_its_headline_and_its_contents_with_a_link_to_
         assert heading[3:] in excerpt, heading
     assert str(path.name) in excerpt
     assert "## Limitations" not in excerpt  # later sections are listed, not shown
+
+
+def test_each_caveat_tier_s_reach_counts_its_opportunities_overall_and_in_the_top_of_the_ranking(fixture_artefacts):
+    baseline = pl.DataFrame({
+        "hs6": ["220830", "220830", "870323", "711319", "300490"],
+        "iso3": ["SAU", "RUS", "RUS", "HKG", "JPN"],
+        "export_gap_usd": [500.0, 400.0, 300.0, -50.0, 100.0],
+    })
+    bundle = replace(fixture_artefacts, baseline=with_caveat_columns(baseline, CaveatContext(baseline_year=2024)))
+
+    reach = reporting.caveat_tier_reach(bundle, tops=(1, 3))
+
+    assert reach.columns == ["Caveat Tier", "Opportunities", "in top 1", "in top 3"]
+    assert reach.rows() == [
+        ("Flagged Product", 0, 0, 0),  # the jewellery to Hong Kong is not an Opportunity
+        ("Re-export Hub", 0, 0, 0),
+        ("Sanctioned Market", 2, 0, 2),
+        ("Restricted Pair", 1, 1, 1),
+    ]
+
+
+def test_flagged_products_are_counted_by_reason(fixture_artefacts):
+    baseline = pl.DataFrame({
+        "hs6": ["711319", "711319", "300490", "300490", "880230", "870323"],
+        "iso3": ["HKG", "JPN", "HKG", "JPN", "QAT", "JPN"],
+        "export_gap_usd": [-50.0, 10.0, 100.0, 200.0, 300.0, 400.0],
+    })
+    reasons = {"300490": VOLATILE_REASON, "880230": ONE_OFF_REASON}
+    marked = with_caveat_columns(baseline, CaveatContext(baseline_year=2024, flagged_product_reasons=reasons))
+
+    counts = reporting.flagged_products_by_reason(replace(fixture_artefacts, baseline=marked))
+
+    assert counts.rows() == [
+        (VOLATILE_REASON, 1, 2),
+        (SECTOR_71_REASON, 1, 1),
+        (ONE_OFF_REASON, 1, 1),
+    ]
+    assert counts.columns == ["Reason", "Products", "Opportunities"]
+
+
+def test_the_large_market_measures_by_version_list_this_version_earlier_versions_and_the_naive_baseline(
+    fixture_artefacts,
+):
+    report = fixture_artefacts.evaluation
+    v1 = {row["markets"]: row["model"] for row in report["rescored_earlier_versions"]["v1"]["large_markets"]}
+
+    table = reporting.large_markets_by_version(fixture_artefacts)
+
+    rows = {row["version"]: row for row in table.iter_rows(named=True)}
+    assert rows["v1"]["30 largest Markets"] == pytest.approx(v1[30])
+    assert rows["v1"]["60 largest Markets"] == pytest.approx(v1[60])
+    assert table["version"][0].startswith("This version")
+
+
+def test_a_version_without_large_market_measures_shows_not_run(fixture_artefacts):
+    older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
+    assert isinstance(reporting.large_markets_by_version(replace(fixture_artefacts, evaluation=older)), reporting.NotRun)
+
+
+def test_what_market_reach_changes_is_the_saved_sentence_or_a_not_run_line(fixture_artefacts):
+    saved = fixture_artefacts.evaluation["market_reach_effect"]["text"]
+    without = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "market_reach_effect"}
+
+    assert reporting.market_reach_effect(fixture_artefacts) == saved
+    assert reporting.market_reach_effect(replace(fixture_artefacts, evaluation=without)) == (
+        "Market Reach: not run for this version."
+    )

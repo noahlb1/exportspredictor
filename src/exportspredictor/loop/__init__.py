@@ -6,7 +6,10 @@ choice is measured and when it counts as a win:
 - **The selection measure** (`SELECTION_MEASURE`): the mean over Products of the Spearman
   correlation between Export Potential and Actual Exports across Markets, on the held-out
   fold's UK pairs in the validation year (2022), on every non-Excluded Product. It is the
-  headline measure of `evaluation` moved to the validation year. Nothing here selects on
+  headline measure of `evaluation` moved to the validation year, and both call the one
+  function `exportspredictor.selection_measure.selection_measure`: ties in Export Potential
+  are broken by a stable hash of Product and Market, so tying the bottom of a ranking (an
+  early tree, a floor) cannot raise it (spec #113, ADR 0008 amended). Nothing here selects on
   Tweedie deviance: it is reported with the other diagnostics (`measures`), never used.
 - **An arm** (`Arm`) is a named set of settings that differ from the best arm so far.
   Running it trains one model on the training years (2012–2021) with one fold of UK pairs
@@ -16,7 +19,9 @@ choice is measured and when it counts as a win:
 - **The noise floor** (`Loop.noise_floor`) runs first: the current v2 configuration with
   `LoopPlan.noise_seeds`, each seed changing the non-UK hash sample and the XGBoost seed
   together. The win threshold is twice the standard deviation of the selection measure
-  over those seeds, and at least `MIN_WIN_THRESHOLD`.
+  over those seeds, and at least `MIN_WIN_THRESHOLD`. Ticket #116 re-scored the seeds under the
+  tie-proof measure (`recheck`); every decision since reads the threshold through
+  `current_win_threshold`, which prefers the re-checked one.
 - **The win rule** (`decide`): in an experiment, the arm with the highest selection
   measure is marked best; it is kept, and becomes the best so far, only if it beats the
   best so far by more than the win threshold. Every other arm is dropped.
@@ -36,6 +41,9 @@ refuses it, and `real_data` refuses it before opening a file.
     uv run python -m exportspredictor.loop product-detail  # #74: three Product features, one experiment each (three models)
     uv run python -m exportspredictor.loop constraints  # #75: the monotone constraints on (cached) and off (one model)
     uv run python -m exportspredictor.loop confirm  # #76: the best arm beside v2 on all five folds (fold 0 cached)
+    # #127, with EXPORTSPREDICTOR_FEATURE_SET=exporter_count: the best so far retrained on the rebuilt
+    # files, then the Exporter count against it, both with Market Reach (two models)
+    uv run python -m exportspredictor.loop exporter-count
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -48,6 +56,7 @@ The package, one module per concern; everything public is importable from `expor
 - `runner`: `Loop`, which runs and caches arms on one fold.
 - `confirmation`: the five-fold confirmation.
 - `served`: what the pipeline serves of the loop's choice.
+- `recheck`: the noise floor, Win Threshold and best so far re-scored under the tie-proof measure (#116).
 - `cli`: the commands above (`__main__` runs them).
 
 Working on the loop
@@ -66,8 +75,28 @@ most `MAX_TRAINED_MODELS`; a two-part arm counts as two.
 **Cache and results** live in `loop_dir()` (`data/derived/loop_V202601/`), shared by every
 worktree through `scripts/wt.ps1`. Models are `models/<training_key>.ubj` with a `.json` of
 their rounds; `results.json` holds the naive baseline, the noise floor, every experiment's
-rows and decision, `best` and `confirmation`. `load()` reads it. A re-run skips arms by
+rows and decision, `best` and `confirmation` (all measured with the old measure), and `recheck`
+(#116: the same decisions under the tie-proof measure, the recomputed noise floor and Win
+Threshold, and the re-scored best so far that `best` now holds). `load()` reads it. A re-run skips arms by
 name, so to re-run an arm, give it a new name; the file is written only by the loop.
+
+**Feature sets.** `real_data` reads the feature set `EXPORTSPREDICTOR_FEATURE_SET` names
+(`features.FEATURE_SETS`; the original `features_V202601` when unset). A rebuilt set, such as
+`exporter_count` (#126: the Exporter count stored as a candidate feature, and GDP filled for small
+Markets), shares this folder and results file, but its models are cached under their own keys:
+the set is part of the cache key, so a base arm on rebuilt files trains afresh instead of reusing
+the original's model. The Exporter count is not in `features.FEATURES`; an arm tries it by naming
+it in `features`. An experiment on rebuilt files passes `base_arm` to `Loop.run_experiment`: the best
+so far is retrained on those files and the arms are decided against it (a paired comparison), and the
+section records the feature set, which `served_configuration` hands the pipeline (it refuses to build
+from other files).
+
+**Market Reach** (#124) is the scoring field `market_reach_beta`: an arm with it multiplies each
+held-out UK pair's Export Potential by exp(beta · offset) of its Market, learned on this fold's
+complement in the year before (`LoopData.reach_source`, the same feature set's UK grid), and records
+its measures without Reach under `without_market_reach`. The rescaling constant is computed per
+scored table, so pooling several folds' Reach scores ranks with a slightly different constant per
+fold; a five-fold figure should re-pool the folds' plain scores with one constant, as #124 did.
 
 **Pitfalls.**
 
@@ -97,6 +126,7 @@ from exportspredictor.loop.arms import (
     BLEND_GRID,
     BLEND_WEIGHTS,
     CONSTRAINTS_EXPERIMENT,
+    EXPORTER_COUNT_EXPERIMENT,
     FIXTURE_LOOP,
     KEYED_FIELDS,
     LOWER_ZERO_RATE,
@@ -106,6 +136,7 @@ from exportspredictor.loop.arms import (
     NOISE_FLOOR,
     NOISE_SEEDS,
     PATIENCE,
+    REBUILT_BASE,
     SCOPE_EXPERIMENTS,
     SCORING_FIELDS,
     SELECT_EXPERIMENT,
@@ -126,6 +157,7 @@ from exportspredictor.loop.arms import (
     constraint_arms,
     count_experiments,
     experiment_label,
+    exporter_count_arms,
     models_trained_by,
     product_detail_arm,
     product_detail_experiment,
@@ -149,12 +181,19 @@ from exportspredictor.loop.data import (
     save_results,
     world_products,
 )
+from exportspredictor.loop.recheck import (
+    RECHECK,
+    current_win_threshold,
+    recheck_results,
+    save_recheck,
+)
 from exportspredictor.loop.runner import (
     NO_MEASURE,
     Loop,
     TwoPart,
     log_progress,
     naive_margin,
+    run_exporter_count,
     run_product_detail,
 )
 from exportspredictor.loop.selection import (
@@ -190,6 +229,7 @@ __all__ = [
     "CONFIRMED_NAIVE_WEIGHT",
     "CONSTRAINTS_EXPERIMENT",
     "DIAGNOSTICS",
+    "EXPORTER_COUNT_EXPERIMENT",
     "FIXTURE_LOOP",
     "KEYED_FIELDS",
     "LOWER_ZERO_RATE",
@@ -202,6 +242,8 @@ __all__ = [
     "NOISE_SEEDS",
     "NO_MEASURE",
     "PATIENCE",
+    "REBUILT_BASE",
+    "RECHECK",
     "RECORDED",
     "RESULTS_FILE",
     "ROUNDING",
@@ -237,8 +279,10 @@ __all__ = [
     "confirm_best",
     "constraint_arms",
     "count_experiments",
+    "current_win_threshold",
     "decide",
     "experiment_label",
+    "exporter_count_arms",
     "fixture_data",
     "fixture_ranking",
     "load",
@@ -255,7 +299,10 @@ __all__ = [
     "ranking_record",
     "read_results",
     "real_data",
+    "recheck_results",
+    "run_exporter_count",
     "run_product_detail",
+    "save_recheck",
     "save_results",
     "select_arms",
     "served_configuration",

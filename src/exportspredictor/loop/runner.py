@@ -11,20 +11,20 @@ import polars as pl
 import xgboost as xgb
 from xgboost.callback import EarlyStopping
 
-from exportspredictor import experiments, search
+from exportspredictor import experiments, market_reach, search
 from exportspredictor.evaluation import naive_potential
 from exportspredictor.exclusions import drop_excluded
-from exportspredictor.experiments import spearman_within_product
 from exportspredictor.features import (
     KEYS,
     PRODUCT_DETAIL_FEATURES,
     FeatureTransform,
     subsample_zeros,
 )
-from exportspredictor.folds import assign_folds, outside_fold
+from exportspredictor.folds import outside_fold, with_folds
 from exportspredictor.loop.arms import (
     ANY_FLOW,
     ANY_FLOW_PARAMS,
+    EXPORTER_COUNT_EXPERIMENT,
     MAX_TRAINED_MODELS,
     NOISE_FLOOR,
     SIZE,
@@ -32,6 +32,7 @@ from exportspredictor.loop.arms import (
     Arm,
     LoopPlan,
     Settings,
+    exporter_count_arms,
     models_trained_by,
     product_detail_arm,
     product_detail_experiment,
@@ -44,6 +45,7 @@ from exportspredictor.loop.data import (
     read_results,
     save_results,
 )
+from exportspredictor.loop.recheck import current_win_threshold
 from exportspredictor.loop.selection import (
     SELECTION_MEASURE,
     SELECTION_MEASURE_TEXT,
@@ -59,6 +61,7 @@ from exportspredictor.prediction import (
     flow_probability,
     two_part_potential,
 )
+from exportspredictor.selection_measure import selection_measure, with_tie_key
 from exportspredictor.training import (
     BASE_MARGIN,
     model_params,
@@ -93,6 +96,14 @@ def run_product_detail(lp: "Loop") -> dict:
     return lp.results
 
 
+def run_exporter_count(lp: "Loop") -> dict:
+    """#127: the Exporter count against the best so far retrained on this loop's files, both with Market Reach."""
+    lp.noise_floor()
+    best = Settings.from_dict(lp.results["best"]["settings"])
+    base, arms = exporter_count_arms(best)
+    return lp.run_experiment(EXPORTER_COUNT_EXPERIMENT, arms, base_arm=base)
+
+
 class Loop:
     """The experiment loop on one fold: the noise floor, then experiments, each against the best so far.
 
@@ -112,6 +123,7 @@ class Loop:
         self._models: dict[str, tuple[xgb.Booster | TwoPart, dict]] = {}
         self._matrix_key, self._matrices = None, None
         self._detail: pl.DataFrame | None = None
+        self._reach: pl.DataFrame | None = None  # this loop's Market Reach table, built on first use
         self.results = read_results(folder) or {}
         rows = data.data
         years = sorted(rows.training)
@@ -125,7 +137,8 @@ class Loop:
         self.validation = self.transform.apply(naive_potential(validation, flows))
         self.grid = self.transform.apply(naive_potential(grid, flows))
         del flows
-        self._grid_keys = self.grid.select("hs6", "value_usd")
+        # Hashed once: the round-by-round measure reads the tie key instead of rehashing every round.
+        self._grid_keys = with_tie_key(self.grid.select("hs6", "importer", "value_usd"))
         if "naive" not in self.results:
             self.results |= {
                 "selection_measure": SELECTION_MEASURE_TEXT,
@@ -142,25 +155,45 @@ class Loop:
         self._save()
 
     def _held_out(self, uk_rows: pl.DataFrame) -> pl.DataFrame:
-        folded = assign_folds(uk_rows.rename({"importer": "iso3"}), self.plan.n_folds).rename({"iso3": "importer"})
+        folded = with_folds(uk_rows, self.plan.n_folds)
         return folded.filter(pl.col("fold") == self.plan.fold).drop("fold")
 
     # --- Running arms --------------------------------------------------------------------------
 
-    def run_experiment(self, name: str, arms: Sequence[Arm]) -> dict:
-        """Run each arm against the best so far, decide by the win rule, and return the results."""
+    def run_experiment(self, name: str, arms: Sequence[Arm], *, base_arm: Arm | None = None) -> dict:
+        """Run each arm against the best so far, decide by the win rule, and return the results.
+
+        With `base_arm`, the arms are compared with that Arm of the best so far, run first on this
+        loop's data, instead of with the best so far's recorded measure: a paired comparison when the
+        data changed (rebuilt feature files, #127) or every Arm is scored differently (Market Reach).
+        The section records it (`base_arm`), the best so far it replaced as base (`previous_best`) and
+        the feature set. If no arm wins, the best so far is unchanged.
+        """
         if name == NOISE_FLOOR:
             raise ValueError(f"{NOISE_FLOOR!r} is the noise floor's name")
         self.noise_floor()
         section = self.results["experiments"].setdefault(name, {"arms": []})
         if "decided" not in section:
-            section["base"] = dict(self.results["best"])
+            if base_arm is None:
+                section["base"] = dict(self.results["best"])
+            elif "base_arm" not in section:
+                previous = dict(self.results["best"])
+                previous_settings = Settings.from_dict(previous["settings"])
+                base_settings = base_arm.apply(previous_settings)
+                self._check_budget(name, section, [Arm(base_arm.name), *arms], base_settings)
+                row = self.run_arm(base_arm, previous_settings)
+                section |= {
+                    "previous_best": previous, "base_arm": row, "base": _best(name, row),
+                    "feature_set": self.data.feature_set,
+                }
+                self._save()
+                log_progress(f"{base_arm.name}: {json.dumps({k: row[k] for k in (SELECTION_MEASURE, 'rounds', 'seconds')})}")
         base = Settings.from_dict(section["base"]["settings"])
         if "decided" not in section:
             self._check_budget(name, section, arms, base)
         rows = self._run_arms(section, arms, base)
         if "decided" not in section:
-            threshold = self.results[NOISE_FLOOR]["win_threshold"]
+            threshold = current_win_threshold(self.results)
             section["arms"], kept = decide(rows, section["base"][SELECTION_MEASURE], threshold)
             section |= {"win_threshold": threshold, "kept": kept, "decided": True}
             if kept is not None:
@@ -245,11 +278,18 @@ class Loop:
             extra["model_alone"] = measures(self.grid.with_columns(model_usd=model_grid), None, "model_usd")
         if settings.two_part:
             extra["parts"] = meta["parts"]
+        model_validation = self._model_potential(model, meta, settings, self.validation)
+        if settings.market_reach_beta:
+            # The same scoring without Market Reach, a reference: what Reach adds on this Arm's model.
+            plain = replace(settings, market_reach_beta=0.0)
+            extra["without_market_reach"] = measures(
+                self.grid.with_columns(export_potential_usd=self._score(model_grid, plain, self.grid)),
+                self.validation.with_columns(export_potential_usd=self._score(model_validation, plain, self.validation)),
+                "export_potential_usd",
+            )
         scored_grid = self.grid.with_columns(export_potential_usd=self._score(model_grid, settings, self.grid))
         scored = self.validation.with_columns(
-            export_potential_usd=self._score(
-                self._model_potential(model, meta, settings, self.validation), settings, self.validation
-            )
+            export_potential_usd=self._score(model_validation, settings, self.validation)
         )
         return {
             "arm": arm.name,
@@ -296,7 +336,10 @@ class Loop:
 
     def _fingerprint(self) -> dict:
         rows = self.data.data
+        # A rebuilt feature set keys its own models; the original's keys are unchanged.
+        feature_set = {"feature_set": self.data.feature_set} if self.data.feature_set else {}
         return {
+            **feature_set,
             "training_years": sorted(rows.training),
             "validation_year": rows.validation_year,
             "built_zero_rate": rows.built_zero_rate,
@@ -409,7 +452,7 @@ class Loop:
         }
 
     def _round_measure(self, predictions, _matrix) -> tuple[str, float]:
-        value = spearman_within_product(self._grid_keys.with_columns(prediction=pl.Series(predictions)), "prediction")
+        value = selection_measure(self._grid_keys.with_columns(prediction=pl.Series(predictions)), "prediction")
         return SELECTION_MEASURE, NO_MEASURE if value is None else value
 
     def _training_matrices(self, settings: Settings, part: str | None = None):
@@ -495,14 +538,34 @@ class Loop:
             raise ValueError("This loop's data has no world exports by Product, so no arm can start from the naive baseline")
         return self.data.world_products()
 
-    @staticmethod
-    def _score(predicted: pl.Series, settings: Settings, table: pl.DataFrame) -> pl.Series:
-        """Export Potential in dollars as the arm scores it: the served blend (`prediction.blend`), the model alone at w = 0."""
-        return pl.Series(
-            "export_potential_usd",
-            blend(predicted.to_numpy(), table["naive_usd"].to_numpy(), settings.naive_weight),
-            dtype=pl.Float64,
-        )
+    def _score(self, predicted: pl.Series, settings: Settings, table: pl.DataFrame) -> pl.Series:
+        """Export Potential in dollars as the arm scores it: the served blend (`prediction.blend`), the model alone
+        at w = 0, then Market Reach where the settings' beta is not 0."""
+        potential = blend(predicted.to_numpy(), table["naive_usd"].to_numpy(), settings.naive_weight)
+        if settings.market_reach_beta:
+            potential = self._with_market_reach(potential, table, settings.market_reach_beta)
+        return pl.Series("export_potential_usd", potential, dtype=pl.Float64)
+
+    def _with_market_reach(self, potential, table: pl.DataFrame, beta: float):
+        """`potential` × exp(beta · offset) of each held-out UK row's Market, rescaled to keep the rows' sum.
+
+        The offsets are this fold's (`market_reach.reach_table`), learned from the year before the
+        validation year on the UK pairs outside this fold. Other Exporters' rows get no offset.
+        """
+        if self._reach is None:
+            if self.data.reach_source is None:
+                raise ValueError("This loop's data has no UK grid of the year before, so no arm can use Market Reach")
+            lag = self.data.validation_year - market_reach.LAG_YEARS
+            source = self.data.reach_source().select(
+                pl.col("hs6").cast(pl.String), importer=pl.col("importer").cast(pl.String), value_usd="value_usd",
+                log_demand_loo=market_reach.DEMAND, year=pl.lit(lag),
+            )
+            rows = with_folds(source, self.plan.n_folds)
+            self._reach = market_reach.reach_table(rows, self.data.validation_year, n_folds=self.plan.n_folds)
+        # Every row is held out by this fold; other Exporters' rows take no offset, only c (as #124 measured).
+        rows = market_reach.uk_keys(table, fold=pl.lit(self.plan.fold, pl.Int8), uk=self.plan.uk).drop("uk")
+        constant = market_reach.rescale_constant(potential, rows, self._reach, beta=beta)
+        return market_reach.apply(potential, rows, self._reach, beta=beta, constant=constant)
 
     def _save(self) -> None:
         if self.folder is not None:

@@ -17,14 +17,16 @@ from pathlib import Path
 
 import polars as pl
 
-from exportspredictor import comparison
+from exportspredictor import comparison, evaluation
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.conformal import coverage_text
+from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.evaluation import (
     LIMITATIONS,
     parts_not_run,
     range_limitations,
     result_limitations,
+    size_coverage_limitations,
+    uk_pair_coverage_limitations,
 )
 from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
@@ -89,8 +91,8 @@ DECISIONS = [
      "sets the tariff to 0, and removing one restores the 2021 MFN rate. Tariffs beyond the training range are "
      "clipped, so the Scenario Effect of a very large hike flattens.")),
     ("Potential Range calibrated on other Exporters, never the UK (ADR 0007)",
-     ("An 80% split-conformal range, calibrated within 20 bands of Export Potential on other top-100 Exporters' "
-     "2024 rows. UK residuals are the Export Gaps the model exists to find, so calibrating on them would make every "
+     ("An 80% split-conformal range, calibrated within 20 bands of Export Potential (the top band split at "
+     "$10m, $100m and $1bn) on other top-100 Exporters' 2024 rows. UK residuals are the Export Gaps the model exists to find, so calibrating on them would make every "
      "gap look normal. An Opportunity whose Actual Exports lie inside its range is an Uncertain Opportunity.")),
     ("Features kept by an ablation on 2022",
      ("Relatedness, Market import growth, the re-export ratio and the Applied Tariff were each removed in turn from "
@@ -198,13 +200,17 @@ def model_card(artefacts: Artefacts) -> dict:
         "not_run": parts_not_run(report, artefacts.ppml_benchmark) if report else [],
         "v1_comparison": _comparison_summary(report.get("v1_comparison"), comparison.version_name(report)),
         "earlier_versions": report.get("earlier_versions"),
+        "large_markets": evaluation.large_markets_beside_earlier(report),
+        "market_reach_effect": report.get("market_reach_effect"),
         "traded_away": traded_away(report.get("earlier_versions")),
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
         "potential_range": _potential_range(report.get("potential_range")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
         "limitations": [
             *result_limitations(metadata, report), *_benchmark_limitations(artefacts.ppml_benchmark),
-            *range_limitations(artefacts.potential_range_bands), *LIMITATIONS,
+            *range_limitations(artefacts.potential_range_bands),
+            *size_coverage_limitations(report.get("potential_range")),
+            *uk_pair_coverage_limitations(metadata, report.get("potential_range")), *LIMITATIONS,
         ],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
@@ -273,18 +279,36 @@ def _earlier_lines(block: dict | None) -> list[str]:
     def cell(row, key, fmt):
         value = row.get(key)
         return "n/a" if value is None else number_text(value, fmt)
+    if "uk_ranking_tie_proof" not in block["rows"][0]:  # saved before the two measures were told apart
+        return [
+            f"**{block['text']}**",
+            "",
+            "| Version | UK ranking | Size-matched Lift | Lift | Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |",
+            "| --- | --- | --- | --- | --- | --- |",
+            *[
+                f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'size_matched_lift', '.2f')} | "
+                f"{cell(row, 'lift', '.2f')} | {cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | "
+                f"{cell(row, 'tweedie_deviance_uk', ',.1f')} |"
+                for row in block["rows"]
+            ],
+            *[f"| {row['name']} | {number_text(row['uk_ranking'], '.3f')} | | | | |" for row in block["naive"]],
+        ]
     return [
         f"**{block['text']}**",
         "",
-        "| Version | UK ranking | Size-matched Lift | Lift | Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |",
-        "| --- | --- | --- | --- | --- | --- |",
+        (
+            "| Version | UK ranking, old measure | UK ranking, tie-proof | Size-matched Lift | Lift | "
+            "Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |"
+        ),
+        "| --- | --- | --- | --- | --- | --- | --- |",
         *[
-            f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'size_matched_lift', '.2f')} | "
-            f"{cell(row, 'lift', '.2f')} | {cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | "
-            f"{cell(row, 'tweedie_deviance_uk', ',.1f')} |"
+            f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'uk_ranking_tie_proof', '.3f')} | "
+            f"{cell(row, 'size_matched_lift', '.2f')} | {cell(row, 'lift', '.2f')} | "
+            f"{cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | {cell(row, 'tweedie_deviance_uk', ',.1f')} |"
             for row in block["rows"]
         ],
-        *[f"| {row['name']} | {number_text(row['uk_ranking'], '.3f')} | | | | |" for row in block["naive"]],
+        *[f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'uk_ranking_tie_proof', '.3f')} | | | | |"
+          for row in block["naive"]],
     ]
 
 
@@ -411,7 +435,7 @@ def _ci(interval, *, percent: bool = False) -> str:
 
 
 # A per-Exporter coverage more than this far from the target is reported as too wide or too narrow.
-RANGE_COVERAGE_TOLERANCE = 0.05
+RANGE_COVERAGE_TOLERANCE = COVERAGE_TOLERANCE
 
 
 def range_coverage_by_exporter(potential_range: dict, tolerance: float = RANGE_COVERAGE_TOLERANCE) -> pl.DataFrame:
@@ -442,7 +466,18 @@ def _potential_range(potential_range: dict | None) -> dict | None:
     if not potential_range or potential_range.get("uncertain_opportunity_share") is None:
         return None
     keys = ("coverage", "target", "opportunities", "uncertain_opportunities", "uncertain_opportunity_share")
-    return {key: potential_range[key] for key in keys} | {"text": coverage_text(potential_range)}
+    return {key: potential_range[key] for key in keys} | {
+        "text": coverage_text(potential_range), "by_size": potential_range.get("by_size"),
+    }
+
+
+def _size_lines(by_size: list[dict] | None) -> list[str]:
+    """The held-out coverage by size of Export Potential as a Markdown table; none for older versions."""
+    if not by_size:
+        return []
+    return ["", "| Size of Export Potential | Held-out rows | Coverage |", "| --- | --- | --- |", *[
+        f"| {row['size']} | {row['rows']:,} | {number_text(row['coverage'], '.0%')} |" for row in by_size
+    ]]
 
 
 def _range_review(potential_range: dict | None) -> dict | None:
@@ -511,15 +546,18 @@ def render_model_card(card: dict) -> str:
     Form and the Illustrative label), and ends with the frozen v1 comparison as a short reported result."""
     lines = [f"# Model card: UK Exports Predictor, version {card['version']}", "",
              f"**Owner:** {card['owner']}", ""]
-    lines += ["## Headline", "", *_headline_lines(card), ""]
+    lines += ["## Headline", "", *_headline_lines(card), "", *_large_market_lines(card.get("large_markets"))]
     if card.get("traded_away"):
         lines += [card["traded_away"]["text"], ""]
     lines += ["## Model Form", "", card["model_form"]["text"], "", f"**Model:** {card['model']}", "",
               card["round_count"]["text"], ""]
     lines += ["## Illustrative Scenario Effects", "", *_illustrative_lines(card["illustrative"]), ""]
+    if card.get("market_reach_effect"):
+        lines += ["## What Market Reach changes", "", card["market_reach_effect"]["text"], ""]
     lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
     lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
-        "text", "The artefact records no Potential Range coverage for this version."), ""]
+        "text", "The artefact records no Potential Range coverage for this version."),
+        *_size_lines((card["potential_range"] or {}).get("by_size")), ""]
     lines += ["## Metrics", "", "| Metric | Model | Reference (Naive Baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
     lines += [
         f"| {m['name']} | {_number(m['model'], m.get('percent', False))} | "
@@ -556,6 +594,24 @@ def render_model_card(card: dict) -> str:
     lines += ["## Frozen results", "", ("Reported once and no longer extended: they decided v2, not the served "
               "Model Form (ADR 0008)."), "", "### Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
     return "\n".join(lines)
+
+
+def _large_market_lines(rows: list[dict] | None) -> list[str]:
+    """The tie-proof UK ranking on the largest Markets, this version beside earlier versions (none: no lines)."""
+    if not rows:
+        return []
+    labels = list(rows[0]["columns"])
+    return [
+        "The same tie-proof ranking on the Markets that import the most (no choice was made on these):",
+        "",
+        "| Version | " + " | ".join(labels) + " |",
+        "| --- |" + " --- |" * len(labels),
+        *[
+            f"| {row['name']} | " + " | ".join(number_text(row["columns"].get(label), ".3f") for label in labels) + " |"
+            for row in rows
+        ],
+        "",
+    ]
 
 
 def _comparison_lines(summary: dict | None) -> list[str]:

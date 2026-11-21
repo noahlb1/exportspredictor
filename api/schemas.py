@@ -1,10 +1,18 @@
-"""Response models: the API contract the app and the contract tests rely on."""
+"""Response models: the API contract the app and the contract tests rely on.
 
-from typing import TYPE_CHECKING, Literal
+Models that carry Caveat Tiers (the ranking queries, ranking rows and explanations) are declared here without them;
+`tiered(tiers)` builds the ones the API serves, with each declared tier's hide filter, column and reason column
+(`exportspredictor.caveats`).
+"""
 
-from pydantic import BaseModel, ConfigDict, Field
+from dataclasses import dataclass
+from functools import cache
+from typing import TYPE_CHECKING, Literal, cast
+
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from exportspredictor import scenarios
+from exportspredictor.caveats import TIERS, CaveatTier, caveat_texts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.rankings import (
     BLOCKED,
@@ -59,13 +67,33 @@ class Caveat(BaseModel):
     text: str  # what it means for the Advisor
 
 
+class CaveatTierOut(BaseModel):
+    """One Caveat Tier (`exportspredictor.caveats`): what the app needs to show its badge, caveat and hide filter."""
+
+    column: str  # the boolean field on ranking rows and explanations that sets it, e.g. "reexport_hub"
+    badge: str  # e.g. "Re-export Hub"
+    plural: str  # e.g. "Re-export Hubs", for "Hide Re-export Hubs" and "Re-export Hubs hidden"
+    text: str  # what the caveat means for the Advisor
+    key: str  # "market", "product" or "pair": what membership depends on
+    hide_param: str  # the ranking reads' query parameter that leaves the tier's rows out, e.g. "hide_hubs"
+    reason_column: str | None  # the row field holding each flagged row's reason, if the tier declares reasons
+    row_text: str | None  # a flagged row's caveat text, with "{reason}" for its reason; `text` when absent
+
+
+class TotalsNote(BaseModel):
+    """Export Potential is a median-type estimate: summed, it falls short of Actual Exports."""
+
+    # Summed Export Potential over summed Actual Exports, every UK pair, Gap Period means; from the artefact
+    potential_share_of_actual_exports: float | None
+    text: str  # the note, naming the share
+
+
 class Labels(BaseModel):
     """Wording and options the app shows, each defined once in the package."""
 
     usd_caption: str  # every value's unit, said once per page
     usd_unit: str  # the unit in column headings, e.g. "Export Gap (USD, nominal)"
     opportunity_types: list[str]  # Expand, New Market, New Product (GLOSSARY.md)
-    caveats: dict[str, Caveat]  # by the boolean row field that sets each (ADR 0005, 0007)
     last_tariff_year: int  # tariff data end here; later years carry it forward, and Scenarios restore its MFN rate
     tariff_carried_forward: str  # the caveat of a carried-forward Applied Tariff (ADR 0006)
     # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
@@ -75,12 +103,31 @@ class Labels(BaseModel):
     # those that name the Gap Period take its label from the artefact (`wording.term_definitions`)
     terms: dict[str, str]
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
+    totals_note: TotalsNote  # beside every summed figure (spec #113, "Totals understate")
 
 
 class MarketOut(BaseModel):
     iso3: str
     name: str
     region: str
+
+
+class MarketReachOut(BaseModel):
+    """A Market's Market Reach (ADR 0010): how widely the UK sends its Products there against how widely expected."""
+
+    year: int  # the reference year whose UK Flows it is learned from (the Baseline year − 1)
+    products_sent: int  # the Market's Products with a UK Flow that year
+    products_imported: int  # the Market's Products imported from other Exporters that year
+    products_expected: float  # products_imported × the UK's share across every Market
+    # Log of the share of the Market's imported Products the UK sends, against that share across Markets, shrunk
+    # (mean over the fold tables).
+    offset: float
+    text: str  # the one sentence the app shows
+
+
+class PairMarketReachOut(MarketReachOut):
+    pair_offset: float  # the offset of the pair's own fold table, the one its Export Potential takes
+    pair_multiplier: float  # exp(β · pair_offset), before the rescale constant that keeps the UK's total
 
 
 # Each choice set is built from the package's own constant, so it is defined once. Pydantic validates
@@ -111,8 +158,7 @@ class _FilterQuery(BaseModel):
 
     sector: str | None = Field(None, description="Sector (HS2 chapter), e.g. 22")
     region: str | None = Field(None, description="Market region, e.g. South Asia")
-    hide_flagged: bool = Field(False, description="Leave out Flagged Products (volatile, entrepôt-driven values)")
-    hide_hubs: bool = Field(False, description="Leave out Re-export Hubs (Markets that re-export much of what they import)")
+    # `tiered` adds each Caveat Tier's hide filter here, e.g. hide_hubs
     limit: int | None = Field(None, ge=1, le=MAX_ROWS, description=f"Keep only the top rows (at most {MAX_ROWS:,})")
 
 
@@ -170,8 +216,7 @@ class _Values(BaseModel):
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
     blocked_opportunity_value_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
     blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
-    flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
-    reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
+    # `tiered` adds each Caveat Tier's column here (and its reason column, if any), e.g. reexport_hub (ADR 0005)
     # The Potential Range (ADR 0007): where Actual Exports fall 80% of the time for comparable pairs
     potential_range_low_usd: float
     potential_range_high_usd: float
@@ -217,6 +262,7 @@ class _Ranking(BaseModel):
 
 class Leaderboard(_Ranking):
     summary: LeaderboardSummary
+    market_reach: MarketReachOut | None = None  # the filtered Market's reach; None without a Market filter
     opportunities: list[LeaderboardOpportunity]  # UK Product–Market pairs, sorted by `rank_by`, largest first
 
 
@@ -239,8 +285,11 @@ class BlockedOpportunity(LeaderboardOpportunity):
 
     baseline_export_potential_usd: float  # Baseline Export Potential (the Baseline year's)
     baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
-    # Export Potential with a Trade Agreement: Baseline Export Potential plus the Blocked Opportunity value (Illustrative)
-    potential_with_agreement_usd: float
+    # Export Potential with a Trade Agreement: Baseline Export Potential plus the Blocked Opportunity value (Illustrative);
+    # None where Actual Exports exceed Baseline Export Potential (spec #113), where the uplift below is given instead
+    potential_with_agreement_usd: float | None
+    # The Blocked Opportunity value as a share of Baseline Export Potential, only where Actual Exports exceed it
+    blocked_opportunity_uplift: float | None
 
 
 class BlockedOpportunities(_Ranking):
@@ -263,6 +312,7 @@ class ProductOpportunities(_Ranking):
 
 class MarketOpportunities(_Ranking):
     market: MarketOut
+    market_reach: MarketReachOut | None  # None only for a Market with no UK grid pairs in the reference year
     opportunities: list[ProductOpportunity]  # Products, sorted by `rank_by`, largest first
 
 
@@ -302,6 +352,56 @@ class Headline(BaseModel):
     model: float | None
     naive: float | None
     beats_naive: bool
+    text: str
+
+
+class LargeMarketsRow(BaseModel):
+    markets: int  # the count of largest importing Markets measured (30, 60)
+    model: float | None
+    naive: float | None
+
+
+class LargeMarkets(BaseModel):
+    """The headline's measure on the largest importing Markets (`large_markets.large_markets_report`)."""
+
+    test_year: int
+    rows: list[LargeMarketsRow]
+    text: str
+
+
+class LargeMarketsByVersion(BaseModel):
+    """One version's tie-proof UK ranking on the largest importing Markets (`evaluation.large_markets_beside_earlier`):
+    this version, the earlier versions re-scored from their saved scores, and this run's Naive Baseline."""
+
+    name: str
+    markets: dict[int, float | None]  # count of largest Markets (30, 60) -> figure; None where not measured
+    columns: dict[str, float | None]  # the same figures by column label ("30 largest Markets"), as tables show them
+
+
+class WithAndWithout(BaseModel):
+    with_: float | None = Field(alias="with")
+    without: float | None
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class LargeMarketsWithAndWithout(WithAndWithout):
+    markets: int
+
+
+class LiftWithAndWithout(WithAndWithout):
+    size_matched: WithAndWithout
+
+
+class MarketReachEffect(BaseModel):
+    """What Market Reach, the change this version keeps, does to the test-year figures (`evaluation.market_reach_effect`)."""
+
+    selection_measure: WithAndWithout
+    old_measure: WithAndWithout
+    large_markets: list[LargeMarketsWithAndWithout]
+    lift: LiftWithAndWithout | None = None
+    uk_pair_coverage: WithAndWithout | None = None
+    scenario_effects: str
     text: str
 
 
@@ -437,12 +537,13 @@ class Confirmation(BaseModel):
 
 
 class VersionResult(BaseModel):
-    """One version's test-year figures: this version or an earlier one (v2, v1)."""
+    """One version's test-year figures: this version or an earlier one (the Blend, v2, v1)."""
 
     model_config = ConfigDict(extra="allow")  # v2's artefact version
 
     name: str
-    uk_ranking: float | None = None
+    uk_ranking: float | None = None  # on the old measure (ties share their average rank), as every version reported
+    uk_ranking_tie_proof: float | None = None  # the Selection Measure; an earlier version's from its saved scores
     lift: float | None = None
     size_matched_lift: float | None = None
     tweedie_deviance_all_exporters: float | None = None
@@ -453,7 +554,8 @@ class NaiveBaselineResult(BaseModel):
     """The Naive Baseline's test-year UK ranking, from this run or as reported for v2."""
 
     name: str
-    uk_ranking: float | None = None
+    uk_ranking: float | None = None  # on the old measure
+    uk_ranking_tie_proof: float | None = None  # the Selection Measure, where measured
 
 
 class TestYearRanking(BaseModel):
@@ -521,6 +623,10 @@ class Evaluation(BaseModel):
     naive_baseline: str
     accuracy: dict[str, ScopeAccuracy]  # "all_exporters" and "uk_out_of_fold"
     headline: Headline
+    large_markets: LargeMarkets | None = None  # None for a version evaluated before #123
+    # This version beside the earlier versions re-scored from their saved scores (#128); None before.
+    large_markets_by_version: list[LargeMarketsByVersion] | None = None
+    market_reach_effect: MarketReachEffect | None = None  # None for a version without Market Reach
     tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None
@@ -619,6 +725,7 @@ class PairEffect(BaseModel):
     scenario_tariff_pct: float | None  # and under the Scenario (clipped to the training range)
     baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
     blocked_opportunity: bool
+    # `tiered` adds each Caveat Tier's column here (and its reason column, if any), as on ranking rows
 
 
 class NotePart(BaseModel):
@@ -717,13 +824,13 @@ class Explanation(BaseModel):
     baseline_export_potential_usd: float  # the Baseline year's, which the factors explain
     relative_export_gap: float | None  # Export Gap / Export Potential (Gap Period means)
     opportunity_type: OpportunityType  # Expand, New Market or New Product, over the Gap Period
-    flagged_product: bool  # a Flagged Product: shown with a caveat (ADR 0005)
-    reexport_hub: bool  # the Market is a Re-export Hub: shown with a caveat (ADR 0005)
+    # `tiered` adds each Caveat Tier's column here (and its reason column, if any), as on ranking rows
     potential_range_low_usd: float  # the Potential Range around the Gap Period mean (ADR 0007)
     potential_range_high_usd: float
     uncertain_opportunity: bool  # an Uncertain Opportunity
     potential_range_text: str  # the Potential Range in plain words, for the pair's detail view
     tariff_caveat: str | None  # set when the Baseline year's Applied Tariff is carried forward (ADR 0006)
+    market_reach: PairMarketReachOut | None  # the Market's reach, shown apart from the Product's factors
     factors: list[FactorOut]  # largest absolute contribution first
     # By year: every Gap Period year (with Export Potential and Export Gap), and earlier
     # years with UK Actual Exports only
@@ -731,3 +838,100 @@ class Explanation(BaseModel):
 
 
 BlockedOpportunities.model_rebuild()  # resolves `note`, whose ScenarioNote is defined after it
+
+
+# --- Caveat Tiers: the models that carry them, built from the declared tiers --------------------------------------
+
+
+@dataclass(frozen=True)
+class Tiered:
+    """The query and response models that carry Caveat Tiers, each with every declared tier's fields.
+
+    The classes of the same name above lack those fields; the API serves these.
+    """
+
+    RankingQuery: type[RankingQuery]
+    LeaderboardQuery: type[LeaderboardQuery]
+    BlockedQuery: type[BlockedQuery]
+    MarketOpportunity: type[MarketOpportunity]
+    ProductOpportunity: type[ProductOpportunity]
+    LeaderboardOpportunity: type[LeaderboardOpportunity]
+    BlockedOpportunity: type[BlockedOpportunity]
+    Leaderboard: type[Leaderboard]
+    BlockedOpportunities: type[BlockedOpportunities]
+    ProductOpportunities: type[ProductOpportunities]
+    MarketOpportunities: type[MarketOpportunities]
+    Explanation: type[Explanation]
+    PairEffect: type[PairEffect]
+    ScenarioResponse: type[ScenarioResponse]
+
+
+def _rebuilt[M: BaseModel](
+    model: type[M], *, after: str | None = None, added: dict | None = None, validators: dict | None = None, **replaced
+) -> type[M]:
+    """`model` under its own name with `added` fields inserted after the field `after`, and `replaced` fields swapped
+    in place, so field order (and the OpenAPI document) reads as if they had been declared there. `validators` are
+    pydantic validators the built model runs."""
+    fields: dict = {}
+    for name, info in model.model_fields.items():
+        fields[name] = (replaced[name], info) if name in replaced else (info.annotation, info)
+        if name == after:
+            fields.update(added or {})
+    built = create_model(
+        model.__name__, __config__=model.model_config, __doc__=model.__doc__, __module__=model.__module__,
+        __validators__=validators, **fields,
+    )
+    return cast(type[M], built)
+
+
+def _caveat_texts_validator(tiers: tuple[CaveatTier, ...]) -> dict:
+    """A validator that fills a row's `caveat_texts` from its tier columns (`caveats.caveat_texts`), so every row the
+    API serves carries its caveats worded once, in the package."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def with_caveat_texts(cls, data):
+        if isinstance(data, dict) and "caveat_texts" not in data:
+            return {**data, "caveat_texts": caveat_texts(data, tiers)}
+        return data
+
+    return {"with_caveat_texts": with_caveat_texts}
+
+
+@cache
+def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
+    """The models carrying `tiers`: each tier's hide filter on the ranking queries (after `region`), and its column
+    (then its reason column, if any) on ranking rows and Scenario pairs (after `blocked_opportunity`) and on
+    explanations (after `opportunity_type`)."""
+    hides = {
+        tier.hide_param: (bool, Field(False, description=tier.hide_description)) for tier in tiers
+    }
+    columns: dict = {}
+    for tier in tiers:
+        columns[tier.column] = (bool, ...)
+        if tier.reason_column is not None:
+            columns[tier.reason_column] = (str | None, ...)
+    # The caveat text of each tier the row is in, worded by the package (`caveats.caveat_texts`), in tier order.
+    columns["caveat_texts"] = (list[str], Field(default_factory=list))
+    texts = _caveat_texts_validator(tiers)
+    market, product, leaderboard, blocked = (
+        _rebuilt(row, after="blocked_opportunity", added=columns, validators=texts)
+        for row in (MarketOpportunity, ProductOpportunity, LeaderboardOpportunity, BlockedOpportunity)
+    )
+    pair = _rebuilt(PairEffect, after="blocked_opportunity", added=columns, validators=texts)
+    return Tiered(
+        RankingQuery=_rebuilt(RankingQuery, after="region", added=hides),
+        LeaderboardQuery=_rebuilt(LeaderboardQuery, after="region", added=hides),
+        BlockedQuery=_rebuilt(BlockedQuery, after="region", added=hides),
+        MarketOpportunity=market,
+        ProductOpportunity=product,
+        LeaderboardOpportunity=leaderboard,
+        BlockedOpportunity=blocked,
+        Leaderboard=_rebuilt(Leaderboard, opportunities=list[leaderboard]),
+        BlockedOpportunities=_rebuilt(BlockedOpportunities, opportunities=list[blocked]),
+        ProductOpportunities=_rebuilt(ProductOpportunities, opportunities=list[market]),
+        MarketOpportunities=_rebuilt(MarketOpportunities, opportunities=list[product]),
+        Explanation=_rebuilt(Explanation, after="opportunity_type", added=columns, validators=texts),
+        PairEffect=pair,
+        ScenarioResponse=_rebuilt(ScenarioResponse, top_pairs=list[pair], blocked_opportunities=list[pair]),
+    )

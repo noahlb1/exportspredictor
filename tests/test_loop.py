@@ -100,6 +100,29 @@ def test_an_arm_inside_the_noise_is_recorded_as_dropped(data):
     assert floor["win_threshold"] == 2.0
 
 
+def test_after_the_recheck_the_loop_decides_on_the_recomputed_win_threshold(data, tmp_path, monkeypatch):
+    # Without the recheck nothing is too small to win (minimum 0): the same arm is kept in
+    # `test_a_kept_arm_becomes_the_best_so_far_and_the_next_experiment_starts_from_it`.
+    plan = replace(loop.FIXTURE_LOOP, min_win_threshold=0.0)
+    lp = loop.Loop(data, plan, tmp_path)
+    lp.noise_floor()
+    rescored_best = {**lp.results["best"], "selection_measure": 0.25}
+    # #116: the noise floor's seeds re-scored under the tie-proof measure. Their SD is 1, so the
+    # recomputed threshold is 2: no change of a correlation can clear it.
+    loop.save_recheck(tmp_path, loop.recheck_results(lp.results, [-0.5, 0.5, 1.5], best=rescored_best))
+    _no_training(monkeypatch)
+
+    results = loop.Loop(data, plan, tmp_path).run_experiment(
+        "blend", [loop.Arm("three quarters naive", {"naive_weight": 0.75})]
+    )
+
+    section = results["experiments"]["blend"]
+    assert section["win_threshold"] == pytest.approx(2.0)
+    assert section["kept"] is None
+    assert section["base"]["selection_measure"] == 0.25  # the best so far, re-scored
+    assert results["noise_floor"]["win_threshold"] == 0.0  # the original record stays as it was
+
+
 def _no_training(monkeypatch):
     def refuse(*args, **kwargs):
         raise AssertionError("a model was trained")
@@ -120,6 +143,34 @@ def test_a_scoring_only_arm_trains_no_model(data, tmp_path, monkeypatch):
     assert row["trained"] is False
     assert row["training_key"] == results["noise_floor"]["arms"][0]["training_key"]
     assert row["selection_measure"] is not None
+
+
+def test_a_model_cached_on_one_feature_set_is_never_reused_on_another(data, tmp_path):
+    """Rebuilt feature files (#126) share the loop's folder: an arm on them trains its own model."""
+    original = loop.Loop(data, loop.FIXTURE_LOOP, tmp_path).noise_floor()["arms"][0]
+    rebuilt = replace(data, feature_set="exporter_count")
+
+    results = loop.Loop(rebuilt, loop.FIXTURE_LOOP, tmp_path).run_experiment(
+        "rebuilt base", [loop.Arm("base on rebuilt files", {})]
+    )
+
+    row = results["experiments"]["rebuilt base"]["arms"][0]
+    assert row["trained"] is True
+    assert row["training_key"] != original["training_key"]
+
+
+def test_the_real_loop_reads_the_feature_set_the_environment_names(derived_data_root, monkeypatch):
+    features.build(derived_data_root, years=[2021, 2022], rate=1.0)
+    monkeypatch.setenv(features.FEATURE_SET_ENV, "exporter_count")
+    (derived_data_root / "derived" / "country_year_filled.parquet").write_bytes(
+        (derived_data_root / "derived" / "country_year.parquet").read_bytes()
+    )
+    folder = features.build(derived_data_root, years=[2021, 2022], rate=1.0)
+
+    real = loop.real_data(derived_data_root)
+
+    assert real.feature_set == "exporter_count"
+    assert real.data.grid == folder / "uk_grid_2022.parquet"
 
 
 def test_an_experiment_that_would_train_more_than_six_models_is_refused_before_training_any(data, monkeypatch):
@@ -629,3 +680,10 @@ def test_a_best_so_far_that_changed_how_zero_cells_are_sampled_is_refused():
         loop.served_configuration(_results({**SELECTED, "zero_rate": 0.02}))
     with pytest.raises(ValueError, match="Zero Cells"):
         loop.served_configuration(_results({**SELECTED, "uk_zeros_sampled": True}))
+
+
+def test_the_exporter_count_experiment_is_shown_in_the_glossary_s_words():
+    # Not one of the research note's seven numbered experiments (its own note: exporter-count-2022.md).
+    assert loop.experiment_label(loop.EXPORTER_COUNT_EXPERIMENT, ["base on rebuilt files", "+ log_exporters_loo"]) == (
+        "Exporter count"
+    )

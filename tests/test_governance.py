@@ -321,7 +321,7 @@ def test_model_card_shows_the_test_year_beside_earlier_versions_and_says_whether
         **fixture_artefacts.evaluation["headline"], "model": 0.55, "naive": 0.52, "beats_naive": True}}
     v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
           "tweedie_deviance_all_exporters": 355.5, "tweedie_deviance_uk": 568.6}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
     text = governance.render_model_card(governance.model_card(replace(fixture_artefacts, evaluation=report)))
 
     section = _section(text, "## Headline")
@@ -456,7 +456,7 @@ def test_the_headline_says_what_choosing_on_the_ranking_cost_in_deviance(fixture
     v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
           "tweedie_deviance_all_exporters": 0.5, "tweedie_deviance_uk": 568.6}  # below the fixture's deviance
     report = {**fixture_artefacts.evaluation}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
     card = governance.model_card(replace(fixture_artefacts, evaluation=report))
 
     deviance = report["earlier_versions"]["rows"][0]["tweedie_deviance_all_exporters"]
@@ -477,3 +477,72 @@ def test_the_frozen_v1_comparison_names_the_blend_it_compared_even_when_saved_as
     assert ", the Blend " in section and "the Blend − v1" in section
     # The gain ladder's steps still name v2's configuration, which the Blend kept.
     assert "v2's Export Potential" not in section and "v2 − v1" not in section and "for v2 " not in section
+
+
+def test_model_card_reports_potential_range_coverage_by_size(card, fixture_artefacts):
+    saved = fixture_artefacts.evaluation["potential_range"]["by_size"]
+    assert card["potential_range"]["by_size"] == saved
+
+    section = _section(governance.render_model_card(card), "## Potential Range")
+    assert "| Size of Export Potential | Held-out rows | Coverage |" in section
+    for row in saved:
+        assert f"| {row['size']} | {row['rows']:,} |" in section
+
+
+def test_model_card_reports_what_market_reach_changes(card, fixture_artefacts):
+    effect = fixture_artefacts.evaluation["market_reach_effect"]
+
+    section = _section(governance.render_model_card(card), "## What Market Reach changes")
+    assert effect["text"] in section
+    assert "Lift" in section and "Scenario Effects" in section
+
+
+def test_model_card_sets_the_large_market_measures_beside_earlier_versions(card, fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    v1 = {row["markets"]: row["model"] for row in report["rescored_earlier_versions"]["v1"]["large_markets"]}
+
+    section = _section(governance.render_model_card(card), "## Headline")
+    assert "| Version | 30 largest Markets | 60 largest Markets |" in section
+    assert f"| v1 | {v1[30]:.3f} | {v1[60]:.3f} |" in section
+
+
+def test_model_card_states_low_uk_pair_coverage_as_the_api_does(fixture_artefacts):
+    from dataclasses import replace
+
+    report = fixture_artefacts.evaluation
+    low = {"with_market_reach": 0.735, "without_market_reach": 0.807}
+    artefacts = replace(fixture_artefacts, evaluation={
+        **report, "potential_range": {**report["potential_range"], "uk_pair_coverage": low}})
+
+    titles = {row["title"] for row in governance.model_card(artefacts)["limitations"]}
+
+    assert "The Potential Range holds fewer UK pairs than its target" in titles
+    assert {row["title"] for row in evaluation.known_limitations(artefacts)} <= titles
+
+
+def test_the_earlier_versions_table_gives_v1_the_lift_its_comparison_measured(card, fixture_artefacts):
+    secondary = {m["metric"]: m["v1"] for m in fixture_artefacts.evaluation["v1_comparison"]["secondary"]}
+    v1 = next(row for row in card["earlier_versions"]["rows"] if row["name"] == "v1")
+
+    assert (v1["lift"], v1["size_matched_lift"]) == (secondary["lift"], secondary["size_matched_lift"])
+    assert f"| {secondary['size_matched_lift']:.2f} | {secondary['lift']:.2f} |" in governance.render_model_card(card)
+
+
+def test_a_saved_v1_row_without_lift_is_filled_from_its_comparison_on_read(fixture_artefacts):
+    from dataclasses import replace
+
+    report = fixture_artefacts.evaluation
+    block = report["earlier_versions"]
+    saved = {**block, "rows": [{k: v for k, v in row.items() if row["name"] != "v1" or "lift" not in k}
+                               for row in block["rows"]]}
+    card = governance.model_card(replace(fixture_artefacts, evaluation={**report, "earlier_versions": saved}))
+
+    v1 = next(row for row in card["earlier_versions"]["rows"] if row["name"] == "v1")
+    assert v1["lift"] is not None and v1["size_matched_lift"] is not None
+
+
+def test_the_scenario_note_names_the_served_model_form_with_its_market_reach(card, fixture_artefacts):
+    assert fixture_artefacts.ppml_benchmark["model"]["model_form"].get("market_reach")
+
+    section = _section(governance.render_model_card(card), "## Illustrative Scenario Effects")
+    assert "On the served Model Form (Blend with Market Reach)," in section

@@ -434,7 +434,7 @@ def test_lift_is_reported_with_a_confidence_interval_as_a_tendency(report):
     assert lift["ci_level"] == 0.95
     assert "tendency" in lift["text"] and "not a promise" in lift["text"]
     assert lift["training_years"] == [2021, 2022] and lift["outcome_year"] == 2023
-    assert lift["gap_years"] == [2021, 2022]
+    assert lift["gap_years"] == [2022]
 
 
 def test_the_lift_report_holds_out_the_frozen_v1_list_within_scope(report, fixture_artefacts):
@@ -569,9 +569,78 @@ def test_a_blend_needs_the_years_flows_for_its_lift_rows(fixture_world):
         backtests.lift_rows(chunks, settings, model, form=ModelForm(0.3))
 
 
-def test_lift_is_measured_on_the_served_model_form(report, fixture_artefacts):
-    assert report["lift"]["model_form"] == fixture_artefacts.metadata["model_form"]
-    assert report["lift"]["model_form"]["form"] == "blend"
+def test_lift_is_measured_on_the_served_model_form_with_market_reach_and_without_it_beside_it(report, fixture_artefacts):
+    served = fixture_artefacts.model_form
+    plain = served.without_market_reach().to_dict()
+    assert served.market_reach is not None
+    # The headline Lift is the served form's: each held-out Exporter's own Market Reach, at the served beta.
+    assert report["lift"]["model_form"] == {**plain, "market_reach": fixture_artefacts.metadata["market_reach"]}
+    # The same Lift model scored without Market Reach, beside it: the kept change's effect on Lift.
+    without = report["lift_without_market_reach"]
+    assert without["model_form"] == plain
+    assert without["held_out_exporters"] == report["lift"]["held_out_exporters"]
+    effect = report["market_reach_effect"]["lift"]
+    assert effect == {
+        "with": report["lift"]["lift"], "without": without["lift"],
+        "size_matched": {"with": report["lift"]["size_matched"]["lift"], "without": without["size_matched"]["lift"]},
+    }
+
+
+def test_lift_rows_with_market_reach_scale_each_exporters_markets_by_its_own_reach_the_year_before(fixture_world):
+    from exportspredictor import market_reach
+    from exportspredictor.prediction import ModelForm
+
+    chunks = pipeline.fixture_training(fixture_world, baseline_year=2025)  # 2021-2024
+    settings = backtests.LiftSettings(training_years=(2021, 2022), gap_years=(2022,), outcome_year=2024)
+    model = backtests.train_backtest_model(
+        chunks, name="lift", training_years=settings.training_years, before=settings.before,
+        uk=UK, params={"max_depth": 2}, rounds=20, device="cpu", held_out=["FRA", "DEU"],
+    )
+    year_flows = lambda year: fixture_world.flows.filter(pl.col("year") == year)
+    keys = ["exporter", "importer", "hs6", "year"]
+    blend = ModelForm(0.3)
+    reached = ModelForm(0.3, market_reach=market_reach.MarketReach(
+        beta=4.0, form=market_reach.FORM, pseudo_count=market_reach.PSEUDO_COUNT, lag_years=1, reference_year=2021,
+        constant=1.0,
+    ))
+
+    plain = backtests.lift_rows(chunks, settings, model, form=blend, year_flows=year_flows)
+    with_reach = backtests.lift_rows(chunks, settings, model, form=reached, year_flows=year_flows)
+
+    both = plain.join(with_reach, on=keys, suffix="_reach")
+    assert both.height == plain.height == with_reach.height > 0
+    assert not both["export_potential_usd"].equals(both["export_potential_usd_reach"], check_names=False)
+    # Each Exporter's weighted sum of Export Potential is kept: Market Reach moves its ranking, not its level.
+    sums = both.group_by("exporter").agg(
+        (pl.col("export_potential_usd") * pl.col("weight")).sum().alias("plain"),
+        (pl.col("export_potential_usd_reach") * pl.col("weight")).sum().alias("reach"),
+    )
+    assert sums["reach"].to_list() == pytest.approx(sums["plain"].to_list())
+    # Within one Exporter, Market and fold, every Product moves by the same factor (a Market-wide offset).
+    from exportspredictor.folds import with_folds
+
+    ratio = with_folds(both, 5).with_columns(r=pl.col("export_potential_usd_reach") / pl.col("export_potential_usd"))
+    spread = ratio.group_by("exporter", "importer", "fold").agg(spread=pl.col("r").max() / pl.col("r").min())
+    assert spread["spread"].to_numpy() == pytest.approx(1.0)
+
+
+def test_lift_with_market_reach_needs_the_year_before_each_gap_year(fixture_world):
+    from exportspredictor import market_reach
+    from exportspredictor.prediction import ModelForm
+
+    chunks = pipeline.fixture_training(fixture_world, baseline_year=2025)
+    settings = backtests.LiftSettings(training_years=(2021, 2022), gap_years=(2021, 2022), outcome_year=2024)
+    model = backtests.train_backtest_model(
+        chunks, name="lift", training_years=settings.training_years, before=settings.before,
+        uk=UK, params={"max_depth": 2}, rounds=5, device="cpu", held_out=["FRA"],
+    )
+    reached = ModelForm(market_reach=market_reach.MarketReach(
+        beta=4.0, form=market_reach.FORM, pseudo_count=market_reach.PSEUDO_COUNT, lag_years=1, reference_year=2020,
+        constant=1.0,
+    ))
+
+    with pytest.raises(ValueError, match="2020"):
+        backtests.lift_rows(chunks, settings, model, form=reached)
 
 
 def test_an_event_backtest_refuses_fold_models_trained_after_the_event(fixture_world):
@@ -582,3 +651,16 @@ def test_an_event_backtest_refuses_fold_models_trained_after_the_event(fixture_w
 
     with pytest.raises(backtests.LeakageError):
         backtests.event_backtest(chunks, EVENT, late, high_income=None, resamples=10)
+
+
+def test_backtest_models_on_another_feature_set_are_cached_apart(tmp_path, monkeypatch):
+    # The Blend's Lift and Event Backtest models were trained on the original files; a build on the rebuilt
+    # `exporter_count` files with the same settings must not read them (#128).
+    from exportspredictor.features import FEATURE_SET_ENV
+
+    monkeypatch.delenv(FEATURE_SET_ENV, raising=False)
+    original = backtests.cache_dir(tmp_path)
+    assert original == tmp_path / "derived" / "backtest_models"
+
+    monkeypatch.setenv(FEATURE_SET_ENV, "exporter_count")
+    assert backtests.cache_dir(tmp_path) == tmp_path / "derived" / "backtest_models_exporter_count"

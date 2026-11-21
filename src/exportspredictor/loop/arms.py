@@ -5,8 +5,8 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 
-from exportspredictor import baci, search
-from exportspredictor.features import FEATURES
+from exportspredictor import baci, market_reach, search
+from exportspredictor.features import EXPORTER_COUNT_FEATURES, FEATURES
 from exportspredictor.folds import N_FOLDS
 from exportspredictor.loop.selection import MIN_WIN_THRESHOLD
 
@@ -44,16 +44,24 @@ class Settings:
     monotone: bool = True
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
+    # Scoring only: Market Reach's beta (`market_reach`, spec #113, ticket #127). 0 scores without it;
+    # otherwise each held-out UK pair's Export Potential is multiplied by exp(beta · offset) of its fold
+    # and Market, learned from the year before, and rescaled to keep the scored rows' summed Export Potential.
+    market_reach_beta: float = 0.0
 
     def to_dict(self) -> dict:
-        return {**asdict(self), "params": dict(self.params), "features": list(self.features)}
+        data = {**asdict(self), "params": dict(self.params), "features": list(self.features)}
+        # Left out at its default, so settings saved before it existed compare equal (the confirmation's).
+        if not self.market_reach_beta:
+            del data["market_reach_beta"]
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping) -> "Settings":
         return cls(**{**data, "params": dict(data["params"]), "features": tuple(data["features"])})
 
 
-SCORING_FIELDS = ("naive_weight",)
+SCORING_FIELDS = ("naive_weight", "market_reach_beta")
 TRAINING_FIELDS = tuple(f.name for f in fields(Settings) if f.name not in SCORING_FIELDS)
 # The training fields of the first loop (#67), always part of a model's cache key. A training
 # field added later is keyed only when it leaves its default, so adding one keeps every
@@ -222,6 +230,22 @@ def constraint_arms(weights: Sequence[float] = BLEND_WEIGHTS) -> list[Arm]:
     return [Arm("constraints on", {"monotone": True}, grid), Arm("constraints off", {"monotone": False}, grid)]
 
 
+# Spec #113, Phase 2 (#127): the Exporter count on the rebuilt `exporter_count` files (which also fill
+# missing GDP). Its base is the best so far retrained on those files (`Loop.run_experiment`'s
+# `base_arm`), and both are scored with Market Reach at the adopted beta, so the feature is kept only
+# if it adds something on top of Reach. The base keeps the best so far's blend weight; the Arm
+# re-chooses its own, as every Arm with a new model has (#71).
+EXPORTER_COUNT_EXPERIMENT = "exporter count"
+REBUILT_BASE = "base on rebuilt files"
+
+
+def exporter_count_arms(best: Settings, beta: float = market_reach.CHOSEN_BETA) -> tuple[Arm, list[Arm]]:
+    """The base Arm (the best so far with Market Reach) and the Arm adding the Exporter count to it."""
+    (feature,) = EXPORTER_COUNT_FEATURES
+    base = Arm(REBUILT_BASE, {"market_reach_beta": beta})
+    return base, [Arm(f"+ {feature}", {"features": (*best.features, feature)}, BLEND_GRID)]
+
+
 # The research note numbers the seven experiments (docs/research/opportunity-ranking-experiments.md).
 # The loop records nine decisions of the rule: experiments 1 and 2 share one, and experiments 5 and 6
 # decide each Arm on its own. These map a recorded decision and its Arms back to the numbers.
@@ -231,7 +255,7 @@ EXPERIMENT_NUMBERS = {
 }
 NAIVE_ARM_NUMBERS = {BLEND: 1, STARTING_POINT: 2}
 # What a decision is called where it is shown, where its recorded name is not the Glossary's.
-EXPERIMENT_DISPLAY_NAMES = {NAIVE_EXPERIMENT: "Naive Baseline"}
+EXPERIMENT_DISPLAY_NAMES = {NAIVE_EXPERIMENT: "Naive Baseline", EXPORTER_COUNT_EXPERIMENT: "Exporter count"}
 
 
 def experiment_numbers(name: str, arms: Sequence[str]) -> tuple[int, ...]:

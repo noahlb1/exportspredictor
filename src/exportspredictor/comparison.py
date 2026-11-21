@@ -41,7 +41,6 @@ import polars as pl
 
 from exportspredictor import backtests, experiments, freeze
 from exportspredictor.evaluation import (
-    MIN_RANKED_ROWS,
     naive_potential,
     tweedie_unit_deviance,
 )
@@ -56,6 +55,7 @@ from exportspredictor.features import (
     Sources,
     build_features,
 )
+from exportspredictor.selection_measure import within_product_correlations
 from exportspredictor.wording import number_text
 
 SEED = 0
@@ -77,6 +77,11 @@ CONDITIONS = {
 # ("v2", "v2_beats_v1") keep that name; the words name the version that was actually compared.
 NEW_VERSION = "v2"
 BLEND_VERSION = "the Blend"
+# Where the served form has Market Reach (ADR 0010): the comparison still scores the Blend without it, as pre-registered.
+WITHOUT_MARKET_REACH_NOTE = (
+    "This comparison scores the Blend without Market Reach, the form it was pre-registered on; the served form "
+    "scales the Blend by each Market's Market Reach. "
+)
 _PAIR = ["exporter", "importer", "hs6"]
 
 # --- The gain ladder (reporting only; it decides nothing) -------------------------------------------
@@ -240,12 +245,13 @@ def _by_product(frame: pl.DataFrame, predictors: Sequence[str]) -> pl.DataFrame:
             .sum()
             for p in predictors
         },
-        **{f"{p}_rho": pl.corr(p, "value_usd", method="spearman") for p in predictors},
     )
-    ranked = pl.col("_rows") >= MIN_RANKED_ROWS
-    return sums.with_columns(
-        pl.when(ranked & pl.col(f"{p}_rho").is_not_nan()).then(pl.col(f"{p}_rho")).alias(f"{p}_rho") for p in predictors
-    ).sort("hs6")
+    # Pre-registered on the measure of its day (average ranks for ties), so it keeps the legacy measure: a
+    # continuity table of the 2023 reads already made, not a choice (ticket #115).
+    for p in predictors:
+        rho = within_product_correlations(frame, p, tie_proof=False).select("hs6", pl.col("rho").alias(f"{p}_rho"))
+        sums = sums.join(rho, on="hs6", how="left")
+    return sums.sort("hs6")
 
 
 def _metrics(products: pl.DataFrame, predictor: str, rows: int) -> dict:
@@ -607,9 +613,11 @@ def version_name(report: dict) -> str:
 
 
 def saved_verdict_text(block: dict, *, name: str) -> str:
-    """A saved `v1_comparison` block's verdict, worded again from its saved figures, the new version called `name`."""
+    """A saved `v1_comparison` block's verdict, worded again from its saved figures, the new version called `name`;
+    a block that scored the Blend without the served form's Market Reach says so first (`WITHOUT_MARKET_REACH_NOTE`)."""
     judged = verdict(block["primary"], block["secondary"], name=name)
-    return judged["text"] + _not_run_text(block.get("secondaries_not_run") or [])
+    note = WITHOUT_MARKET_REACH_NOTE if block.get("scored_without_market_reach") else ""
+    return note + judged["text"] + _not_run_text(block.get("secondaries_not_run") or [])
 
 
 def relabelled(report: dict) -> dict:

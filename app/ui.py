@@ -57,21 +57,22 @@ def scenario_note(note: dict) -> None:
     st.markdown("\n".join(f"- {text}" for text in parts))
 
 
-def caveats() -> dict[str, tuple[str, str]]:
-    """Caveat badges (ADR 0005): the row field that sets each, its badge and what it means."""
-    return {field: (caveat["badge"], caveat["text"]) for field, caveat in labels()["caveats"].items()}
+def caveat_tiers() -> list[dict]:
+    """The Caveat Tiers (ADR 0005, `/caveats`), in display order: each one's row field (`column`), `badge`, `plural`,
+    `text`, `hide_param` and, if it gives a reason per row, `reason_column` and `row_text`. Every badge, caveat, hide
+    filter and hidden-rows notice is drawn from these, so a tier the API declares needs no app code."""
+    return fetch("/caveats", client.api_url())
 
 
 def caveat_badges(row: dict) -> str:
     """The caveat badges of one ranking row or explanation, comma-separated ("" if none)."""
-    return ", ".join(badge for field, (badge, _) in caveats().items() if row[field])
+    return ", ".join(tier["badge"] for tier in caveat_tiers() if row[tier["column"]])
 
 
 def show_caveats(row: dict) -> None:
-    """One warning per caveat of a pair (its detail view)."""
-    for field, (_, caveat) in caveats().items():
-        if row[field]:
-            st.warning(caveat)
+    """One warning per caveat of a pair (its detail view), worded by the API (`caveat_texts`)."""
+    for text in row.get("caveat_texts", []):
+        st.warning(text)
 
 
 @st.cache_data(ttl=300, show_spinner=False)

@@ -96,3 +96,15 @@ def test_checklist_mentions_no_removed_page():
     removed = ["Why?", "Product to Markets", "Product → Markets", "Market to Products", "Market → Products"]
     named = [title for title in removed if title in checklist]
     assert not named, f"The README checklist still names removed pages: {named}"
+
+
+def test_checklist_covers_the_market_reach_sentence_in_the_market_view_and_the_panel():
+    lines = [line for line in _checklist().splitlines() if "Market Reach" in line]
+    assert any("Choose a Market" in line for line in lines)
+    assert any("panel" in line for line in lines)
+
+
+def test_checklist_covers_the_evaluation_figures_of_spec_113():
+    checklist = _checklist()
+    for figure in ("tie-proof", "old measure", "30 largest", "What Market Reach changes", "by size", "UK pairs"):
+        assert figure in checklist, figure

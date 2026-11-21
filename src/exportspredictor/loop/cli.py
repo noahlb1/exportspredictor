@@ -7,9 +7,10 @@ from dataclasses import replace
 from pathlib import Path
 
 from exportspredictor import experiments, search
-from exportspredictor.features import PRODUCT_DETAIL_FEATURES
+from exportspredictor.features import FEATURE_SET_ENV, PRODUCT_DETAIL_FEATURES
 from exportspredictor.loop.arms import (
     CONSTRAINTS_EXPERIMENT,
+    EXPORTER_COUNT_EXPERIMENT,
     NAIVE_EXPERIMENT,
     NOISE_FLOOR,
     SCOPE_EXPERIMENTS,
@@ -26,9 +27,12 @@ from exportspredictor.loop.arms import (
 )
 from exportspredictor.loop.confirmation import V2, WINNER, confirm
 from exportspredictor.loop.data import RESULTS_FILE, load, loop_dir, real_data
-from exportspredictor.loop.runner import Loop, run_product_detail
+from exportspredictor.loop.recheck import current_win_threshold
+from exportspredictor.loop.runner import Loop, run_exporter_count, run_product_detail
 from exportspredictor.loop.selection import SELECTION_MEASURE
 from exportspredictor.loop.served import v2_plan
+
+EXPORTER_COUNT_SET = "exporter_count"  # the rebuilt feature files the Exporter count is tried on (#126)
 
 
 def main(argv: Sequence[str]) -> None:
@@ -65,6 +69,13 @@ def main(argv: Sequence[str]) -> None:
         lp = Loop(real_data(), v2_plan(), loop_dir())
         section = lp.run_experiment(CONSTRAINTS_EXPERIMENT, constraint_arms())["experiments"][CONSTRAINTS_EXPERIMENT]
         print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in section["arms"]}}), flush=True)
+    elif command == "exporter-count":
+        data = real_data()
+        if data.feature_set != EXPORTER_COUNT_SET:
+            raise SystemExit(f"Run on the rebuilt files: set {FEATURE_SET_ENV}={EXPORTER_COUNT_SET}")
+        section = run_exporter_count(Loop(data, v2_plan(), loop_dir()))["experiments"][EXPORTER_COUNT_EXPERIMENT]
+        rows = [section["base_arm"], *section["arms"]]
+        print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in rows}}), flush=True)
     elif command == "confirm":
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
@@ -73,7 +84,8 @@ def main(argv: Sequence[str]) -> None:
         print(json.dumps(time_one_arm()), flush=True)
     else:
         raise SystemExit(
-            "usage: python -m exportspredictor.loop noise|naive|select|two-part|scope|product-detail|constraints|confirm|time"
+            "usage: python -m exportspredictor.loop "
+            "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|confirm|time"
         )
 
 
@@ -85,7 +97,7 @@ def confirm_best(root: Path | None = None) -> dict:
     plan = v2_plan(root)
     return confirm(
         real_data(root), replace(plan, fold=0), winner, v2,
-        threshold=results[NOISE_FLOOR]["win_threshold"], folder=loop_dir(root),
+        threshold=current_win_threshold(results), folder=loop_dir(root),
     )
 
 

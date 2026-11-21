@@ -203,3 +203,10 @@ def test_the_three_steps_close_and_come_back(monkeypatch, fixture_api_url):
     assert not _steps(page)
     page.button(key="steps_open").click().run()
     assert len(_steps(page)) == 3
+
+
+def test_the_panel_shows_the_markets_reach_in_one_sentence(monkeypatch, fixture_api_url):
+    page = _choose(_home(monkeypatch, fixture_api_url), WHISKY, "JPN")
+    reach = httpx.get(f"{fixture_api_url}/explain/{WHISKY}/JPN").json()["market_reach"]
+
+    assert reach["text"] in _texts(page)

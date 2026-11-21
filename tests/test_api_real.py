@@ -36,12 +36,12 @@ def real(client):
     return client.app.state.artefacts
 
 
-def test_health_reports_format_3_and_the_gap_period_of_the_served_artefacts(client, real):
+def test_health_reports_format_4_and_the_gap_period_of_the_served_artefacts(client, real):
     body = client.get("/health").json()
 
     assert body["ready"] is True
     assert body["artefact_version"] == real.version
-    assert body["artefact_format"] == 3
+    assert body["artefact_format"] == 4
     assert body["gap_years"] == [2022, 2024]
     assert body["baseline_year"] == 2024
 
@@ -80,3 +80,15 @@ def test_the_exporter_scope_is_the_top_100_economies_the_features_were_built_on(
     assert baci.UK in served
     assert served == scope.exporter_scope(pl.read_parquet(country_year), uk=baci.UK)
     assert served == json.loads(built.read_text(encoding="utf-8"))["exporter_scope"]
+
+
+def test_every_market_view_states_its_market_reach_from_the_year_before_the_baseline(client, real):
+    # ADR 0010: the UK reaches France far more widely than Iran; each sentence is learned from 2023's UK Flows.
+    france = client.get("/opportunities/by-market/FRA").json()["market_reach"]
+    iran = client.get("/opportunities/by-market/IRN").json()["market_reach"]
+
+    assert france["year"] == iran["year"] == real.baseline_year - 1
+    assert france["offset"] > 0 > iran["offset"]
+    assert france["products_sent"] > france["products_expected"] and iran["products_sent"] < iran["products_expected"]
+    detail = client.get("/explain/220830/FRA").json()["market_reach"]
+    assert detail["text"] == france["text"]

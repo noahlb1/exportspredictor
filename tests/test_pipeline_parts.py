@@ -9,7 +9,12 @@ import math
 import pytest
 import xgboost
 
-from exportspredictor.pipeline import Parts, build_artefacts, parse_parts
+from exportspredictor.pipeline import (
+    Parts,
+    build_artefacts,
+    fixture_rescore,
+    parse_parts,
+)
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +36,7 @@ def _run(world, tuned, monkeypatch, parts: Parts):
         patch.setattr(xgboost, "train", counting)
         bundle = build_artefacts(
             world, version="parts", search_results=tuned["search"], ranking_results=tuned["ranking_experiments"],
-            parts=parts,
+            parts=parts, rescore=fixture_rescore(world),  # as the session fixture artefacts are built
         )
     return bundle, len(trained)
 
@@ -48,7 +53,7 @@ def test_a_default_run_trains_only_the_fold_and_test_year_models(default_run):
 
 
 OWN_PART = {
-    "event_backtests": {"lift", "event_backtest"},
+    "event_backtests": {"lift", "lift_without_market_reach", "event_backtest"},
     "constraint_comparison": {"monotone_constraints"},
 }
 
@@ -135,3 +140,10 @@ def test_the_ppml_benchmark_is_opt_in_and_trains_no_model(fixture_world, tuned, 
 def test_the_command_line_switches_on_the_ppml_benchmark():
     assert parse_parts(["--ppml-benchmark"]) == Parts(ppml_benchmark=True)
     assert parse_parts(["--every-part"]).ppml_benchmark
+
+
+@pytest.mark.parametrize("command", ["refresh", "rerange", "compare"])
+def test_the_command_line_help_names_the_commands_that_copy_the_newest_version(command, capsys):
+    with pytest.raises(SystemExit):
+        parse_parts(["--help"])
+    assert f"python -m exportspredictor.pipeline {command}" in capsys.readouterr().out

@@ -16,6 +16,7 @@ from app import client, panel
 from app.filters import leaderboard_filters, show_all
 from app.format import format_usd
 from app.frame import page
+from app.panel import MARKET_REACH_HELP
 from app.tables import (
     LEADERBOARD_FORMATS,
     LEADERBOARD_NARROW,
@@ -28,8 +29,9 @@ from app.tables import (
 )
 from app.ui import (
     ROWS_SHOWN,
-    caveats,
+    caveat_tiers,
     fetch,
+    labels,
     rank_orders,
     read_limit,
 )
@@ -135,11 +137,14 @@ with page(
         )
         order = rank_orders()[body["rank_by"]]
         st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']}")
+        if body.get("market_reach"):  # a Market filter: the Market's reach beside its Products' Export Gaps (ADR 0010)
+            st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
+        st.caption(labels()["totals_note"]["text"])  # beside the summed Export Gap (spec #113)
         if not rows:
             st.info("No Opportunities match these filters.")
         else:
             _table_and_panel(body, rows)
-            flagged = [caveat for field, (_, caveat) in caveats().items() if any(row[field] for row in read)]
+            flagged = [tier["text"] for tier in caveat_tiers() if any(row[tier["column"]] for row in read)]
             if flagged:
                 st.caption(" ".join(flagged) + " Use the hide filters to leave them out.")
             if pairs > len(read):

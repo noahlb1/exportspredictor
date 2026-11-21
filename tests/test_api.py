@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
-from exportspredictor import conformal, illustrative, loop
+from exportspredictor import conformal, evaluation, illustrative, loop
 from exportspredictor.fixture import PRODUCTS
 from exportspredictor.pipeline import build_artefacts
 
@@ -39,7 +39,7 @@ def test_health_reports_version_format_baseline_year_and_gap_period_once_loaded(
     assert response.json() == {
         "ready": True,
         "artefact_version": "fixture-test",
-        "artefact_format": 3,
+        "artefact_format": 4,
         "baseline_year": 2024,
         "gap_years": [2022, 2024],
         "gap_period_label": "2022–2024 average",
@@ -52,11 +52,15 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     assert body["usd_unit"] == "USD, nominal"
     assert "nominal US dollars" in body["usd_caption"]
     assert body["opportunity_types"] == ["Expand", "New Market", "New Product"]
-    assert {field: caveat["badge"] for field, caveat in body["caveats"].items()} == {
+    caveats = {tier["column"]: tier for tier in client.get("/caveats").json()}
+    assert {field: caveat["badge"] for field, caveat in caveats.items()} == {
         "flagged_product": "Flagged Product",
         "reexport_hub": "Re-export Hub",
+        "sanctioned_market": "Sanctioned Market",
+        "restricted_pair": "Restricted Pair",
     }
-    assert all(caveat["text"].startswith(caveat["badge"]) for caveat in body["caveats"].values())
+    assert all(caveat["text"].startswith(caveat["badge"]) for caveat in caveats.values())
+    assert "caveats" not in body  # one source: /caveats
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
     assert body["last_tariff_year"] == 2021
     assert "carried forward from 2021" in body["tariff_carried_forward"]
@@ -66,6 +70,19 @@ def test_labels_serve_the_caution_line_every_page_shows_under_its_heading(client
     caution = client.get("/labels").json()["caution"]
 
     assert caution == "Figures are associations the model has learned, not causes or forecasts."
+
+
+@pytest.mark.parametrize(("share", "about"), [(0.7, "about 70%"), (0.7999, "about 80%")])
+def test_labels_serve_the_totals_note_with_the_share_the_artefact_records(fixture_artefacts, tmp_path, share, about):
+    # Spec #113 "Totals understate": the share comes from the artefact, not a constant.
+    metadata = {**fixture_artefacts.metadata, "potential_share_of_actual_exports": share}
+    store.save(replace(fixture_artefacts, metadata=metadata), tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        note = client.get("/labels").json()["totals_note"]
+
+    assert note["potential_share_of_actual_exports"] == pytest.approx(share)
+    assert "median-type" in note["text"] and f"{about} of Actual Exports" in note["text"]
+    assert "2022–2024 average" in note["text"]
 
 
 def test_health_is_not_ready_until_artefacts_load(fixture_artefacts, tmp_path):
@@ -137,7 +154,13 @@ def test_by_product_rows_have_the_documented_shape(client):
         "blocked_opportunity_value_usd",
         "blocked_opportunity",
         "flagged_product",
+        "flagged_product_reason",
         "reexport_hub",
+        "sanctioned_market",
+        "sanctioned_market_reason",
+        "restricted_pair",
+        "restricted_pair_reason",
+        "caveat_texts",
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",
@@ -245,13 +268,36 @@ def test_evaluation_serves_the_limitations_the_artefact_shows(client, fixture_ar
     body = client.get("/evaluation").json()
 
     limitations = {item["title"]: item["text"] for item in body["limitations"]}
-    # The Potential Range's fixed dollar width (spec story 44), from the artefact's own bands
-    fixed_width = limitations["The Potential Range is a fixed width in dollars"]
-    assert "Uncertain Opportunity" in fixed_width
-    # and what its results show, as on the model card
-    headline = "Does not beat" if not fixture_artefacts.evaluation["headline"]["beats_naive"] else "Only slightly better"
-    assert any(title.startswith(headline) for title in limitations)
+    # The artefact's bands are log offsets (ADR 0007, amended), so no fixed dollar width is reported,
+    assert "The Potential Range is a fixed width in dollars" not in limitations
+    # but what its results show is, as on the model card: the ranking titled by its margin over the Naive Baseline
+    headline = fixture_artefacts.evaluation["headline"]
+    if not headline["beats_naive"]:
+        expected = "Does not beat a naive ranking for UK pairs"
+    elif headline["model"] - headline["naive"] < evaluation.NARROW_MARGIN:
+        expected = "Only slightly better than a naive ranking for UK pairs"
+    else:
+        expected = "Ranks Markets better than it sizes them"
+    assert expected in limitations
     assert "Trained on a sample of other Exporters' Flows" in limitations
+
+
+def test_evaluation_serves_the_measure_on_the_largest_importing_markets(client, fixture_artefacts):
+    large = client.get("/evaluation").json()["large_markets"]
+
+    assert large == fixture_artefacts.evaluation["large_markets"]
+    assert [row["markets"] for row in large["rows"]] == [30, 60]
+
+
+def test_evaluation_of_an_artefact_without_the_largest_markets_measure_serves_none(fixture_artefacts, tmp_path):
+    from dataclasses import replace
+
+    older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
+    store.save(replace(fixture_artefacts, evaluation=older), tmp_path)
+    with TestClient(create_app(tmp_path)) as client:
+        body = client.get("/evaluation").json()
+
+    assert body["large_markets"] is None
 
 
 def test_evaluation_is_404_when_the_artefact_has_none(fixture_artefacts, tmp_path):
@@ -414,13 +460,20 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "relative_export_gap",
         "opportunity_type",
         "flagged_product",
+        "flagged_product_reason",
         "reexport_hub",
+        "sanctioned_market",
+        "sanctioned_market_reason",
+        "restricted_pair",
+        "restricted_pair_reason",
+        "caveat_texts",
         "potential_range_low_usd",
         "potential_range_high_usd",
         "uncertain_opportunity",
         "potential_range_text",
         "gap_period_label",
         "tariff_caveat",
+        "market_reach",
         "factors",
         "history",
     }
@@ -508,7 +561,7 @@ def test_evaluation_includes_lift_and_the_event_backtest(client):
     lift = body["lift"]
     assert lift["lift"] is not None and len(lift["ci"]) == 2 and "tendency" in lift["text"]
     assert len(lift["size_matched"]["ci"]) == 2 and "lift" in lift["size_matched"]
-    assert lift["gap_years"] == [2021, 2022] and lift["held_out_from"] == "v1"
+    assert lift["gap_years"] == [2022] and lift["held_out_from"] == "v1"
     event = body["event_backtest"]["events"][0]
     direction = event["directions"][0]
     assert direction["controls"] and direction["pooled"]["observed"] is not None
@@ -852,6 +905,15 @@ def test_evaluation_states_the_share_of_opportunities_inside_their_potential_ran
     assert served["uncertain_opportunity_share"] == saved["uncertain_opportunity_share"]
 
 
+def test_evaluation_serves_the_potential_range_coverage_by_size(client, fixture_artefacts):
+    saved = fixture_artefacts.evaluation["potential_range"]["by_size"]
+
+    served = client.get("/evaluation").json()["potential_range"]["by_size"]
+
+    assert [row["size"] for row in served] == ["under $2m", "$2m–10m", "$10m–100m", "over $100m"]
+    assert served == saved
+
+
 # --- The Scenario note: Illustrative, beside its benchmarks (spec #66) ------------------
 
 SCENARIO = {"add_agreements": ["IND"]}
@@ -1079,7 +1141,7 @@ def _with_v2(fixture_artefacts, v2: dict = V2):
     from exportspredictor import evaluation
 
     report = {**fixture_artefacts.evaluation}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2)
+    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
     return replace(fixture_artefacts, evaluation=report)
 
 
@@ -1308,3 +1370,64 @@ def test_excluded_product_reasons_are_counted_most_products_first(fixture_artefa
         reasons = constructed.get("/products/excluded/reasons").json()
 
     assert reasons == [{"reason": fuels, "products": 2}, {"reason": bullion, "products": 1}]
+
+
+def _jpn_counts(world, year: int) -> tuple[int, int]:
+    """The UK's Products sent to Japan in `year`, and those Japan imported from other Exporters, from the Flows."""
+    from exportspredictor.exclusions import drop_excluded
+    from exportspredictor.fixture import UK
+
+    flows = drop_excluded(world.flows.filter((pl.col("year") == year) & (pl.col("importer") == "JPN")))
+    flowing = flows.filter(pl.col("value_usd") > 0)
+    return (
+        flowing.filter(pl.col("exporter") == UK)["hs6"].n_unique(),
+        flowing.filter(pl.col("exporter") != UK)["hs6"].n_unique(),
+    )
+
+
+def test_the_market_view_serves_the_markets_reach_in_the_reference_year(client, fixture_world, fixture_artefacts):
+    year = fixture_artefacts.model_form.market_reach.reference_year
+    sent, imported = _jpn_counts(fixture_world, year)
+
+    for read in ("/opportunities/by-market/JPN", "/opportunities/top?market=JPN"):
+        reach = client.get(read).json()["market_reach"]
+        assert reach["year"] == year
+        assert (reach["products_sent"], reach["products_imported"]) == (sent, imported)
+        assert 0 < reach["products_expected"] <= imported
+        assert reach["text"].startswith(
+            f"In {year} the UK sent {sent:,} Products to Japan, which imported {imported:,} from other Exporters"
+        )
+        assert f"about {reach['products_expected']:,.0f} were expected" in reach["text"]
+    assert client.get("/opportunities/top").json()["market_reach"] is None
+
+
+def test_the_pair_detail_serves_its_markets_reach_and_the_offset_applied_to_it(client, fixture_artefacts):
+    body = client.get(f"/explain/{FIXTURE_HS6}/JPN").json()
+    market = client.get("/opportunities/by-market/JPN").json()["market_reach"]
+    reach = fixture_artefacts.model_form.market_reach
+    applied = reach.table.filter((pl.col("fold") == body["fold"]) & (pl.col("importer") == "JPN"))["offset"].item()
+
+    assert {k: body["market_reach"][k] for k in market} == market
+    assert body["market_reach"]["pair_offset"] == pytest.approx(applied)
+    assert body["market_reach"]["pair_multiplier"] == pytest.approx(math.exp(reach.beta * applied))
+
+
+def test_evaluation_serves_what_market_reach_changes(client, fixture_artefacts):
+    effect = client.get("/evaluation").json()["market_reach_effect"]
+    saved = fixture_artefacts.evaluation["market_reach_effect"]
+
+    assert effect["text"] == saved["text"]
+    assert effect["selection_measure"] == saved["selection_measure"]
+    assert effect["lift"] == saved["lift"]
+    assert effect["uk_pair_coverage"] == saved["uk_pair_coverage"]
+
+
+def test_evaluation_serves_the_large_market_measures_beside_earlier_versions(client, fixture_artefacts):
+    rows = client.get("/evaluation").json()["large_markets_by_version"]
+    v1 = {row["markets"]: row["model"] for row in fixture_artefacts.evaluation["rescored_earlier_versions"]["v1"]["large_markets"]}
+
+    by_name = {row["name"]: row for row in rows}
+    assert by_name["v1"]["markets"] == {"30": v1[30], "60": v1[60]}
+    assert rows[0]["name"].startswith("This version")
+    # Worded in the package, so the app shows the columns without naming them itself.
+    assert by_name["v1"]["columns"] == {"30 largest Markets": v1[30], "60 largest Markets": v1[60]}

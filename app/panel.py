@@ -5,8 +5,8 @@ The Leaderboard shows the whole panel with `show(row)`, in order:
 
 1. `opening(row, body)`: the pair, its caveats and the tariff-carried-forward warning.
 2. `figures(body)`: Export Potential, Actual Exports and Export Gap, each with its term tooltip.
-3. `from_facts(row, body)`: the rest, from the facts table on: the facts, the Barrier (only for a pair with no UK
-   Trade Agreement), the factors and the year-by-year history.
+3. `from_facts(row, body)`: the rest, from the facts table on: the facts, the Market's Market Reach, the Barrier
+   (only for a pair with no UK Trade Agreement), the factors and the year-by-year history.
 
 A page with another opening (Blocked Opportunities leads with the Barrier, then its own three figures) reads the
 explanation with `explanation(row)`, draws `barrier(row, body, note=..., titled=True)` (the box headed by the pair),
@@ -32,6 +32,11 @@ RAISED, LOWERED = "#2a78d6", "#e34948"  # the factor bars (spec #103, "Theme and
 TEXT = {"light": "#1b1915", "dark": "#f5f2ec"}  # chart value labels take the mode's text colour
 # The Factor column has a fixed width, so the value and association beside it stay in view in a narrow panel.
 FACTOR_WIDTHS = {"Factor": st.column_config.TextColumn("Factor", width="medium")}
+MARKET_REACH_HELP = (
+    "How widely the UK sends its Products to this Market, against how widely it does across Markets. The model "
+    "associates broad UK reach into a Market with higher Export Potential there, for every Product alike, so where "
+    "the UK sends fewer Products to a whole Market than expected, it shows here, not in any one Product's figures."
+)
 FACTOR_COLUMNS = {
     "label": "Factor",
     "value_text": "Value for this pair",
@@ -67,6 +72,21 @@ def _title(row: dict) -> str:
     return f"{row['description']} → {row['market']}"
 
 
+def uplift_text(row: dict) -> str | None:
+    """A Blocked Opportunities row's value as an uplift on Export Potential (e.g. "+25%"), only where Actual Exports
+    exceed Export Potential (`blocked_opportunity_uplift`, spec #113); None elsewhere and on other pages' rows."""
+    uplift = row.get("blocked_opportunity_uplift")
+    return None if uplift is None else f"{uplift:+.0%}"
+
+
+def _value_text(row: dict, year: int) -> str:
+    """The Blocked Opportunity value as the panel words it: the uplift on Export Potential where there is one (the
+    dollars after it), the dollars elsewhere."""
+    dollars = format_usd(row["blocked_opportunity_value_usd"])
+    uplift = uplift_text(row)
+    return dollars if uplift is None else f"{uplift} on its {year} Export Potential ({dollars})"
+
+
 def figures(body: dict) -> None:
     """Export Potential, Actual Exports and Export Gap in the adaptive money form, each with the API's term wording."""
     potential, actual, gap = st.columns(3)
@@ -81,6 +101,7 @@ def from_facts(row: dict, body: dict, *, with_barrier: bool = True, with_gap: bo
     year-by-year history. `with_gap=False` leaves out the Export Gap figures (the Relative Export Gap and each year's
     Export Gap), for a page that shows Baseline-year figures only."""
     facts(row, body, with_gap=with_gap)
+    market_reach(body)
     if with_barrier:
         barrier(row, body)
     factors(body)
@@ -96,7 +117,7 @@ def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
     meaning = next((sentence for sentence in kinds.split(". ") if sentence.startswith(f"{kind}:")), kinds)
     meaning = meaning.removeprefix(f"{kind}:").strip().rstrip(".")
     relative = body["relative_export_gap"]
-    value = format_usd(row["blocked_opportunity_value_usd"])
+    value = _value_text(row, year)
     blocked = ", a Blocked Opportunity" if row["blocked_opportunity"] else ""
     lines = [
         (
@@ -132,6 +153,12 @@ def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
             st.markdown(f"**{name}:** {text}", help=tip)
 
 
+def market_reach(body: dict) -> None:
+    """The Market's Market Reach in one sentence (ADR 0010), where the API serves one."""
+    if body.get("market_reach"):
+        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
+
+
 def barrier(row: dict, body: dict, note: str | None = None, *, titled: bool = False) -> None:
     """The Barrier, only for a pair with no UK Trade Agreement: its Applied Tariff and the Illustrative amount the
     model associates with adding an agreement. A warning when the pair is a Blocked Opportunity. `note` adds a
@@ -139,12 +166,15 @@ def barrier(row: dict, body: dict, note: str | None = None, *, titled: bool = Fa
     if row["trade_agreement"]:
         return
     badge = labels()["illustrative"]["badge"]
+    year, uplift = body["baseline_year"], uplift_text(row)
+    amount = (
+        f"**{format_usd(row['blocked_opportunity_value_usd'])}** more {year} Export Potential" if uplift is None
+        else f"**{uplift}** on its {year} Export Potential ({format_usd(row['blocked_opportunity_value_usd'])})"
+    )
     text = (
         f"**The Barrier.** No UK Trade Agreement is in force with {row['market']}, and the Applied Tariff is "
         f"{tariff_text(row['applied_tariff_pct'])}. The model associates adding a Trade Agreement, and removing the "
-        "tariff, with "
-        f"**{format_usd(row['blocked_opportunity_value_usd'])}** more {body['baseline_year']} Export Potential. "
-        f"{badge}: a tendency the model has learned, not a forecast."
+        f"tariff, with {amount}. {badge}: a tendency the model has learned, not a forecast."
     )
     if note:
         text += f" {note}"

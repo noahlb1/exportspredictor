@@ -116,6 +116,17 @@ def test_the_active_filters_line_states_the_counts_and_the_total_positive_export
     assert "Market: Japan" in line and "5 pairs shown of 5" in line
 
 
+def test_the_summed_export_gap_carries_the_totals_note_with_the_artefacts_share(monkeypatch, fixture_api_url):
+    # Spec #113 "Totals understate": the note sits beside the summary, its share read from the artefact.
+    note = httpx.get(f"{fixture_api_url}/labels").json()["totals_note"]
+
+    page = _home(monkeypatch, fixture_api_url)
+
+    assert note["potential_share_of_actual_exports"] is not None
+    assert f"about {note['potential_share_of_actual_exports']:.0%} of Actual Exports" in note["text"]
+    assert note["text"] in [element.value for element in page.caption]
+
+
 def test_the_active_filters_line_says_pair_for_one_pair(monkeypatch, fixture_api_url):
     page = _home(monkeypatch, fixture_api_url, product="220830", market="JPN")
 
@@ -188,6 +199,16 @@ def test_the_market_filter_ranks_that_markets_products(monkeypatch, fixture_api_
     assert set(table["HS6"]) == {"711319", "220830", "300490", "851712", "870323"}
     gaps = list(table[GAP])
     assert gaps == sorted(gaps, reverse=True)
+
+
+def test_the_market_filter_shows_the_markets_reach_in_one_sentence(monkeypatch, fixture_api_url):
+    reach = httpx.get(f"{fixture_api_url}/opportunities/by-market/JPN").json()["market_reach"]
+    page = _home(monkeypatch, fixture_api_url)
+    assert not any(reach["text"] in text for text in _texts(page))
+
+    page.sidebar.selectbox(key="market").set_value("JPN").run()
+
+    assert any(reach["text"] in text for text in _texts(page))
 
 
 def test_the_region_filter_narrows_the_market_choice(monkeypatch, fixture_api_url):

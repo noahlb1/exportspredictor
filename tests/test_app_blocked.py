@@ -21,12 +21,13 @@ from exportspredictor import artefacts as store
 PAGE = "pages/blocked_opportunities.py"
 WHISKY, JEWELLERY, CARS, CRUDE_OIL = "220830", "711319", "870323", "270900"
 BLOCKED_PAIRS = [(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG"), (CARS, "HKG")]
-PRODUCT_COLUMNS = ["Product", "Blocked Opportunity value", "Applied Tariff %", "Potential with agreement", "Actual Exports"]
-# #102's sentence, on a pair whose Baseline-year Actual Exports are above Export Potential with a Trade Agreement.
-EXTRA = (
-    "The UK already exports more here than the Export Potential the model associates with a Trade Agreement. The "
-    "Blocked Opportunity value is still the rise in Export Potential the model associates with the agreement; it does "
-    "not depend on Actual Exports."
+PRODUCT_COLUMNS = [
+    "Product", "Blocked Opportunity value", "Uplift %", "Applied Tariff %", "Potential with agreement", "Actual Exports"
+]
+# Spec #113's explanation, on a pair whose Baseline-year Actual Exports exceed its Export Potential.
+UPLIFT_EXPLANATION = (
+    "The UK already exports more here than its Export Potential, so the Blocked Opportunity value is shown as an "
+    "uplift on Export Potential, not as a dollar level with a Trade Agreement."
 )
 # Wording that would read a Blocked Opportunity value as a cause or a forecast.
 CAUSAL = re.compile(
@@ -118,7 +119,6 @@ def test_the_chosen_markets_products_have_the_stated_columns_in_baseline_year_fi
     assert list(products["Product"]) == [row["description"] for row in rows]  # every one, by value
     for field, column in [
         ("blocked_opportunity_value_usd", "Blocked Opportunity value"),
-        ("potential_with_agreement_usd", "Potential with agreement"),
         ("baseline_actual_exports_usd", "Actual Exports"),
     ]:
         assert list(products[column]) == pytest.approx([row[field] / 1e6 for row in rows])
@@ -128,6 +128,24 @@ def test_the_chosen_markets_products_have_the_stated_columns_in_baseline_year_fi
     assert "Export Potential with a Trade Agreement" in helps["Potential with agreement"]
     assert "llustrative" in helps["Potential with agreement"]
     assert "Trade Agreement alone" in helps["Applied Tariff %"] and "not known" in helps["Applied Tariff %"]
+    assert "exceed" in helps["Uplift %"] and "Export Potential" in helps["Uplift %"]
+
+
+def test_a_row_whose_actual_exports_exceed_export_potential_shows_an_uplift_not_a_dollar_level(
+    monkeypatch, blocked_api_url
+):
+    # Hong Kong: jewellery ($18.3m exported, below its $18.8m Export Potential) and cars ($9.8m exported, above $4.3m).
+    page = _page(monkeypatch, blocked_api_url)
+    page.session_state["blocked_market"] = "HKG"
+    page.run()
+
+    products = _products(page).set_index("Product")
+    [cars_label] = [name for name in products.index if name.startswith("Motor cars")]
+    jewellery, cars = products.drop(index=cars_label).iloc[0], products.loc[cars_label]
+    assert jewellery["Potential with agreement"] == pytest.approx(23.9, abs=0.05)  # $18.8m + $5.1m
+    assert pd.isna(jewellery["Uplift %"])
+    assert pd.isna(cars["Potential with agreement"])
+    assert cars["Uplift %"] == pytest.approx(25.1, abs=0.05)  # $1.1m on $4.3m of Export Potential
 
 
 @pytest.mark.parametrize(("hs6", "iso3"), BLOCKED_PAIRS)
@@ -144,30 +162,45 @@ def test_the_panel_leads_with_the_barrier_then_three_baseline_year_figures(monke
     assert any("The Barrier" in box.value for box in page.warning)
     labels = [metric.label for metric in page.metric]
     assert labels == ["Baseline Export Potential", "Export Potential with a Trade Agreement", "Actual Exports"]
-    # Whisky in India, 2024: $40.6m Export Potential, $12.2m Blocked Opportunity value, $38.1m exported.
-    assert [metric.value for metric in page.metric] == ["$40.6m", "$52.8m", "$38.1m"]
+    # Whisky in India, 2024: $61.6m Export Potential, $18.5m Blocked Opportunity value, $38.1m exported.
+    assert [metric.value for metric in page.metric] == ["$61.6m", "$80.0m", "$38.1m"]
+
+
+def test_where_actual_exports_exceed_export_potential_the_panel_shows_the_uplift_and_why(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), CARS, "HKG")
+
+    # Cars in Hong Kong, 2024: $4.3m Export Potential, $1.1m Blocked Opportunity value (+25%), $9.8m exported.
+    labels = [metric.label for metric in page.metric]
+    assert labels == ["Baseline Export Potential", "Uplift with a Trade Agreement", "Actual Exports"]
+    assert [metric.value for metric in page.metric] == ["$4.3m", "+25%", "$9.8m"]
+    [barrier] = [box.value for box in page.warning if "The Barrier" in box.value]
+    assert "+25%" in barrier and UPLIFT_EXPLANATION in barrier
+    assert not [text for text in _texts(page) if "Export Potential with a Trade Agreement is" in text]
 
 
 @pytest.mark.parametrize(("hs6", "iso3"), BLOCKED_PAIRS)
-def test_the_extra_sentence_shows_only_where_actual_exports_are_above_potential_with_agreement(
+def test_the_uplift_explanation_shows_only_where_actual_exports_exceed_export_potential(
     monkeypatch, blocked_api_url, hs6, iso3
 ):
     page = _choose(_page(monkeypatch, blocked_api_url), hs6, iso3)
 
     [barrier] = [box.value for box in page.warning if "The Barrier" in box.value]
-    # Cars in Hong Kong: $9.8m exported in 2024, above $5.7m with an agreement. The others are below.
-    assert (EXTRA in barrier) == ((hs6, iso3) == (CARS, "HKG"))
+    # Cars in Hong Kong is the one above its Export Potential ($9.8m against $4.3m); the others are below.
+    assert (UPLIFT_EXPLANATION in barrier) == ((hs6, iso3) == (CARS, "HKG"))
 
 
 def test_the_active_filters_line_states_the_count_and_the_illustrative_total(monkeypatch, blocked_api_url):
     page = _page(monkeypatch, blocked_api_url)
 
     line = next(element.value for element in page.markdown if "No filters" in element.value)
-    # 12.2 + 5.6 + 4.9 + 1.1 = $23.8m
-    assert "4 Blocked Opportunities" in line and "illustrative" in line and "$23.8m" in line
+    # 18.5 + 7.1 + 5.1 + 1.1 = $31.8m
+    assert "4 Blocked Opportunities" in line and "illustrative" in line and "$31.8m" in line
     caption = " ".join(element.value for element in page.caption)
     assert "$ millions" in caption and "2024" in caption and "Scenarios page" in caption
     assert "20%" in caption and "$1.0m" in caption
+    # Spec #113 "Totals understate": the note beside the summed values, with the share the artefact records.
+    note = httpx.get(f"{blocked_api_url}/labels").json()["totals_note"]["text"]
+    assert note in caption and "about 82% of Actual Exports" in note
 
 
 def test_sidebar_filters_narrow_the_markets_and_reset_restores_them(monkeypatch, blocked_api_url):
@@ -201,7 +234,7 @@ def test_a_product_search_keeps_that_products_blocked_opportunities(monkeypatch,
 
 
 def test_url_parameters_set_the_filters(monkeypatch, blocked_api_url):
-    page = _page(monkeypatch, blocked_api_url, region="South Asia", min_value_usd="6000000")
+    page = _page(monkeypatch, blocked_api_url, region="South Asia", min_value_usd="10000000")
 
     assert list(_markets(page)["Market"]) == ["India"]
     assert list(_products(page)["Product"]) == ["Whiskies"]
@@ -228,6 +261,14 @@ def test_csv_holds_every_filtered_blocked_opportunity_in_full_dollars(monkeypatc
     assert "illustrative" in value and "2024" in value and "USD" in value
     assert list(exported[value]) == pytest.approx([row["blocked_opportunity_value_usd"] for row in rows])
     assert not [column for column in exported.columns if "Export Gap" in column]
+    # Where Actual Exports exceed Export Potential: the uplift in percent, and no level with a Trade Agreement.
+    uplift = next(column for column in exported.columns if column.startswith("Uplift on Export Potential"))
+    with_agreement = next(column for column in exported.columns if column.startswith("Export Potential with"))
+    for row, (_, line) in zip(rows, exported.iterrows(), strict=True):
+        if row["blocked_opportunity_uplift"] is None:
+            assert pd.isna(line[uplift]) and line[with_agreement] == pytest.approx(row["potential_with_agreement_usd"])
+        else:
+            assert line[uplift] == pytest.approx(100 * row["blocked_opportunity_uplift"]) and pd.isna(line[with_agreement])
 
 
 def test_the_illustrative_note_sits_in_an_expander_under_the_tables(monkeypatch, blocked_api_url):

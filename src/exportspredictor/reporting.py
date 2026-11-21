@@ -22,7 +22,13 @@ from matplotlib.figure import Figure
 
 from exportspredictor import model_choice, ppml
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.evaluation import NOT_RUN, relabelled
+from exportspredictor.caveats import TIERS, CaveatTier
+from exportspredictor.evaluation import (
+    NOT_RUN,
+    large_markets_beside_earlier,
+    relabelled,
+)
+from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
@@ -102,21 +108,47 @@ def model_card_excerpt(path: Path) -> str:
 
 
 def ranking_by_version(bundle: Artefacts) -> Chart | NotRun:
-    """The test year's UK ranking for this version beside the Naive Baseline and earlier versions."""
+    """The test year's UK ranking for this version beside the Naive Baseline and earlier versions.
+
+    Drawn on the tie-proof Selection Measure once every earlier version has been re-scored from its saved scores
+    (`evaluation.with_rescored_earlier_versions`), else on the old measure, the one every version reported. A row
+    without a figure on the drawn measure (the Naive Baseline as reported for v2) is listed in the data, not drawn."""
     block = relabelled(bundle.evaluation or {}).get("earlier_versions")
     if not block:
         return NotRun("UK ranking by version")
-    rows = [{**_pick(row, "name", "uk_ranking"), "kind": "this version" if i == 0 else "earlier version"}
+    keys = ("name", "uk_ranking", "uk_ranking_tie_proof")
+    rows = [{**_pick(row, *keys), "kind": "this version" if i == 0 else "earlier version"}
             for i, row in enumerate(block["rows"])]
-    rows += [{**_pick(row, "name", "uk_ranking"), "kind": "naive"} for row in block["naive"]]
-    data = pl.DataFrame(rows, schema={"name": pl.String, "uk_ranking": pl.Float64, "kind": pl.String})
+    rows += [{**_pick(row, *keys), "kind": "naive"} for row in block["naive"]]
+    data = pl.DataFrame(
+        rows, schema={"name": pl.String, "uk_ranking": pl.Float64, "uk_ranking_tie_proof": pl.Float64, "kind": pl.String}
+    )
     colours = {"this version": ACCENT, "earlier version": NEUTRAL, "naive": NEUTRAL}
-    title = f"UK within-Product rank correlation on {block['test_year']}, read once (higher is better)"
+    tie_proof = all(row["uk_ranking_tie_proof"] is not None for row in rows if row["kind"] != "naive")
+    column = "uk_ranking_tie_proof" if tie_proof else "uk_ranking"
+    measure = ", tie-proof measure" if tie_proof else (", old measure" if "uk_ranking_tie_proof" in block["rows"][0] else "")
+    title = f"UK within-Product rank correlation on {block['test_year']}, read once{measure} (higher is better)"
     return Chart(title, data, bar_svg(
         title,
-        [Bar(r["name"], 0.0, r["uk_ranking"], colours[r["kind"]], f"{r['uk_ranking']:.3f}") for r in rows],
+        [Bar(r["name"], 0.0, r[column], colours[r["kind"]], f"{r[column]:.3f}") for r in rows if r[column] is not None],
     ))
 
+
+
+def large_markets_by_version(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """The test year's tie-proof UK ranking on the largest importing Markets: this version, the earlier versions
+    re-scored from their saved scores, and the Naive Baseline (`evaluation.large_markets_beside_earlier`)."""
+    rows = large_markets_beside_earlier(bundle.evaluation or {})
+    if not rows:
+        return NotRun("The measure on the largest Markets")
+    return pl.DataFrame([{"version": row["name"], **row["columns"]} for row in rows])
+
+
+def market_reach_effect(bundle: Artefacts) -> str:
+    """What Market Reach changes on the test year (`evaluation.market_reach_effect`), as saved, or the line saying
+    it was not run for a version without Market Reach."""
+    effect = (bundle.evaluation or {}).get("market_reach_effect")
+    return repr(NotRun("Market Reach")) if effect is None else effect["text"]
 
 
 # A best round under this means the stopping rule, not the configuration, decided the Arm
@@ -201,6 +233,45 @@ def round_count(bundle: Artefacts) -> pl.DataFrame | NotRun:
     return pl.DataFrame(rows, schema={
         "model": pl.String, "chosen_on": pl.String, "rounds_chosen": pl.Int64, "rounds_trained": pl.Int64,
     })
+
+
+def caveat_tier_reach(
+    bundle: Artefacts, *, tops: tuple[int, ...] = (1_000, 10_000), tiers: tuple[CaveatTier, ...] = TIERS
+) -> pl.DataFrame:
+    """How many Opportunities each Caveat Tier covers in the Baseline (ADR 0005), and how many of them are in the
+    top `tops` of the Leaderboard's default ranking (largest Export Gap first, ties by hs6 and iso3)."""
+    ranked = (
+        bundle.baseline.filter(pl.col("export_gap_usd") > 0)
+        .sort(["export_gap_usd", "hs6", "iso3"], descending=[True, False, False])
+        .with_row_index("rank", offset=1)
+    )
+    return pl.DataFrame(
+        [
+            {
+                "Caveat Tier": tier.badge,
+                "Opportunities": int(ranked[tier.column].sum()),
+                **{f"in top {top:,}": int(ranked.filter(pl.col("rank") <= top)[tier.column].sum()) for top in tops},
+            }
+            for tier in tiers
+        ]
+    )
+
+
+def flagged_products_by_reason(bundle: Artefacts) -> pl.DataFrame:
+    """How many Flagged Products each reason covers in the Baseline (Sector 71, volatile or one-off; ADR 0005), and
+    their Opportunities (positive Export Gap); most Products first."""
+    return (
+        bundle.baseline.filter("flagged_product")
+        .group_by(Reason="flagged_product_reason")
+        .agg(Products=pl.col("hs6").n_unique(), Opportunities=(pl.col("export_gap_usd") > 0).sum().cast(pl.Int64))
+        .sort(["Products", "Opportunities", "Reason"], descending=[True, True, False])
+    )
+
+
+def test_year_ledger(path: Path = LEDGER_PATH) -> pl.DataFrame:
+    """Every read of the test year, oldest first, from the Test-year Ledger file alone (ADR 0009); nothing
+    of the test year is read. Each row's source record stays in the file's `record` column."""
+    return read_ledger(path).drop("record")
 
 
 def lift_by_tenth(bundle: Artefacts) -> Chart | NotRun:

@@ -82,8 +82,8 @@ def test_page_lists_every_known_limitation(page):
 
     for limitation in LIMITATIONS:
         assert limitation["title"] in text
-    # and those the artefact shows, the Potential Range's fixed dollar width included (spec story 44)
-    assert "The Potential Range is a fixed width in dollars" in text
+    # The fixture's bands are log offsets (ADR 0007, amended): no fixed dollar width to report
+    assert "The Potential Range is a fixed width in dollars" not in text
 
 
 def test_page_shows_the_imputed_observed_tariff_split(page, fixture_artefacts):
@@ -104,6 +104,15 @@ def test_page_shows_the_potential_range_coverage(page, fixture_artefacts):
     assert "Potential Range" in _text(page)
     assert f"{coverage['coverage']:.0%}" in _text(page) and f"{coverage['target']:.0%}" in _text(page)
     assert any("Coverage" in t.columns and "Exporter" in t.columns for t in tables)
+
+
+def test_page_shows_the_potential_range_coverage_by_size(page, fixture_artefacts):
+    by_size = fixture_artefacts.evaluation["potential_range"]["by_size"]
+    tables = [element.value for element in page.dataframe]
+
+    table = next(t for t in tables if "Size of Export Potential" in t.columns)
+    assert list(table["Size of Export Potential"]) == [row["size"] for row in by_size]
+    assert list(table["Rows"]) == [row["rows"] for row in by_size]
 
 
 def test_page_drops_no_tariffs_and_lists_v2s_limitations(page):
@@ -133,6 +142,36 @@ def test_page_states_the_non_uk_training_sample(monkeypatch, live_api, fixture_a
     assert "30%" in _text(page)
 
 
+def _largest_markets_table(page: AppTest):
+    return next(element.value for element in page.dataframe if "Markets measured" in element.value.columns)
+
+
+def test_page_shows_the_measure_on_the_largest_importing_markets_beside_the_headline(page, fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    headline, (top30, top60) = report["headline"], report["large_markets"]["rows"]
+    table = _largest_markets_table(page)
+
+    assert list(table["Markets measured"]) == ["Every Market (the headline)", "30 largest importers",
+                                                "60 largest importers"]
+    assert list(table["Model"]) == [f"{headline['model']:.2f}", f"{top30['model']:.2f}", f"{top60['model']:.2f}"]
+    assert list(table["Naive Baseline"]) == [f"{headline['naive']:.2f}", f"{top30['naive']:.2f}",
+                                             f"{top60['naive']:.2f}"]
+    assert report["large_markets"]["text"] in _text(page)
+
+
+def test_page_shows_only_the_headline_for_an_artefact_without_the_largest_markets_measure(
+    monkeypatch, live_api, fixture_artefacts, tmp_path
+):
+    older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
+    store.save(replace(fixture_artefacts, evaluation=older), tmp_path)
+
+    with live_api(tmp_path) as url:
+        table = _largest_markets_table(_run(monkeypatch, url))
+
+    # The counts of Markets come from the API's rows, so a version without them shows the headline alone.
+    assert list(table["Markets measured"]) == ["Every Market (the headline)"]
+
+
 def test_page_says_so_when_the_artefact_has_no_evaluation(monkeypatch, live_api, fixture_artefacts, tmp_path):
     store.save(replace(fixture_artefacts, evaluation=None), tmp_path)
 
@@ -160,7 +199,7 @@ def test_page_shows_size_matched_lift_next_to_raw_lift_and_explains_the_differen
     assert f"${lift['min_growth_usd']:,.0f}" in text  # the growth threshold, from the API
     assert "tendency" in text
     first, last = lift["gap_years"][0], lift["gap_years"][-1]
-    assert f"{first}–{last}" in text  # the Gap Period the Export Gaps are averaged over
+    assert (str(first) if first == last else f"{first}–{last}") in text  # the Gap Period the gaps are averaged over
 
 
 def test_page_shows_the_event_backtest_predicted_against_observed_with_its_control_group(page, fixture_artefacts):
@@ -186,3 +225,22 @@ def test_page_states_the_share_of_opportunities_inside_their_potential_range(pag
         f"({coverage['uncertain_opportunity_share']:.0%})" in text and "inside their Potential Range" in text.split(share)[1]
         for text in stated
     )
+
+
+def test_page_sets_the_large_market_measures_beside_earlier_versions(page, fixture_artefacts):
+    v1 = {row["markets"]: row["model"]
+          for row in fixture_artefacts.evaluation["rescored_earlier_versions"]["v1"]["large_markets"]}
+    table = next(element.value for element in page.dataframe if "30 largest Markets" in element.value.columns)
+
+    rows = {row["Version"]: row for row in table.to_dict("records")}
+    assert rows["v1"]["30 largest Markets"] == pytest.approx(v1[30])
+    assert rows["v1"]["60 largest Markets"] == pytest.approx(v1[60])
+
+
+def test_page_says_what_market_reach_changes(page, fixture_artefacts):
+    effect = fixture_artefacts.evaluation["market_reach_effect"]
+    table = next(element.value for element in page.dataframe if "Without Market Reach" in element.value.columns)
+
+    assert effect["text"] in _text(page)
+    assert "Lift" in list(table["Figure"])
+    assert table["With Market Reach"].iloc[0] == pytest.approx(effect["selection_measure"]["with"])

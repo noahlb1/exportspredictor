@@ -297,3 +297,7 @@ def test_no_committed_output_is_large():
         size for size in sizes if size[0] > (reporting.CHART_LIMIT_BYTES if size[1] else OUTPUT_LIMIT_BYTES)
     ]
     assert not too_large, too_large
+
+
+def test_the_notebook_shows_the_test_year_ledger_from_the_reporting_module():
+    assert "reporting.test_year_ledger()" in "\n".join(_code_cells())

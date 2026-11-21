@@ -21,6 +21,7 @@ from app.format import format_change, format_usd, tariff_text
 from app.frame import page
 from app.tables import (
     ONE_DECIMAL,
+    caveats_column,
     millions,
     millions_unit,
     money_column,
@@ -29,7 +30,15 @@ from app.tables import (
     product_column,
     tariff_column,
 )
-from app.ui import fetch, illustrative, labels, run_scenario, scenario_note
+from app.ui import (
+    caveat_badges,
+    fetch,
+    illustrative,
+    labels,
+    run_scenario,
+    scenario_note,
+    show_caveats,
+)
 
 PRESET = "Trading Bloc preset"
 CUSTOM = "Custom Trade Agreements"
@@ -148,6 +157,7 @@ def columns(year: int) -> dict:
             help="The Applied Tariff under the Scenario, in percent, held within the range the model was trained on. "
             "Blank where it is not known.",
         ),
+        "Caveats": caveats_column(),
     }
 
 
@@ -163,13 +173,15 @@ def effects(rows: list[dict], names: dict[str, str]) -> pd.DataFrame:
 
 
 def pairs_frame(rows: list[dict], *, with_market: bool, with_exports: bool) -> pd.DataFrame:
-    """A table of Product–Market pairs, with both Applied Tariffs (and Baseline-year Actual Exports if asked)."""
+    """A table of Product–Market pairs, with both Applied Tariffs (and Baseline-year Actual Exports if asked), then
+    each pair's caveat badges."""
     frame = effects(rows, {"description": "Product", **({"market": "Market"} if with_market else {})})
     raw = pd.DataFrame(rows)
     if with_exports:
         frame["Actual Exports"] = millions(raw["baseline_actual_exports_usd"])
     frame["Tariff, Baseline %"] = pd.Series(raw["baseline_tariff_pct"], dtype="float64")
     frame["Tariff, Scenario %"] = pd.Series(raw["scenario_tariff_pct"], dtype="float64")
+    frame["Caveats"] = [caveat_badges(row) for row in rows]
     return frame
 
 
@@ -192,10 +204,12 @@ def pair_table(rows: list[dict], key: str, table_key: str, year: int, *, with_ma
 
 
 def pair_box(row: dict) -> None:
-    """The chosen pair: Baseline and Scenario Export Potential, the Scenario Effect and both Applied Tariffs, with a
-    link that opens the Leaderboard on that Product and Market (its URL parameters `product` and `market`)."""
+    """The chosen pair: its caveats, Baseline and Scenario Export Potential, the Scenario Effect and both Applied
+    Tariffs, with a link that opens the Leaderboard on that Product and Market (its URL parameters `product` and
+    `market`)."""
     with st.container(border=True):
         st.markdown(f"**{row['description']}** (HS6 {row['hs6']}) to **{row['market']}**")
+        show_caveats(row)
         baseline, scenario, effect, tariff_before, tariff_after = st.columns(5)
         baseline.metric("Baseline Export Potential", format_usd(row["baseline_potential_usd"]))
         scenario.metric("Scenario Export Potential", format_usd(row["scenario_potential_usd"]))
@@ -245,7 +259,7 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
 
     st.caption(
         f"Amounts in {millions_unit()}, for the Baseline year {year}. Scenario Effects are {word}. "
-        "Click any value to select its row."
+        f"Click any value to select its row. {labels()['totals_note']['text']}"
     )
 
     st.subheader("Change per Market")

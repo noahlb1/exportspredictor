@@ -21,6 +21,13 @@ A two-part model (spec #65, experiment 4) is a binary model of whether a Flow ex
 size model fitted on non-zero Flows: its Export Potential is the probability of a Flow times
 the size (`two_part_potential`).
 
+A form may also carry **Market Reach** (spec #113, ADR 0010, `MarketReach`): Export Potential is
+then multiplied by exp(β · offset) × c, with the offset of the row's fold and Market from the
+Market Reach table and c the rescale constant (`market_reach.apply`). Only UK rows take it: a row
+with an `exporter` column naming another Exporter, or scored by the mean of the models, is left as
+the form without Market Reach makes it. The offset is the same for every Product of a Market and the Naive Baseline
+has no policy features, so a Scenario's relative effect is unchanged.
+
 `by="fold"` scores each row with the fold model named by its `fold` column, the model that
 held the row's Product–Market pair out (ADR 0001). `by="mean"` scores every row with the mean
 of the models (rows no fold model held out, such as other Exporters'). A lone Booster scores
@@ -28,13 +35,14 @@ every row.
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
 import polars as pl
 import xgboost as xgb
 
+from exportspredictor.baci import UK
 from exportspredictor.features import FEATURES
 
 PREDICT_ROWS = 2_000_000  # rows predicted at a time, so a large table fits on the device
@@ -49,13 +57,50 @@ SUPPLY, DEMAND = "log_supply_loo", "log_demand_loo"  # the features a blend's na
 
 
 @dataclass(frozen=True)
+class MarketReach:
+    """Market Reach as a Model Form applies it (`exportspredictor.market_reach`, ADR 0010).
+
+    `form`, `beta`, `pseudo_count` and `lag_years` are its settings; `reference_year` is the year of UK Flows
+    its table was learned from (the scored year − `lag_years`); `constant` is c, which keeps the UK's summed
+    Export Potential over the scored grid unchanged. `table` holds one row per fold and Market (fold, importer,
+    products_sent, products_imported, products_expected, offset). It is saved as its own artefact table, not
+    in the metadata, so a form read from metadata has none until the table is attached, and cannot predict.
+    """
+
+    beta: float
+    form: str
+    pseudo_count: float
+    lag_years: int
+    reference_year: int
+    constant: float
+    table: pl.DataFrame | None = field(default=None, compare=False, repr=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "form": self.form, "beta": self.beta, "pseudo_count": self.pseudo_count, "lag_years": self.lag_years,
+            "reference_year": self.reference_year, "constant": self.constant,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping, table: pl.DataFrame | None = None) -> "MarketReach":
+        return cls(
+            beta=float(data["beta"]), form=str(data["form"]), pseudo_count=float(data["pseudo_count"]),
+            lag_years=int(data["lag_years"]), reference_year=int(data["reference_year"]),
+            constant=float(data["constant"]), table=table,
+        )
+
+
+@dataclass(frozen=True)
 class ModelForm:
-    """How Export Potential is made from the fold models: the model alone (w = 0) or a blend.
+    """How Export Potential is made from the fold models: the model alone (w = 0) or a blend, with or without
+    Market Reach.
 
     `naive_weight` is w, the weight of the naive baseline on the log scale; the model's is 1 − w.
+    `market_reach` (None: none) multiplies the result by each UK row's Market Reach.
     """
 
     naive_weight: float = 0.0
+    market_reach: MarketReach | None = None
 
     def __post_init__(self):
         if not 0 <= self.naive_weight < 1:
@@ -69,25 +114,45 @@ class ModelForm:
     def text(self) -> str:
         """How this form makes Export Potential, in one sentence: the one wording of the blend."""
         if not self.naive_weight:
-            return "Export Potential comes from the model alone."
+            text = "Export Potential comes from the model alone"
+        else:
+            text = (
+                f"Export Potential blends the model (weight {1 - self.naive_weight:g}) with the Naive Baseline "
+                f"(weight {self.naive_weight:g}) on the log scale"
+            )
+        if self.market_reach is None:
+            return text + "."
         return (
-            f"Export Potential blends the model (weight {1 - self.naive_weight:g}) with the Naive Baseline "
-            f"(weight {self.naive_weight:g}) on the log scale."
+            f"{text}, then scales it by each Market's Market Reach (β = {self.market_reach.beta:g}), learned from the "
+            f"UK's other Products there in {self.market_reach.reference_year}."
         )
 
     def served_effect(self, model_effect: float) -> float:
         """A Scenario Effect of the model (a relative change) as this form serves it: the Naive Baseline
-        has no policy features, so only the model's share, 1 − w on the log scale, moves."""
+        has no policy features, so only the model's share, 1 − w on the log scale, moves. Market Reach
+        multiplies a pair's Export Potential with and without the Scenario alike, so it changes nothing here."""
         return (1 + model_effect) ** (1 - self.naive_weight) - 1
 
+    def without_market_reach(self) -> "ModelForm":
+        """This form before Market Reach: the Export Potential its rescale constant is computed on."""
+        return ModelForm(naive_weight=self.naive_weight)
+
     def to_dict(self) -> dict:
-        return {"form": self.name, "naive_weight": self.naive_weight}
+        saved = {"form": self.name, "naive_weight": self.naive_weight}
+        if self.market_reach is not None:
+            saved["market_reach"] = self.market_reach.to_dict()
+        return saved
 
     @classmethod
-    def from_dict(cls, data: Mapping) -> "ModelForm":
+    def from_dict(cls, data: Mapping, market_reach_table: pl.DataFrame | None = None) -> "ModelForm":
+        """The form `to_dict` saved; a form with Market Reach takes its table as `market_reach_table`."""
         if data.get("form") not in ("blend", "model alone"):
             raise ValueError(f"No served model form {data.get('form')!r}: only the model alone or a blend")
-        return cls(naive_weight=float(data["naive_weight"]))
+        reach = data.get("market_reach")
+        return cls(
+            naive_weight=float(data["naive_weight"]),
+            market_reach=None if reach is None else MarketReach.from_dict(reach, market_reach_table),
+        )
 
 
 MODEL_ALONE = ModelForm()
@@ -113,10 +178,12 @@ def export_potential(
     has no model, a fold model held out another fold, or a blend's rows have no `naive_usd`.
     """
     naive = _naive(rows, form)
+    reach = reach_multiplier(rows, form, by)
     potential = _model_potential(rows, models, features, by, rounds, device, base_margin)
-    if naive is None:
+    if naive is None and reach is None:
         return potential
-    return pl.Series("export_potential_usd", blend(potential.to_numpy(), naive, form.naive_weight))
+    usd = potential.to_numpy() if naive is None else blend(potential.to_numpy(), naive, form.naive_weight)
+    return pl.Series("export_potential_usd", usd if reach is None else usd * reach)
 
 
 def blend(model_usd: np.ndarray, naive_usd: np.ndarray, naive_weight: float) -> np.ndarray:
@@ -138,6 +205,29 @@ def _naive(rows: pl.DataFrame, form: ModelForm) -> np.ndarray | None:
     if NAIVE_COLUMN not in rows.columns or rows[NAIVE_COLUMN].null_count():
         raise ValueError(f"A blend needs the naive baseline ({NAIVE_COLUMN}) on every row")
     return rows[NAIVE_COLUMN].cast(pl.Float64).to_numpy()
+
+
+def reach_multiplier(rows: pl.DataFrame, form: ModelForm, by: str = "fold") -> np.ndarray | None:
+    """Each row's Market Reach multiplier, exp(β · offset) × c (`market_reach.apply`), or None without Market Reach.
+
+    Rows scored by the mean of the models, or whose `exporter` is not the UK, are not UK pairs and take none
+    (multiplier 1): c is defined on the UK grid only, and scaling other Exporters by it would move the Potential
+    Range's calibration off the scale of their Actual Exports. A row's Export Potential without Market Reach is
+    its Export Potential divided by this."""
+    reach = form.market_reach
+    if reach is None:
+        return None
+    if reach.table is None:
+        raise ValueError("A Model Form with Market Reach needs its Market Reach table to predict")
+    if by != "fold":
+        return np.ones(rows.height)
+    # Imported here: `market_reach` imports `folds`, which imports this module.
+    from exportspredictor import market_reach
+
+    fold = pl.col("fold") if "fold" in rows.columns else pl.lit(None, pl.Int8)
+    keys = market_reach.uk_keys(rows, fold=fold, uk=UK)
+    multiplier = market_reach.apply(np.ones(rows.height), keys, reach.table, beta=reach.beta, constant=reach.constant)
+    return np.where(keys["uk"].to_numpy(), multiplier, 1.0)
 
 
 def _model_potential(rows, models, features, by, rounds, device, base_margin) -> pl.Series:
@@ -204,8 +294,23 @@ def log_contributions(
     share, w · log naive, is split equally between UK supply (`log_supply_loo`) and Market
     demand (`log_demand_loo`), the two sides of the market-share product it is made of; and
     where the model's own Export Potential is below the $1 floor, the bias takes up the lift
-    to $1, so the contributions still add up.
+    to $1, so the contributions still add up. With Market Reach, its log multiplier,
+    β · offset + log c, is added to the bias: it is the same for every Product of the Market, so
+    no feature's contribution changes, and the Market's reach is shown on its own (ADR 0010).
     """
+    contributions, log_potential = _blend_contributions(rows, models, features, form)
+    reach = reach_multiplier(rows, form)
+    if reach is None:
+        return contributions, log_potential
+    contributions = contributions.astype(np.float64)
+    contributions[:, -1] += np.log(reach)
+    return contributions, log_potential + np.log(reach)
+
+
+def _blend_contributions(
+    rows: pl.DataFrame, models: Sequence[xgb.Booster], features: Sequence[str], form: ModelForm
+) -> tuple[np.ndarray, np.ndarray]:
+    """`log_contributions` before Market Reach."""
     naive = _naive(rows, form)
     contributions = np.zeros((rows.height, len(features) + 1), dtype=np.float32)
     margin = np.zeros(rows.height, dtype=np.float32)
