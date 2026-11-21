@@ -504,3 +504,45 @@ def test_model_card_sets_the_large_market_measures_beside_earlier_versions(card,
     section = _section(governance.render_model_card(card), "## Headline")
     assert "| Version | 30 largest Markets | 60 largest Markets |" in section
     assert f"| v1 | {v1[30]:.3f} | {v1[60]:.3f} |" in section
+
+
+def test_model_card_states_low_uk_pair_coverage_as_the_api_does(fixture_artefacts):
+    from dataclasses import replace
+
+    report = fixture_artefacts.evaluation
+    low = {"with_market_reach": 0.735, "without_market_reach": 0.807}
+    artefacts = replace(fixture_artefacts, evaluation={
+        **report, "potential_range": {**report["potential_range"], "uk_pair_coverage": low}})
+
+    titles = {row["title"] for row in governance.model_card(artefacts)["limitations"]}
+
+    assert "The Potential Range holds fewer UK pairs than its target" in titles
+    assert {row["title"] for row in evaluation.known_limitations(artefacts)} <= titles
+
+
+def test_the_earlier_versions_table_gives_v1_the_lift_its_comparison_measured(card, fixture_artefacts):
+    secondary = {m["metric"]: m["v1"] for m in fixture_artefacts.evaluation["v1_comparison"]["secondary"]}
+    v1 = next(row for row in card["earlier_versions"]["rows"] if row["name"] == "v1")
+
+    assert (v1["lift"], v1["size_matched_lift"]) == (secondary["lift"], secondary["size_matched_lift"])
+    assert f"| {secondary['size_matched_lift']:.2f} | {secondary['lift']:.2f} |" in governance.render_model_card(card)
+
+
+def test_a_saved_v1_row_without_lift_is_filled_from_its_comparison_on_read(fixture_artefacts):
+    from dataclasses import replace
+
+    report = fixture_artefacts.evaluation
+    block = report["earlier_versions"]
+    saved = {**block, "rows": [{k: v for k, v in row.items() if row["name"] != "v1" or "lift" not in k}
+                               for row in block["rows"]]}
+    card = governance.model_card(replace(fixture_artefacts, evaluation={**report, "earlier_versions": saved}))
+
+    v1 = next(row for row in card["earlier_versions"]["rows"] if row["name"] == "v1")
+    assert v1["lift"] is not None and v1["size_matched_lift"] is not None
+
+
+def test_the_scenario_note_names_the_served_model_form_with_its_market_reach(card, fixture_artefacts):
+    assert fixture_artefacts.ppml_benchmark["model"]["model_form"].get("market_reach")
+
+    section = _section(governance.render_model_card(card), "## Illustrative Scenario Effects")
+    assert "On the served Model Form (Blend with Market Reach)," in section

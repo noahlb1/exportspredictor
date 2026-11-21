@@ -10,7 +10,7 @@ Event Backtest's predicted and observed change, and, for a Blend, what the Event
 
 from typing import TYPE_CHECKING
 
-from exportspredictor.evaluation import NOT_RUN
+from exportspredictor.evaluation import NOT_RUN, model_form_label
 from exportspredictor.model_choice import event_backtest_note, primary_event_backtest
 
 if TYPE_CHECKING:
@@ -83,7 +83,8 @@ def _model_association(saved: dict | None) -> dict:
         "pairs": model["pairs"],
         "model_form": model["model_form"]["form"],
         "text": (
-            f"On the served Model Form ({model['model_form']['form'].capitalize()}), the model associates adding a Trade Agreement with "
+            f"On the served Model Form ({model_form_label(model['model_form'])}), the model associates adding a Trade "
+            "Agreement with "
             f"{_signed_percent(model['effect_pct'])} in Export Potential over the {model['pairs']:,} UK pairs without one "
             "(weighted by Baseline Export Potential)."
         ),

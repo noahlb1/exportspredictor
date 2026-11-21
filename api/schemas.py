@@ -375,6 +375,7 @@ class LargeMarketsByVersion(BaseModel):
 
     name: str
     markets: dict[int, float | None]  # count of largest Markets (30, 60) -> figure; None where not measured
+    columns: dict[str, float | None]  # the same figures by column label ("30 largest Markets"), as tables show them
 
 
 class WithAndWithout(BaseModel):
@@ -389,8 +390,7 @@ class LargeMarketsWithAndWithout(WithAndWithout):
 
 
 class LiftWithAndWithout(WithAndWithout):
-    size_matched_with: float | None
-    size_matched_without: float | None
+    size_matched: WithAndWithout
 
 
 class MarketReachEffect(BaseModel):

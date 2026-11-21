@@ -167,6 +167,19 @@ def complete_read(ledger: Ledger, key: str) -> dict:
     return dict(started[-1])
 
 
+def complete_rescores(ledger: Ledger, version: str) -> list[dict]:
+    """Mark completed, in place, every started re-score recorded under `version` (`record_rescore`): the build that
+    reads `version` re-scores earlier versions in the same run. Returns those rows; none where it re-scored nothing."""
+    path = Path(ledger.path)
+    rows = _rows(path)
+    started = [row for row in rows if row["kind"] == RESCORE and row["version"] == version and row["status"] == STARTED]
+    for row in started:
+        row["status"] = COMPLETED
+    if started:
+        _write(path, rows)
+    return [dict(row) for row in started]
+
+
 def _record(ledger: Ledger, key: str, *, kind: str, version: str, read: str, record: str, refused: str) -> dict:
     path = Path(ledger.path)
     rows = _rows(path)

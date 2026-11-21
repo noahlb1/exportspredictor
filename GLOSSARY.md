@@ -135,7 +135,7 @@ _Avoid_: comparison country, untreated unit
 ### Model selection
 
 **Selection Measure**:
-The one measure every modelling choice is made on: the mean over Products of the rank correlation between Export Potential and Actual Exports across Markets, for held-out UK pairs in the validation year. Ties in Export Potential are broken in a fixed pseudo-random order (a stable hash of the Product and the Market), and tied Actual Exports (the zeros) share their average rank, so tying the bottom of a ranking can never raise it. Every other metric is reported beside it, never chosen on. The measure before ties were broken, where tied Export Potential also shared its average rank, is the **old measure**: it is reported only to set a version beside earlier versions, which reported it.
+The one measure every modelling choice is made on: the mean over Products of the rank correlation between Export Potential and Actual Exports across Markets, for held-out UK pairs in the validation year. Ties in Export Potential are broken in a fixed pseudo-random order (a stable hash of the Product and the Market), and tied Actual Exports (the zeros) share their average rank, so tying the bottom of a ranking can never raise it. Every other metric is reported beside it, never chosen on. The measure before ties were broken, where tied Export Potential also shared its average rank, is the **old measure**: it is reported only to set a version beside earlier versions, which reported it. Set beside the old measure, the Selection Measure is called the **tie-proof** measure.
 _Avoid_: objective, score, headline (the headline is the same measure on the test year)
 
 **Arm**:

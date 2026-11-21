@@ -582,7 +582,7 @@ def test_lift_is_measured_on_the_served_model_form_with_market_reach_and_without
     effect = report["market_reach_effect"]["lift"]
     assert effect == {
         "with": report["lift"]["lift"], "without": without["lift"],
-        "size_matched_with": report["lift"]["size_matched"]["lift"], "size_matched_without": without["size_matched"]["lift"],
+        "size_matched": {"with": report["lift"]["size_matched"]["lift"], "without": without["size_matched"]["lift"]},
     }
 
 

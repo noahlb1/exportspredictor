@@ -26,6 +26,7 @@ from exportspredictor.evaluation import (
     range_limitations,
     result_limitations,
     size_coverage_limitations,
+    uk_pair_coverage_limitations,
 )
 from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
@@ -208,7 +209,8 @@ def model_card(artefacts: Artefacts) -> dict:
         "limitations": [
             *result_limitations(metadata, report), *_benchmark_limitations(artefacts.ppml_benchmark),
             *range_limitations(artefacts.potential_range_bands),
-            *size_coverage_limitations(report.get("potential_range")), *LIMITATIONS,
+            *size_coverage_limitations(report.get("potential_range")),
+            *uk_pair_coverage_limitations(metadata, report.get("potential_range")), *LIMITATIONS,
         ],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
@@ -598,14 +600,14 @@ def _large_market_lines(rows: list[dict] | None) -> list[str]:
     """The tie-proof UK ranking on the largest Markets, this version beside earlier versions (none: no lines)."""
     if not rows:
         return []
-    counts = list(rows[0]["markets"])
+    labels = list(rows[0]["columns"])
     return [
         "The same tie-proof ranking on the Markets that import the most (no choice was made on these):",
         "",
-        "| Version | " + " | ".join(f"{n} largest Markets" for n in counts) + " |",
-        "| --- |" + " --- |" * len(counts),
+        "| Version | " + " | ".join(labels) + " |",
+        "| --- |" + " --- |" * len(labels),
         *[
-            f"| {row['name']} | " + " | ".join(number_text(row["markets"].get(n), ".3f") for n in counts) + " |"
+            f"| {row['name']} | " + " | ".join(number_text(row["columns"].get(label), ".3f") for label in labels) + " |"
             for row in rows
         ],
         "",

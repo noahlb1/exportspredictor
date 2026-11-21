@@ -44,11 +44,12 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 copies it with its Potential Range recomputed (`rerange`), and `--help` lists both.
 """
 
+import functools
 import hashlib
 import json
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -371,9 +372,7 @@ def save_version(bundle: Artefacts, root: Path, *, test_year_ledger: ledger.Ledg
     folder = store.save(bundle, root)
     if test_year_ledger is not None:
         ledger.complete_read(test_year_ledger, ledger.fingerprint(bundle.metadata))
-        rescored = (bundle.evaluation or {}).get(RESCORE_FINGERPRINT)
-        if rescored:  # the earlier versions' re-score, recorded by the same run
-            ledger.complete_read(test_year_ledger, rescored)
+        ledger.complete_rescores(test_year_ledger, bundle.version)  # the earlier versions' re-score, if this run made one
     return folder
 
 
@@ -1148,10 +1147,6 @@ def _record_test_year_read(test_year_ledger: ledger.Ledger | None, metadata: dic
     ledger.record_read(test_year_ledger, metadata, read="; ".join(read))
 
 
-# Where a report keeps the fingerprint of the re-score its build recorded, so `save_version` completes that row too.
-RESCORE_FINGERPRINT = "rescore_fingerprint"
-
-
 @dataclass(frozen=True)
 class Rescore:
     """Earlier versions whose saved test-year UK scores a build re-scores under the tie-proof Selection Measure.
@@ -1159,14 +1154,19 @@ class Rescore:
     `fingerprints` maps each `earlier_versions` row name ("v1", "v2", "Blend") to that version's configuration
     fingerprint in the test-year ledger. `scores()` loads the saved scores (`evaluation.rescore_saved`'s tables);
     it is called only after the re-score is recorded. `flows()` gives every Exporter's Flows of the test year, which
-    rank the largest Markets for the large-Market measures. `reported` says whether the report lists v2's and the
-    Blend's reported figures (real runs) or not (the fixture).
+    rank the largest Markets for the large-Market measures. `reported` holds v2's and the Blend's reported figures
+    by row name (`evaluation.V2_REPORTED`, `evaluation.BLEND_REPORTED`; none in the fixture), which the report lists
+    beside this version; v1's comes from the report's v1 comparison.
     """
 
     fingerprints: Mapping[str, str]
     scores: Callable[[], Mapping[str, pl.DataFrame]]
     flows: Callable[[], pl.DataFrame]
-    reported: bool = True
+    reported: Mapping[str, Mapping] = field(default_factory=dict)
+
+
+# How far a re-scored version's old measure may be from the figure it reported: they matched exactly on 2023 (#128).
+RESCORE_TOLERANCE = 1e-9
 
 
 def rescore_earlier_versions(
@@ -1176,21 +1176,30 @@ def rescore_earlier_versions(
 
     The re-score is recorded in `test_year_ledger` first as its own read (`ledger.record_rescore`, kind `re-score`,
     under `version`) and refused if it was made before; `save_version` completes it with the build's own read.
-    Nothing is trained or chosen. Without a ledger it is unrecorded (synthetic data).
+    Each version's old measure must reproduce the figure it reported (within `RESCORE_TOLERANCE`), which checks
+    the saved scores; a ValueError otherwise. Nothing is trained or chosen. Without a ledger it is unrecorded
+    (synthetic data).
     """
-    out = dict(report)
     if test_year_ledger is not None:
-        row = ledger.record_rescore(
+        ledger.record_rescore(
             test_year_ledger, measure=evaluation.TIE_PROOF_MEASURE, fingerprints=rescore.fingerprints.values(),
             version=version,
         )
-        out[RESCORE_FINGERPRINT] = row["fingerprint"]
     rescored = evaluation.rescore_saved(rescore.scores(), flows=rescore.flows())
     for name, figures in rescored.items():
         print(f"Re-scored {name}'s saved {report['test_year']} scores: {figures}", flush=True)
-    if rescore.reported:
-        return evaluation.with_rescored_earlier_versions(out, rescored)
-    return evaluation.with_rescored_earlier_versions(out, rescored, v2=None, blend=None)
+    reported = {name: figures["uk_ranking"] for name, figures in rescore.reported.items()}
+    reported["v1"] = (report.get("v1_comparison") or {}).get("primary", {}).get("v1")
+    for name, figures in rescored.items():
+        expected = reported.get(name)
+        if expected is None or abs(figures["uk_ranking"] - expected) > RESCORE_TOLERANCE:
+            raise ValueError(
+                f"{name}'s re-scored saved scores give {figures['uk_ranking']} on the old measure, not the {expected} "
+                "it reported: the saved scores are not the ones that were read"
+            )
+    return evaluation.with_rescored_earlier_versions(
+        report, rescored, v2=rescore.reported.get("v2"), blend=rescore.reported.get("Blend")
+    )
 
 
 def saved_v1_scores(frozen: comparison.Frozen) -> pl.DataFrame:
@@ -1213,12 +1222,7 @@ def fixture_rescore(world: World) -> Rescore:
         fingerprints={"v1": FIXTURE_V1_FINGERPRINT},
         scores=lambda: {"v1": saved_v1_scores(fixture_v1_frozen(world))},
         flows=lambda: world.flows.filter(pl.col("year") == FIXTURE_V1_MANIFEST["test_year"]),
-        reported=False,
     )
-
-
-# v2's artefact; its test-year models are the Blend's (one saved set), which the re-score reads.
-V2_ARTEFACT = "20261118T100524Z"
 
 
 def real_rescore(root: Path | None = None, artefacts_root: Path | None = None, *, test_year: int = 2023) -> Rescore:
@@ -1228,8 +1232,9 @@ def real_rescore(root: Path | None = None, artefacts_root: Path | None = None, *
     test-year fold models (one set, cached under `evaluation.test_models_dir`; the Blend is v2's model blended
     with the Naive Baseline), so their scores are regenerated from those saved models on the original feature
     files' UK grid of the test year: out-of-fold, v2 alone and the Blend in its saved Model Form. Nothing is
-    trained. The old measure of each should match what the version reported, which checks the regeneration.
-    Each artefact's fingerprint and every file are checked here, before anything of the test year is loaded.
+    trained. The old measure of each must match what the version reported (`rescore_earlier_versions` checks it),
+    which checks the regeneration. v2's artefact is `evaluation.V2_REPORTED`'s version; its test-year models are
+    the Blend's (one saved set). Each artefact's fingerprint and every file are checked here, before anything of the test year is loaded.
     """
     from exportspredictor.paths import artefacts_dir
 
@@ -1238,7 +1243,7 @@ def real_rescore(root: Path | None = None, artefacts_root: Path | None = None, *
     fingerprints = evaluation.EARLIER_FINGERPRINTS
     metadata = {
         name: json.loads((artefacts_root / folder / "metadata.json").read_text(encoding="utf-8"))
-        for name, folder in (("Blend", evaluation.BLEND_REPORTED["version"]), ("v2", V2_ARTEFACT))
+        for name, folder in (("Blend", evaluation.BLEND_REPORTED["version"]), ("v2", evaluation.V2_REPORTED["version"]))
     }
     for name, meta in metadata.items():
         if ledger.fingerprint(meta) != fingerprints[name]:
@@ -1252,12 +1257,10 @@ def real_rescore(root: Path | None = None, artefacts_root: Path | None = None, *
         if not Path(path).exists():
             raise ValueError(f"The re-score of the earlier versions needs {path}")
     blend = ModelForm.from_dict(metadata["Blend"]["model_form"])
-    loaded: dict[int, pl.DataFrame] = {}
 
+    @functools.cache
     def flows() -> pl.DataFrame:
-        if test_year not in loaded:
-            loaded[test_year] = load_year_flows(test_year, load_sources(root)[1], root)
-        return loaded[test_year]
+        return load_year_flows(test_year, load_sources(root)[1], root)
 
     def scores() -> dict[str, pl.DataFrame]:
         test_models = evaluation.TestModels.load(models_dir)
@@ -1274,7 +1277,8 @@ def real_rescore(root: Path | None = None, artefacts_root: Path | None = None, *
             )
         return out
 
-    return Rescore(fingerprints=fingerprints, scores=scores, flows=flows)
+    reported = {"v2": evaluation.V2_REPORTED, "Blend": evaluation.BLEND_REPORTED}
+    return Rescore(fingerprints=fingerprints, scores=scores, flows=flows, reported=reported)
 
 
 def _v1_comparison(
