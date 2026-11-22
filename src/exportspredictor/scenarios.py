@@ -25,10 +25,11 @@ tariffs, a combination it rarely saw in training. A tariff Scenario sets `ln(1 +
 the chosen pairs. Every tariff a Scenario sets is clipped to the training range, so the
 Scenario Effect of a very large hike flattens; `ScenarioResult.clipped_pairs` counts them.
 
-**Blocked Opportunities**: pairs whose Scenario Effect is at least `min_share` of their
-Baseline Export Potential and at least `min_usd`. `blocked_opportunity_values` precomputes, for every
-pair without a Trade Agreement, the Scenario Effect of adding one: the value that the
-`rank_by=blocked` rankings sort by.
+**Blocked Opportunities** (`is_blocked`, ADR 0011): pairs whose Scenario Effect is at least
+`min_share` of their Baseline Export Potential and at least `min_usd`, with room to grow (Baseline-year
+Actual Exports below Export Potential with the effect added). `blocked_opportunity_values` precomputes,
+for every pair without a Trade Agreement, the Scenario Effect of adding one (the value the Blocked
+Opportunities page ranks by) and its Tariff part (`tariff_only`); `barrier_label` words the Barrier.
 
 Scenario Effects are associations the model has learned, not causal estimates.
 """
@@ -49,6 +50,7 @@ from exportspredictor.features import (
     TARIFF_METADATA,
     FeatureTransform,
 )
+from exportspredictor.gap_period import with_baseline_actual_exports
 from exportspredictor.prediction import (
     MODEL_ALONE,
     NAIVE_COLUMN,
@@ -230,10 +232,19 @@ class ScenarioResult:
         return {**sums, "effect_share": sums["effect_usd"] / baseline if baseline else 0.0}
 
     def blocked_opportunities(
-        self, min_share: float = DEFAULT_MIN_SHARE, min_usd: float = DEFAULT_MIN_USD
+        self,
+        history: pl.DataFrame,
+        baseline_year: int,
+        min_share: float = DEFAULT_MIN_SHARE,
+        min_usd: float = DEFAULT_MIN_USD,
     ) -> pl.DataFrame:
-        """Pairs whose Scenario Effect clears both Blocked Opportunity thresholds."""
-        return self.pairs.filter(is_blocked("effect_usd", "baseline_potential_usd", min_share, min_usd))
+        """The changed pairs that are Blocked Opportunities under this Scenario (`is_blocked`): the Scenario Effect
+        clears both thresholds and the Baseline year's Actual Exports, read from the yearly `history` and added as
+        `baseline_actual_exports_usd`, are below the Scenario's Export Potential (room to grow, ADR 0011)."""
+        pairs = with_baseline_actual_exports(self.pairs, history, baseline_year)
+        return pairs.filter(
+            is_blocked("effect_usd", "baseline_potential_usd", "baseline_actual_exports_usd", min_share, min_usd)
+        )
 
     def summary(self, *, blocked: int, year: int) -> str:
         """One sentence, worded as an association, never as a cause or a forecast.
@@ -264,9 +275,38 @@ class ScenarioResult:
         )
 
 
-def is_blocked(effect: str, baseline: str, min_share: float = DEFAULT_MIN_SHARE, min_usd: float = DEFAULT_MIN_USD) -> pl.Expr:
-    """The Blocked Opportunity rule: effect ≥ `min_share` × Baseline and ≥ `min_usd`."""
-    return (pl.col(effect) >= min_share * pl.col(baseline)) & (pl.col(effect) >= min_usd)
+def is_blocked(
+    effect: str,
+    baseline: str,
+    actual_exports: str,
+    min_share: float = DEFAULT_MIN_SHARE,
+    min_usd: float = DEFAULT_MIN_USD,
+) -> pl.Expr:
+    """The Blocked Opportunity rule, the one every page uses (ADR 0011), over the named columns.
+
+    The effect (a Blocked Opportunity value or Scenario Effect) is at least `min_share` × the Baseline year's Export
+    Potential `baseline` and at least `min_usd`, and the pair has room to grow: its Baseline-year Actual Exports
+    (`actual_exports`, a missing value counting as 0) are below `baseline` plus the effect, its Export Potential with
+    a Trade Agreement. The effect itself is not capped at that room.
+    """
+    effect_, potential = pl.col(effect), pl.col(baseline)
+    room_to_grow = pl.col(actual_exports).fill_null(0.0) < potential + effect_
+    return (effect_ >= min_share * potential) & (effect_ >= min_usd) & room_to_grow
+
+
+def barrier_label(applied_tariff_pct: float | None) -> str:
+    """A Blocked Opportunity's Barrier in words, from its Baseline-year Applied Tariff in percent (None where unknown):
+    "No agreement, tariff 7.5%", "No agreement, tariff 0%" or "No agreement, tariff unknown".
+
+    The rate is shown to one decimal, without a trailing ".0"; a rate above 0 that rounds to 0 reads "under 0.1%", so
+    a row with a Tariff part never says 0%.
+    """
+    if applied_tariff_pct is None or np.isnan(applied_tariff_pct):
+        return "No agreement, tariff unknown"
+    rate = round(applied_tariff_pct, 1)
+    if rate == 0 and applied_tariff_pct > 0:
+        return "No agreement, tariff under 0.1%"
+    return f"No agreement, tariff {rate:g}%"
 
 
 def run(
@@ -316,36 +356,60 @@ def blocked_opportunity_values(
     baseline: pl.DataFrame,
     models: Sequence[xgb.Booster],
     *,
+    tariff_range: tuple[float, float],
     form: ModelForm = MODEL_ALONE,
 ) -> pl.DataFrame:
-    """Every pair's Scenario Effect of adding a Trade Agreement where none exists (0 where one does).
+    """Every pair's Blocked Opportunity value and its Tariff part (both 0 where a Trade Agreement is in force).
 
-    It is the Scenario that adds a Trade Agreement with every Market, so the agreement removes
-    a known tariff exactly as in every Scenario and leaves an unknown one unknown (ADR 0006).
-    Measured against the Baseline year's Export Potential (`baseline_export_potential_usd`).
+    The value is the Scenario that adds a Trade Agreement with every Market, so the agreement
+    removes a known tariff exactly as in every Scenario and leaves an unknown one unknown
+    (ADR 0006). The Tariff part is the effect of `tariff_only`: a known Applied Tariff set to 0
+    (clipped to `tariff_range`, the training range) with the Trade Agreement flag left off; it is
+    0 where the tariff is 0 or unknown. Both are re-predicted out-of-fold in the served `form`,
+    against the Baseline year's Export Potential (`baseline_export_potential_usd`). The Agreement
+    part is the value minus the Tariff part (ADR 0011), not a run of its own.
 
-    Returns hs6, iso3, blocked_opportunity_value_usd: the Blocked Opportunity value.
+    Returns hs6, iso3, blocked_opportunity_value_usd, tariff_part_usd.
     """
     every_market = Scenario(add_agreements=tuple(baseline_features["iso3"].unique().sort()))
-    added = apply(baseline_features, every_market)
-    effects = added.select("hs6", "iso3").with_columns(scenario=export_potential(added, models, form=form))
-    return (
-        baseline.select("hs6", "iso3", "baseline_export_potential_usd")
-        .join(effects, on=["hs6", "iso3"], how="left")
-        .select(
-            "hs6",
-            "iso3",
-            blocked_opportunity_value_usd=pl.when(pl.col("scenario").is_null())
+    runs = {
+        "blocked_opportunity_value_usd": apply(baseline_features, every_market),
+        "tariff_part_usd": tariff_only(baseline_features, tariff_range),
+    }
+    values = baseline.select("hs6", "iso3", "baseline_export_potential_usd")
+    for name, changed in runs.items():
+        scenario = changed.select("hs6", "iso3", scenario=export_potential(changed, models, form=form))
+        values = values.join(scenario, on=["hs6", "iso3"], how="left", maintain_order="left").select(
+            pl.exclude("scenario"),
+            pl.when(pl.col("scenario").is_null())
             .then(0.0)
-            .otherwise(pl.col("scenario") - pl.col("baseline_export_potential_usd")),
+            .otherwise(pl.col("scenario") - pl.col("baseline_export_potential_usd"))
+            .alias(name),
         )
-    )
+    return values.select("hs6", "iso3", *runs)
+
+
+def tariff_only(baseline_features: pl.DataFrame, tariff_range: tuple[float, float]) -> pl.DataFrame:
+    """The Tariff part's input: the Baseline feature rows of pairs with no Trade Agreement in force and a known
+    Applied Tariff above 0, with that tariff set to 0 (clipped to `tariff_range`) and every other column kept.
+
+    The Trade Agreement flag stays off and an unknown tariff stays unknown (ADR 0006, ADR 0011); like `apply`, it
+    refuses (`LeakageError`) any change outside the policy columns.
+    """
+    low, high = tariff_range
+    # The same pairs the value's Scenario adds an agreement to, so a pair with a value of 0 has a Tariff part of 0.
+    rows = baseline_features.filter((pl.col("trade_agreement") == 0) & (pl.col(TARIFF).fill_nan(None) > 0))
+    after = rows.with_columns(pl.lit(min(max(0.0, low), high)).cast(rows.schema[TARIFF]).alias(TARIFF))
+    check_only_policy_changed(baseline_features, after)
+    return after
 
 
 def with_blocked_opportunity_values(baseline: pl.DataFrame, effects: pl.DataFrame) -> pl.DataFrame:
-    """The Baseline table with its `blocked_opportunity_value_usd` column (replaced if already there)."""
-    return baseline.drop("blocked_opportunity_value_usd", strict=False).join(
-        effects.select("hs6", "iso3", "blocked_opportunity_value_usd"), on=["hs6", "iso3"], how="left", maintain_order="left"
+    """The Baseline table with its `blocked_opportunity_value_usd` and `tariff_part_usd` columns (replaced if
+    already there)."""
+    columns = ["blocked_opportunity_value_usd", "tariff_part_usd"]
+    return baseline.drop(columns, strict=False).join(
+        effects.select("hs6", "iso3", *columns), on=["hs6", "iso3"], how="left", maintain_order="left"
     )
 
 
@@ -457,17 +521,24 @@ def _sectors(rows: pl.DataFrame) -> list[str]:
 
 
 def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
-    """Recompute `blocked_opportunity_value_usd` from the newest artefact's saved fold models.
+    """Recompute `blocked_opportunity_value_usd` and `tariff_part_usd` from the newest artefact's saved fold models.
 
     Writes a new artefact version (models and tables copied) and returns its folder, so
-    this step re-runs on its own without retraining. Nothing is trained here.
+    this step re-runs on its own without retraining. Nothing is trained and no test year is
+    read. It also reads a version saved before the Tariff part, which `artefacts.load` refuses.
+    Run it with `python -m exportspredictor.scenarios`.
     """
     from exportspredictor import artefacts as store
 
-    source = store.load_latest(root)
+    # A version saved before the Tariff part lacks its column, which is what this step adds.
+    source = store.load_latest(root, blocked_values=False)
     started = time.perf_counter()
     effects = blocked_opportunity_values(
-        source.baseline_features, source.baseline, source.fold_models, form=source.model_form
+        source.baseline_features,
+        source.baseline,
+        source.fold_models,
+        tariff_range=tariff_range(source.metadata),
+        form=source.model_form,
     )
     metadata = {
         **source.metadata,

@@ -11,7 +11,7 @@ Layout of `<root>/<version>/`:
     models/fold_<k>.ubj
     baseline.parquet   one row per UK Product–Market pair: Gap Period means of Export Potential,
                        Actual Exports and Export Gap; the Baseline year's Export Potential;
-                       the Blocked Opportunity value; its Caveat Tier columns, such as the
+                       the Blocked Opportunity value and its Tariff part (ADR 0011); its Caveat Tier columns, such as the
                        Flagged Product and Re-export Hub flags (`caveats.TIERS`, ADR 0005); its Potential Range and Uncertain Opportunity flag (ADR 0007);
                        whether its Baseline-year Applied Tariff is carried forward from 2021 (ADR 0006)
     baseline_features.parquet  the same pairs' Baseline-year model inputs, fold and Naive Baseline
@@ -77,6 +77,9 @@ _RENAMED_BASELINE_COLUMNS = {
     "blocked_effect_usd": "blocked_opportunity_value_usd",
     "uncertain": "uncertain_opportunity",
 }
+# The Baseline's Blocked Opportunity columns (`scenarios.blocked_opportunity_values`): the value and its Tariff part
+# (ADR 0011). A version saved before the Tariff part loads only for `scenarios.rebuild_blocked_values`.
+BLOCKED_VALUE_COLUMNS = ("blocked_opportunity_value_usd", "tariff_part_usd")
 
 
 class ArtefactsNotFound(FileNotFoundError):
@@ -93,7 +96,7 @@ class Artefacts:
     fold_models: list[xgb.Booster]
     # hs6, iso3, export_potential_usd, actual_exports_usd, export_gap_usd (Gap Period means),
     # baseline_export_potential_usd (the Baseline year's), each Caveat Tier's columns (`caveats.TIERS`), blocked_opportunity_value_usd,
-    # potential_range_low_usd, potential_range_high_usd, uncertain_opportunity, tariff_imputed
+    # tariff_part_usd, potential_range_low_usd, potential_range_high_usd, uncertain_opportunity, tariff_imputed
     baseline: pl.DataFrame
     # hs6, iso3, fold, FEATURES (transformed, as the models saw them), mfn_tariff (percent, the 2021 MFN rate),
     # naive_usd (the Naive Baseline a Blend takes)
@@ -164,11 +167,19 @@ def save(artefacts: Artefacts, root: Path) -> Path:
     return folder
 
 
-def load(folder: Path, *, tiers: Sequence | None = None) -> Artefacts:
+def load(folder: Path, *, tiers: Sequence | None = None, blocked_values: bool = True) -> Artefacts:
     """Load one artefact folder; `UnreadableArtefacts` if it is not a complete format-4 folder, or if its Baseline
-    lacks a column of one of `tiers` (default: every declared Caveat Tier, `caveats.TIERS`). `recaveat`, which marks
-    the Baseline again, reads it with `tiers=()`."""
+    lacks a column of one of `tiers` (default: every declared Caveat Tier, `caveats.TIERS`) or, with
+    `blocked_values`, a Blocked Opportunity column (`BLOCKED_VALUE_COLUMNS`: the value and its Tariff part, ADR 0011).
+    `recaveat`, which marks the Baseline again, reads it with `tiers=()`; `scenarios.rebuild_blocked_values`, which
+    computes the Blocked Opportunity columns again, with `blocked_values=False`."""
     bundle = _load(folder, ARTEFACT_FORMAT, _TABLES)
+    lacking = [column for column in BLOCKED_VALUE_COLUMNS if column not in bundle.baseline.columns]
+    if blocked_values and lacking:
+        raise UnreadableArtefacts(
+            f"{folder}'s Baseline lacks {', '.join(lacking)} (a version saved before the Tariff part, ADR 0011); "
+            "write a version with them from its saved fold models with `python -m exportspredictor.scenarios`"
+        )
     if tiers is None:
         # Imported here: the caveat tables are not needed to load a bundle.
         from exportspredictor.caveats import TIERS
@@ -226,9 +237,9 @@ def latest_folder(root: Path) -> Path:
     return folders[-1]
 
 
-def load_latest(root: Path, *, tiers: Sequence | None = None) -> Artefacts:
-    """Load the newest complete artefact folder under `root` (`load`, with the Caveat Tiers `tiers`)."""
-    return load(latest_folder(root), tiers=tiers)
+def load_latest(root: Path, *, tiers: Sequence | None = None, blocked_values: bool = True) -> Artefacts:
+    """Load the newest complete artefact folder under `root` (`load`, with its `tiers` and `blocked_values`)."""
+    return load(latest_folder(root), tiers=tiers, blocked_values=blocked_values)
 
 
 def copy_version(

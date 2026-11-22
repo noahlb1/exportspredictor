@@ -293,13 +293,12 @@ def leaderboard_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
 # table, every figure for the Baseline year. The Export Gap is not on this page.
 BLOCKED_MARKETS = ["Market", "Blocked Opportunities", "Total value"]
 BLOCKED_PRODUCTS = [
-    "Product", "Blocked Opportunity value", "Uplift %", "Applied Tariff %", "Potential with agreement", "Actual Exports"
+    "Product", "Blocked Opportunity value", "Applied Tariff %", "Potential with agreement", "Actual Exports"
 ]
 BLOCKED_FORMATS: dict[str, str | Callable] = {
     "Blocked Opportunities": "{:,}",
     "Total value": ONE_DECIMAL,
     "Blocked Opportunity value": ONE_DECIMAL,
-    "Uplift %": ONE_DECIMAL,
     "Applied Tariff %": ONE_DECIMAL,
     "Potential with agreement": ONE_DECIMAL,
     "Actual Exports": ONE_DECIMAL,
@@ -334,22 +333,14 @@ def blocked_markets_columns(body: dict) -> dict:
     }
 
 
-def uplift_percent(raw: pd.DataFrame) -> pd.Series:
-    """Each Blocked Opportunity's uplift on Export Potential in percent (`blocked_opportunity_uplift` is a share);
-    blank where Actual Exports do not exceed Export Potential."""
-    return pd.Series(raw["blocked_opportunity_uplift"], dtype="float64") * 100
-
-
 def blocked_products_frame(rows: list[dict]) -> pd.DataFrame:
-    """One Market's Blocked Opportunities: Product, value, its uplift on Export Potential (only where Actual Exports
-    exceed Export Potential), Applied Tariff, Export Potential with a Trade Agreement (elsewhere) and Actual Exports,
-    all for the Baseline year, money in $ millions."""
+    """One Market's Blocked Opportunities: Product, value, Applied Tariff, Export Potential with a Trade Agreement and
+    Actual Exports, all for the Baseline year, money in $ millions."""
     raw = pd.DataFrame(rows)
     return pd.DataFrame(
         {
             "Product": raw["description"],
             "Blocked Opportunity value": millions(raw["blocked_opportunity_value_usd"]),
-            "Uplift %": uplift_percent(raw),
             "Applied Tariff %": pd.Series(raw["applied_tariff_pct"], dtype="float64"),
             "Potential with agreement": millions(raw["potential_with_agreement_usd"]),
             "Actual Exports": millions(raw["baseline_actual_exports_usd"]),
@@ -367,13 +358,6 @@ def blocked_products_columns(body: dict) -> dict:
             f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement and removing "
             f"the tariff. {word}.",
         ),
-        "Uplift %": st.column_config.NumberColumn(
-            "Uplift %",
-            help=f"Only where {year} Actual Exports exceed {year} Export Potential: the Blocked Opportunity value as a "
-            "percentage of Export Potential. Potential with agreement is then left blank: a dollar level built on "
-            f"Export Potential would understate what the UK already sells. {word}.",
-            format="%.1f",
-        ),
         "Applied Tariff %": tariff_column(
             year,
             help=f"The tariff the Market charges on this Product from the UK in {year}, in percent. Where it is 0, the "
@@ -382,8 +366,7 @@ def blocked_products_columns(body: dict) -> dict:
         "Potential with agreement": money_column(
             "Potential with agreement",
             f"Export Potential with a Trade Agreement: {year} Export Potential plus the Blocked Opportunity value, the "
-            f"level the model associates with adding the agreement. Blank where {year} Actual Exports exceed Export "
-            f"Potential (see Uplift %). {word}.",
+            f"level the model associates with adding the agreement, above {year} Actual Exports. {word}.",
         ),
         "Actual Exports": money_column(
             "Actual Exports",
@@ -404,8 +387,6 @@ def blocked_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
             "Market": raw["market"],
             "Region": raw["region"],
             f"Blocked Opportunity value, {year}, {word} ({unit})": raw["blocked_opportunity_value_usd"],
-            # Only where Actual Exports exceed Export Potential, which then has no level with a Trade Agreement
-            f"Uplift on Export Potential, {year}, {word} (%)": uplift_percent(raw),
             "Applied Tariff %": raw["applied_tariff_pct"],
             f"Export Potential, {year} ({unit})": raw["baseline_export_potential_usd"],
             f"Export Potential with a Trade Agreement, {year}, {word} ({unit})": raw["potential_with_agreement_usd"],

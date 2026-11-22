@@ -31,21 +31,13 @@ from app.ui import caveat_tiers, fetch, illustrative, labels, read_limit, scenar
 
 MARKET = "blocked_market"  # the chosen Market, ISO3
 PAIR = "blocked_pair"  # the chosen Blocked Opportunity, (HS6, ISO3)
-# In the Barrier box, only where Baseline-year Actual Exports exceed Export Potential (spec #113): the value is then
-# shown as an uplift on Export Potential, with no dollar level with a Trade Agreement below what the UK already sells.
-UPLIFT_EXPLANATION = (
-    "The UK already exports more here than its Export Potential, so the Blocked Opportunity value is shown as an "
-    "uplift on Export Potential, not as a dollar level with a Trade Agreement."
-)
 
 
 def _explain(row: dict) -> None:
     """The chosen Blocked Opportunity's panel: the Barrier first, in a box headed by the pair, then what the pair is and
-    its caveats, three Baseline-year figures, and the shared panel from its facts table on, without the Export Gap.
-    Where Actual Exports exceed Export Potential, the middle figure is the uplift, not the level with an agreement."""
+    its caveats, three Baseline-year figures, and the shared panel from its facts table on, without the Export Gap."""
     body = panel.explanation(row)
-    uplift = panel.uplift_text(row)
-    panel.barrier(row, body, note=None if uplift is None else UPLIFT_EXPLANATION, titled=True)
+    panel.barrier(row, body, titled=True)
     panel.opening(row, body, titled=False)
     year, word = body["baseline_year"], illustrative()
     potential, with_agreement, actual = st.columns(3)
@@ -54,28 +46,18 @@ def _explain(row: dict) -> None:
         format_usd(row["baseline_export_potential_usd"]),
         help=f"The Export Potential the model expects in {year}, under the trade-policy conditions in force.",
     )
-    if uplift is None:
-        with_agreement.metric(
-            "Export Potential with a Trade Agreement",
-            format_usd(row["potential_with_agreement_usd"]),
-            help=f"Baseline Export Potential plus the Blocked Opportunity value: the {year} level the model "
-            f"associates with adding a UK Trade Agreement and removing the tariff. {word.capitalize()}.",
-        )
-    else:
-        with_agreement.metric(
-            "Uplift with a Trade Agreement",
-            uplift,
-            help="The Blocked Opportunity value as a percentage of Baseline Export Potential: the rise the model "
-            f"associates with adding a UK Trade Agreement and removing the tariff. {UPLIFT_EXPLANATION} "
-            f"{word.capitalize()}.",
-        )
+    with_agreement.metric(
+        "Export Potential with a Trade Agreement",
+        format_usd(row["potential_with_agreement_usd"]),
+        help=f"Baseline Export Potential plus the Blocked Opportunity value: the {year} level the model "
+        f"associates with adding a UK Trade Agreement. {word.capitalize()}.",
+    )
     actual.metric(
         "Actual Exports",
         format_usd(row["baseline_actual_exports_usd"]),
         help=f"What the UK actually exported of this Product to this Market in {year} (0 where there was no Flow).",
     )
-    middle = "Export Potential with a Trade Agreement" if uplift is None else "the uplift"
-    st.caption(f"Each is for {year}; {middle} is {word}.")
+    st.caption(f"Each is for {year}; Export Potential with a Trade Agreement is {word}.")
     panel.from_facts(row, body, with_barrier=False, with_gap=False)
 
 

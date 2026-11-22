@@ -72,21 +72,6 @@ def _title(row: dict) -> str:
     return f"{row['description']} → {row['market']}"
 
 
-def uplift_text(row: dict) -> str | None:
-    """A Blocked Opportunities row's value as an uplift on Export Potential (e.g. "+25%"), only where Actual Exports
-    exceed Export Potential (`blocked_opportunity_uplift`, spec #113); None elsewhere and on other pages' rows."""
-    uplift = row.get("blocked_opportunity_uplift")
-    return None if uplift is None else f"{uplift:+.0%}"
-
-
-def _value_text(row: dict, year: int) -> str:
-    """The Blocked Opportunity value as the panel words it: the uplift on Export Potential where there is one (the
-    dollars after it), the dollars elsewhere."""
-    dollars = format_usd(row["blocked_opportunity_value_usd"])
-    uplift = uplift_text(row)
-    return dollars if uplift is None else f"{uplift} on its {year} Export Potential ({dollars})"
-
-
 def figures(body: dict) -> None:
     """Export Potential, Actual Exports and Export Gap in the adaptive money form, each with the API's term wording."""
     potential, actual, gap = st.columns(3)
@@ -117,7 +102,7 @@ def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
     meaning = next((sentence for sentence in kinds.split(". ") if sentence.startswith(f"{kind}:")), kinds)
     meaning = meaning.removeprefix(f"{kind}:").strip().rstrip(".")
     relative = body["relative_export_gap"]
-    value = _value_text(row, year)
+    value = format_usd(row["blocked_opportunity_value_usd"])
     blocked = ", a Blocked Opportunity" if row["blocked_opportunity"] else ""
     lines = [
         (
@@ -166,11 +151,8 @@ def barrier(row: dict, body: dict, note: str | None = None, *, titled: bool = Fa
     if row["trade_agreement"]:
         return
     badge = labels()["illustrative"]["badge"]
-    year, uplift = body["baseline_year"], uplift_text(row)
-    amount = (
-        f"**{format_usd(row['blocked_opportunity_value_usd'])}** more {year} Export Potential" if uplift is None
-        else f"**{uplift}** on its {year} Export Potential ({format_usd(row['blocked_opportunity_value_usd'])})"
-    )
+    year = body["baseline_year"]
+    amount = f"**{format_usd(row['blocked_opportunity_value_usd'])}** more {year} Export Potential"
     text = (
         f"**The Barrier.** No UK Trade Agreement is in force with {row['market']}, and the Applied Tariff is "
         f"{tariff_text(row['applied_tariff_pct'])}. The model associates adding a Trade Agreement, and removing the "
