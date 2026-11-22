@@ -123,6 +123,30 @@ def test_blocked_values_can_be_rebuilt_from_saved_fold_models(fixture_artefacts,
     assert_frame_equal(rebuilt.baseline_features, fixture_artefacts.baseline_features)
 
 
+def test_rebuilt_blocked_values_rewrite_the_model_card_and_re_read_the_ppml_comparison(fixture_artefacts, tmp_path):
+    saved = fixture_artefacts.ppml_benchmark
+    stale = {**saved, "model": {**saved["model"], "effect_usd": 1.0, "effect_pct": 99.0}}
+    older = replace(
+        fixture_artefacts,
+        metadata={**fixture_artefacts.metadata, "version": "20260101T000000Z"},
+        baseline=fixture_artefacts.baseline.drop("blocked_opportunity_value_usd", "tariff_part_usd"),
+        ppml_benchmark=stale,
+    )
+    store.save(older, tmp_path)
+
+    folder = scenarios.rebuild_blocked_values(tmp_path, version="20260102T000000Z")
+    rebuilt = store.load(folder)
+
+    # The model's side of the PPML comparison is read again from the rebuilt values; the PPML fit is kept.
+    assert rebuilt.ppml_benchmark["model"]["effect_usd"] == pytest.approx(saved["model"]["effect_usd"])
+    assert rebuilt.ppml_benchmark["model"]["effect_pct"] == pytest.approx(saved["model"]["effect_pct"])
+    assert rebuilt.ppml_benchmark["model"]["model_form"] == saved["model"]["model_form"]
+    assert rebuilt.ppml_benchmark["ppml"] == saved["ppml"]
+    card = (folder / "model_card.md").read_text(encoding="utf-8")
+    assert "version 20260102T000000Z" in card
+    assert "## Blocked Opportunities" in card
+
+
 def test_blocked_values_are_zero_where_a_trade_agreement_exists(fixture_artefacts):
     values = fixture_artefacts.baseline.join(
         fixture_artefacts.baseline_features.select("hs6", "iso3", "trade_agreement"), on=["hs6", "iso3"]

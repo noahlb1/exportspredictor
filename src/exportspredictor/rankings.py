@@ -279,3 +279,52 @@ def blocked_opportunities(
         above_export_potential=pl.col("baseline_actual_exports_usd") > potential,
     )
     return BlockedRanking(rows=shown, summary=summary, markets=markets, order=order)
+
+
+# The Barrier kinds of the split, in the order it lists them (`blocked_opportunity_split`).
+BARRIER_KINDS = ("Tariff above 0", "Tariff 0%", "Tariff unknown")
+ALL_BARRIERS = "All"
+
+
+def barrier_kind(applied_tariff_pct: pl.Expr) -> pl.Expr:
+    """Which `BARRIER_KINDS` a Blocked Opportunity's Baseline-year Applied Tariff (percent; null or NaN where unknown)
+    falls in: above 0 (the only kind that can have a Tariff part), 0%, or unknown."""
+    pct = applied_tariff_pct.cast(pl.Float64).fill_nan(None)
+    above, zero, unknown = BARRIER_KINDS
+    return pl.when(pct.is_null()).then(pl.lit(unknown)).when(pct > 0).then(pl.lit(above)).otherwise(pl.lit(zero))
+
+
+def blocked_opportunity_split(artefacts: Artefacts) -> pl.DataFrame:
+    """The Blocked Opportunity value split into its Tariff part and Agreement part (ADR 0011), by Barrier kind
+    (`BARRIER_KINDS`, every kind listed even when empty) and over all Blocked Opportunities (`ALL_BARRIERS`).
+
+    Columns: barrier, blocked_opportunities, markets, value_usd, tariff_part_usd, agreement_part_usd,
+    tariff_part_share (of the value), negative_agreement_parts and negative_agreement_part_usd (their sum). The
+    Agreement part is the value minus the Tariff part, so it comes out negative wherever the Tariff part is larger.
+    Same rule and thresholds as the Blocked Opportunities page (`blocked_opportunities`), with no filter.
+    """
+    rows = blocked_opportunities(artefacts).rows.with_columns(barrier=barrier_kind(pl.col("applied_tariff_pct")))
+    agreement = pl.col("agreement_part_usd")
+    sums = [
+        pl.len().alias("blocked_opportunities"),
+        pl.col("iso3").n_unique().alias("markets"),
+        pl.col("blocked_opportunity_value_usd").sum().alias("value_usd"),
+        pl.col("tariff_part_usd").sum(),
+        agreement.sum(),
+        (agreement < 0).sum().alias("negative_agreement_parts"),
+        agreement.filter(agreement < 0).sum().alias("negative_agreement_part_usd"),
+    ]
+    kinds = pl.DataFrame({"barrier": list(BARRIER_KINDS)})
+    by_kind = kinds.join(rows.group_by("barrier").agg(sums), on="barrier", how="left", maintain_order="left")
+    every = rows.select(sums).with_columns(barrier=pl.lit(ALL_BARRIERS))
+    split = pl.concat([by_kind, every], how="diagonal_relaxed")
+    counts = ["blocked_opportunities", "markets", "negative_agreement_parts"]
+    return split.with_columns(
+        pl.col(counts).fill_null(0).cast(pl.Int64),
+        pl.col("value_usd", "tariff_part_usd", "agreement_part_usd", "negative_agreement_part_usd").fill_null(0.0),
+    ).with_columns(
+        tariff_part_share=pl.when(pl.col("value_usd") > 0).then(pl.col("tariff_part_usd") / pl.col("value_usd"))
+    ).select(
+        "barrier", "blocked_opportunities", "markets", "value_usd", "tariff_part_usd", "agreement_part_usd",
+        "tariff_part_share", "negative_agreement_parts", "negative_agreement_part_usd",
+    )

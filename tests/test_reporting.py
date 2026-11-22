@@ -305,3 +305,70 @@ def test_what_market_reach_changes_is_the_saved_sentence_or_a_not_run_line(fixtu
     assert reporting.market_reach_effect(replace(fixture_artefacts, evaluation=without)) == (
         "Market Reach: not run for this version."
     )
+
+
+# --- Blocked Opportunities: the split of the value and how Product-specific its Agreement part is (spec #133) -----
+
+
+def test_the_blocked_opportunity_split_counts_each_barrier_and_parts_sum_to_the_value(blocked_artefacts):
+    # The Blocked world: whisky ($18.5m, tariff 150%, Tariff part 40% of its value) and jewellery ($7.1m, tariff
+    # above 0, Tariff part 0) in India; jewellery in Hong Kong ($5.1m, tariff 0%).
+    split = {row["barrier"]: row for row in reporting.blocked_opportunity_split(blocked_artefacts).iter_rows(named=True)}
+
+    assert list(split) == ["Tariff above 0", "Tariff 0%", "Tariff unknown", "All"]
+    assert [split[b]["blocked_opportunities"] for b in split] == [2, 1, 0, 3]
+    assert [split[b]["markets"] for b in split] == [1, 1, 0, 2]
+    everything = split["All"]
+    assert everything["value_usd"] == pytest.approx(30.7e6, rel=0.01)
+    assert everything["tariff_part_usd"] == pytest.approx(0.4 * 18.5e6, rel=0.01)
+    assert everything["tariff_part_usd"] + everything["agreement_part_usd"] == pytest.approx(everything["value_usd"])
+    assert everything["tariff_part_share"] == pytest.approx(7.4 / 30.7, rel=0.01)
+    assert split["Tariff 0%"]["tariff_part_usd"] == 0
+    assert everything["negative_agreement_parts"] == 0
+
+
+def test_a_tariff_part_above_its_value_is_counted_as_a_negative_agreement_part(blocked_artefacts):
+    # The Agreement part is the remainder, so it is negative wherever the Tariff part exceeds the value.
+    jewellery_india = (pl.col("hs6") == "711319") & (pl.col("iso3") == "IND")
+    baseline = blocked_artefacts.baseline.with_columns(
+        tariff_part_usd=pl.when(jewellery_india).then(pl.col("blocked_opportunity_value_usd") * 1.5)
+        .otherwise(pl.col("tariff_part_usd"))
+    )
+    split = reporting.blocked_opportunity_split(replace(blocked_artefacts, baseline=baseline))
+    everything = split.filter(pl.col("barrier") == "All").row(0, named=True)
+
+    assert everything["negative_agreement_parts"] == 1
+    assert everything["negative_agreement_part_usd"] == pytest.approx(-0.5 * 7.1e6, rel=0.02)
+
+
+def _description(bundle, hs6):
+    return bundle.products.filter(pl.col("hs6") == hs6)["description"].item()
+
+
+def test_the_agreement_part_variation_spreads_its_share_between_products_within_each_top_market(blocked_artefacts):
+    # India: whisky's Agreement part is 18% of its Baseline Export Potential ($11.1m of $61.6m), jewellery's 25%
+    # ($7.1m of $28.3m). Whisky leads by value, jewellery by share: sorting by the share reverses India's order.
+    variation = reporting.agreement_part_variation(blocked_artefacts)
+    india, hong_kong = variation.iter_rows(named=True)
+
+    assert [india["iso3"], hong_kong["iso3"]] == ["IND", "HKG"]  # largest Blocked Opportunity total first
+    assert india["blocked_opportunities"] == 2
+    assert india["share_min"] == pytest.approx(0.180, abs=0.002)
+    assert india["share_max"] == pytest.approx(0.251, abs=0.002)
+    assert india["order_correlation"] == pytest.approx(-1.0)
+    assert india["first_by_value"] == _description(blocked_artefacts, "220830")
+    assert india["first_by_share"] == _description(blocked_artefacts, "711319")
+    # One Product: no spread and no order to compare.
+    assert hong_kong["share_min"] == hong_kong["share_max"]
+    assert hong_kong["order_correlation"] is None
+
+
+def test_the_agreement_part_variation_keeps_only_the_top_markets(blocked_artefacts):
+    assert reporting.agreement_part_variation(blocked_artefacts, markets=1)["iso3"].to_list() == ["IND"]
+
+
+def test_the_agreement_part_variation_chart_draws_each_markets_median_share_and_its_range(blocked_artefacts):
+    chart = reporting.agreement_part_variation_chart(blocked_artefacts)
+
+    assert chart.data["iso3"].to_list() == ["IND", "HKG"]
+    assert "India" in chart.svg

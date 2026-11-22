@@ -561,10 +561,13 @@ def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
 
     Writes a new artefact version (models and tables copied) and returns its folder, so
     this step re-runs on its own without retraining. Nothing is trained and no test year is
-    read. It also reads a version saved before the Tariff part, which `artefacts.load` refuses.
+    read. It also reads a version saved before the Tariff part, which `artefacts.load` refuses. The saved PPML
+    benchmark's model side is re-read from the new values (`ppml.model_agreement_effect`) and the model card is
+    written for the new version.
     Run it with `python -m exportspredictor.scenarios`.
     """
     from exportspredictor import artefacts as store
+    from exportspredictor import governance, ppml
 
     # A version saved before the Tariff part lacks its column, which is what this step adds.
     source = store.load_latest(root, blocked_values=False)
@@ -582,8 +585,17 @@ def rebuild_blocked_values(root: Path, *, version: str | None = None) -> Path:
         "blocked_values_from": source.version,
         "blocked_values_seconds": round(time.perf_counter() - started, 2),
     }
-    rebuilt = replace(source, metadata=metadata, baseline=with_blocked_opportunity_values(source.baseline, effects))
-    return store.save(rebuilt, root)
+    baseline = with_blocked_opportunity_values(source.baseline, effects)
+    benchmark = source.ppml_benchmark
+    if benchmark:
+        # The model's side of the PPML comparison is read from these values; the PPML fit itself is kept.
+        model = {**benchmark["model"], **ppml.model_agreement_effect(baseline, source.baseline_features)}
+        benchmark = {**benchmark, "model": model}
+    rebuilt = replace(source, metadata=metadata, baseline=baseline, ppml_benchmark=benchmark)
+    folder = store.save(rebuilt, root)
+    # Files `save` does not write are not copied, so the model card is written again for this version.
+    governance.write_model_card(rebuilt, folder)
+    return folder
 
 
 def main() -> None:
