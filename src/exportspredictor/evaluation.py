@@ -252,22 +252,20 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
 def offset_pair_limitations(metadata: dict) -> list[dict]:
     """When a version's Baseline holds Offset Pairs (`offsets.METADATA_KEY`, spec #129): the model can be right about a
     Heading and wrong about the split between its Products. None for a version that records no Offset Pair."""
-    reach = metadata.get(offsets.METADATA_KEY)
-    if not reach or not reach.get("offset_pairs"):
+    saved = metadata.get(offsets.METADATA_KEY)
+    if not saved:
         return []
-    tops = sorted(reach["in_top"].items(), key=lambda item: int(item[0]))
-    counts = [f"{count:,} of the top {int(depth):,}" for depth, count in tops]
-    listed = ", ".join(counts[:-1]) + f" and {counts[-1]}" if len(counts) > 1 else "".join(counts)
+    reach = offsets.OffsetPairReach.from_dict(saved)
+    if not reach.offset_pair_count:
+        return []
     return [{
         "title": "Right about a Heading, wrong about the split between its Products",
-        "text": "The model can be right about a Heading and wrong about the split between its Products. For UK "
-        "turbo-jets and their parts (Heading 8411), Export Potential for the whole Heading is close to Actual Exports in "
-        "France and in Germany, but France buys mostly engines and Germany mostly parts, and the model spreads each "
-        "Market's total across the two Products. So an Export Gap can sit beside a surplus one Product away. No feature "
-        "can see the split without reading the UK's own trade with the pair's Market. Such Opportunities are marked "
-        f"as Offset Pairs: {reach['offset_pairs']:,} of {reach['opportunities']:,} Opportunities "
-        f"({reach['offset_pairs'] / reach['opportunities']:.0%}), {listed}. Their Export Gap may be trade recorded "
-        "under a neighbouring Product.",
+        "text": "The model can be right about a Heading and wrong about the split between its Products, so an Export "
+        "Gap can sit beside a surplus one Product away in the same Market. No feature can see the split without "
+        "reading the UK's own trade with the pair's Market. Opportunities whose Export Gap the rest of their Heading "
+        f"offsets by at least {reach.threshold:.0%} are marked as Offset Pairs: {reach.offset_pair_count:,} of "
+        f"{reach.opportunities:,} Opportunities ({reach.share_of_opportunities:.0%}), {reach.in_top_text()}. Their "
+        "Export Gap may be trade recorded under a neighbouring Product.",
     }]
 
 

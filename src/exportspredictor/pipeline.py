@@ -1563,11 +1563,12 @@ def mark_caveats(
     """
     context = caveat_context(bundle, volatile=volatile)
     baseline = with_caveat_columns(bundle.baseline, context, tiers=tiers)
-    # The reach is recorded whichever `tiers` are marked, so it is read from the Offset Pair tier's own marks.
-    offset_marked = with_caveat_columns(
+    # The reach is recorded whichever `tiers` are marked: from the marked Baseline when the Offset Pair tier is among
+    # them, else from that tier's own marks.
+    offset_marked = baseline if OFFSET_PAIR in tiers else with_caveat_columns(
         bundle.baseline.select("hs6", "iso3", "export_gap_usd"), context, tiers=[OFFSET_PAIR]
     )
-    metadata = {**bundle.metadata, offsets.METADATA_KEY: offsets.reach(offset_marked, OFFSET_PAIR.column)}
+    metadata = {**bundle.metadata, offsets.METADATA_KEY: offsets.reach(offset_marked, OFFSET_PAIR.column).to_dict()}
     if volatile is not None:
         metadata[volatility.METADATA_KEY] = volatile.to_dict()
     return replace(bundle, metadata=metadata, baseline=baseline)
