@@ -43,6 +43,7 @@ import numpy as np
 import polars as pl
 import xgboost as xgb
 
+from exportspredictor.artefacts import BLOCKED_VALUE_COLUMNS
 from exportspredictor.currency import format_change
 from exportspredictor.features import (
     FEATURES,
@@ -362,8 +363,8 @@ def blocked_opportunity_values(
     """Every pair's Blocked Opportunity value and its Tariff part (both 0 where a Trade Agreement is in force).
 
     The value is the Scenario that adds a Trade Agreement with every Market, so the agreement
-    removes a known tariff exactly as in every Scenario and leaves an unknown one unknown
-    (ADR 0006). The Tariff part is the effect of `tariff_only`: a known Applied Tariff set to 0
+    removes a known tariff exactly as in every Scenario (clipped to `tariff_range`) and leaves an
+    unknown one unknown (ADR 0006). The Tariff part is the effect of `tariff_only`: a known Applied Tariff set to 0
     (clipped to `tariff_range`, the training range) with the Trade Agreement flag left off; it is
     0 where the tariff is 0 or unknown. Both are re-predicted out-of-fold in the served `form`,
     against the Baseline year's Export Potential (`baseline_export_potential_usd`). The Agreement
@@ -372,9 +373,11 @@ def blocked_opportunity_values(
     Returns hs6, iso3, blocked_opportunity_value_usd, tariff_part_usd.
     """
     every_market = Scenario(add_agreements=tuple(baseline_features["iso3"].unique().sort()))
+    value_column, tariff_part_column = BLOCKED_VALUE_COLUMNS
+    # Both runs clip the tariff they set to the same training range (ADR 0006).
     runs = {
-        "blocked_opportunity_value_usd": apply(baseline_features, every_market),
-        "tariff_part_usd": tariff_only(baseline_features, tariff_range),
+        value_column: apply(baseline_features, every_market, tariff_range),
+        tariff_part_column: tariff_only(baseline_features, tariff_range),
     }
     values = baseline.select("hs6", "iso3", "baseline_export_potential_usd")
     for name, changed in runs.items():
@@ -405,11 +408,10 @@ def tariff_only(baseline_features: pl.DataFrame, tariff_range: tuple[float, floa
 
 
 def with_blocked_opportunity_values(baseline: pl.DataFrame, effects: pl.DataFrame) -> pl.DataFrame:
-    """The Baseline table with its `blocked_opportunity_value_usd` and `tariff_part_usd` columns (replaced if
-    already there)."""
-    columns = ["blocked_opportunity_value_usd", "tariff_part_usd"]
-    return baseline.drop(columns, strict=False).join(
-        effects.select("hs6", "iso3", *columns), on=["hs6", "iso3"], how="left", maintain_order="left"
+    """The Baseline table with its Blocked Opportunity columns (`BLOCKED_VALUE_COLUMNS`: the value and its Tariff
+    part), replaced if already there."""
+    return baseline.drop(BLOCKED_VALUE_COLUMNS, strict=False).join(
+        effects.select("hs6", "iso3", *BLOCKED_VALUE_COLUMNS), on=["hs6", "iso3"], how="left", maintain_order="left"
     )
 
 
