@@ -313,7 +313,13 @@ def model_agreement_association(bundle: "Artefacts") -> dict:
     from exportspredictor import scenarios
 
     form = bundle.model_form
-    values = scenarios.blocked_opportunity_values(bundle.baseline_features, bundle.baseline, bundle.fold_models, form=form)
+    values = scenarios.blocked_opportunity_values(
+        bundle.baseline_features,
+        bundle.baseline,
+        bundle.fold_models,
+        tariff_range=scenarios.tariff_range(bundle.metadata),
+        form=form,
+    )
     baseline = scenarios.with_blocked_opportunity_values(bundle.baseline, values)
     return {**model_agreement_effect(baseline, bundle.baseline_features), "model_form": form.to_dict()}
 

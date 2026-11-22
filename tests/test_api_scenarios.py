@@ -106,10 +106,15 @@ def test_blocked_opportunity_thresholds_are_respected(client):
     share = 0.3
     middle = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": share, "min_effect_usd": 0}).json()
 
-    assert len(loose["blocked_opportunities"]) == 5
+    # Medicaments in India clear thresholds of 0 but have no room to grow (ADR 0011).
+    assert len(loose["top_pairs"]) == 5 and len(loose["blocked_opportunities"]) == 4
     assert strict["blocked_opportunities"] == []
     assert all(row["effect_share"] >= share for row in middle["blocked_opportunities"])
-    expected = {(r["hs6"], r["iso3"]) for r in loose["top_pairs"] if r["effect_share"] >= share}
+    expected = {
+        (r["hs6"], r["iso3"])
+        for r in loose["top_pairs"]
+        if r["effect_share"] >= share and r["baseline_actual_exports_usd"] < r["scenario_potential_usd"]
+    }
     assert {(r["hs6"], r["iso3"]) for r in middle["blocked_opportunities"]} == expected
     assert middle["thresholds"] == {"min_effect_share": share, "min_effect_usd": 0}
 
@@ -158,8 +163,8 @@ def test_by_product_ranks_by_export_gap_by_default(client):
 
 WHISKY, JEWELLERY, CARS, CRUDE_OIL = "220830", "711319", "870323", "270900"
 # The Blocked world's Blocked Opportunities (see `conftest.blocked_artefacts`): jewellery is the Flagged Product and
-# Hong Kong the Re-export Hub.
-BLOCKED_PAIRS = {(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG"), (CARS, "HKG")}
+# Hong Kong the Re-export Hub. Cars in Hong Kong clears both thresholds but has no room to grow.
+BLOCKED_PAIRS = {(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG")}
 
 
 @pytest.fixture(scope="module")
@@ -223,17 +228,17 @@ def test_the_summary_and_per_market_totals_are_sums_over_the_returned_rows(block
     summary, markets = _totals(body["opportunities"])
     assert body["summary"] == summary
     assert body["markets"] == markets
-    # India's two (whisky and jewellery) total more than Hong Kong's two (jewellery and cars).
-    assert [(market["iso3"], market["blocked_opportunities"]) for market in body["markets"]] == [("IND", 2), ("HKG", 2)]
+    # India's two (whisky and jewellery) total more than Hong Kong's jewellery; its cars have no room to grow.
+    assert [(market["iso3"], market["blocked_opportunities"]) for market in body["markets"]] == [("IND", 2), ("HKG", 1)]
 
 
 @pytest.mark.parametrize(
     ("params", "keep"),
     [
         ({"product": JEWELLERY}, lambda row: row["hs6"] == JEWELLERY),
-        ({"sector": "87"}, lambda row: row["sector"] == "87"),
+        ({"sector": "22"}, lambda row: row["sector"] == "22"),
         ({"region": "South Asia"}, lambda row: row["region"] == "South Asia"),
-        ({"min_value_usd": 5e6}, lambda row: row["blocked_opportunity_value_usd"] >= 5e6),
+        ({"min_value_usd": 1e7}, lambda row: row["blocked_opportunity_value_usd"] >= 1e7),
         ({"hide_flagged": True}, lambda row: not row["flagged_product"]),
         ({"hide_hubs": True}, lambda row: not row["reexport_hub"]),
     ],
@@ -259,30 +264,108 @@ def test_a_limit_keeps_the_top_rows_but_not_the_summary_or_totals(blocked_client
     assert top["summary"] == everything["summary"] and top["markets"] == everything["markets"]
 
 
-def test_potential_with_agreement_is_baseline_export_potential_plus_the_value(blocked_client):
+def test_potential_with_agreement_is_baseline_export_potential_plus_the_value_with_room_to_grow(blocked_client):
     rows = _blocked(blocked_client)["opportunities"]
-    below = [row for row in rows if row["baseline_actual_exports_usd"] <= row["baseline_export_potential_usd"]]
 
-    assert below  # whisky in India: $38.1m exported against $40.6m of Export Potential, 2024
-    for row in below:
+    for row in rows:
         baseline = blocked_client.get(f"/explain/{row['hs6']}/{row['iso3']}").json()["baseline_export_potential_usd"]
         assert row["baseline_export_potential_usd"] == pytest.approx(baseline)
         assert row["potential_with_agreement_usd"] == pytest.approx(baseline + row["blocked_opportunity_value_usd"])
-        assert row["blocked_opportunity_uplift"] is None
+        assert row["baseline_actual_exports_usd"] < row["potential_with_agreement_usd"]
+        assert row["rise_share"] == pytest.approx(row["blocked_opportunity_value_usd"] / baseline)
+        assert "blocked_opportunity_uplift" not in row
 
 
-def test_where_actual_exports_exceed_export_potential_the_value_is_an_uplift_with_no_dollar_level(blocked_client):
-    # Spec #113 "Blocked Opportunity figures": no "with a Trade Agreement" dollar level below what the UK already sells.
+def test_a_pair_already_exporting_above_export_potential_with_an_agreement_is_no_blocked_opportunity(blocked_client):
+    # ADR 0011 "Room to grow": cars in Hong Kong clear both thresholds, but the UK already sells more there than the
+    # model's Export Potential with a Trade Agreement.
+    [cars] = blocked_client.get("/opportunities/top", params={"product": CARS, "market": "HKG"}).json()["opportunities"]
+    potential = blocked_client.get(f"/explain/{CARS}/HKG").json()["baseline_export_potential_usd"]
+    blocked = _blocked(blocked_client)
+
+    assert cars["blocked_opportunity_value_usd"] >= max(1e6, 0.2 * potential)
+    assert cars["blocked_opportunity"] is False
+    assert (CARS, "HKG") not in {(row["hs6"], row["iso3"]) for row in blocked["opportunities"]}
+    # Nor does it count in the summary or its Market's total.
+    hong_kong = next(market for market in blocked["markets"] if market["iso3"] == "HKG")
+    assert hong_kong["blocked_opportunities"] == 1
+
+
+def test_the_leaderboard_flags_exactly_the_blocked_reads_pairs(blocked_client):
+    rows = blocked_client.get("/opportunities/top", params={"limit": 1000}).json()["opportunities"]
+
+    assert {(row["hs6"], row["iso3"]) for row in rows if row["blocked_opportunity"]} == BLOCKED_PAIRS
+
+
+def test_the_tariff_part_and_the_agreement_part_sum_to_the_value(blocked_client):
     rows = {(row["hs6"], row["iso3"]): row for row in _blocked(blocked_client)["opportunities"]}
-    cars = rows[(CARS, "HKG")]
 
-    assert cars["baseline_actual_exports_usd"] > cars["baseline_export_potential_usd"]
-    assert cars["potential_with_agreement_usd"] is None
-    assert cars["blocked_opportunity_uplift"] == pytest.approx(
-        cars["blocked_opportunity_value_usd"] / cars["baseline_export_potential_usd"]
+    for row in rows.values():
+        assert row["tariff_part_usd"] + row["agreement_part_usd"] == pytest.approx(row["blocked_opportunity_value_usd"])
+    whisky = rows[(WHISKY, "IND")]
+    assert whisky["tariff_part_usd"] == pytest.approx(0.4 * whisky["blocked_opportunity_value_usd"])
+    assert whisky["barrier"] == "No agreement, tariff 150%"
+
+
+def test_a_0_percent_tariff_has_no_tariff_part_and_says_so_in_its_barrier(blocked_client):
+    rows = {(row["hs6"], row["iso3"]): row for row in _blocked(blocked_client)["opportunities"]}
+    jewellery = rows[(JEWELLERY, "HKG")]
+
+    assert jewellery["applied_tariff_pct"] == 0
+    assert jewellery["tariff_part_usd"] == 0
+    assert jewellery["agreement_part_usd"] == pytest.approx(jewellery["blocked_opportunity_value_usd"])
+    assert jewellery["barrier"] == "No agreement, tariff 0%"
+
+
+def test_an_unknown_tariff_stays_unknown_with_no_tariff_part(fixture_artefacts, tmp_path):
+    # India's jewellery tariff is made unknown, the values are rebuilt from the saved fold models, then scaled into
+    # the Blocked world.
+    from exportspredictor import scenarios
+
+    unknown = (pl.col("hs6") == JEWELLERY) & (pl.col("iso3") == "IND")
+    features = fixture_artefacts.baseline_features.with_columns(
+        pl.when(unknown).then(None).otherwise(pl.col("log_applied_tariff")).alias("log_applied_tariff")
     )
-    # Its value still counts in the ranking, the summary and its Market's total.
-    assert cars["blocked_opportunity_value_usd"] > 0
+    older = replace(fixture_artefacts, baseline_features=features, metadata={**fixture_artefacts.metadata, "version": "1"})
+    store.save(older, tmp_path / "source")
+    rebuilt = store.load(scenarios.rebuild_blocked_values(tmp_path / "source", version="2"))
+    scaled = replace(
+        rebuilt,
+        baseline=rebuilt.baseline.with_columns(pl.col(r"^.*_usd$") * 1000),
+        history=rebuilt.history.with_columns(pl.col(r"^.*_usd$") * 1000),
+    )
+    store.save(scaled, tmp_path / "served")
+
+    with TestClient(create_app(tmp_path / "served")) as client:
+        rows = {(row["hs6"], row["iso3"]): row for row in _blocked(client)["opportunities"]}
+
+    jewellery = rows[(JEWELLERY, "IND")]
+    assert jewellery["applied_tariff_pct"] is None
+    assert jewellery["tariff_part_usd"] == 0
+    assert jewellery["agreement_part_usd"] == pytest.approx(jewellery["blocked_opportunity_value_usd"])
+    assert jewellery["barrier"] == "No agreement, tariff unknown"
+
+
+def test_the_above_export_potential_flag_marks_actual_exports_above_baseline_export_potential(blocked_client):
+    rows = {(row["hs6"], row["iso3"]): row for row in _blocked(blocked_client)["opportunities"]}
+
+    # Jewellery in Hong Kong sells above its Export Potential, though below its level with a Trade Agreement.
+    assert {pair for pair, row in rows.items() if row["above_export_potential"]} == {(JEWELLERY, "HKG")}
+    for row in rows.values():
+        above = row["baseline_actual_exports_usd"] > row["baseline_export_potential_usd"]
+        assert row["above_export_potential"] is above
+
+
+def test_the_blocked_read_orders_by_tariff_part_on_request(blocked_client):
+    by_value = _blocked(blocked_client)
+    by_tariff = _blocked(blocked_client, rank_by="tariff_part")
+
+    order = [(row["hs6"], row["iso3"]) for row in by_tariff["opportunities"]]
+    # Whisky in India leads on its Tariff part; the two 0% rows follow by value.
+    assert order == [(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG")]
+    assert by_tariff["rank_by"] == "tariff_part" and by_value["rank_by"] == "blocked"
+    assert by_tariff["order"]["title"] == "Tariff part" and "associates" in by_tariff["order"]["description"]
+    assert by_tariff["summary"] == by_value["summary"] and by_tariff["markets"] == by_value["markets"]
 
 
 def test_baseline_year_actual_exports_match_the_history_with_0_where_there_is_no_flow(blocked_artefacts, tmp_path):
@@ -318,6 +401,22 @@ def test_the_blocked_read_answers_404_for_an_unknown_or_excluded_product(blocked
 
     assert unknown.status_code == 404
     assert excluded.status_code == 404 and "Excluded Product" in excluded.json()["detail"]
+
+
+def test_a_scenarios_blocked_opportunities_need_room_to_grow_against_its_export_potential(client):
+    # Thresholds at 0, so only room to grow decides. Cars in Hong Kong: the UK already sells more than the Scenario's
+    # Export Potential.
+    body = client.post("/scenarios", json={"add_agreements": ["HKG"], "min_effect_share": 0, "min_effect_usd": 0}).json()
+    pairs = {(row["hs6"], row["iso3"]): row for row in body["top_pairs"]}
+    blocked = {(row["hs6"], row["iso3"]) for row in body["blocked_opportunities"]}
+
+    cars = pairs[(CARS, "HKG")]
+    assert cars["effect_usd"] >= 0 and cars["baseline_actual_exports_usd"] > cars["scenario_potential_usd"]
+    assert cars["blocked_opportunity"] is False and (CARS, "HKG") not in blocked
+    assert blocked and body["blocked_count"] == len(blocked)
+    for pair in blocked:
+        assert pairs[pair]["blocked_opportunity"]
+        assert pairs[pair]["baseline_actual_exports_usd"] < pairs[pair]["scenario_potential_usd"]
 
 
 def test_blocked_value_matches_a_scenario_adding_that_agreement(client):

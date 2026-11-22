@@ -82,7 +82,7 @@ from exportspredictor.lookups import search_products
 from exportspredictor.model_choice import event_backtest_note, how_chosen
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
-    BLOCKED,
+    BLOCKED_ORDERS,
     DEFAULT_MIN_POTENTIAL_USD,
     MAX_ROWS,
     MIN_POTENTIAL_USD_OPTIONS,
@@ -250,10 +250,12 @@ def create_app(
         query: Annotated[models.BlockedQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
         artefacts: store.Artefacts = Depends(loaded),
     ):
-        """The Blocked Opportunities page: only Blocked Opportunities (default thresholds), ranked by Blocked Opportunity
-        value, in Baseline-year figures, with a summary and per-Market totals over every filtered one. An unknown
-        Product answers 404, as does an Excluded Product, with its reason."""
+        """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the default thresholds, room to
+        grow included), ranked by Blocked Opportunity value or by Tariff part, in Baseline-year figures with the value's
+        Tariff part and Agreement part and the Barrier, with a summary and per-Market totals over every filtered one. An
+        unknown Product answers 404, as does an Excluded Product, with its reason."""
         _check_product(artefacts, query.product)
+        order = BLOCKED_ORDERS[query.rank_by]
         found = blocked_opportunities(
             artefacts,
             hs6=query.product,
@@ -261,6 +263,7 @@ def create_app(
             region=query.region,
             min_value_usd=query.min_value_usd,
             hide=_hidden(query, tiers),
+            rank_by=order.name,
             limit=query.limit,
         )
         return models.BlockedOpportunities(
@@ -269,8 +272,8 @@ def create_app(
             markets=[_pick(BlockedMarket, row) for row in found.markets.iter_rows(named=True)],
             opportunities=[_pick(models.BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)],
             thresholds=Thresholds(),
-            rank_by=BLOCKED.name,
-            order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
+            rank_by=order.name,
+            order=RankOrderOut(name=order.name, title=order.title, description=order.description),
             note=scenario_note(artefacts),
         )
 
@@ -528,10 +531,16 @@ def scenario_response(
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
     caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
+    # The Blocked Opportunity rule, room to grow against the Scenario's Export Potential included (ADR 0011).
     pairs = (
-        result.pairs.with_columns(
+        with_baseline_actual_exports(result.pairs, artefacts.history, artefacts.baseline_year)
+        .with_columns(
             blocked_opportunity=scenarios.is_blocked(
-                "effect_usd", "baseline_potential_usd", request.min_effect_share, request.min_effect_usd
+                "effect_usd",
+                "baseline_potential_usd",
+                "baseline_actual_exports_usd",
+                request.min_effect_share,
+                request.min_effect_usd,
             )
         )
         .join(markets, on="iso3", how="left", maintain_order="left")
@@ -544,9 +553,7 @@ def scenario_response(
 
     def shown(rows: pl.DataFrame) -> list[dict]:
         """The top `limit` rows, each with its Baseline-year Actual Exports."""
-        return with_baseline_actual_exports(
-            rows.head(request.limit), artefacts.history, artefacts.baseline_year
-        ).to_dicts()
+        return rows.head(request.limit).to_dicts()
 
     return models.ScenarioResponse(
         **_metadata(artefacts),

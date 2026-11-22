@@ -136,18 +136,40 @@ BLOCKED_WORLD_SCALE = 1000
 def blocked_artefacts(fixture_artefacts):
     """The fixture artefacts with every Baseline and history amount × 1,000, so some pairs clear the $1M threshold.
 
-    The fixture's own Blocked Opportunity values are all under $1M, so it has no Blocked Opportunity. Scaled, it has
-    four, two in each Market without a UK Trade Agreement: whisky and jewellery in India, jewellery and cars in Hong
-    Kong. Cars in Hong Kong is the one whose Baseline-year Actual Exports are above Export Potential with a Trade
-    Agreement. Tariffs and fold models are unchanged.
+    The fixture's own Blocked Opportunity values are all under $1M, so it has no Blocked Opportunity. Scaled, four
+    pairs clear both thresholds, two in each Market without a UK Trade Agreement: whisky and jewellery in India,
+    jewellery and cars in Hong Kong. Cars in Hong Kong has no room to grow (its Baseline-year Actual Exports are above
+    Export Potential with a Trade Agreement), so three are Blocked Opportunities.
+
+    Two figures are set so every kind of row exists (ADR 0011). The tiny fold models price none of India's tariffs, so
+    every Tariff part is 0; whisky in India (150%) is given a Tariff part of `BLOCKED_WHISKY_TARIFF_SHARE` of its value.
+    Jewellery in Hong Kong (tariff 0%) gets Baseline-year Actual Exports halfway between its Export Potential and its
+    Export Potential with a Trade Agreement, so it is "above Export Potential". Tariffs and fold models are unchanged.
     """
 
     def scaled(table: pl.DataFrame) -> pl.DataFrame:
         return table.with_columns(pl.col(r"^.*_usd$") * BLOCKED_WORLD_SCALE)
 
-    return replace(
-        fixture_artefacts, baseline=scaled(fixture_artefacts.baseline), history=scaled(fixture_artefacts.history)
+    baseline = scaled(fixture_artefacts.baseline)
+    whisky_india = (pl.col("hs6") == "220830") & (pl.col("iso3") == "IND")
+    baseline = baseline.with_columns(
+        tariff_part_usd=pl.when(whisky_india)
+        .then(pl.col("blocked_opportunity_value_usd") * BLOCKED_WHISKY_TARIFF_SHARE)
+        .otherwise(pl.col("tariff_part_usd"))
     )
+    [jewellery] = baseline.filter((pl.col("hs6") == "711319") & (pl.col("iso3") == "HKG")).iter_rows(named=True)
+    above = jewellery["baseline_export_potential_usd"] + jewellery["blocked_opportunity_value_usd"] / 2
+    history = scaled(fixture_artefacts.history)
+    in_baseline_year = (
+        (pl.col("hs6") == "711319") & (pl.col("iso3") == "HKG") & (pl.col("year") == fixture_artefacts.baseline_year)
+    )
+    history = history.with_columns(
+        actual_exports_usd=pl.when(in_baseline_year).then(above).otherwise(pl.col("actual_exports_usd"))
+    )
+    return replace(fixture_artefacts, baseline=baseline, history=history)
+
+
+BLOCKED_WHISKY_TARIFF_SHARE = 0.4  # whisky in India's Tariff part, as a share of its value, in the Blocked world
 
 
 @pytest.fixture(scope="session")
@@ -233,7 +255,16 @@ def offset_world(blocked_artefacts):
         products=products,
         metadata={key: value for key, value in bundle.metadata.items() if key != offsets.METADATA_KEY},
     )
-    return with_gap_period_figures(recoded_bundle, OFFSET_FIGURES)
+    # Cars to Hong Kong get room to grow (ADR 0011), so they are a Blocked Opportunity here: Baseline-year Actual
+    # Exports of half their Baseline-year Export Potential.
+    [cars] = bundle.baseline.filter((pl.col("hs6") == CARS) & (pl.col("iso3") == "HKG")).iter_rows(named=True)
+    in_baseline_year = (pl.col("hs6") == CARS) & (pl.col("iso3") == "HKG") & (pl.col("year") == bundle.baseline_year)
+    history = recoded_bundle.history.with_columns(
+        actual_exports_usd=pl.when(in_baseline_year)
+        .then(cars["baseline_export_potential_usd"] / 2)
+        .otherwise(pl.col("actual_exports_usd"))
+    )
+    return with_gap_period_figures(replace(recoded_bundle, history=history), OFFSET_FIGURES)
 
 
 @pytest.fixture(scope="session")
