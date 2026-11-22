@@ -4,7 +4,7 @@ For spec #129, ticket #131, under [ADR 0005](../adr/0005-product-exclusions-and-
 
 **Finding.** The model can be right about a Heading and wrong about the split between its Products. The two largest Opportunities on the Leaderboard each sit beside a surplus of about the same size one Product away, in the same Heading and Market. The spec's rule marks 27% of Opportunities, and about a fifth of the top of the Leaderboard at every depth. Across Headings, a pair's surplus and its neighbours' surplus move together (+0.24 on the 2022 held-out scores), so a feature built from the rest of the Heading would point the wrong way for these cases. The Offset Pair tier is therefore a caveat, not a feature or an exclusion.
 
-**Every recomputed figure matches the spec's.** Nothing differs: 27% of Opportunities (27.5%), 21 / 159 / 1,709 by rank, $19.0bn of $97.7bn of positive Export Gap, +0.24 (0.236) and 15 of 107 negative Headings.
+**Every recomputed figure matches the spec's to rounding.** The one the spec rounds is the Heading's fit: it says "within about 1%" of Actual Exports, and the recomputed figure is within 1.3%. The rest match as stated: 27% of Opportunities (27.5%), 21 / 159 / 1,709 by rank, $19.0bn of $97.7bn of positive Export Gap, +0.24 (0.236) and 15 of 107 negative Headings.
 
 **Nothing was trained and 2023 was not read.** The script reads the served artefact **`20261120T221726Z`** (Baseline year 2024, the lexically newest version folder when this was written), the loop's cached five-fold confirmation of 2022 (`data/derived/loop_V202601/confirmation/fold_<k>.parquet`) and, for the Market Reach check, the 2021 UK grid. It runs on the CPU in about 4 seconds.
 

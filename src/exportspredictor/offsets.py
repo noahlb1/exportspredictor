@@ -18,54 +18,36 @@ The rule reads the served Baseline's own figures (Gap Period means), after scori
 and no model or feature reads a pair's Actual Exports (ADR 0001). Excluded Products are not in the Baseline, so they
 are not in the Heading sums. It changes no score, rank or metric.
 
-The result (`OffsetPairs`) reaches the Offset Pair Caveat Tier through `caveats.CaveatContext.offset_pair_reasons`,
-and the pipeline records its reach in the artefact metadata (`METADATA_KEY`, `OffsetPairs.metadata`).
+The result (`offset_pairs`, each Offset Pair's reason) reaches the Offset Pair Caveat Tier through
+`caveats.CaveatContext.offset_pair_reasons`, and the pipeline records the tier's reach in the artefact metadata
+(`METADATA_KEY`, `reach`).
 """
-
-from collections.abc import Mapping
-from dataclasses import dataclass
 
 import polars as pl
 
 from exportspredictor.currency import format_usd
+from exportspredictor.rankings import in_top, ranked_opportunities
 
 THRESHOLD = 0.5  # the share of a pair's Export Gap the rest of its Heading must offset
-TOP_DEPTHS = (100, 1_000, 10_000)  # the Leaderboard depths the metadata counts Offset Pairs in
 METADATA_KEY = "offset_pairs"
 
 
-@dataclass(frozen=True)
-class OffsetPairs:
-    """The rule's result: its threshold and each Offset Pair's reason, keyed by (hs6, iso3)."""
-
-    threshold: float
-    reasons: Mapping[tuple[str, str], str]
-
-    def metadata(self, baseline: pl.DataFrame) -> dict:
-        """The rule's reach in `baseline` (hs6, iso3, export_gap_usd): how many Offset Pairs there are, how many are
-        in the top `TOP_DEPTHS` Opportunities (largest Export Gap first, ties by hs6 and iso3), and the share of
-        summed positive Export Gap they hold."""
-        keys = pl.DataFrame(
-            list(self.reasons), schema={"hs6": pl.String, "iso3": pl.String}, orient="row"
-        ).with_columns(offset=pl.lit(True))
-        ranked = (
-            baseline.select(pl.col("hs6").cast(pl.String), pl.col("iso3").cast(pl.String), "export_gap_usd")
-            .filter(pl.col("export_gap_usd") > 0)
-            .sort(["export_gap_usd", "hs6", "iso3"], descending=[True, False, False])
-            .join(keys, on=["hs6", "iso3"], how="left", maintain_order="left")
-            .with_columns(pl.col("offset").fill_null(False))
-        )
-        total = float(ranked["export_gap_usd"].sum())
-        offset = float(ranked.filter("offset")["export_gap_usd"].sum())
-        return {
-            "threshold": self.threshold,
-            "offset_pairs": int(ranked["offset"].sum()),
-            "opportunities": ranked.height,
-            "in_top": {str(depth): int(ranked.head(depth)["offset"].sum()) for depth in TOP_DEPTHS},
-            "offset_export_gap_usd": offset,
-            "opportunity_export_gap_usd": total,
-            "share_of_export_gap": offset / total if total else None,
-        }
+def reach(marked: pl.DataFrame, column: str) -> dict:
+    """The rule's reach in a Baseline `marked` with the Offset Pair tier's boolean `column`: the threshold, how many
+    Offset Pairs there are, how many are in the top `rankings.REACH_DEPTHS` Opportunities of the Leaderboard's default
+    ranking (`rankings.ranked_opportunities`), and the share of summed positive Export Gap they hold."""
+    ranked = ranked_opportunities(marked)
+    total = float(ranked["export_gap_usd"].sum())
+    offset = float(ranked.filter(column)["export_gap_usd"].sum())
+    return {
+        "threshold": THRESHOLD,
+        "offset_pairs": int(ranked[column].sum()),
+        "opportunities": ranked.height,
+        "in_top": {str(depth): count for depth, count in in_top(ranked, column).items()},
+        "offset_export_gap_usd": offset,
+        "opportunity_export_gap_usd": total,
+        "share_of_export_gap": offset / total if total else None,
+    }
 
 
 def heading(hs6: pl.Expr) -> pl.Expr:
@@ -74,13 +56,10 @@ def heading(hs6: pl.Expr) -> pl.Expr:
 
 
 def offset_pairs(
-    baseline: pl.DataFrame,
-    *,
-    products: pl.DataFrame,
-    markets: pl.DataFrame,
-    threshold: float = THRESHOLD,
-) -> OffsetPairs:
-    """The Offset Pairs of `baseline` (hs6, iso3, export_gap_usd: one row per scored UK pair), with each one's reason.
+    baseline: pl.DataFrame, *, products: pl.DataFrame, markets: pl.DataFrame
+) -> dict[tuple[str, str], str]:
+    """The Offset Pairs of `baseline` (hs6, iso3, export_gap_usd: one row per scored UK pair), each one's reason keyed
+    by (hs6, iso3).
 
     `products` (hs6, description) and `markets` (iso3, name) name the Product with the largest surplus and the Market.
     """
@@ -99,11 +78,11 @@ def offset_pairs(
     offset = rows.filter(
         (pl.col("export_gap_usd") > 0)
         & (pl.col("neighbours") >= 1)
-        & (pl.col("heading_gap") <= (1 - threshold) * pl.col("export_gap_usd"))
+        & (pl.col("heading_gap") <= (1 - THRESHOLD) * pl.col("export_gap_usd"))
     ).with_columns(offset_usd=pl.col("export_gap_usd") - pl.col("heading_gap"))
     names = dict(markets.select(pl.col("iso3").cast(pl.String), "name").iter_rows())
     descriptions = dict(products.select(pl.col("hs6").cast(pl.String), "description").iter_rows())
-    reasons = {
+    return {
         (hs6, iso3): (
             f"the UK already sells {names.get(iso3, iso3)} {format_usd(amount)} above Export Potential in the other "
             f"Products of Heading {code}, mostly {descriptions.get(surplus, surplus)}"
@@ -112,4 +91,3 @@ def offset_pairs(
             "hs6", "iso3", "heading", "offset_usd", "largest_surplus"
         ).iter_rows()
     }
-    return OffsetPairs(threshold=threshold, reasons=reasons)

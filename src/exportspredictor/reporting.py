@@ -30,6 +30,7 @@ from exportspredictor.evaluation import (
 )
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
+from exportspredictor.rankings import REACH_DEPTHS, in_top, ranked_opportunities
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
 NEUTRAL = "#8a8984"
@@ -236,21 +237,17 @@ def round_count(bundle: Artefacts) -> pl.DataFrame | NotRun:
 
 
 def caveat_tier_reach(
-    bundle: Artefacts, *, tops: tuple[int, ...] = (1_000, 10_000), tiers: tuple[CaveatTier, ...] = TIERS
+    bundle: Artefacts, *, tops: tuple[int, ...] = REACH_DEPTHS, tiers: tuple[CaveatTier, ...] = TIERS
 ) -> pl.DataFrame:
     """How many Opportunities each Caveat Tier covers in the Baseline (ADR 0005), and how many of them are in the
-    top `tops` of the Leaderboard's default ranking (largest Export Gap first, ties by hs6 and iso3)."""
-    ranked = (
-        bundle.baseline.filter(pl.col("export_gap_usd") > 0)
-        .sort(["export_gap_usd", "hs6", "iso3"], descending=[True, False, False])
-        .with_row_index("rank", offset=1)
-    )
+    top `tops` of the Leaderboard's default ranking (`rankings.ranked_opportunities`)."""
+    ranked = ranked_opportunities(bundle.baseline)
     return pl.DataFrame(
         [
             {
                 "Caveat Tier": tier.badge,
                 "Opportunities": int(ranked[tier.column].sum()),
-                **{f"in top {top:,}": int(ranked.filter(pl.col("rank") <= top)[tier.column].sum()) for top in tops},
+                **{f"in top {top:,}": count for top, count in in_top(ranked, tier.column, tops).items()},
             }
             for tier in tiers
         ]

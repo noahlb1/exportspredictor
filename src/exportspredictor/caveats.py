@@ -64,7 +64,7 @@ class CaveatContext:
     # Products flagged by the volatility rule (`volatility.VolatileProducts.reasons`, hs6 -> reason), read from the
     # UK's exports in the training years; Sector 71 is flagged whatever this holds.
     flagged_product_reasons: Mapping[str, str] = field(default_factory=dict)
-    # Offset Pairs (`offsets.OffsetPairs.reasons`, (hs6, iso3) -> reason), read from the Baseline's own Export Gaps.
+    # Offset Pairs (`offsets.offset_pairs`, (hs6, iso3) -> reason), read from the Baseline's own Export Gaps.
     offset_pair_reasons: Mapping[tuple[str, str], str] = field(default_factory=dict)
 
 
@@ -186,14 +186,17 @@ def restricted_pair_tier(prohibitions: tuple[Prohibition, ...] = PROHIBITIONS) -
     )
 
 
-def _pair_key() -> pl.Expr:
-    """Each row's pair as one string, for a set test or lookup against (hs6, iso3) keys (`_pair_keys`)."""
-    return pl.concat_str(pl.col("hs6").cast(pl.String), pl.col("iso3").cast(pl.String), separator=" ")
+def _pair() -> pl.Expr:
+    """Each row's pair as a struct (hs6, iso3), for a set test or lookup against (hs6, iso3) keys (`_pairs`)."""
+    return pl.struct(pl.col("hs6").cast(pl.String), pl.col("iso3").cast(pl.String))
 
 
-def _pair_keys(pairs: Mapping[tuple[str, str], str]) -> pl.Series:
-    return pl.Series([f"{hs6} {iso3}" for hs6, iso3 in pairs], dtype=pl.String)
+def _pairs(pairs: Mapping[tuple[str, str], str]) -> pl.Series:
+    """The (hs6, iso3) keys of `pairs` as a Series of structs matching `_pair`."""
+    return pl.DataFrame(list(pairs), schema={"hs6": pl.String, "iso3": pl.String}, orient="row").to_struct("pair")
 
+
+_NEIGHBOURING_PRODUCT = "Its Export Gap may be trade recorded under a neighbouring Product."
 
 OFFSET_PAIR = CaveatTier(
     column="offset_pair",
@@ -201,8 +204,7 @@ OFFSET_PAIR = CaveatTier(
     plural="Offset Pairs",
     text=(
         "Offset Pair: the UK already sells above Export Potential in the other Products of this Product's Heading in "
-        "this Market, by at least half of its Export Gap. Its Export Gap may be trade recorded under a neighbouring "
-        "Product."
+        f"this Market, by at least half of its Export Gap. {_NEIGHBOURING_PRODUCT}"
     ),
     key="pair",
     hide_param="hide_offset",
@@ -211,14 +213,14 @@ OFFSET_PAIR = CaveatTier(
         "other Products of their Heading in that Market)"
     ),
     # A set test and a lookup on the pair: about 250,000 Offset Pairs on the real Baseline.
-    flags=lambda context: _pair_key().is_in(_pair_keys(context.offset_pair_reasons).implode()),
-    reason=lambda context: _pair_key().replace_strict(
-        _pair_keys(context.offset_pair_reasons),
+    flags=lambda context: _pair().is_in(_pairs(context.offset_pair_reasons).implode()),
+    reason=lambda context: _pair().replace_strict(
+        _pairs(context.offset_pair_reasons),
         pl.Series(list(context.offset_pair_reasons.values()), dtype=pl.String),
         default=None,
         return_dtype=pl.String,
     ),
-    row_text="Offset Pair: {reason}. Its Export Gap may be trade recorded under a neighbouring Product.",
+    row_text="Offset Pair: {reason}. " + _NEIGHBOURING_PRODUCT,
 )
 
 SANCTIONED_MARKET = sanctioned_market_tier()

@@ -187,6 +187,12 @@ OFFSET_FIGURES = {
 }
 
 
+def offset_recoded(table: pl.DataFrame) -> pl.DataFrame:
+    """`table` (with `hs6`) in the Offset world's Product codes (`OFFSET_RECODED`)."""
+    recode = {old: new for old, (new, _) in OFFSET_RECODED.items()}
+    return table.with_columns(pl.col("hs6").cast(pl.String).replace(recode))
+
+
 def with_gap_period_figures(bundle, figures):
     """`bundle` with these pairs' Gap Period Export Potential and Actual Exports (`{(iso3, hs6): (potential, actual)}`,
     in $m), their Export Gap the difference."""
@@ -210,26 +216,22 @@ def with_gap_period_figures(bundle, figures):
 @pytest.fixture(scope="session")
 def offset_world(blocked_artefacts):
     """The Offset world as saved before the Offset Pair tier: its Baseline lacks the tier's columns."""
+    from exportspredictor import offsets
     from exportspredictor.caveats import OFFSET_PAIR
 
-    recode = {old: new for old, (new, _) in OFFSET_RECODED.items()}
     descriptions = {new: description for new, description in OFFSET_RECODED.values()}
-
-    def recoded(table: pl.DataFrame) -> pl.DataFrame:
-        return table.with_columns(pl.col("hs6").cast(pl.String).replace(recode))
-
     bundle = blocked_artefacts
-    products = recoded(bundle.products).with_columns(
+    products = offset_recoded(bundle.products).with_columns(
         description=pl.col("hs6").replace_strict(descriptions, default=pl.col("description")),
         sector=pl.col("hs6").str.slice(0, 2),
     )
     recoded_bundle = replace(
         bundle,
-        baseline=recoded(bundle.baseline).drop(OFFSET_PAIR.columns, strict=False),
-        baseline_features=recoded(bundle.baseline_features),
-        history=recoded(bundle.history),
+        baseline=offset_recoded(bundle.baseline).drop(OFFSET_PAIR.columns, strict=False),
+        baseline_features=offset_recoded(bundle.baseline_features),
+        history=offset_recoded(bundle.history),
         products=products,
-        metadata={key: value for key, value in bundle.metadata.items() if key != "offset_pairs"},
+        metadata={key: value for key, value in bundle.metadata.items() if key != offsets.METADATA_KEY},
     )
     return with_gap_period_figures(recoded_bundle, OFFSET_FIGURES)
 

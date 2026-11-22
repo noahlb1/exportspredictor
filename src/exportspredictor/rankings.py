@@ -75,6 +75,26 @@ BLOCKED = RankOrder(
     f"and ${DEFAULT_MIN_USD / 1e6:g}M.",
 )
 _ORDERS = {**RANK_BY, BLOCKED.name: BLOCKED}  # every order `rank_opportunities` accepts
+# The depths of the Leaderboard's default ranking at which a Caveat Tier's reach is counted (`in_top`).
+REACH_DEPTHS = (100, 1_000, 10_000)
+
+
+def _sorted(rows: pl.DataFrame, order: RankOrder) -> pl.DataFrame:
+    """`rows` in `order`: its column and tie-breaks, largest first, then hs6 and iso3."""
+    keys = [order.column, *order.ties]
+    return rows.sort([*keys, "hs6", "iso3"], descending=[True] * len(keys) + [False, False], nulls_last=True)
+
+
+def ranked_opportunities(baseline: pl.DataFrame) -> pl.DataFrame:
+    """The Baseline's Opportunities (positive Export Gap) in the Leaderboard's default order (`DEFAULT_RANK_BY`), each
+    with its `rank`, from 1."""
+    opportunities = baseline.filter(pl.col("export_gap_usd") > 0)
+    return _sorted(opportunities, RANK_BY[DEFAULT_RANK_BY]).with_row_index("rank", offset=1)
+
+
+def in_top(ranked: pl.DataFrame, column: str, depths: tuple[int, ...] = REACH_DEPTHS) -> dict[int, int]:
+    """How many of the top `depths` rows of `ranked` (`ranked_opportunities`) the boolean `column` flags."""
+    return {depth: int(ranked.filter(pl.col("rank") <= depth)[column].sum()) for depth in depths}
 
 
 def rank_opportunities(
@@ -142,8 +162,7 @@ def rank_opportunities(
         rows = rows.join(artefacts.products.filter(pl.col("sector") == sector).select("hs6"), on="hs6", how="semi")
     if region is not None:
         rows = rows.join(artefacts.markets.filter(pl.col("region") == region).select("iso3"), on="iso3", how="semi")
-    keys = [order.column, *order.ties]
-    rows = rows.sort([*keys, "hs6", "iso3"], descending=[True] * len(keys) + [False, False], nulls_last=True)
+    rows = _sorted(rows, order)
     if limit is not None:
         rows = rows.head(limit)
     return (
