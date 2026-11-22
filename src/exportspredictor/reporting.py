@@ -76,7 +76,7 @@ _PROVENANCE = re.compile(re.escape(PROVENANCE_PREFIX) + r" (\S+) \(source: ([^;)
 def provenance(bundle: Artefacts) -> str:
     """Which artefact version the outputs come from, and whether it is real data or the fixture."""
     metadata = bundle.metadata
-    derived = metadata.get("ppml_benchmark_from") or metadata.get("copied_from")
+    derived = metadata.get("blocked_values_from") or metadata.get("ppml_benchmark_from") or metadata.get("copied_from")
     return (
         f"{PROVENANCE_PREFIX} {bundle.version} (source: {metadata.get('source')}; "
         f"Model Form: {bundle.model_form.text.rstrip('.')}"

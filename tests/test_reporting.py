@@ -182,6 +182,12 @@ def test_the_provenance_names_the_version_and_its_source(fixture_artefacts):
     assert "source: fixture" in text
 
 
+def test_the_provenance_names_the_version_a_blocked_value_rebuild_derived_from(fixture_artefacts):
+    metadata = {**fixture_artefacts.metadata, "blocked_values_from": "20260101T000000Z"}
+
+    assert "derived from version 20260101T000000Z" in reporting.provenance(replace(fixture_artefacts, metadata=metadata))
+
+
 def test_the_round_count_of_a_version_built_by_the_loop_was_chosen_on_the_selection_measure(fixture_artefacts):
     scaling = fixture_artefacts.metadata["round_scaling"]
 
