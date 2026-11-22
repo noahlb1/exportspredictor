@@ -224,12 +224,17 @@ def test_short_headings_carry_tooltips(monkeypatch, api_url):
     assert "Pairs changed" in page.dataframe[MARKETS].value.columns
 
 
-def test_blocked_opportunities_leave_no_pair_out_for_its_actual_exports(monkeypatch, api_url):
+def test_blocked_opportunities_are_the_apis_each_with_room_to_grow(monkeypatch, api_url):
+    # Spec #133 (rewritten from "leave no pair out for its Actual Exports"): a pair needs room to grow, Baseline-year
+    # Actual Exports below its Scenario Export Potential; pairs that export at all still qualify.
     result = httpx.post(f"{api_url}/scenarios", json=INDIA).json()
 
     page = _run_india(monkeypatch, api_url, thresholds_off=True)
 
     assert len(page.dataframe[BLOCKED].value) == result["blocked_count"]
+    assert all(
+        row["baseline_actual_exports_usd"] < row["scenario_potential_usd"] for row in result["blocked_opportunities"]
+    )
     assert any(row["baseline_actual_exports_usd"] > 0 for row in result["blocked_opportunities"])
 
 
@@ -351,5 +356,44 @@ def test_choosing_a_pair_keeps_the_market_and_the_other_table_unchanged(monkeypa
 def test_the_blocked_opportunities_line_states_the_threshold_in_the_adaptive_form(monkeypatch, api_url):
     page = _run_india(monkeypatch, api_url)  # the default thresholds: 20% and $1M
 
-    line = next(element.value for element in page.caption if "whatever their Actual Exports" in element.value)
+    line = next(element.value for element in page.caption if "room to grow" in element.value)
     assert "$1.0m" in line and "$1,000,000" not in line
+    assert "whatever their Actual Exports" not in line  # spec #133: Actual Exports must be below Scenario Export Potential
+    assert "Actual Exports" in line and "Scenario Export Potential" in line
+
+
+def test_the_page_says_what_a_trade_agreement_means_before_a_run(monkeypatch, api_url):
+    meaning = httpx.get(f"{api_url}/labels").json()["trade_agreement_meaning"]
+
+    page = _scenarios_page(monkeypatch, api_url)
+
+    assert any(meaning in element.value for element in page.caption)
+
+
+def test_a_link_with_add_prefills_a_trade_agreement_with_that_market(open_page, api_url):
+    # The Blocked Opportunities page links each Market here: `?add=IND` fills the builder, the visitor runs it.
+    page = open_page(api_url, SCENARIOS, query={"add": "IND"})
+
+    assert not page.exception
+    assert page.radio(key="kind").value == "Custom Trade Agreements"
+    assert page.multiselect(key="add").value == ["IND"]
+    assert "scenario_body" not in page.session_state  # prefilled, not run
+
+    page.button(key="run").click().run()
+    assert page.dataframe and not page.exception
+
+
+def test_an_unknown_market_in_the_link_is_left_out(open_page, api_url):
+    page = open_page(api_url, SCENARIOS, query={"add": "IND,XXX"})
+
+    assert not page.exception
+    assert page.multiselect(key="add").value == ["IND"]
+
+
+def test_a_prefilled_builder_can_be_changed(open_page, api_url):
+    # The link fills the builder once: a change the visitor makes afterwards is kept on the next run.
+    page = open_page(api_url, SCENARIOS, query={"add": "IND"})
+
+    page.radio(key="kind").set_value("Trading Bloc preset").run()
+
+    assert page.radio(key="kind").value == "Trading Bloc preset"

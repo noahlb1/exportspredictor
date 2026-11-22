@@ -65,6 +65,9 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
     assert body["last_tariff_year"] == 2021
     assert "carried forward from 2021" in body["tariff_carried_forward"]
+    # What "a Trade Agreement" means in the model, said on the Blocked Opportunities and Scenarios pages (spec #133).
+    meaning = body["trade_agreement_meaning"]
+    assert "average agreement" in meaning and "not a specific deal" in meaning and "one yes/no flag" in meaning
 
 
 def test_labels_serve_the_caution_line_every_page_shows_under_its_heading(client):

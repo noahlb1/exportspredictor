@@ -106,6 +106,7 @@ class Labels(BaseModel):
     terms: dict[str, str]
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
     totals_note: TotalsNote  # beside every summed figure (spec #113, "Totals understate")
+    trade_agreement_meaning: str  # what "a Trade Agreement" means in the model (spec #133, ADR 0011)
 
 
 class MarketOut(BaseModel):
