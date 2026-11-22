@@ -94,7 +94,12 @@ from exportspredictor.rankings import (
 from exportspredictor.sectors import sectors as sectors_of
 from exportspredictor.sectors import with_sector_names
 from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
-from exportspredictor.wording import CAUTION, term_definitions, totals_note
+from exportspredictor.wording import (
+    CAUTION,
+    TRADE_AGREEMENT_MEANING,
+    term_definitions,
+    totals_note,
+)
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -170,6 +175,7 @@ def create_app(
                 potential_share_of_actual_exports=share,
                 text=totals_note(share, gap_period_label(artefacts.gap_years)),
             ),
+            trade_agreement_meaning=TRADE_AGREEMENT_MEANING,
         )
 
     @app.get("/caveats", response_model=list[CaveatTierOut])

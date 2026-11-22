@@ -1,8 +1,12 @@
 """Scenarios: re-predict UK Export Potential under a Trading Bloc preset, custom Trade Agreements or a tariff change.
 
-The page reads top to bottom (spec #103, "Scenarios"): the builder in a box, then, once **Run Scenario** is pressed,
-the summary, the three figures beside the Illustrative note, Change per Market, the pairs most affected in the
-selected Market, Top Products gaining and Blocked Opportunities.
+The page reads top to bottom (spec #103, "Scenarios"): what a Trade Agreement means in the model (spec #133), the
+builder in a box, then, once **Run Scenario** is pressed, the summary, the three figures beside the Illustrative note,
+Change per Market, the pairs most affected in the selected Market, Top Products gaining and Blocked Opportunities
+(each with room to grow, ADR 0011).
+
+A link with `?add=IND` (ISO3 codes, comma-separated) fills the builder with Custom Trade Agreements adding those
+Markets, once, without running it (`prefill`); the Blocked Opportunities page links each Market this way.
 
 Clicking any value selects its row and tints it, as on the other pages (`app.tables.pick_row`). The page remembers
 the choice in session state, so a test can set it as a click does: `scenario_market` (ISO3; the top Market when unset
@@ -49,6 +53,8 @@ MARKET = "scenario_market"
 DRILL_PAIR = "scenario_drill_pair"
 BLOCKED_PAIR = "scenario_blocked_pair"
 LEADERBOARD = "pages/leaderboard.py"
+ADD_PARAM = "add"  # URL parameter: ISO3 codes, comma-separated, to add a Trade Agreement with (`prefill`)
+APPLIED_LINK = "_scenario_add_link"  # the `add` link already applied to the builder
 # How each numeric column reads in a click-to-select table (a Styler's formats replace the column config's).
 FORMATS = {
     "Scenario Effect": ONE_DECIMAL,
@@ -117,6 +123,18 @@ def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str
         key="min_usd",
     )
     return body | {"min_effect_share": min_share / 100, "min_effect_usd": min_usd * 1e6, "limit": ROWS}
+
+
+def prefill(market_names: dict[str, str]) -> None:
+    """Fill the builder from the URL once (before its widgets): `add=IND,JPN` chooses Custom Trade Agreements adding
+    those Markets (unknown codes are left out). The Blocked Opportunities page links each Market this way. A link
+    already applied is not applied again, so the visitor's later changes are kept."""
+    link = st.query_params.get(ADD_PARAM)
+    if link is None or link == st.session_state.get(APPLIED_LINK):
+        return
+    st.session_state[APPLIED_LINK] = link
+    st.session_state["kind"] = CUSTOM
+    st.session_state["add"] = [iso3 for iso3 in link.split(",") if iso3 in market_names]
 
 
 def run(body_json: str) -> None:
@@ -292,8 +310,8 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     st.caption(
         f"{result['blocked_count']:,} pairs have a Scenario Effect of at least "
         f"{result['thresholds']['min_effect_share']:.0%} of Baseline Export Potential and at least "
-        f"{format_usd(result['thresholds']['min_effect_usd'])}, whatever their Actual Exports. The largest "
-        f"{ROWS} are listed."
+        f"{format_usd(result['thresholds']['min_effect_usd'])}, and room to grow: {year} Actual Exports below their "
+        f"Scenario Export Potential. The largest {ROWS} are listed."
     )
     blocked_key = f"blocked_{run_key}"
     pair_table(result["blocked_opportunities"], BLOCKED_PAIR, blocked_key, year, with_market=True, with_exports=True)
@@ -312,6 +330,8 @@ with page(
         st.error(f"The API is unavailable: {error}")
         st.stop()
     market_names = {market["iso3"]: market["name"] for market in markets}
+    prefill(market_names)
+    st.caption(labels()["trade_agreement_meaning"])
 
     with st.container(border=True):
         body_json = json.dumps(builder(presets, market_names, sectors, defaults), sort_keys=True)

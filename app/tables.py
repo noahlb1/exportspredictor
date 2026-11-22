@@ -242,8 +242,9 @@ def leaderboard_columns(body: dict) -> dict:
         ),
         "Blocked Opportunity value": money_column(
             "Blocked Opportunity value",
-            f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement and removing "
-            f"the tariff where none is in force; 0 where one is. {illustrative().capitalize()}.",
+            f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement where "
+            f"none is in force (a known Applied Tariff goes to 0 with it); 0 where one is. "
+            f"{illustrative().capitalize()}.",
         ),
         "Blocked Opportunity": st.column_config.CheckboxColumn(
             "Blocked Opportunity", help="The Blocked Opportunity value clears the default thresholds."
@@ -289,19 +290,17 @@ def leaderboard_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
     return pd.concat([table[columns], pd.DataFrame(dollars), table[rest]], axis=1)
 
 
-# The Blocked Opportunities page (spec #103, "Blocked Opportunities"): a Markets table and the chosen Market's Products
-# table, every figure for the Baseline year. The Export Gap is not on this page.
-BLOCKED_MARKETS = ["Market", "Blocked Opportunities", "Total value"]
-BLOCKED_PRODUCTS = [
-    "Product", "Blocked Opportunity value", "Applied Tariff %", "Potential with agreement", "Actual Exports"
-]
+# The Blocked Opportunities page (spec #103, "Blocked Opportunities"; spec #133, the before and after): a Markets table
+# and the chosen Market's Products table, every figure for the Baseline year. The Export Gap is not on this page.
 BLOCKED_FORMATS: dict[str, str | Callable] = {
     "Blocked Opportunities": "{:,}",
     "Total value": ONE_DECIMAL,
-    "Blocked Opportunity value": ONE_DECIMAL,
-    "Applied Tariff %": ONE_DECIMAL,
-    "Potential with agreement": ONE_DECIMAL,
     "Actual Exports": ONE_DECIMAL,
+    "Export Potential": ONE_DECIMAL,
+    "With a Trade Agreement": ONE_DECIMAL,
+    "Rise with agreement": ONE_DECIMAL,
+    "Rise %": "{:.0%}",
+    "Tariff part": ONE_DECIMAL,
 }
 
 
@@ -328,22 +327,28 @@ def blocked_markets_columns(body: dict) -> dict:
         ),
         "Total value": money_column(
             "Total value",
-            f"The sum of their Blocked Opportunity values, {body['baseline_year']}. {illustrative().capitalize()}.",
+            f"The sum of their Blocked Opportunity values, {body['baseline_year']}: the listed pairs only. "
+            f"{illustrative().capitalize()}.",
         ),
     }
 
 
 def blocked_products_frame(rows: list[dict]) -> pd.DataFrame:
-    """One Market's Blocked Opportunities: Product, value, Applied Tariff, Export Potential with a Trade Agreement and
-    Actual Exports, all for the Baseline year, money in $ millions."""
+    """One Market's Blocked Opportunities as a before and after, all for the Baseline year, money in $ millions:
+    Product, Barrier, Actual Exports, Export Potential, Export Potential with a Trade Agreement, the rise ($ and share
+    of Export Potential), its Tariff part and the "above Export Potential" mark. Every figure is the API's."""
     raw = pd.DataFrame(rows)
     return pd.DataFrame(
         {
             "Product": raw["description"],
-            "Blocked Opportunity value": millions(raw["blocked_opportunity_value_usd"]),
-            "Applied Tariff %": pd.Series(raw["applied_tariff_pct"], dtype="float64"),
-            "Potential with agreement": millions(raw["potential_with_agreement_usd"]),
+            "Barrier": raw["barrier"],
             "Actual Exports": millions(raw["baseline_actual_exports_usd"]),
+            "Export Potential": millions(raw["baseline_export_potential_usd"]),
+            "With a Trade Agreement": millions(raw["potential_with_agreement_usd"]),
+            "Rise with agreement": millions(raw["blocked_opportunity_value_usd"]),
+            "Rise %": pd.Series(raw["rise_share"], dtype="float64"),
+            "Tariff part": millions(raw["tariff_part_usd"]),
+            "Above Export Potential": raw["above_export_potential"],
         }
     )
 
@@ -353,30 +358,51 @@ def blocked_products_columns(body: dict) -> dict:
     year, word = body["baseline_year"], illustrative().capitalize()
     return {
         "Product": product_column(),
-        "Blocked Opportunity value": money_column(
-            "Blocked Opportunity value",
-            f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement and removing "
-            f"the tariff. {word}.",
-        ),
-        "Applied Tariff %": tariff_column(
-            year,
-            help=f"The tariff the Market charges on this Product from the UK in {year}, in percent. Where it is 0, the "
-            "Blocked Opportunity value rests on the Trade Agreement alone. A blank means the tariff is not known.",
-        ),
-        "Potential with agreement": money_column(
-            "Potential with agreement",
-            f"Export Potential with a Trade Agreement: {year} Export Potential plus the Blocked Opportunity value, the "
-            f"level the model associates with adding the agreement, above {year} Actual Exports. {word}.",
+        "Barrier": st.column_config.TextColumn(
+            "Barrier",
+            help=f"What holds this pair's Export Potential down: no UK Trade Agreement is in force, with its {year} "
+            "Applied Tariff (0%, above 0, or unknown).",
         ),
         "Actual Exports": money_column(
             "Actual Exports",
             f"What the UK actually exported of this Product to this Market in {year} (0 where there was no Flow).",
         ),
+        "Export Potential": money_column(
+            "Export Potential", f"Baseline Export Potential: what the model expects in {year}, with no agreement."
+        ),
+        "With a Trade Agreement": money_column(
+            "With a Trade Agreement",
+            f"Export Potential with a Trade Agreement: {year} Export Potential plus the Blocked Opportunity value, the "
+            f"level the model associates with adding an agreement. It is above {year} Actual Exports (room to grow). "
+            f"{word}.",
+        ),
+        "Rise with agreement": money_column(
+            "Rise with agreement",
+            f"The Blocked Opportunity value: the rise in {year} Export Potential the model associates with adding a "
+            f"UK Trade Agreement. It is the Tariff part plus the Agreement part. {word}.",
+        ),
+        "Rise %": st.column_config.NumberColumn(
+            "Rise %",
+            help=f"The Rise share: the rise with agreement as a share of Baseline Export Potential ({year}). {word}.",
+            format="percent",
+        ),
+        "Tariff part": money_column(
+            "Tariff part",
+            "The Tariff part: the part of the rise the model associates with the Applied Tariff alone, a known tariff "
+            "set to 0 with no Trade Agreement added. It is 0 where the tariff is 0% or unknown: the rise then rests on "
+            f"the agreement as a whole. {word}.",
+        ),
+        "Above Export Potential": st.column_config.CheckboxColumn(
+            "Above Export Potential",
+            help=f"{year} Actual Exports are already above Export Potential (though below the level with a Trade "
+            "Agreement): the model already rates current trade here as strong.",
+        ),
     }
 
 
 def blocked_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
-    """The Blocked Opportunities CSV: every row given, in full dollars, each money heading naming its year and unit."""
+    """The Blocked Opportunities CSV: every row given, in full dollars, each money heading naming its year and unit,
+    with the Barrier, the Tariff part and the Agreement part (spec #133)."""
     raw = pd.DataFrame(rows)
     year, unit, word = body["baseline_year"], usd_unit(), illustrative()
     return pd.DataFrame(
@@ -386,11 +412,16 @@ def blocked_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
             "Sector": raw["sector_name"],
             "Market": raw["market"],
             "Region": raw["region"],
-            f"Blocked Opportunity value, {year}, {word} ({unit})": raw["blocked_opportunity_value_usd"],
+            "Barrier": raw["barrier"],
             "Applied Tariff %": raw["applied_tariff_pct"],
+            f"Actual Exports, {year} ({unit})": raw["baseline_actual_exports_usd"],
             f"Export Potential, {year} ({unit})": raw["baseline_export_potential_usd"],
             f"Export Potential with a Trade Agreement, {year}, {word} ({unit})": raw["potential_with_agreement_usd"],
-            f"Actual Exports, {year} ({unit})": raw["baseline_actual_exports_usd"],
+            f"Blocked Opportunity value, {year}, {word} ({unit})": raw["blocked_opportunity_value_usd"],
+            "Rise share": raw["rise_share"],
+            f"Tariff part, {year}, {word} ({unit})": raw["tariff_part_usd"],
+            f"Agreement part, {year}, {word} ({unit})": raw["agreement_part_usd"],
+            "Above Export Potential": raw["above_export_potential"],
             "Caveats": [caveat_badges(row) for row in rows],
         }
     )
