@@ -186,6 +186,7 @@ def create_app(
                 hide_param=tier.hide_param,
                 reason_column=tier.reason_column,
                 row_text=tier.row_text,
+                hidden_by_default=tier.hidden_by_default,
             )
             for tier in tiers
         ]

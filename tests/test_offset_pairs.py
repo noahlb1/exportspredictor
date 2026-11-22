@@ -201,27 +201,29 @@ def test_hiding_offset_pairs_leaves_them_out_and_keeps_every_other_rows_order(cl
 # --- The app ---------------------------------------------------------------------------------------------------------
 
 
-def test_the_leaderboard_shows_the_badge_and_hides_offset_pairs_on_request(monkeypatch, offset_api_url):
+def test_the_leaderboard_hides_offset_pairs_by_default_and_shows_their_badge_on_request(monkeypatch, offset_api_url):
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", offset_api_url)
     page = run_page(query={"product": CARS})
     [*switch] = page.segmented_control
     switch[0].set_value("Wide table").run()
 
+    assert set(page.dataframe[0].value["Market"]) == {"Canada", "India"}
+    assert any("Offset Pairs are hidden by default" in element.value for element in page.main.caption)
+    hide = page.sidebar.checkbox(key="hide_offset")
+    assert hide.label == "Hide Offset Pairs" and hide.value is True
+
+    hide.uncheck().run()
+
     caveats = dict(zip(page.dataframe[0].value["Market"], page.dataframe[0].value["Caveats"], strict=True))
     assert caveats["Japan"] == "Offset Pair" and caveats["Canada"] == ""
     assert caveats["Hong Kong"] == "Re-export Hub, Offset Pair"
-    hide = page.sidebar.checkbox(key="hide_offset")
-    assert hide.label == "Hide Offset Pairs" and hide.value is False
-
-    hide.check().run()
-
-    assert set(page.dataframe[0].value["Market"]) == {"Canada", "India"}
-    assert any("Offset Pairs hidden" in element.value for element in page.main.markdown)
+    assert any("Offset Pairs shown" == button.label for button in page.main.button)
+    assert page.query_params["hide_offset"] == "false"
 
 
 def test_the_detail_panel_shows_the_caveat(monkeypatch, offset_api_url):
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", offset_api_url)
-    page = run_page(query={"product": CARS, "market": "JPN"})
+    page = run_page(query={"product": CARS, "market": "JPN", "hide_offset": "false"})
 
     assert OFFSET_PAIR.caveat_text(JAPAN_REASON) in [element.value for element in page.warning]
 
@@ -236,9 +238,10 @@ def test_the_blocked_page_shows_the_badge_on_an_offset_pair(monkeypatch, offset_
 
     monkeypatch.setattr(streamlit, "download_button", record)
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", offset_api_url)
-    page = run_page("pages/blocked_opportunities.py")
+    page = run_page("pages/blocked_opportunities.py", query={"hide_offset": "false"})
 
-    csv = pd.read_csv(io.StringIO(offered[0]), dtype={"HS6": str}, keep_default_na=False)
+    # The last CSV offered: `run_page` opens the Leaderboard, with its own CSV, before switching pages.
+    csv = pd.read_csv(io.StringIO(offered[-1]), dtype={"HS6": str}, keep_default_na=False)
     caveats = {(row["HS6"], row["Market"]): row["Caveats"] for _, row in csv.iterrows()}
     assert caveats[(CARS, "Hong Kong")] == "Re-export Hub, Offset Pair"
     page.session_state["blocked_market"] = "HKG"

@@ -160,7 +160,13 @@ def test_the_panel_shows_the_factors_and_both_expanders(monkeypatch, fixture_api
     assert list(top.columns) == ["Factor", "Value for this pair", "Association with Export Potential"]
     assert len(top) <= 8 and len(every) == len(body["factors"])
     assert any("Japan" in label for label in every["Factor"]) and not any("_" in label for label in every["Factor"])
-    assert {expander.label for expander in page.main.expander} >= {"All factors", "Figures by year"}
+    assert {expander.label for expander in page.main.expander} >= {f"All {len(every)} factors", "Figures by year"}
+    # Both tables run from the highest multiplier to the lowest; the top ones are still the largest effects.
+    multipliers = {factor["label"]: factor["multiplier"] for factor in body["factors"]}
+    for table in (top, every):
+        shown = [multipliers[label] for label in table["Factor"]]
+        assert shown == sorted(shown, reverse=True)
+    assert set(top["Factor"]) == {factor["label"] for factor in body["factors"][: len(top)]}
     text = _texts(page)
     assert "×1.50 means" in text and f"fold model {body['fold']}" in text
     assert "associat" in text and "not causes" in text

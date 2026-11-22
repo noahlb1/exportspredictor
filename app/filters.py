@@ -6,7 +6,8 @@
   minimum Blocked Opportunity value, the hide filters, then Reset filters.
 
 There is one hide filter per Caveat Tier the API serves (`/caveats`, e.g. Hide Re-export Hubs), keyed and kept in the
-URL under the tier's `hide_param`.
+URL under the tier's `hide_param`. A tier the API marks `hidden_by_default` starts hidden, so a link that shows it
+carries `<hide_param>=false`.
 
 Each filter is kept in the page's URL under its own query parameter (`_params`, `_blocked_params`; a default is left
 out), so a filtered view, or one pair, can be shared as a link. The Product parameter is the HS6 code and the Market
@@ -17,6 +18,9 @@ a bound selectbox writes its displayed label (a Market's name), not its code.
   link to a pair), sets every filter: the ones it names to its values, the rest to their defaults.
 - A URL that names none (a return from another page through the menu) leaves the filters as they were: they persist
   for the session, and the page writes them back to the URL.
+
+Above each page's summary line, every filter away from its default is a removable chip (`show_chips`, e.g. "Market:
+Japan ✕"): clicking it puts that filter back to its default, as Reset filters does for all of them (Clear all).
 
 Show all (`show_all`, the toggle above the Leaderboard's table) is kept in the URL the same way, though it is not a
 filter.
@@ -70,8 +74,8 @@ class Param:
 
 
 def _flag(name: str) -> Param:
-    """A switch kept in the URL as `name=true` while on (and left out while off)."""
-    return Param(name, to_url=lambda value: _TRUE, from_url=lambda text: text == _TRUE)
+    """A switch kept in the URL as `name=true` or `name=false` (and left out while at its default)."""
+    return Param(name, to_url=lambda value: _TRUE if value else "false", from_url=lambda text: text == _TRUE)
 
 
 _PRODUCT = Param("product")  # HS6 code
@@ -80,8 +84,9 @@ _REGION = Param("region")
 
 
 def _hides() -> dict[str, bool]:
-    """Each Caveat Tier's hide filter (`/caveats`), by its parameter, at its default: off."""
-    return {tier["hide_param"]: False for tier in caveat_tiers()}
+    """Each Caveat Tier's hide filter (`/caveats`), by its parameter, at its default: on where the tier is
+    `hidden_by_default`."""
+    return {tier["hide_param"]: tier["hidden_by_default"] for tier in caveat_tiers()}
 
 
 def _params() -> list[Param]:
@@ -203,12 +208,44 @@ def _start(params: list[Param], defaults: dict[str, Any], prefix: str = "") -> N
 
 
 @dataclass(frozen=True)
+class Chip:
+    """One filter away from its default, as a removable chip: its text (e.g. "Market: Japan") and the session-state
+    values (widget keys, the page's prefix included) that put it back to its default."""
+
+    text: str
+    clears: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class Filters:
-    """The filters in force: the API query parameters that are set, and how the active-filters line names each."""
+    """The filters in force: the API query parameters that are set, and a chip for each filter away from its
+    default."""
 
     params: dict[str, Any]
-    named: list[str]  # e.g. "Market: Japan"; empty when no filter is in force
+    chips: list[Chip]  # empty when every filter is at its default
     product_found: bool  # False when the search text matches no Product
+    hidden_note: str = ""  # which Caveat Tiers are still hidden by default (`_hidden_by_default`)
+    reset: Callable[[], None] = lambda: None  # the page's Reset filters, for Clear all
+
+    @property
+    def named(self) -> list[str]:
+        """Each chip's text, e.g. "Market: Japan"."""
+        return [chip.text for chip in self.chips]
+
+
+def show_chips(filters: Filters, key: str) -> None:
+    """The filters in force as a row of chips: clicking one puts that filter back to its default, and Clear all
+    (with two chips or more) resets them all. Draws nothing when there are none (the page says "No filters")."""
+    if not filters.chips:
+        return
+    with st.container(horizontal=True, gap="small", vertical_alignment="center", key=f"{key}_chips"):
+        for chip in filters.chips:
+            st.button(
+                chip.text, key=f"{key}_chip_{'_'.join(chip.clears)}", icon=":material/close:", icon_position="right",
+                help="Remove this filter", on_click=st.session_state.update, args=(chip.clears,),
+            )
+        if len(filters.chips) > 1:
+            st.button("Clear all", key=f"{key}_chip_clear_all", type="tertiary", on_click=filters.reset)
 
 
 def leaderboard_filters() -> Filters:
@@ -279,8 +316,13 @@ def leaderboard_filters() -> Filters:
         "min_potential_usd": min_potential_usd,
         **{name: on or None for name, on in hides.items()},
     }
-    named = _named(values, sectors, orders, options)
-    return Filters({name: value for name, value in params.items() if value is not None}, named, found)
+    return Filters(
+        {name: value for name, value in params.items() if value is not None},
+        _chips(values, defaults, sectors, orders, options),
+        found,
+        _hidden_by_default(values),
+        reset,
+    )
 
 
 def blocked_filters() -> Filters:
@@ -314,17 +356,28 @@ def blocked_filters() -> Filters:
     }
     _write_url(url_params, values, defaults, BLOCKED_KEY_PREFIX)
     params = {**values, **{name: on or None for name, on in hides.items()}}
-    named = []
+    chips = []
     if product:
-        named.append(f"Product: {product}")
+        chips.append(_chip(f"Product: {product}", defaults, QUERY, "product", prefix=BLOCKED_KEY_PREFIX))
     if sector:
-        named.append(f"Sector: {sectors.get(sector, sector)}")
+        chips.append(_chip(f"Sector: {sectors.get(sector, sector)}", defaults, "sector", prefix=BLOCKED_KEY_PREFIX))
     if region:
-        named.append(f"Market region: {region}")
+        chips.append(_chip(f"Market region: {region}", defaults, "region", prefix=BLOCKED_KEY_PREFIX))
     if min_value_usd is not None:
-        named.append(f"Blocked Opportunity value at least {format_usd(min_value_usd)}")
-    named += _hidden(hides)
-    return Filters({name: value for name, value in params.items() if value is not None}, named, found)
+        chips.append(
+            _chip(
+                f"Blocked Opportunity value at least {format_usd(min_value_usd)}", defaults, "min_value_usd",
+                prefix=BLOCKED_KEY_PREFIX,
+            )
+        )
+    chips += _hidden(hides, BLOCKED_KEY_PREFIX)
+    return Filters(
+        {name: value for name, value in params.items() if value is not None},
+        chips,
+        found,
+        _hidden_by_default(hides),
+        reset_blocked,
+    )
 
 
 def show_all(pairs: int) -> bool:
@@ -418,33 +471,70 @@ def _region(markets: list[dict], iso3: str) -> str:
     return next(market["region"] for market in markets if market["iso3"] == iso3)
 
 
-def _hidden(values: dict[str, Any]) -> list[str]:
-    """The active-filters line's notice of each Caveat Tier hidden, e.g. "Re-export Hubs hidden"."""
-    return [f"{tier['plural']} hidden" for tier in caveat_tiers() if values[tier["hide_param"]]]
+def _chip(text: str, defaults: dict[str, Any], *names: str, prefix: str = "") -> Chip:
+    """A chip whose removal puts the filters `names` back to their `defaults`."""
+    return Chip(text, {prefix + name: defaults[name] for name in names})
 
 
-def _named(values: dict[str, Any], sectors: dict[str, str], orders: dict[str, dict], options: list | None) -> list[str]:
-    """How the Leaderboard's active-filters line names each filter in force."""
-    markets = {market["iso3"]: market["name"] for market in fetch("/markets", client.api_url())}
-    named = []
-    if values["product"]:
-        named.append(f"Product: {values['product']}")
-    if values["market"]:
-        named.append(f"Market: {markets.get(values['market'], values['market'])}")
-    if values["sector"]:
-        named.append(f"Sector: {sectors.get(values['sector'], values['sector'])}")
-    if values["region"]:
-        named.append(f"Market region: {values['region']}")
-    if values["opportunity_type"]:
-        named.append(f"Opportunity Type: {values['opportunity_type']}")
-    if values["trade_agreement"] is not None:
-        named.append(f"UK Trade Agreement in force: {_AGREEMENT_CHOICES[values['trade_agreement']]}")
-    if values["min_gap_usd"] is not None:
-        named.append(f"Export Gap at least {format_usd(values['min_gap_usd'])}")
-    named += _hidden(values)
-    if options:
-        named.append(
-            f"Ranked by {orders[values['rank_by']]['title']}, Export Potential at least "
-            f"{format_usd(values['min_potential_usd'])}"
+def _hidden(values: dict[str, Any], prefix: str = "") -> list[Chip]:
+    """A chip for each hide filter away from its default: "<plural> hidden" for a tier shown by default, "<plural>
+    shown" for one hidden by default."""
+    return [
+        Chip(
+            f"{tier['plural']} {'hidden' if values[tier['hide_param']] else 'shown'}",
+            {prefix + tier["hide_param"]: tier["hidden_by_default"]},
         )
-    return named
+        for tier in caveat_tiers()
+        if values[tier["hide_param"]] != tier["hidden_by_default"]
+    ]
+
+
+def _hidden_by_default(values: dict[str, Any]) -> str:
+    """The sentence after the active-filters line naming the Caveat Tiers still hidden by default (empty if none)."""
+    plurals = [tier["plural"] for tier in caveat_tiers() if tier["hidden_by_default"] and values[tier["hide_param"]]]
+    if not plurals:
+        return ""
+    *rest, last = plurals
+    names = f"{', '.join(rest)} and {last}" if rest else last
+    return f"{names} are hidden by default: untick them under Filters to show them."
+
+
+def _chips(
+    values: dict[str, Any],
+    defaults: dict[str, Any],
+    sectors: dict[str, str],
+    orders: dict[str, dict],
+    options: list | None,
+) -> list[Chip]:
+    """A chip for each Leaderboard filter in force."""
+    markets = {market["iso3"]: market["name"] for market in fetch("/markets", client.api_url())}
+    chips = []
+    if values["product"]:
+        chips.append(_chip(f"Product: {values['product']}", defaults, QUERY, "product"))
+    if values["market"]:
+        chips.append(_chip(f"Market: {markets.get(values['market'], values['market'])}", defaults, "market"))
+    if values["sector"]:
+        chips.append(_chip(f"Sector: {sectors.get(values['sector'], values['sector'])}", defaults, "sector"))
+    if values["region"]:
+        chips.append(_chip(f"Market region: {values['region']}", defaults, "region"))
+    if values["opportunity_type"]:
+        chips.append(_chip(f"Opportunity Type: {values['opportunity_type']}", defaults, "opportunity_type"))
+    if values["trade_agreement"] is not None:
+        chips.append(
+            _chip(
+                f"UK Trade Agreement in force: {_AGREEMENT_CHOICES[values['trade_agreement']]}", defaults,
+                "trade_agreement",
+            )
+        )
+    if values["min_gap_usd"] is not None:
+        chips.append(_chip(f"Export Gap at least {format_usd(values['min_gap_usd'])}", defaults, "min_gap_usd"))
+    chips += _hidden(values)
+    if options:
+        chips.append(
+            _chip(
+                f"Ranked by {orders[values['rank_by']]['title']}, Export Potential at least "
+                f"{format_usd(values['min_potential_usd'])}",
+                defaults, "rank_by", "min_potential_usd",
+            )
+        )
+    return chips

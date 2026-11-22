@@ -64,9 +64,15 @@ def _wide(page: AppTest) -> AppTest:
     return page
 
 
+def _chips(page: AppTest) -> list[str]:
+    """The labels of the removable filter chips above the summary line."""
+    return [button.label for button in page.main.button if button.key and "_chip_" in button.key]
+
+
 def _active_filters(page: AppTest) -> str:
+    """The filter chips' labels, then the summary line."""
     [line] = [element.value for element in page.main.markdown if " shown of " in element.value]
-    return line
+    return "; ".join([*_chips(page), line])
 
 
 def _texts(page: AppTest) -> list[str]:
@@ -113,7 +119,24 @@ def test_the_active_filters_line_states_the_counts_and_the_total_positive_export
     page.sidebar.selectbox(key="market").set_value("JPN").run()
 
     line = _active_filters(page)
-    assert "Market: Japan" in line and "5 pairs shown of 5" in line
+    assert "Market: Japan" in line and "5 pairs shown of 5" in line and "No filters" not in line
+
+
+def test_a_filter_chip_removes_its_filter_and_clear_all_removes_every_one(monkeypatch, fixture_api_url):
+    page = _home(monkeypatch, fixture_api_url, market="JPN", hide_hubs="true")
+    assert _chips(page) == ["Market: Japan", "Re-export Hubs hidden", "Clear all"]
+
+    next(button for button in page.main.button if button.label == "Market: Japan").click().run()
+
+    assert _chips(page) == ["Re-export Hubs hidden"]  # one chip left: no Clear all
+    assert page.session_state["market"] is None and "market" not in page.query_params
+    assert page.query_params["hide_hubs"] == "true"
+
+    page.sidebar.selectbox(key="sector").set_value("85").run()
+    next(button for button in page.main.button if button.label == "Clear all").click().run()
+
+    assert not _chips(page) and "No filters" in _active_filters(page)
+    assert dict(page.query_params) == {}
 
 
 def test_the_summed_export_gap_carries_the_totals_note_with_the_artefacts_share(monkeypatch, fixture_api_url):

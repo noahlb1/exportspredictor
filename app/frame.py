@@ -22,6 +22,10 @@ APP_NAME = "UK Exports Predictor"
 ASSETS = Path(__file__).parent / "assets"
 LOGO = ASSETS / "logo.svg"  # the Profile container ship tile (issue #97)
 LOADING_MARK = ASSETS / "loading.svg"  # the logo's ship riding the wave line
+# Scrollbar (thumb, track) by mode, from the theme's border and secondary background colours (config.toml).
+SCROLLBAR = {"light": ("#a39b88", "#efebe1"), "dark": ("#6b655b", "#2a2825")}
+# A table's scrollbar thumb: the same colours, see-through, as the table's cells are drawn beneath it.
+TABLE_THUMB = {"light": "rgba(163, 155, 136, 0.6)", "dark": "rgba(160, 152, 140, 0.45)"}
 API_DOWN_HELP = (
     "Start everything with `podman compose up`, or for development run `uv run uvicorn api.main:app`. "
     "Then reload this page."
@@ -34,7 +38,28 @@ def setup() -> None:
     st.set_page_config(page_title=APP_NAME, page_icon=str(LOGO), layout="wide")
     st.logo(str(LOGO), size="large")
     _loading_mark()
+    _visible_scrollbars()
     st.title(APP_NAME)
+
+
+def _visible_scrollbars() -> None:
+    """Keep every scrollbar visible (tables, the Leaderboard's fixed-height detail panel, the page), so an Advisor
+    sees there is more to scroll to. Streamlit draws them thin and transparent until hovered.
+
+    Only the colour changes, never `scrollbar-width`: the data grid lays out its columns around the thin scrollbar
+    it measures, so a wider one would cover the end of the last column. Scrollbars Streamlit hides (width `none`)
+    stay hidden.
+
+    A table (`.dvn-scroller`, the data grid's scroller) draws its cells under its scrollbar, so there the track is
+    transparent and the thumb see-through: the end of the last column stays readable beneath it."""
+    mode = st.context.theme.type or "light"
+    thumb, track = SCROLLBAR[mode]
+    st.html(
+        f"""<style>
+        * {{ scrollbar-color: {thumb} {track} !important; }}
+        .dvn-scroller {{ scrollbar-color: {TABLE_THUMB[mode]} transparent !important; }}
+        </style>"""
+    )
 
 
 def _loading_mark() -> None:

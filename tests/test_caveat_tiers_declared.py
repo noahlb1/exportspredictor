@@ -84,9 +84,16 @@ def test_the_api_serves_every_declared_tier(client):
         "hide_param": "hide_test_markets",
         "reason_column": None,
         "row_text": None,
+        "hidden_by_default": False,
     }
     assert pair["reason_column"] == "test_pair_reason" and pair["row_text"] == "Test Pair: {reason}."
     assert "caveats" not in _get(client, "/labels")  # one source for every tier's badge and text: /caveats
+
+
+def test_sanctioned_markets_restricted_pairs_and_offset_pairs_are_hidden_by_default(client):
+    hidden = {tier["column"] for tier in _get(client, "/caveats") if tier["hidden_by_default"]}
+
+    assert hidden == {"sanctioned_market", "restricted_pair", "offset_pair"}
 
 
 def test_ranking_rows_and_explanations_carry_each_tier_s_column_and_reason(client):
@@ -157,7 +164,7 @@ def test_the_app_shows_each_tier_s_badge_filter_and_notice(monkeypatch, declared
 
     assert "India" not in set(page.dataframe[0].value["Market"])
     assert page.query_params["hide_test_markets"] == "true"
-    assert any("Test Markets hidden" in element.value for element in page.main.markdown)
+    assert any("Test Markets hidden" == button.label for button in page.main.button)
 
 
 def test_the_app_s_detail_panel_names_a_row_s_reason(monkeypatch, declared_api_url):

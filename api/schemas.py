@@ -78,6 +78,7 @@ class CaveatTierOut(BaseModel):
     hide_param: str  # the ranking reads' query parameter that leaves the tier's rows out, e.g. "hide_hubs"
     reason_column: str | None  # the row field holding each flagged row's reason, if the tier declares reasons
     row_text: str | None  # a flagged row's caveat text, with "{reason}" for its reason; `text` when absent
+    hidden_by_default: bool  # whether the app's hide filter starts on (the query parameter itself defaults to off)
 
 
 class TotalsNote(BaseModel):

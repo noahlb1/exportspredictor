@@ -26,6 +26,8 @@ TINT = {"background-color": "rgba(42, 120, 214, 0.28)", "font-weight": "600"}
 # Pixels: a long Product name otherwise widens its column until the columns after it scroll out of sight.
 PRODUCT_WIDTH = 200
 MARKET_WIDTH = 90  # px, in the narrow Markets table of Blocked Opportunities
+# Pixels: Streamlit's table row height, and the height it gives a table with no `height` (about ten rows).
+ROW_HEIGHT, DEFAULT_TABLE_HEIGHT = 35, 400
 ONE_DECIMAL = "{:.1f}"  # how a $ millions or percent column reads in a `pick_row` table, as `money_column` does
 
 
@@ -92,7 +94,15 @@ def _pick(
         selection_mode="single-cell",
         **dataframe,  # type: ignore[arg-type]
     )
+    scroll_hint(len(table), dataframe.get("height"))  # type: ignore[arg-type]
     return at
+
+
+def scroll_hint(rows: int, height: int | None = None) -> None:
+    """Under a table, when its rows do not all fit its height (`height` in pixels, or Streamlit's default): how many
+    rows it holds and that it scrolls."""
+    if rows > (height or DEFAULT_TABLE_HEIGHT) // ROW_HEIGHT - 1:  # one row's height is the header's
+        st.caption(f"↕ {rows:,} rows: scroll inside the table to see them all.")
 
 
 def _remember(key: str, remembered: str) -> Callable[[], None]:

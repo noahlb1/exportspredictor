@@ -160,27 +160,31 @@ def api_url(marked_dir):
         yield url
 
 
-def test_the_leaderboard_shows_both_badges_and_hide_filters(monkeypatch, api_url):
+def test_the_leaderboard_hides_both_by_default_and_shows_their_badges_on_request(monkeypatch, api_url):
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
     page = run_page(query={"product": WHISKY})
     [*switch] = page.segmented_control
     switch[0].set_value("Wide table").run()
 
+    assert "India" not in set(page.dataframe[0].value["Market"])
+    sanctioned = page.sidebar.checkbox(key="hide_sanctioned")
+    restricted = page.sidebar.checkbox(key="hide_restricted")
+    assert sanctioned.label == "Hide Sanctioned Markets" and sanctioned.value is True
+    assert restricted.label == "Hide Restricted Pairs" and restricted.value is True
+
+    sanctioned.uncheck().run()
+    page.sidebar.checkbox(key="hide_restricted").uncheck().run()
+
     caveats = dict(zip(page.dataframe[0].value["Market"], page.dataframe[0].value["Caveats"], strict=True))
     assert caveats["India"] == "Sanctioned Market, Restricted Pair" and caveats["Japan"] == ""
-    assert page.sidebar.checkbox(key="hide_sanctioned").label == "Hide Sanctioned Markets"
-    hide = page.sidebar.checkbox(key="hide_restricted")
-    assert hide.label == "Hide Restricted Pairs" and hide.value is False
-
-    hide.check().run()
-
-    assert "India" not in set(page.dataframe[0].value["Market"])
-    assert any("Restricted Pairs hidden" in element.value for element in page.main.markdown)
+    assert {"Sanctioned Markets shown", "Restricted Pairs shown"} <= {button.label for button in page.main.button}
 
 
 def test_the_detail_panel_names_the_regime_and_the_prohibition(monkeypatch, api_url):
     monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", api_url)
-    page = run_page(query={"product": WHISKY, "market": INDIA})
+    page = run_page(
+        query={"product": WHISKY, "market": INDIA, "hide_sanctioned": "false", "hide_restricted": "false"}
+    )
 
     warnings = [element.value for element in page.warning]
     assert SANCTIONED.caveat_text(SANCTION_REASON) in warnings
