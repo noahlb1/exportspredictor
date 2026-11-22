@@ -14,13 +14,13 @@ from dataclasses import dataclass
 import polars as pl
 
 from exportspredictor.artefacts import Artefacts
-from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
+from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.scenarios import (
     DEFAULT_MIN_SHARE,
     DEFAULT_MIN_USD,
-    barrier_label,
-    is_blocked,
+    barrier,
     tariff_percent,
+    with_blocked_opportunity_flag,
 )
 from exportspredictor.sectors import with_sector_names
 
@@ -181,10 +181,12 @@ def rank_opportunities(
     rows = rows.join(with_sector_names(artefacts.products), on="hs6", how="left", maintain_order="left").join(
         artefacts.markets.rename({"name": "market"}), on="iso3", how="left", maintain_order="left"
     )
-    return with_baseline_actual_exports(rows, artefacts.history, artefacts.baseline_year).with_columns(
-        blocked_opportunity=is_blocked(
-            "blocked_opportunity_value_usd", "baseline_export_potential_usd", "baseline_actual_exports_usd"
-        )
+    return with_blocked_opportunity_flag(
+        rows,
+        artefacts.history,
+        artefacts.baseline_year,
+        effect="blocked_opportunity_value_usd",
+        baseline="baseline_export_potential_usd",
     )
 
 
@@ -217,6 +219,7 @@ class BlockedRanking:
     rows: pl.DataFrame  # the top `limit` Blocked Opportunities, in the chosen order (`BLOCKED_ORDERS`)
     summary: dict  # over every filtered Blocked Opportunity: their count and total Blocked Opportunity value (USD)
     markets: pl.DataFrame  # iso3, market, blocked_opportunities, blocked_opportunity_value_usd; largest total first
+    order: RankOrder  # the order the rows are in (one of `BLOCKED_ORDERS`), for the page caption
 
 
 def blocked_opportunities(
@@ -238,7 +241,7 @@ def blocked_opportunities(
     so no client computes them (ADR 0011):
 
     - `potential_with_agreement_usd`: Export Potential with a Trade Agreement, Baseline Export Potential plus the value;
-    - `rise_share`: the value as a share of Baseline Export Potential;
+    - `rise_share`: the Rise share, the value as a share of Baseline Export Potential;
     - `agreement_part_usd`: the Agreement part, the value minus its Tariff part;
     - `barrier`: the Barrier in words (`barrier_label`);
     - `above_export_potential`: Baseline-year Actual Exports above Baseline Export Potential (yet, by room to grow,
@@ -272,7 +275,7 @@ def blocked_opportunities(
         potential_with_agreement_usd=potential + value,
         rise_share=pl.when(potential > 0).then(value / potential),
         agreement_part_usd=value - pl.col("tariff_part_usd"),
-        barrier=pl.col("applied_tariff_pct").map_elements(barrier_label, return_dtype=pl.String, skip_nulls=False),
+        barrier=barrier(pl.col("applied_tariff_pct")),
         above_export_potential=pl.col("baseline_actual_exports_usd") > potential,
     )
-    return BlockedRanking(rows=shown, summary=summary, markets=markets)
+    return BlockedRanking(rows=shown, summary=summary, markets=markets, order=order)

@@ -75,14 +75,13 @@ from exportspredictor.evaluation import (
 )
 from exportspredictor.exclusions import not_ranked_message, reason_counts
 from exportspredictor.explain import UnknownPair, explain_pair
-from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
+from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.illustrative import ILLUSTRATIVE, ILLUSTRATIVE_TEXT, scenario_note
 from exportspredictor.lookups import search_products
 from exportspredictor.model_choice import event_backtest_note, how_chosen
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
-    BLOCKED_ORDERS,
     DEFAULT_MIN_POTENTIAL_USD,
     MAX_ROWS,
     MIN_POTENTIAL_USD_OPTIONS,
@@ -255,7 +254,6 @@ def create_app(
         Tariff part and Agreement part and the Barrier, with a summary and per-Market totals over every filtered one. An
         unknown Product answers 404, as does an Excluded Product, with its reason."""
         _check_product(artefacts, query.product)
-        order = BLOCKED_ORDERS[query.rank_by]
         found = blocked_opportunities(
             artefacts,
             hs6=query.product,
@@ -263,9 +261,10 @@ def create_app(
             region=query.region,
             min_value_usd=query.min_value_usd,
             hide=_hidden(query, tiers),
-            rank_by=order.name,
+            rank_by=query.rank_by,
             limit=query.limit,
         )
+        order = found.order
         return models.BlockedOpportunities(
             **_metadata(artefacts),
             summary=BlockedSummary(**found.summary),
@@ -533,15 +532,14 @@ def scenario_response(
     caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
     # The Blocked Opportunity rule, room to grow against the Scenario's Export Potential included (ADR 0011).
     pairs = (
-        with_baseline_actual_exports(result.pairs, artefacts.history, artefacts.baseline_year)
-        .with_columns(
-            blocked_opportunity=scenarios.is_blocked(
-                "effect_usd",
-                "baseline_potential_usd",
-                "baseline_actual_exports_usd",
-                request.min_effect_share,
-                request.min_effect_usd,
-            )
+        scenarios.with_blocked_opportunity_flag(
+            result.pairs,
+            artefacts.history,
+            artefacts.baseline_year,
+            effect="effect_usd",
+            baseline="baseline_potential_usd",
+            min_share=request.min_effect_share,
+            min_usd=request.min_effect_usd,
         )
         .join(markets, on="iso3", how="left", maintain_order="left")
         .join(products, on="hs6", how="left", maintain_order="left")

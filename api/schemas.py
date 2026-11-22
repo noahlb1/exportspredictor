@@ -294,7 +294,7 @@ class BlockedOpportunity(LeaderboardOpportunity):
     # Export Potential with a Trade Agreement: Baseline Export Potential plus the Blocked Opportunity value (Illustrative);
     # always above Baseline-year Actual Exports (room to grow, ADR 0011)
     potential_with_agreement_usd: float
-    rise_share: float | None  # the Blocked Opportunity value as a share of Baseline Export Potential (None where it is 0)
+    rise_share: float | None  # the Rise share: the value as a share of Baseline Export Potential (None where that is 0)
     tariff_part_usd: float  # the Tariff part: the effect of setting a known Applied Tariff to 0, no agreement added
     agreement_part_usd: float  # the Agreement part: the value minus its Tariff part
     barrier: str  # e.g. "No agreement, tariff 7.5%", "No agreement, tariff 0%", "No agreement, tariff unknown"
