@@ -22,6 +22,7 @@ from exportspredictor.artefacts import Artefacts
 from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.evaluation import (
     LIMITATIONS,
+    offset_pair_limitations,
     parts_not_run,
     range_limitations,
     result_limitations,
@@ -210,7 +211,8 @@ def model_card(artefacts: Artefacts) -> dict:
             *result_limitations(metadata, report), *_benchmark_limitations(artefacts.ppml_benchmark),
             *range_limitations(artefacts.potential_range_bands),
             *size_coverage_limitations(report.get("potential_range")),
-            *uk_pair_coverage_limitations(metadata, report.get("potential_range")), *LIMITATIONS,
+            *uk_pair_coverage_limitations(metadata, report.get("potential_range")),
+            *offset_pair_limitations(metadata), *LIMITATIONS,
         ],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded

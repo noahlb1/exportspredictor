@@ -20,9 +20,10 @@ import matplotlib
 import polars as pl
 from matplotlib.figure import Figure
 
-from exportspredictor import model_choice, ppml
+from exportspredictor import model_choice, offsets, ppml
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.caveats import TIERS, CaveatTier
+from exportspredictor.currency import format_usd
 from exportspredictor.evaluation import (
     NOT_RUN,
     large_markets_beside_earlier,
@@ -252,6 +253,50 @@ def caveat_tier_reach(
             for tier in tiers
         ]
     )
+
+
+def offset_pair_reach(bundle: Artefacts) -> str:
+    """The Offset Pair tier's reach as the artefact metadata records it (`offsets.METADATA_KEY`, spec #129): how many
+    Opportunities are Offset Pairs, how many of the top of the Leaderboard, and their share of positive Export Gap."""
+    reach = bundle.metadata.get(offsets.METADATA_KEY)
+    if not reach:
+        return repr(NotRun("The Offset Pair tier"))
+    counts = [f"{count:,} of the top {int(depth):,}" for depth, count in
+              sorted(reach["in_top"].items(), key=lambda item: int(item[0]))]
+    tops = ", ".join(counts[:-1]) + f" and {counts[-1]}" if len(counts) > 1 else "".join(counts)
+    return (
+        f"Offset Pairs: {reach['offset_pairs']:,} of {reach['opportunities']:,} Opportunities "
+        f"({reach['offset_pairs'] / reach['opportunities']:.0%}); {tops}; "
+        f"{format_usd(reach['offset_export_gap_usd'])} of {format_usd(reach['opportunity_export_gap_usd'])} of positive "
+        f"Export Gap ({reach['share_of_export_gap']:.0%})."
+    )
+
+
+# The figures of `heading_split`, in the Baseline's columns, each shown in $m.
+_SPLIT_FIGURES = {
+    "Actual Exports": "actual_exports_usd", "Export Potential": "export_potential_usd", "Export Gap": "export_gap_usd",
+}
+
+
+def heading_split(bundle: Artefacts, *, products: tuple[str, ...], markets: tuple[str, ...]) -> pl.DataFrame:
+    """Some Products of one Heading beside the whole Heading (every scored Product of it) in some Markets, in $m: each
+    Market's Actual Exports, Export Potential and Export Gap from the Baseline (spec #129's worked example)."""
+    [code] = {hs6[:4] for hs6 in products}
+    rows = bundle.baseline.with_columns(pl.col("hs6").cast(pl.String), pl.col("iso3").cast(pl.String)).filter(
+        offsets.heading(pl.col("hs6")) == code, pl.col("iso3").is_in(markets)
+    )
+    names = dict(bundle.markets.select(pl.col("iso3").cast(pl.String), "name").iter_rows())
+    table = []
+    for iso3 in markets:
+        market = rows.filter(pl.col("iso3") == iso3)
+        for figure, column in _SPLIT_FIGURES.items():
+            values = dict(market.select("hs6", column).iter_rows())
+            table.append({
+                "Market": names.get(iso3, iso3), "Figure": figure,
+                **{hs6: round(values.get(hs6, 0.0) / 1e6, 1) for hs6 in products},
+                f"Whole Heading {code}": round(float(market[column].sum()) / 1e6, 1),
+            })
+    return pl.DataFrame(table)
 
 
 def flagged_products_by_reason(bundle: Artefacts) -> pl.DataFrame:
