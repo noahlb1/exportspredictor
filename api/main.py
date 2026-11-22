@@ -75,14 +75,14 @@ from exportspredictor.evaluation import (
 )
 from exportspredictor.exclusions import not_ranked_message, reason_counts
 from exportspredictor.explain import UnknownPair, explain_pair
-from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
+from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.illustrative import ILLUSTRATIVE, ILLUSTRATIVE_TEXT, scenario_note
 from exportspredictor.lookups import search_products
 from exportspredictor.model_choice import event_backtest_note, how_chosen
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
-    BLOCKED,
+    BLOCKED_ORDERS,
     DEFAULT_MIN_POTENTIAL_USD,
     MAX_ROWS,
     MIN_POTENTIAL_USD_OPTIONS,
@@ -94,7 +94,12 @@ from exportspredictor.rankings import (
 from exportspredictor.sectors import sectors as sectors_of
 from exportspredictor.sectors import with_sector_names
 from exportspredictor.tariffs import LAST_TRAINS_YEAR, TARIFF_CARRIED_FORWARD_CAVEAT
-from exportspredictor.wording import CAUTION, term_definitions, totals_note
+from exportspredictor.wording import (
+    CAUTION,
+    TRADE_AGREEMENT_MEANING,
+    term_definitions,
+    totals_note,
+)
 
 RETRY_SECONDS = 30.0
 log = logging.getLogger(__name__)
@@ -170,6 +175,7 @@ def create_app(
                 potential_share_of_actual_exports=share,
                 text=totals_note(share, gap_period_label(artefacts.gap_years)),
             ),
+            trade_agreement_meaning=TRADE_AGREEMENT_MEANING,
         )
 
     @app.get("/caveats", response_model=list[CaveatTierOut])
@@ -236,6 +242,11 @@ def create_app(
             for o in RANK_BY.values()
         ]
 
+    @app.get("/opportunities/blocked/rank-by", response_model=list[RankOrderOut])
+    def blocked_rank_orders():
+        """The orders the Blocked Opportunities read accepts as `rank_by`, the default first."""
+        return [RankOrderOut(name=o.name, title=o.title, description=o.description) for o in BLOCKED_ORDERS.values()]
+
     @app.get("/opportunities/top", response_model=models.Leaderboard)
     def top(
         query: Annotated[models.LeaderboardQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
@@ -250,9 +261,10 @@ def create_app(
         query: Annotated[models.BlockedQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
         artefacts: store.Artefacts = Depends(loaded),
     ):
-        """The Blocked Opportunities page: only Blocked Opportunities (default thresholds), ranked by Blocked Opportunity
-        value, in Baseline-year figures, with a summary and per-Market totals over every filtered one. An unknown
-        Product answers 404, as does an Excluded Product, with its reason."""
+        """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the default thresholds, room to
+        grow included), ranked by Blocked Opportunity value or by Tariff part, in Baseline-year figures with the value's
+        Tariff part and Agreement part and the Barrier, with a summary and per-Market totals over every filtered one. An
+        unknown Product answers 404, as does an Excluded Product, with its reason."""
         _check_product(artefacts, query.product)
         found = blocked_opportunities(
             artefacts,
@@ -261,16 +273,18 @@ def create_app(
             region=query.region,
             min_value_usd=query.min_value_usd,
             hide=_hidden(query, tiers),
+            rank_by=query.rank_by,
             limit=query.limit,
         )
+        order = found.order
         return models.BlockedOpportunities(
             **_metadata(artefacts),
             summary=BlockedSummary(**found.summary),
             markets=[_pick(BlockedMarket, row) for row in found.markets.iter_rows(named=True)],
             opportunities=[_pick(models.BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)],
             thresholds=Thresholds(),
-            rank_by=BLOCKED.name,
-            order=RankOrderOut(name=BLOCKED.name, title=BLOCKED.title, description=BLOCKED.description),
+            rank_by=order.name,
+            order=RankOrderOut(name=order.name, title=order.title, description=order.description),
             note=scenario_note(artefacts),
         )
 
@@ -528,11 +542,16 @@ def scenario_response(
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
     caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
+    # The Blocked Opportunity rule, room to grow against the Scenario's Export Potential included (ADR 0011).
     pairs = (
-        result.pairs.with_columns(
-            blocked_opportunity=scenarios.is_blocked(
-                "effect_usd", "baseline_potential_usd", request.min_effect_share, request.min_effect_usd
-            )
+        scenarios.with_blocked_opportunity_flag(
+            result.pairs,
+            artefacts.history,
+            artefacts.baseline_year,
+            effect="effect_usd",
+            baseline="baseline_potential_usd",
+            min_share=request.min_effect_share,
+            min_usd=request.min_effect_usd,
         )
         .join(markets, on="iso3", how="left", maintain_order="left")
         .join(products, on="hs6", how="left", maintain_order="left")
@@ -541,12 +560,6 @@ def scenario_response(
     blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
     total = result.total()
-
-    def shown(rows: pl.DataFrame) -> list[dict]:
-        """The top `limit` rows, each with its Baseline-year Actual Exports."""
-        return with_baseline_actual_exports(
-            rows.head(request.limit), artefacts.history, artefacts.baseline_year
-        ).to_dicts()
 
     return models.ScenarioResponse(
         **_metadata(artefacts),
@@ -561,8 +574,8 @@ def scenario_response(
         .head(request.limit)
         .join(products, on="hs6", how="left", maintain_order="left")
         .to_dicts(),
-        top_pairs=shown(top),
-        blocked_opportunities=shown(blocked),
+        top_pairs=top.head(request.limit).to_dicts(),
+        blocked_opportunities=blocked.head(request.limit).to_dicts(),
         blocked_count=blocked.height,
         clipped_pairs=result.clipped_pairs,
         note=scenario_note(artefacts),

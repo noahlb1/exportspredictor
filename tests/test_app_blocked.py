@@ -1,7 +1,12 @@
 """The Blocked Opportunities page, run with AppTest through the router against a live local API.
 
-Most tests use the Blocked world (`conftest.blocked_artefacts`): the fixture with its amounts × 1,000, so it has four
-Blocked Opportunities, whisky and jewellery in India, jewellery and cars in Hong Kong. The fixture alone has none.
+Most tests use the Blocked world (`conftest.blocked_artefacts`): the fixture with its amounts × 1,000, so it has three
+Blocked Opportunities, whisky and jewellery in India and jewellery in Hong Kong (cars in Hong Kong clear both thresholds
+but have no room to grow). Whisky in India has a Tariff part (40% of its value); jewellery in Hong Kong has a 0%
+tariff and Actual Exports above Export Potential. The fixture alone has none.
+
+The page reads as a before and after (spec #133, ADR 0011): each Product's Actual Exports, Export Potential and Export
+Potential with a Trade Agreement, the rise, and how much of it the model associates with the tariff.
 """
 
 import io
@@ -11,29 +16,38 @@ from dataclasses import replace
 
 import httpx
 import pandas as pd
+import polars as pl
 import pytest
 import streamlit
 from conftest import run_page
+from streamlit import dataframe_util
 from streamlit.testing.v1 import AppTest
 
 from exportspredictor import artefacts as store
 
 PAGE = "pages/blocked_opportunities.py"
 WHISKY, JEWELLERY, CARS, CRUDE_OIL = "220830", "711319", "870323", "270900"
-BLOCKED_PAIRS = [(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG"), (CARS, "HKG")]
+JEWELLERY_NAME = "Articles of jewellery and parts thereof, of precious metal other than silver"
+BLOCKED_PAIRS = [(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG")]
 PRODUCT_COLUMNS = [
-    "Product", "Blocked Opportunity value", "Uplift %", "Applied Tariff %", "Potential with agreement", "Actual Exports"
+    "Product",
+    "Barrier",
+    "Actual Exports",
+    "Export Potential",
+    "With a Trade Agreement",
+    "Rise with agreement",
+    "Rise %",
+    "Tariff part",
+    "Above Export Potential",
 ]
-# Spec #113's explanation, on a pair whose Baseline-year Actual Exports exceed its Export Potential.
-UPLIFT_EXPLANATION = (
-    "The UK already exports more here than its Export Potential, so the Blocked Opportunity value is shown as an "
-    "uplift on Export Potential, not as a dollar level with a Trade Agreement."
-)
 # Wording that would read a Blocked Opportunity value as a cause or a forecast.
 CAUSAL = re.compile(
     r"(?<!not )\b(causes?|caused|will (raise|add|unlock|increase)|would (raise|add|unlock|increase)|unlocks?)\b",
     re.IGNORECASE,
 )
+# Wording that credits a rise to taking a tariff away (spec #133: never on a 0% or unknown tariff).
+REMOVING_THE_TARIFF = re.compile(r"remov\w* (the|a|its|any) \S*\s*tariff", re.IGNORECASE)
+CHART = "vega_lite_chart"
 
 
 @pytest.fixture
@@ -57,6 +71,10 @@ def _page(monkeypatch, api_url: str, **query: str) -> AppTest:
 
 def _read(api_url: str, **params) -> dict:
     return httpx.get(f"{api_url}/opportunities/blocked", params=params).json()
+
+
+def _row(api_url: str, hs6: str, iso3: str) -> dict:
+    return next(row for row in _read(api_url)["opportunities"] if (row["hs6"], row["iso3"]) == (hs6, iso3))
 
 
 def _choose(page: AppTest, hs6: str, iso3: str) -> AppTest:
@@ -90,7 +108,19 @@ def _texts(page: AppTest) -> list[str]:
     return texts
 
 
-def test_markets_are_listed_largest_total_first_with_the_top_market_chosen(monkeypatch, blocked_api_url):
+def _panel_texts(page: AppTest) -> list[str]:
+    return [str(getattr(node, "value", "")) for node in page.main if hasattr(node, "value")]
+
+
+def _charts(page: AppTest) -> list[pd.DataFrame]:
+    """The data of each chart on the page (Streamlit sends a chart's inline values as an Arrow table)."""
+    return [dataframe_util.convert_arrow_bytes_to_pandas_df(chart.proto.data.data) for chart in page.get(CHART)]
+
+
+# --- The overview: Markets, then the chosen Market's Products, no pair chosen until one is clicked ----------------
+
+
+def test_markets_are_listed_largest_total_first_with_the_top_markets_products_shown(monkeypatch, blocked_api_url):
     page = _page(monkeypatch, blocked_api_url)
 
     assert not page.exception
@@ -98,54 +128,255 @@ def test_markets_are_listed_largest_total_first_with_the_top_market_chosen(monke
     markets = _markets(page)
     assert list(markets.columns) == ["Market", "Blocked Opportunities", "Total value"]
     assert list(markets["Market"]) == ["India", "Hong Kong"]
-    assert list(markets["Blocked Opportunities"]) == [2, 2]
+    assert list(markets["Blocked Opportunities"]) == [2, 1]
     totals = {market["market"]: market["blocked_opportunity_value_usd"] for market in _read(blocked_api_url)["markets"]}
     assert list(markets["Total value"]) == pytest.approx([totals["India"] / 1e6, totals["Hong Kong"] / 1e6])
     # The top Market's Products are shown on open.
-    assert set(_products(page)["Product"]) == {
-        "Whiskies",
-        "Articles of jewellery and parts thereof, of precious metal other than silver",
-    }
+    assert set(_products(page)["Product"]) == {"Whiskies", JEWELLERY_NAME}
+
+
+def test_no_product_is_chosen_on_open(monkeypatch, blocked_api_url):
+    # Spec #133, story 11: the page opens on the overview; the panel waits for a click.
+    page = _page(monkeypatch, blocked_api_url)
+
+    assert not [text for text in _panel_texts(page) if "No agreement, tariff" in text and "→" in text]
+    assert not page.get(CHART)
+    assert any("Click a Product" in element.value for element in page.caption)
 
 
 def test_the_chosen_markets_products_have_the_stated_columns_in_baseline_year_figures(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url)
+    page.session_state["blocked_market"] = "IND"
+    page.run()
+
+    products = _products(page)
+    assert list(products.columns) == PRODUCT_COLUMNS
+    rows = [row for row in _read(blocked_api_url)["opportunities"] if row["iso3"] == "IND"]
+    assert list(products["Product"]) == [row["description"] for row in rows]  # every one, by value (the rise)
+    assert list(products["Barrier"]) == [row["barrier"] for row in rows]
+    for field, column in [
+        ("baseline_actual_exports_usd", "Actual Exports"),
+        ("baseline_export_potential_usd", "Export Potential"),
+        ("potential_with_agreement_usd", "With a Trade Agreement"),
+        ("blocked_opportunity_value_usd", "Rise with agreement"),
+        ("tariff_part_usd", "Tariff part"),
+    ]:
+        assert list(products[column]) == pytest.approx([row[field] / 1e6 for row in rows])
+    assert list(products["Rise %"]) == pytest.approx([row["rise_share"] for row in rows])
+    # Whisky in India, 2024: $38.1m exported, $61.6m Export Potential, $80.0m with an agreement, $7.4m Tariff part.
+    whisky = products.iloc[0]
+    assert whisky["Product"] == "Whiskies" and whisky["Barrier"] == "No agreement, tariff 150%"
+    assert [round(whisky[c], 1) for c in PRODUCT_COLUMNS[2:6]] == [38.1, 61.6, 80.0, 18.5]
+    assert whisky["Tariff part"] == pytest.approx(7.4, abs=0.05)
+    assert any("India" in element.value and "2 Blocked Opportunities" in element.value for element in page.markdown)
+
+
+def test_product_headings_carry_tooltips_in_the_glossarys_terms(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url)
+
+    config = json.loads(page.dataframe[1].proto.columns)
+    helps = {name.removeprefix("name:"): column.get("help", "") for name, column in config.items()}
+    assert set(PRODUCT_COLUMNS) <= set(helps)
+    assert "Export Potential with a Trade Agreement" in helps["With a Trade Agreement"]
+    assert "llustrative" in helps["With a Trade Agreement"] and "llustrative" in helps["Rise with agreement"]
+    assert "Tariff part" in helps["Tariff part"] and "no Trade Agreement added" in helps["Tariff part"]
+    assert "0% or unknown" in helps["Tariff part"]
+    assert "above" in helps["Above Export Potential"] and "Export Potential" in helps["Above Export Potential"]
+    assert "Rise share" in helps["Rise %"] and "Baseline Export Potential" in helps["Rise %"]
+
+
+def test_a_pair_with_actual_exports_above_export_potential_is_marked(monkeypatch, blocked_api_url):
     page = _page(monkeypatch, blocked_api_url)
     page.session_state["blocked_market"] = "HKG"
     page.run()
 
     products = _products(page)
-    assert list(products.columns) == PRODUCT_COLUMNS
-    rows = [row for row in _read(blocked_api_url)["opportunities"] if row["iso3"] == "HKG"]
-    assert list(products["Product"]) == [row["description"] for row in rows]  # every one, by value
-    for field, column in [
-        ("blocked_opportunity_value_usd", "Blocked Opportunity value"),
-        ("baseline_actual_exports_usd", "Actual Exports"),
-    ]:
-        assert list(products[column]) == pytest.approx([row[field] / 1e6 for row in rows])
-    assert any("Hong Kong" in element.value and "2 Blocked Opportunities" in element.value for element in page.markdown)
-    config = json.loads(page.dataframe[1].proto.columns)
-    helps = {name.removeprefix("name:"): column.get("help", "") for name, column in config.items()}
-    assert "Export Potential with a Trade Agreement" in helps["Potential with agreement"]
-    assert "llustrative" in helps["Potential with agreement"]
-    assert "Trade Agreement alone" in helps["Applied Tariff %"] and "not known" in helps["Applied Tariff %"]
-    assert "exceed" in helps["Uplift %"] and "Export Potential" in helps["Uplift %"]
+    assert list(products["Product"]) == [JEWELLERY_NAME]
+    assert list(products["Above Export Potential"]) == [True]
+    assert list(products["Barrier"]) == ["No agreement, tariff 0%"]
 
 
-def test_a_row_whose_actual_exports_exceed_export_potential_shows_an_uplift_not_a_dollar_level(
-    monkeypatch, blocked_api_url
-):
-    # Hong Kong: jewellery ($18.3m exported, below its $18.8m Export Potential) and cars ($9.8m exported, above $4.3m).
+def test_a_pair_with_no_room_to_grow_is_not_listed(monkeypatch, blocked_api_url):
+    # Hong Kong: jewellery is listed; cars ($9.8m exported, above $4.3m + $1.1m with a Trade Agreement) are not.
     page = _page(monkeypatch, blocked_api_url)
     page.session_state["blocked_market"] = "HKG"
     page.run()
 
-    products = _products(page).set_index("Product")
-    [cars_label] = [name for name in products.index if name.startswith("Motor cars")]
-    jewellery, cars = products.drop(index=cars_label).iloc[0], products.loc[cars_label]
-    assert jewellery["Potential with agreement"] == pytest.approx(23.9, abs=0.05)  # $18.8m + $5.1m
-    assert pd.isna(jewellery["Uplift %"])
-    assert pd.isna(cars["Potential with agreement"])
-    assert cars["Uplift %"] == pytest.approx(25.1, abs=0.05)  # $1.1m on $4.3m of Export Potential
+    products = _products(page)
+    assert not [name for name in products["Product"] if name.startswith("Motor cars")]
+    assert products["With a Trade Agreement"].iloc[0] == pytest.approx(23.9, abs=0.05)  # $18.8m + $5.1m
+
+
+def test_products_can_be_ordered_by_tariff_part(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url)
+    order = page.sidebar.radio(key="blocked_rank_by")
+    assert order.value == "blocked"  # the rise with agreement, by default
+
+    order.set_value("tariff_part").run()
+
+    assert page.query_params["rank_by"] == "tariff_part"
+    assert any("Ordered by Tariff part" == button.label for button in page.main.button)
+    by_tariff = [row["description"] for row in _read(blocked_api_url, rank_by="tariff_part")["opportunities"]
+                 if row["iso3"] == "IND"]
+    assert list(_products(page)["Product"]) == by_tariff
+    assert list(_markets(page)["Market"]) == ["India", "Hong Kong"]  # Markets keep their order by total
+
+
+def test_a_link_can_order_by_tariff_part(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url, rank_by="tariff_part")
+
+    assert page.sidebar.radio(key="blocked_rank_by").value == "tariff_part"
+
+
+# --- The page's own sentences -----------------------------------------------------------------------------------
+
+
+def test_the_active_filters_line_states_the_count_and_the_illustrative_total(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url)
+
+    line = next(element.value for element in page.markdown if "No filters" in element.value)
+    # 18.5 + 7.1 + 5.1 = $30.7m
+    assert "3 Blocked Opportunities" in line and "illustrative" in line and "$30.7m" in line
+    caption = " ".join(element.value for element in page.caption)
+    assert "$ millions" in caption and "2024" in caption and "Scenarios page" in caption
+    assert "20%" in caption and "$1.0m" in caption
+    # Spec #113 "Totals understate": the note beside the summed values, with the share the artefact records.
+    note = httpx.get(f"{blocked_api_url}/labels").json()["totals_note"]["text"]
+    assert note in caption and "about 82% of Actual Exports" in note
+
+
+def test_the_caption_says_with_no_uk_trade_agreement_in_force_and_states_room_to_grow(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url)
+
+    caption = next(element.value for element in page.caption if "Blocked Opportunity value is" in element.value)
+    assert "with no UK Trade Agreement in force" in caption
+    assert "where none is in force" not in caption  # read as "no tariff" (spec #133, story 13)
+    assert "room to grow" in caption and "Actual Exports" in caption
+    assert not REMOVING_THE_TARIFF.search(caption)
+
+
+def test_the_page_states_the_tariff_carried_forward_caveat_and_what_a_trade_agreement_means(
+    monkeypatch, blocked_api_url
+):
+    labels = httpx.get(f"{blocked_api_url}/labels").json()
+
+    page = _page(monkeypatch, blocked_api_url)  # no pair chosen: both are on the page itself
+
+    texts = [element.value for element in [*page.caption, *page.markdown, *page.info]]
+    assert any(labels["tariff_carried_forward"] in text for text in texts)
+    assert any(labels["trade_agreement_meaning"] in text for text in texts)
+
+
+def test_the_markets_table_explains_its_totals_and_links_the_market_to_a_scenario(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url)
+
+    note = next(element.value for element in page.caption if "Scenario Effect" in element.value)
+    assert "only" in note and "every pair" in note
+    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenarios"]
+    assert "Trade Agreement with India" in link.proto.label
+    assert link.proto.query_string == "add=IND"  # the Scenarios page prefills it (`?add=`)
+
+    page.session_state["blocked_market"] = "HKG"
+    page.run()
+    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenarios"]
+    assert "Hong Kong" in link.proto.label and link.proto.query_string == "add=HKG"
+
+
+# --- The panel: a neutral box, the before-and-after chart, the split, then the caveats ----------------------------
+
+
+def test_the_panel_opens_with_a_neutral_box_naming_the_pair_and_its_barrier(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
+
+    assert not page.exception
+    assert not [box for box in page.warning if "Whiskies" in box.value]  # no warning box (spec #133, story 12)
+    [box] = [box for box in page.info if "Whiskies → India" in box.value]
+    assert "No agreement, tariff 150%" in box.value
+
+
+def test_the_panel_shows_actual_exports_export_potential_and_the_level_with_an_agreement_as_one_chart(
+    monkeypatch, blocked_api_url
+):
+    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
+
+    [before_after] = [chart for chart in _charts(page) if "figure" in chart.columns]
+    assert list(before_after["figure"]) == [
+        "Actual Exports", "Export Potential", "Export Potential with a Trade Agreement"
+    ]
+    assert [round(value, 1) for value in before_after["value"]] == [38.1, 61.6, 80.0]  # $ millions, 2024
+    assert list(before_after["text"]) == ["$38.1m", "$61.6m", "$80.0m"]
+    assert not page.metric  # the chart replaces the three metrics
+
+
+def test_a_tariff_rows_split_sentence_names_the_tariff_part_and_the_agreement_part(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
+
+    [split] = [text for text in _panel_texts(page) if "$18.5m" in text and "Tariff part" in text]
+    assert "$7.4m" in split and "150%" in split and "$11.1m" in split and "Agreement part" in split
+    assert "associates" in split
+
+
+def test_a_0_percent_rows_text_never_speaks_of_removing_the_tariff(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), JEWELLERY, "HKG")
+
+    assert not page.exception
+    assert not [text for text in _texts(page) if REMOVING_THE_TARIFF.search(text)]
+    [split] = [text for text in _panel_texts(page) if "$5.1m" in text and "average" in text]
+    assert "0%" in split and "entirely" in split and "associat" in split
+
+
+def test_an_above_export_potential_row_says_the_model_already_rates_current_trade_as_strong(
+    monkeypatch, blocked_api_url
+):
+    page = _choose(_page(monkeypatch, blocked_api_url), JEWELLERY, "HKG")
+
+    assert any("already above" in text and "Export Potential" in text for text in _panel_texts(page))
+    whisky = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
+    assert not any("already above" in text for text in _panel_texts(whisky))
+
+
+def test_an_unknown_tariff_rows_text_never_speaks_of_removing_the_tariff(
+    monkeypatch, blocked_artefacts, tmp_path, live_api
+):
+    # Jewellery in India's tariff is made unknown (its Tariff part is already 0 in the Blocked world).
+    unknown = (pl.col("hs6") == JEWELLERY) & (pl.col("iso3") == "IND")
+    features = blocked_artefacts.baseline_features.with_columns(
+        pl.when(unknown).then(None).otherwise(pl.col("log_applied_tariff")).alias("log_applied_tariff")
+    )
+    store.save(replace(blocked_artefacts, baseline_features=features), tmp_path)
+
+    with live_api(tmp_path) as api_url:
+        assert _row(api_url, JEWELLERY, "IND")["barrier"] == "No agreement, tariff unknown"
+        page = _choose(_page(monkeypatch, api_url), JEWELLERY, "IND")
+
+    assert not page.exception
+    assert not [text for text in _texts(page) if REMOVING_THE_TARIFF.search(text)]
+    [split] = [text for text in _panel_texts(page) if "not known" in text]
+    assert "average" in split and "entirely" in split
+
+
+def test_the_panel_opens_with_the_box_then_the_chart_then_the_split_then_the_caveats(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), JEWELLERY, "HKG")  # a Re-export Hub: it has a caveat
+
+    nodes = list(page.main)  # depth first, in the order the page draws them
+    texts = [str(getattr(node, "value", "")) for node in nodes]
+    box = next(i for i, text in enumerate(texts) if "→ Hong Kong" in text)
+    chart = next(i for i, node in enumerate(nodes) if node.type == CHART)
+    split = next(i for i, text in enumerate(texts) if "$5.1m" in text and "average" in text)
+    caveat = next(i for i, text in enumerate(texts) if text.startswith("Re-export Hub"))
+    assert box < chart < split < caveat
+    assert not [element for element in page.subheader if "Hong Kong" in element.value]  # the box names the pair
+
+
+def test_the_facts_repeat_nothing_the_box_or_chart_already_says(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
+
+    facts = [element.value for element in page.markdown if element.value.startswith("**") and ":**" in element.value]
+    names = [fact.split(":**")[0].strip("*") for fact in facts]
+    assert "Potential Range" in names and "Opportunity Type" in names
+    for repeated in ("Applied Tariff, 2024", "UK Trade Agreement in force", "Blocked Opportunity value",
+                     "Relative Export Gap"):
+        assert repeated not in names
 
 
 @pytest.mark.parametrize(("hs6", "iso3"), BLOCKED_PAIRS)
@@ -156,51 +387,7 @@ def test_no_export_gap_appears_anywhere_on_the_page(monkeypatch, blocked_api_url
     assert [text for text in _texts(page) if "Export Gap" in text] == []
 
 
-def test_the_panel_leads_with_the_barrier_then_three_baseline_year_figures(monkeypatch, blocked_api_url):
-    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
-
-    assert any("The Barrier" in box.value for box in page.warning)
-    labels = [metric.label for metric in page.metric]
-    assert labels == ["Baseline Export Potential", "Export Potential with a Trade Agreement", "Actual Exports"]
-    # Whisky in India, 2024: $61.6m Export Potential, $18.5m Blocked Opportunity value, $38.1m exported.
-    assert [metric.value for metric in page.metric] == ["$61.6m", "$80.0m", "$38.1m"]
-
-
-def test_where_actual_exports_exceed_export_potential_the_panel_shows_the_uplift_and_why(monkeypatch, blocked_api_url):
-    page = _choose(_page(monkeypatch, blocked_api_url), CARS, "HKG")
-
-    # Cars in Hong Kong, 2024: $4.3m Export Potential, $1.1m Blocked Opportunity value (+25%), $9.8m exported.
-    labels = [metric.label for metric in page.metric]
-    assert labels == ["Baseline Export Potential", "Uplift with a Trade Agreement", "Actual Exports"]
-    assert [metric.value for metric in page.metric] == ["$4.3m", "+25%", "$9.8m"]
-    [barrier] = [box.value for box in page.warning if "The Barrier" in box.value]
-    assert "+25%" in barrier and UPLIFT_EXPLANATION in barrier
-    assert not [text for text in _texts(page) if "Export Potential with a Trade Agreement is" in text]
-
-
-@pytest.mark.parametrize(("hs6", "iso3"), BLOCKED_PAIRS)
-def test_the_uplift_explanation_shows_only_where_actual_exports_exceed_export_potential(
-    monkeypatch, blocked_api_url, hs6, iso3
-):
-    page = _choose(_page(monkeypatch, blocked_api_url), hs6, iso3)
-
-    [barrier] = [box.value for box in page.warning if "The Barrier" in box.value]
-    # Cars in Hong Kong is the one above its Export Potential ($9.8m against $4.3m); the others are below.
-    assert (UPLIFT_EXPLANATION in barrier) == ((hs6, iso3) == (CARS, "HKG"))
-
-
-def test_the_active_filters_line_states_the_count_and_the_illustrative_total(monkeypatch, blocked_api_url):
-    page = _page(monkeypatch, blocked_api_url)
-
-    line = next(element.value for element in page.markdown if "No filters" in element.value)
-    # 18.5 + 7.1 + 5.1 + 1.1 = $31.8m
-    assert "4 Blocked Opportunities" in line and "illustrative" in line and "$31.8m" in line
-    caption = " ".join(element.value for element in page.caption)
-    assert "$ millions" in caption and "2024" in caption and "Scenarios page" in caption
-    assert "20%" in caption and "$1.0m" in caption
-    # Spec #113 "Totals understate": the note beside the summed values, with the share the artefact records.
-    note = httpx.get(f"{blocked_api_url}/labels").json()["totals_note"]["text"]
-    assert note in caption and "about 82% of Actual Exports" in note
+# --- Filters ----------------------------------------------------------------------------------------------------
 
 
 def test_sidebar_filters_narrow_the_markets_and_reset_restores_them(monkeypatch, blocked_api_url):
@@ -227,11 +414,12 @@ def test_a_filter_chip_removes_only_its_filter(monkeypatch, blocked_api_url):
     assert any("No filters" in element.value for element in page.markdown)
 
 
-def test_the_page_has_no_market_order_type_or_agreement_filter(monkeypatch, blocked_api_url):
+def test_the_page_has_an_order_but_no_market_type_or_agreement_filter(monkeypatch, blocked_api_url):
+    # Rewritten for spec #133: the page gained its order (by the rise or by Tariff part); still no Market filter.
     page = _page(monkeypatch, blocked_api_url)
 
     keys = {widget.key for widget in [*page.sidebar.selectbox, *page.sidebar.radio, *page.sidebar.number_input]}
-    assert keys == {"blocked_sector", "blocked_region", "blocked_min_value_usd"}
+    assert keys == {"blocked_sector", "blocked_region", "blocked_min_value_usd", "blocked_rank_by"}
 
 
 def test_a_product_search_keeps_that_products_blocked_opportunities(monkeypatch, blocked_api_url):
@@ -262,6 +450,9 @@ def test_filters_are_kept_apart_from_the_leaderboards(monkeypatch, blocked_api_u
     assert page.session_state["blocked_hide_hubs"] is True
 
 
+# --- CSV, note, language and edge cases ---------------------------------------------------------------------------
+
+
 def test_csv_holds_every_filtered_blocked_opportunity_in_full_dollars(monkeypatch, blocked_api_url, downloads):
     _page(monkeypatch, blocked_api_url)
 
@@ -272,14 +463,16 @@ def test_csv_holds_every_filtered_blocked_opportunity_in_full_dollars(monkeypatc
     assert "illustrative" in value and "2024" in value and "USD" in value
     assert list(exported[value]) == pytest.approx([row["blocked_opportunity_value_usd"] for row in rows])
     assert not [column for column in exported.columns if "Export Gap" in column]
-    # Where Actual Exports exceed Export Potential: the uplift in percent, and no level with a Trade Agreement.
-    uplift = next(column for column in exported.columns if column.startswith("Uplift on Export Potential"))
     with_agreement = next(column for column in exported.columns if column.startswith("Export Potential with"))
-    for row, (_, line) in zip(rows, exported.iterrows(), strict=True):
-        if row["blocked_opportunity_uplift"] is None:
-            assert pd.isna(line[uplift]) and line[with_agreement] == pytest.approx(row["potential_with_agreement_usd"])
-        else:
-            assert line[uplift] == pytest.approx(100 * row["blocked_opportunity_uplift"]) and pd.isna(line[with_agreement])
+    assert list(exported[with_agreement]) == pytest.approx([row["potential_with_agreement_usd"] for row in rows])
+    # Spec #133, story 23: the Barrier, both parts, the rise as a share and the mark.
+    assert list(exported["Barrier"]) == [row["barrier"] for row in rows]
+    for prefix, field in [("Tariff part", "tariff_part_usd"), ("Agreement part", "agreement_part_usd")]:
+        column = next(column for column in exported.columns if column.startswith(prefix))
+        assert "illustrative" in column and "USD" in column
+        assert list(exported[column]) == pytest.approx([row[field] for row in rows])
+    assert list(exported["Rise share"]) == pytest.approx([row["rise_share"] for row in rows])
+    assert list(exported["Above Export Potential"]) == [row["above_export_potential"] for row in rows]
 
 
 def test_the_illustrative_note_sits_in_an_expander_under_the_tables(monkeypatch, blocked_api_url):
@@ -294,14 +487,18 @@ def test_the_illustrative_note_sits_in_an_expander_under_the_tables(monkeypatch,
         assert note[part]["text"] in text
 
 
-def test_every_text_uses_associational_language(monkeypatch, blocked_api_url):
-    page = _choose(_page(monkeypatch, blocked_api_url), CARS, "HKG")
+@pytest.mark.parametrize(("hs6", "iso3"), BLOCKED_PAIRS)
+def test_every_text_uses_associational_language(monkeypatch, blocked_api_url, hs6, iso3):
+    page = _choose(_page(monkeypatch, blocked_api_url), hs6, iso3)
 
     texts = _texts(page)
     assert not [text for text in texts if CAUSAL.search(text)]
     about_value = [
-        element.value for element in [*page.caption, *page.warning] if "Blocked Opportunity value" in element.value
+        element.value
+        for element in [*page.caption, *page.warning, *page.info, *page.markdown]
+        if "Blocked Opportunity value" in element.value or "rise" in element.value
     ]
+    about_value = [text for text in about_value if "Export Potential" in text]
     assert about_value and all("associat" in text for text in about_value)
 
 
@@ -344,34 +541,6 @@ def test_with_no_benchmark_or_event_backtests_the_note_keeps_the_label_and_says_
         assert note[part]["run"] is False and note[part]["text"] in text
 
 
-# --- Final review of #103: the Barrier first, Potential Range kept, one read ---------------------------------------
-
-
-def _in_order(page: AppTest) -> list:
-    """Every element of the main area, in the order the page draws them."""
-    return list(page.main)  # depth first: each block, then what it holds
-
-
-def test_the_panel_opens_with_the_barrier_box_headed_by_the_pair_then_its_caveats(monkeypatch, blocked_api_url):
-    page = _choose(_page(monkeypatch, blocked_api_url), JEWELLERY, "HKG")  # a Re-export Hub: it has a caveat
-
-    texts = [str(getattr(node, "value", "")) for node in _in_order(page)]
-    barrier = next(i for i, text in enumerate(texts) if "The Barrier" in text)
-    assert "Articles of jewellery" in texts[barrier] and "Hong Kong" in texts[barrier]
-    hs6 = next(i for i, text in enumerate(texts) if text.startswith(f"HS6 {JEWELLERY}"))
-    caveat = next(i for i, text in enumerate(texts) if text.startswith("Re-export Hub"))
-    assert barrier < hs6 and barrier < caveat
-    assert not [element for element in page.subheader if "Hong Kong" in element.value]  # the box names the pair
-
-
-def test_the_facts_keep_the_potential_range_but_no_relative_export_gap(monkeypatch, blocked_api_url):
-    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
-
-    facts = [element.value for element in page.markdown if element.value.startswith("**") and ":**" in element.value]
-    assert any(fact.startswith("**Potential Range:**") for fact in facts)
-    assert not [fact for fact in facts if "Relative Export Gap" in fact]
-
-
 def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatch, blocked_api_url):
     from app import client
 
@@ -391,3 +560,24 @@ def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatc
     assert paths.count("/opportunities/blocked") == 1
     caption = " ".join(element.value for element in page.caption)
     assert "20%" in caption and "$1.0m" in caption
+
+
+def test_the_tariff_carried_forward_caveat_is_shown_once_with_a_pair_chosen(monkeypatch, blocked_api_url):
+    # The page states it under the summary; the panel does not repeat it as a warning (spec #133, stories 12 and 14).
+    caveat = httpx.get(f"{blocked_api_url}/labels").json()["tariff_carried_forward"]
+    explained = httpx.get(f"{blocked_api_url}/explain/{WHISKY}/IND").json()
+    assert explained["tariff_caveat"]  # whisky's 2024 tariff is carried forward, so the panel would warn
+
+    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
+
+    assert len([text for text in _panel_texts(page) if caveat in text]) == 1
+    assert not [box for box in page.warning if caveat in box.value]
+
+
+def test_the_order_choices_are_the_apis_blocked_orders(monkeypatch, blocked_api_url):
+    orders = httpx.get(f"{blocked_api_url}/opportunities/blocked/rank-by").json()
+    page = _page(monkeypatch, blocked_api_url)
+
+    order = page.sidebar.radio(key="blocked_rank_by")
+    assert order.options == [entry["title"] for entry in orders]
+    assert all(entry["description"] in order.proto.help for entry in orders)

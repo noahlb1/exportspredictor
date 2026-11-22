@@ -8,11 +8,11 @@ The Leaderboard shows the whole panel with `show(row)`, in order:
 3. `from_facts(row, body)`: the rest, from the facts table on: the facts, the Market's Market Reach, the Barrier
    (only for a pair with no UK Trade Agreement), the factors and the year-by-year history.
 
-A page with another opening (Blocked Opportunities leads with the Barrier, then its own three figures) reads the
-explanation with `explanation(row)`, draws `barrier(row, body, note=..., titled=True)` (the box headed by the pair),
-`opening(row, body, titled=False)` and its figures itself, then
-`from_facts(row, body, with_barrier=False, with_gap=False)`: without the Export Gap figures, which that page does not
-show.
+A page with another opening (Blocked Opportunities leads with its own box naming the pair and its Barrier, then
+`before_after`, the three-bar chart, and a sentence on the split) reads the explanation with `explanation(row)`, draws
+those and `opening(row, body, titled=False, with_tariff_caveat=False)` itself (the page states the carried-forward
+tariff once, above its tables), then `from_facts(row, body, with_barrier=False, with_gap=False)`: without the facts
+its box and chart already give, and without the Export Gap figures, which that page does not show.
 
 A row is a ranking row (`/opportunities/top`, `/opportunities/blocked`): it carries the pair's names, caveats, Trade
 Agreement, Applied Tariff and Blocked Opportunity value. The explanation carries the Gap Period figures, the factors
@@ -57,34 +57,20 @@ def show(row: dict) -> None:
     from_facts(row, body)
 
 
-def opening(row: dict, body: dict, *, titled: bool = True) -> None:
+def opening(row: dict, body: dict, *, titled: bool = True, with_tariff_caveat: bool = True) -> None:
     """The pair (unless `titled` is False: a box above already names it), what it is, its caveats and, when the
-    Baseline year's Applied Tariff is carried forward, that warning."""
+    Baseline year's Applied Tariff is carried forward, that warning (unless `with_tariff_caveat` is False: the page
+    states it once itself)."""
     if titled:
         st.subheader(_title(row))
     st.caption(f"HS6 {row['hs6']} · {row['sector_name']} · {row['region']}")
     show_caveats(row)
-    if body["tariff_caveat"]:
+    if with_tariff_caveat and body["tariff_caveat"]:
         st.warning(body["tariff_caveat"])
 
 
 def _title(row: dict) -> str:
     return f"{row['description']} → {row['market']}"
-
-
-def uplift_text(row: dict) -> str | None:
-    """A Blocked Opportunities row's value as an uplift on Export Potential (e.g. "+25%"), only where Actual Exports
-    exceed Export Potential (`blocked_opportunity_uplift`, spec #113); None elsewhere and on other pages' rows."""
-    uplift = row.get("blocked_opportunity_uplift")
-    return None if uplift is None else f"{uplift:+.0%}"
-
-
-def _value_text(row: dict, year: int) -> str:
-    """The Blocked Opportunity value as the panel words it: the uplift on Export Potential where there is one (the
-    dollars after it), the dollars elsewhere."""
-    dollars = format_usd(row["blocked_opportunity_value_usd"])
-    uplift = uplift_text(row)
-    return dollars if uplift is None else f"{uplift} on its {year} Export Potential ({dollars})"
 
 
 def figures(body: dict) -> None:
@@ -98,9 +84,10 @@ def figures(body: dict) -> None:
 
 def from_facts(row: dict, body: dict, *, with_barrier: bool = True, with_gap: bool = True) -> None:
     """The panel from its facts table on: the facts, the Barrier (unless the page led with it), the factors and the
-    year-by-year history. `with_gap=False` leaves out the Export Gap figures (the Relative Export Gap and each year's
-    Export Gap), for a page that shows Baseline-year figures only."""
-    facts(row, body, with_gap=with_gap)
+    year-by-year history. `with_barrier=False` also leaves out the facts the page's own Barrier box and figures give
+    (Applied Tariff, UK Trade Agreement, Blocked Opportunity value). `with_gap=False` leaves out the Export Gap figures
+    (the Relative Export Gap and each year's Export Gap), for a page that shows Baseline-year figures only."""
+    facts(row, body, with_gap=with_gap, with_policy=with_barrier)
     market_reach(body)
     if with_barrier:
         barrier(row, body)
@@ -108,16 +95,19 @@ def from_facts(row: dict, body: dict, *, with_barrier: bool = True, with_gap: bo
     history(body, with_gap=with_gap)
 
 
-def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
+POLICY_FACTS = ("Applied Tariff", "UK Trade Agreement in force", "Blocked Opportunity value")
+
+
+def facts(row: dict, body: dict, *, with_gap: bool = True, with_policy: bool = True) -> None:
     """The facts table, the Barrier's figures first: one line per fact, with a tooltip where a fact needs one.
-    `with_gap=False` leaves out the Relative Export Gap."""
+    `with_gap=False` leaves out the Relative Export Gap; `with_policy=False` the Barrier's figures (`POLICY_FACTS`)."""
     year = body["baseline_year"]
     kind = body["opportunity_type"]
     kinds = term("opportunity_type")
     meaning = next((sentence for sentence in kinds.split(". ") if sentence.startswith(f"{kind}:")), kinds)
     meaning = meaning.removeprefix(f"{kind}:").strip().rstrip(".")
     relative = body["relative_export_gap"]
-    value = _value_text(row, year)
+    value = format_usd(row["blocked_opportunity_value_usd"])
     blocked = ", a Blocked Opportunity" if row["blocked_opportunity"] else ""
     lines = [
         (
@@ -130,8 +120,8 @@ def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
             "Blocked Opportunity value",
             f"{value}{blocked} ({labels()['illustrative']['badge'].lower()})",
             (
-                f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement and "
-                "removing the tariff where none is in force; 0 where one is."
+                f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement where none "
+                "is in force (a known Applied Tariff goes to 0 with it); 0 where one is."
             ),
         ),
         ("Opportunity Type", f"{kind}: {meaning[:1].lower()}{meaning[1:]}", kinds),
@@ -148,6 +138,8 @@ def facts(row: dict, body: dict, *, with_gap: bool = True) -> None:
     ]
     if not with_gap:
         lines = [line for line in lines if line[0] != "Relative Export Gap"]
+    if not with_policy:
+        lines = [line for line in lines if not line[0].startswith(POLICY_FACTS)]
     with st.container(border=True):
         for name, text, tip in lines:
             st.markdown(f"**{name}:** {text}", help=tip)
@@ -159,31 +151,34 @@ def market_reach(body: dict) -> None:
         st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
 
 
-def barrier(row: dict, body: dict, note: str | None = None, *, titled: bool = False) -> None:
+def barrier(row: dict, body: dict) -> None:
     """The Barrier, only for a pair with no UK Trade Agreement: its Applied Tariff and the Illustrative amount the
-    model associates with adding an agreement. A warning when the pair is a Blocked Opportunity. `note` adds a
-    sentence of the calling page's own; `titled` heads the box with the pair, for a panel that opens with it."""
+    model associates with adding an agreement. Only a known tariff above 0 is said to go to 0 with it (ADR 0011). A
+    warning when the pair is a Blocked Opportunity."""
     if row["trade_agreement"]:
         return
     badge = labels()["illustrative"]["badge"]
-    year, uplift = body["baseline_year"], uplift_text(row)
-    amount = (
-        f"**{format_usd(row['blocked_opportunity_value_usd'])}** more {year} Export Potential" if uplift is None
-        else f"**{uplift}** on its {year} Export Potential ({format_usd(row['blocked_opportunity_value_usd'])})"
-    )
+    year = body["baseline_year"]
+    amount = f"**{format_usd(row['blocked_opportunity_value_usd'])}** more {year} Export Potential"
+    tariff = row["applied_tariff_pct"]
+    if tariff:
+        association = f"The model associates adding a Trade Agreement, which sets that tariff to 0, with {amount}."
+    else:
+        association = (
+            f"The model associates adding a Trade Agreement with {amount}, from the agreement as a whole, as no tariff "
+            "is priced here."
+        )
     text = (
         f"**The Barrier.** No UK Trade Agreement is in force with {row['market']}, and the Applied Tariff is "
-        f"{tariff_text(row['applied_tariff_pct'])}. The model associates adding a Trade Agreement, and removing the "
-        f"tariff, with {amount}. {badge}: a tendency the model has learned, not a forecast."
+        f"{tariff_text(tariff)}. {association} {badge}: a tendency the model has learned, not a forecast."
     )
-    if note:
-        text += f" {note}"
-    if titled:
-        text = f"**{_title(row)}**\n\n{text}"
     if row["blocked_opportunity"]:
         st.warning(text)
     else:
-        st.info(text + " That is too small to count as a Blocked Opportunity.")
+        st.info(
+            text + " It is not a Blocked Opportunity: the rise is below the thresholds, or Actual Exports are already "
+            "above the level with an agreement (no room to grow)."
+        )
 
 
 def _factor_table(rows: pd.DataFrame) -> pd.DataFrame:
@@ -257,6 +252,49 @@ def factors(body: dict) -> None:
         "(SHAP values); ×0.70 means 30% lower. The factors multiply together into the Export Potential. "
         f"Computed with SHAP from fold model {body['fold']}, the same model that scored this pair's Baseline, "
         f"{format_usd(body['baseline_export_potential_usd'])} in {body['baseline_year']}."
+    )
+
+
+BEFORE_AFTER = ("Actual Exports", "Export Potential", "Export Potential with a Trade Agreement")
+BEFORE_AFTER_COLOURS = ("#8a8378", RAISED, "#9cc3ee")  # grey; the model's estimate; the hypothetical, lighter
+
+
+def before_after(row: dict, year: int) -> None:
+    """One Blocked Opportunity's before and after as three bars in $ millions (spec #133): its Baseline-year Actual
+    Exports, Export Potential and Export Potential with a Trade Agreement, each the API's figure."""
+    fields = ("baseline_actual_exports_usd", "baseline_export_potential_usd", "potential_with_agreement_usd")
+    values = [
+        {"figure": figure, "value": row[field] / MILLION, "text": format_usd(row[field])}
+        for figure, field in zip(BEFORE_AFTER, fields, strict=True)
+    ]
+    st.vega_lite_chart(
+        {
+            "data": {"values": values},
+            "height": {"step": 30},
+            "encoding": {
+                "y": {"field": "figure", "type": "nominal", "sort": None, "title": None, "axis": {"labelLimit": 300}},
+                "x": {"field": "value", "type": "quantitative", "title": f"{millions_unit()}, {year}"},
+                "tooltip": [{"field": "figure", "title": "Figure"}, {"field": "text", "title": str(year)}],
+            },
+            "layer": [
+                {
+                    "mark": "bar",
+                    "encoding": {
+                        "color": {
+                            "field": "figure",
+                            "type": "nominal",
+                            "legend": None,
+                            "scale": {"domain": list(BEFORE_AFTER), "range": list(BEFORE_AFTER_COLOURS)},
+                        }
+                    },
+                },
+                {
+                    "mark": {"type": "text", "align": "left", "dx": 4, "color": _text_colour()},
+                    "encoding": {"text": {"field": "text"}},
+                },
+            ],
+        },
+        width="stretch",
     )
 
 

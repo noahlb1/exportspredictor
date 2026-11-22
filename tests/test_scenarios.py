@@ -107,9 +107,12 @@ def test_blocked_values_can_be_rebuilt_from_saved_fold_models(fixture_artefacts,
     older = replace(
         fixture_artefacts,
         metadata={**fixture_artefacts.metadata, "version": "20260101T000000Z"},
-        baseline=fixture_artefacts.baseline.drop("blocked_opportunity_value_usd"),
+        baseline=fixture_artefacts.baseline.drop("blocked_opportunity_value_usd", "tariff_part_usd"),
     )
     store.save(older, tmp_path)
+    # A version saved before the Tariff part refuses to load, and says how to add it.
+    with pytest.raises(store.UnreadableArtefacts, match="exportspredictor.scenarios"):
+        store.load_latest(tmp_path)
 
     folder = scenarios.rebuild_blocked_values(tmp_path, version="20260102T000000Z")
     rebuilt = store.load_latest(tmp_path)
@@ -118,6 +121,30 @@ def test_blocked_values_can_be_rebuilt_from_saved_fold_models(fixture_artefacts,
     assert rebuilt.metadata["blocked_values_from"] == "20260101T000000Z"
     assert_frame_equal(rebuilt.baseline, fixture_artefacts.baseline)
     assert_frame_equal(rebuilt.baseline_features, fixture_artefacts.baseline_features)
+
+
+def test_rebuilt_blocked_values_rewrite_the_model_card_and_re_read_the_ppml_comparison(fixture_artefacts, tmp_path):
+    saved = fixture_artefacts.ppml_benchmark
+    stale = {**saved, "model": {**saved["model"], "effect_usd": 1.0, "effect_pct": 99.0}}
+    older = replace(
+        fixture_artefacts,
+        metadata={**fixture_artefacts.metadata, "version": "20260101T000000Z"},
+        baseline=fixture_artefacts.baseline.drop("blocked_opportunity_value_usd", "tariff_part_usd"),
+        ppml_benchmark=stale,
+    )
+    store.save(older, tmp_path)
+
+    folder = scenarios.rebuild_blocked_values(tmp_path, version="20260102T000000Z")
+    rebuilt = store.load(folder)
+
+    # The model's side of the PPML comparison is read again from the rebuilt values; the PPML fit is kept.
+    assert rebuilt.ppml_benchmark["model"]["effect_usd"] == pytest.approx(saved["model"]["effect_usd"])
+    assert rebuilt.ppml_benchmark["model"]["effect_pct"] == pytest.approx(saved["model"]["effect_pct"])
+    assert rebuilt.ppml_benchmark["model"]["model_form"] == saved["model"]["model_form"]
+    assert rebuilt.ppml_benchmark["ppml"] == saved["ppml"]
+    card = (folder / "model_card.md").read_text(encoding="utf-8")
+    assert "version 20260102T000000Z" in card
+    assert "## Blocked Opportunities" in card
 
 
 def test_blocked_values_are_zero_where_a_trade_agreement_exists(fixture_artefacts):
@@ -199,9 +226,7 @@ def test_blocked_values_leave_an_unknown_tariff_unknown(fixture_artefacts):
         .sort("hs6")
     )
 
-    values = scenarios.blocked_opportunity_values(
-        features, fixture_artefacts.baseline, fixture_artefacts.fold_models, form=fixture_artefacts.model_form
-    )
+    values = _values(fixture_artefacts, features)
     india = values.filter(pl.col("iso3") == "IND").sort("hs6")
 
     assert india["hs6"].to_list() == expected["hs6"].to_list()
@@ -219,6 +244,121 @@ def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
     blocked = fixture_artefacts.baseline.join(result.pairs, on=["hs6", "iso3"])
 
     assert blocked["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
+
+
+# --- The Tariff part (ADR 0011) -------------------------------------------------------------
+
+
+def _values(artefacts, features: pl.DataFrame | None = None, baseline: pl.DataFrame | None = None) -> pl.DataFrame:
+    return scenarios.blocked_opportunity_values(
+        artefacts.baseline_features if features is None else features,
+        artefacts.baseline if baseline is None else baseline,
+        artefacts.fold_models,
+        form=artefacts.model_form,
+        tariff_range=scenarios.tariff_range(artefacts.metadata),
+    )
+
+
+def test_the_tariff_part_sets_a_known_tariff_to_0_and_never_switches_the_trade_agreement_on(fixture_artefacts):
+    # India charges every Product a tariff above 0 and has no UK Trade Agreement in the fixture Baseline. Its tariffs
+    # sit below the tiny fold models' tariff splits, so telephones are given one they price, ln(1 + t) = 0.9, and the
+    # Baseline year's Export Potential is predicted again from these rows.
+    models, form = fixture_artefacts.fold_models, fixture_artefacts.model_form
+    phones = (pl.col("hs6") == "851712") & (pl.col("iso3") == "IND")
+    features = fixture_artefacts.baseline_features.with_columns(
+        pl.when(phones).then(0.9).otherwise(pl.col("log_applied_tariff")).cast(pl.Float32).alias("log_applied_tariff")
+    )
+    baseline = features.select("hs6", "iso3", baseline_export_potential_usd=export_potential(features, models, form=form))
+    india = features.filter(pl.col("iso3") == "IND")
+    tariff_only = india.with_columns(log_applied_tariff=pl.lit(0.0, features.schema["log_applied_tariff"]))
+    expected = (
+        india.select("hs6", "iso3")
+        .with_columns(scenario=export_potential(tariff_only, models, form=form))
+        .join(baseline, on=["hs6", "iso3"])
+        .select("hs6", part=pl.col("scenario") - pl.col("baseline_export_potential_usd"))
+        .sort("hs6")
+    )
+
+    values = _values(fixture_artefacts, features, baseline).filter(pl.col("iso3") == "IND").sort("hs6")
+
+    assert (india["trade_agreement"] == 0).all() and (india["log_applied_tariff"] > 0).all()
+    assert values["tariff_part_usd"].to_list() == pytest.approx(expected["part"].to_list(), rel=1e-6)
+    assert values.filter(pl.col("hs6") == "851712")["tariff_part_usd"].item() > 0
+    # The agreement adds to the tariff's part, never takes from it (monotone constraints, ADR 0008).
+    assert (values["tariff_part_usd"] <= values["blocked_opportunity_value_usd"] + 1e-6).all()
+
+
+BARRIERS = [
+    (7.5, "No agreement, tariff 7.5%"),
+    (150.0, "No agreement, tariff 150%"),
+    (12.34, "No agreement, tariff 12.3%"),
+    (0.0, "No agreement, tariff 0%"),
+    (0.04, "No agreement, tariff under 0.1%"),
+    (None, "No agreement, tariff unknown"),
+    (float("nan"), "No agreement, tariff unknown"),
+]
+
+
+@pytest.mark.parametrize(("pct", "words"), BARRIERS)
+def test_the_barrier_is_worded_from_the_applied_tariff(pct, words):
+    assert scenarios.barrier_label(pct) == words
+
+
+def test_the_barrier_column_words_every_row_as_its_label():
+    rates = pl.DataFrame({"applied_tariff_pct": [pct for pct, _ in BARRIERS]}, schema={"applied_tariff_pct": pl.Float64})
+
+    assert rates.select(scenarios.barrier(pl.col("applied_tariff_pct"))).to_series().to_list() == [w for _, w in BARRIERS]
+
+
+def test_the_value_and_its_tariff_part_clip_to_the_same_training_range(fixture_artefacts):
+    # A training range whose floor is above 0 (telephones in India priced at ln(1 + t) = 0.9, the floor 0.9): both runs
+    # clip the removed tariff to it, so the value is the every-Market agreement Scenario run with that range (ADR 0006).
+    models, form = fixture_artefacts.fold_models, fixture_artefacts.model_form
+    phones = (pl.col("hs6") == "851712") & (pl.col("iso3") == "IND")
+    features = fixture_artefacts.baseline_features.with_columns(
+        pl.when(phones).then(0.9).otherwise(pl.col("log_applied_tariff")).cast(pl.Float32).alias("log_applied_tariff")
+    )
+    baseline = features.select("hs6", "iso3", baseline_export_potential_usd=export_potential(features, models, form=form))
+    floor_range = (0.9, scenarios.tariff_range(fixture_artefacts.metadata)[1])
+    every_market = scenarios.Scenario(add_agreements=tuple(features["iso3"].unique().sort()))
+    expected = scenarios.run(features, baseline, models, every_market, floor_range, form=form).pairs
+
+    values = scenarios.blocked_opportunity_values(features, baseline, models, tariff_range=floor_range, form=form)
+    compared = values.join(expected, on=["hs6", "iso3"]).filter(pl.col("iso3") == "IND").sort("hs6")
+
+    assert "851712" in compared["hs6"].to_list()
+    assert compared["blocked_opportunity_value_usd"].to_list() == pytest.approx(compared["effect_usd"].to_list(), rel=1e-6)
+    # At the floor, India's telephone tariff cannot fall, so its Tariff part is 0.
+    assert values.filter(phones)["tariff_part_usd"].item() == 0
+
+
+def test_the_tariff_part_is_0_where_the_tariff_is_0_unknown_or_an_agreement_is_in_force(fixture_artefacts):
+    unknown = ("220830", "851712")
+    features = _unknown_tariffs(fixture_artefacts.baseline_features, unknown)
+    values = _values(fixture_artefacts, features).join(
+        features.select("hs6", "iso3", "trade_agreement", "log_applied_tariff"), on=["hs6", "iso3"]
+    )
+
+    unknown_rows = values.filter(pl.col("log_applied_tariff").is_null())
+    zero_tariff = values.filter((pl.col("iso3") == "HKG") & pl.col("log_applied_tariff").is_not_null())
+    agreement = values.filter(pl.col("trade_agreement") == 1)
+    assert unknown_rows.height == 4 and (unknown_rows["blocked_opportunity_value_usd"] > 0).all()
+    assert (unknown_rows["tariff_part_usd"] == 0).all()
+    assert zero_tariff.height > 0 and (zero_tariff["tariff_part_usd"] == 0).all()
+    assert agreement.height > 0
+    assert (agreement["tariff_part_usd"] == 0).all() and (agreement["blocked_opportunity_value_usd"] == 0).all()
+
+
+def test_the_tariff_run_changes_only_the_known_tariffs_of_pairs_without_an_agreement(fixture_artefacts):
+    unknown = ("220830", "851712")
+    before = _unknown_tariffs(fixture_artefacts.baseline_features, unknown)
+    after = scenarios.tariff_only(before, scenarios.tariff_range(fixture_artefacts.metadata)).sort("hs6", "iso3")
+    original = before.join(after.select("hs6", "iso3"), on=["hs6", "iso3"]).sort("hs6", "iso3")
+
+    # India's three pairs with a known tariff: Hong Kong's are 0% or unknown, Japan and Canada have agreements.
+    assert after["iso3"].unique().to_list() == ["IND"] and after.height == 3
+    assert (after["trade_agreement"] == 0).all() and (after["log_applied_tariff"] == 0).all()
+    assert_frame_equal(after.drop("log_applied_tariff"), original.drop("log_applied_tariff"))
 
 
 def test_a_tariff_scenario_sets_the_tariff_in_the_chosen_markets_and_sectors(fixture_artefacts):
@@ -319,3 +459,68 @@ def test_the_summary_writes_counts_with_thousands_separators():
     result = scenarios.ScenarioResult(scenario=scenarios.Scenario(add_agreements=("DEU",)), pairs=pairs)
 
     assert "with 5,526 Blocked Opportunities." in result.summary(blocked=5526, year=2024)
+
+
+def _kinds(rates):
+    frame = pl.DataFrame({"applied_tariff_pct": rates}, schema={"applied_tariff_pct": pl.Float64})
+    return frame.select(scenarios.tariff_kind(pl.col("applied_tariff_pct"))).to_series().to_list()
+
+
+def test_a_tariff_is_of_one_kind_above_0_0_percent_or_unknown():
+    assert _kinds([7.5, 0.04, 0.0, None, float("nan")]) == [
+        "Tariff above 0", "Tariff above 0", "Tariff 0%", "Tariff unknown", "Tariff unknown"
+    ]
+    assert scenarios.TARIFF_KINDS == ("Tariff above 0", "Tariff 0%", "Tariff unknown")
+
+
+def _split(value, tariff_part, pct):
+    rows = pl.DataFrame(
+        {"blocked_opportunity_value_usd": [value], "tariff_part_usd": [tariff_part], "applied_tariff_pct": [pct]},
+        schema={"blocked_opportunity_value_usd": pl.Float64, "tariff_part_usd": pl.Float64,
+                "applied_tariff_pct": pl.Float64},
+    )
+    [sentence] = scenarios.value_split(rows).to_list()
+    return sentence
+
+
+def test_the_value_split_names_the_tariff_part_its_share_and_the_agreement_part():
+    sentence = _split(18.5e6, 7.4e6, 150.0)
+
+    assert sentence == (
+        "Of the $18.5m rise, the model associates $7.4m (40%, the Tariff part) with the Applied Tariff of 150% going "
+        "to 0, and $11.1m (the Agreement part) with having an average Trade Agreement (standards, customs, legal "
+        "frameworks and so on)."
+    )
+
+
+def test_a_0_percent_or_unknown_tariff_rests_the_rise_entirely_on_an_average_agreement():
+    zero, unknown = _split(5.1e6, 0.0, 0.0), _split(5.1e6, 0.0, None)
+
+    assert "already 0%" in zero and "rests entirely" in zero and "not on any tariff" in zero
+    assert "not known" in unknown and "no Tariff part" in unknown and "rests entirely" in unknown
+    for sentence in (zero, unknown):
+        assert "going to 0" not in sentence and "average Trade Agreement" in sentence
+
+
+def test_a_tariff_with_no_tariff_part_says_the_model_associates_none_of_the_rise_with_it():
+    sentence = _split(7.1e6, 0.0, 12.0)
+
+    assert "none of the $7.1m rise" in sentence and "Applied Tariff of 12%" in sentence
+    assert "rests entirely" in sentence
+
+
+def test_a_tariff_under_0_1_percent_is_named_as_a_rate_not_as_a_kind_of_tariff():
+    sentence = _split(4e6, 1e6, 0.04)
+
+    assert "the Applied Tariff of under 0.1% going to 0" in sentence
+    assert "the under 0.1% tariff" not in sentence
+
+
+def test_a_tariff_part_above_the_value_reads_as_a_negative_agreement_part_never_a_share_above_100_percent():
+    # The Agreement part is the remainder, so it is negative where the Tariff part exceeds the value (ADR 0011).
+    sentence = _split(4e6, 6e6, 9.0)
+
+    assert "$6.0m (the Tariff part)" in sentence and "more than the $4.0m rise" in sentence
+    assert "$2.0m less" in sentence and "negative Agreement part" in sentence
+    assert "150%" not in sentence and "-$" not in sentence
+    assert "%," not in sentence  # no share is printed

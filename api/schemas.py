@@ -16,6 +16,7 @@ from exportspredictor.caveats import TIERS, CaveatTier, caveat_texts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.rankings import (
     BLOCKED,
+    BLOCKED_ORDERS,
     DEFAULT_MIN_POTENTIAL_USD,
     DEFAULT_RANK_BY,
     MAX_ROWS,
@@ -105,6 +106,7 @@ class Labels(BaseModel):
     terms: dict[str, str]
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
     totals_note: TotalsNote  # beside every summed figure (spec #113, "Totals understate")
+    trade_agreement_meaning: str  # what "a Trade Agreement" means in the model (spec #133, ADR 0011)
 
 
 class MarketOut(BaseModel):
@@ -139,7 +141,7 @@ else:
     RankBy = Literal[tuple(RANK_BY)]  # the ranking orders of `exportspredictor.rankings.RANK_BY`
     OpportunityType = Literal[OPPORTUNITY_TYPES]  # Expand, New Market or New Product (GLOSSARY.md)
     PresetName = Literal[tuple(PRESETS)]  # the presets of `exportspredictor.scenarios.PRESETS`
-    BlockedRankBy = Literal[BLOCKED.name]  # the Blocked Opportunities order, the only one its page uses
+    BlockedRankBy = Literal[tuple(BLOCKED_ORDERS)]  # the Blocked Opportunities orders (`rankings.BLOCKED_ORDERS`)
 
 
 class RankOrderOut(BaseModel):
@@ -199,11 +201,14 @@ class LeaderboardQuery(RankingQuery, _OneProduct):
 
 
 class BlockedQuery(_FilterQuery, _OneProduct):
-    """The Blocked Opportunities page's filters: the shared ones, one Product and a minimum Blocked Opportunity value.
-    It has one order and no Market filter (the page groups by Market); an unknown parameter, such as `market` or
-    `rank_by`, is a 422."""
+    """The Blocked Opportunities page's filters and order: the shared filters, one Product, a minimum Blocked Opportunity
+    value, and its own orders (by value or by Tariff part). It has no Market filter (the page groups by Market); an
+    unknown parameter, such as `market`, or a ranking order such as `gap`, is a 422."""
 
     min_value_usd: float | None = Field(None, ge=0, description="Minimum Blocked Opportunity value, in USD")
+    rank_by: BlockedRankBy = Field(
+        BLOCKED.name, description="; ".join(f"{order.name}: {order.title}" for order in BLOCKED_ORDERS.values())
+    )
 
 
 class _Values(BaseModel):
@@ -216,7 +221,8 @@ class _Values(BaseModel):
     opportunity_type: OpportunityType  # how far the UK already trades the pair over the Gap Period
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
     blocked_opportunity_value_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
-    blocked_opportunity: bool  # that effect clears the default Blocked Opportunity thresholds
+    # that effect clears the default Blocked Opportunity thresholds and the pair has room to grow (`is_blocked`)
+    blocked_opportunity: bool
     # `tiered` adds each Caveat Tier's column here (and its reason column, if any), e.g. reexport_hub (ADR 0005)
     # The Potential Range (ADR 0007): where Actual Exports fall 80% of the time for comparable pairs
     potential_range_low_usd: float
@@ -287,14 +293,19 @@ class BlockedOpportunity(LeaderboardOpportunity):
     baseline_export_potential_usd: float  # Baseline Export Potential (the Baseline year's)
     baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
     # Export Potential with a Trade Agreement: Baseline Export Potential plus the Blocked Opportunity value (Illustrative);
-    # None where Actual Exports exceed Baseline Export Potential (spec #113), where the uplift below is given instead
-    potential_with_agreement_usd: float | None
-    # The Blocked Opportunity value as a share of Baseline Export Potential, only where Actual Exports exceed it
-    blocked_opportunity_uplift: float | None
+    # always above Baseline-year Actual Exports (room to grow, ADR 0011)
+    potential_with_agreement_usd: float
+    rise_share: float | None  # the Rise share: the value as a share of Baseline Export Potential (None where that is 0)
+    tariff_part_usd: float  # the Tariff part: the effect of setting a known Applied Tariff to 0, no agreement added
+    agreement_part_usd: float  # the Agreement part: the value minus its Tariff part
+    barrier: str  # e.g. "No agreement, tariff 7.5%", "No agreement, tariff 0%", "No agreement, tariff unknown"
+    value_split: str  # one sentence on how the model splits the value between the Tariff part and the Agreement part
+    above_export_potential: bool  # Baseline-year Actual Exports above Baseline Export Potential
 
 
 class BlockedOpportunities(_Ranking):
-    """The Blocked Opportunities page: only Blocked Opportunities (default thresholds), by Blocked Opportunity value."""
+    """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the default thresholds), by Blocked
+    Opportunity value or by Tariff part."""
 
     rank_by: BlockedRankBy
     order: RankOrderOut  # the order's title and (associational) description, for the page caption

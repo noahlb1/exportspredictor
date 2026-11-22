@@ -141,6 +141,29 @@ def test_the_barrier_shows_only_for_a_pair_with_no_uk_trade_agreement(monkeypatc
     assert "The Barrier" not in _texts(agreed)
 
 
+def _barrier(page) -> str:
+    return " ".join(box.value for box in [*page.main.warning, *page.main.info] if "The Barrier" in box.value)
+
+
+def test_the_barrier_speaks_of_the_tariff_going_to_0_only_where_one_is_charged(monkeypatch, fixture_api_url):
+    # Spec #133 / ADR 0011: a 0% tariff's rise rests on the agreement as a whole, never on removing a tariff.
+    charged = _barrier(_choose(_home(monkeypatch, fixture_api_url), WHISKY, "IND"))  # 150%
+    free = _barrier(_choose(_home(monkeypatch, fixture_api_url), "711319", "HKG"))  # 0%
+
+    assert "sets that tariff to 0" in charged
+    assert "0.0%" in free and "agreement as a whole" in free
+    assert "tariff to 0" not in free and "removing" not in free
+
+
+def test_a_barrier_that_is_not_a_blocked_opportunity_names_both_reasons(monkeypatch, fixture_api_url):
+    # The fixture alone has no Blocked Opportunity: each pair without an agreement fails the thresholds or room to grow.
+    page = _choose(_home(monkeypatch, fixture_api_url), WHISKY, "IND")
+
+    barrier = _barrier(page)
+    assert "not a Blocked Opportunity" in barrier and "thresholds" in barrier and "room to grow" in barrier
+    assert "too small" not in barrier
+
+
 def test_the_barrier_is_a_warning_on_a_blocked_opportunity(monkeypatch, fixture_api_url):
     rows = httpx.get(f"{fixture_api_url}/opportunities/top", params={"trade_agreement": False}).json()["opportunities"]
     for row in rows:
