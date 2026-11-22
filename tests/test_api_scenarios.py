@@ -214,7 +214,7 @@ def test_the_blocked_read_returns_only_blocked_opportunities_ranked_by_value(blo
     values = [row["blocked_opportunity_value_usd"] for row in rows]
     assert values == sorted(values, reverse=True)
     assert (rows[0]["hs6"], rows[0]["iso3"]) == (WHISKY, "IND")
-    assert body["order"]["title"] == "Blocked Opportunity value"
+    assert body["order"]["title"] == "Rise with agreement"
     assert "associates" in body["order"]["description"]
     # The unscaled fixture's values are all under the $1M threshold: no Blocked Opportunity at all.
     empty = _blocked(client)
@@ -305,6 +305,16 @@ def test_the_tariff_part_and_the_agreement_part_sum_to_the_value(blocked_client)
     whisky = rows[(WHISKY, "IND")]
     assert whisky["tariff_part_usd"] == pytest.approx(0.4 * whisky["blocked_opportunity_value_usd"])
     assert whisky["barrier"] == "No agreement, tariff 150%"
+
+
+def test_each_blocked_opportunity_carries_the_sentence_splitting_its_value(blocked_client):
+    rows = {(row["hs6"], row["iso3"]): row for row in _blocked(blocked_client)["opportunities"]}
+
+    assert rows[(WHISKY, "IND")]["value_split"].startswith(
+        "Of the $18.5m rise, the model associates $7.4m (40%, the Tariff part) with the Applied Tariff of 150% going to 0"
+    )
+    assert "already 0%" in rows[(JEWELLERY, "HKG")]["value_split"]
+    assert "none of the $7.1m rise" in rows[(JEWELLERY, "IND")]["value_split"]
 
 
 def test_a_0_percent_tariff_has_no_tariff_part_and_says_so_in_its_barrier(blocked_client):

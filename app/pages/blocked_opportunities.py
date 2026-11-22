@@ -6,14 +6,15 @@ the missing Trade Agreement already holds its Export Potential down. The Export 
 figure is for the Baseline year.
 
 One cached read (`/opportunities/blocked`) gives every filtered Blocked Opportunity (up to `app.ui.read_limit()`), in
-the order chosen in the sidebar (by the rise with agreement, or by Tariff part), with the summary, the per-Market
-totals and the default thresholds. Every figure, the Barrier and both parts of the value come from the API; the page
-computes none. Left, the Markets table, largest total first; clicking any value chooses a Market, remembered under
-`MARKET` (the top Market until one is chosen), with a note on why its total differs from a Scenario and a link to that
-Scenario. Right, the chosen Market's Products, and under it, once one is clicked (remembered as (HS6, ISO3) under
-`PAIR`), its panel: a neutral box naming the pair and its Barrier, the three-bar before and after, one sentence on the
-split, its caveats, then the shared panel (`app.panel`) from its facts on. Filters are `app.filters.blocked_filters`,
-kept apart from the Leaderboard's.
+the order chosen in the sidebar (by the rise with agreement, or by Tariff part), with the summary, the per-Market totals
+and the default thresholds. Every figure, the Barrier, both parts of the value and the sentence splitting it come from
+the API; the page computes and words none of them. Left, the Markets table, largest total first; clicking any value
+chooses a Market, remembered under `MARKET` (the top Market until one is chosen), with a note on why its total differs
+from a Scenario and a link to that Scenario. Right, the chosen Market's Products, and under it, once one is clicked
+(remembered as (HS6, ISO3) under `PAIR`), its panel: a neutral box naming the pair and its Barrier, the three-bar before
+and after, one sentence on the split, its caveats, then the shared panel (`app.panel`) from its facts on. The
+carried-forward tariff caveat is stated once, under the summary, not again in the panel. Filters are
+`app.filters.blocked_filters`, kept apart from the Leaderboard's.
 """
 
 import streamlit as st
@@ -38,38 +39,6 @@ from app.ui import caveat_tiers, fetch, illustrative, labels, read_limit, scenar
 MARKET = "blocked_market"  # the chosen Market, ISO3
 PAIR = "blocked_pair"  # the chosen Blocked Opportunity, (HS6, ISO3)
 SCENARIOS = "pages/scenarios.py"
-BARRIER_PREFIX = "No agreement, tariff "  # the API's Barrier label, before the tariff it names
-AGREEMENT_SCOPE = "standards, customs, legal frameworks and so on"
-
-
-def _split(row: dict) -> str:
-    """The one sentence on how the model splits the rise between the Tariff part and the Agreement part. Only a known
-    tariff above 0 is said to go to 0; on a 0% or unknown tariff the rise rests on the agreement as a whole."""
-    rise = format_usd(row["blocked_opportunity_value_usd"])
-    tariff = row["applied_tariff_pct"]
-    named = row["barrier"].removeprefix(BARRIER_PREFIX)  # e.g. "7.5%"
-    average = f"an average Trade Agreement ({AGREEMENT_SCOPE})"
-    if tariff is None:
-        return (
-            f"The Applied Tariff is not known, so the model prices no Tariff part: the {rise} rise rests entirely on "
-            f"its association with {average}."
-        )
-    if tariff == 0:
-        return (
-            f"The Applied Tariff is already 0%, so the {rise} rise rests entirely on the model's association with "
-            f"{average}, not on any tariff."
-        )
-    if row["tariff_part_usd"] <= 0:
-        return (
-            f"The model associates none of the {rise} rise with the {named} tariff alone (a Tariff part of 0): it "
-            f"rests entirely on its association with {average}."
-        )
-    share = row["tariff_part_usd"] / row["blocked_opportunity_value_usd"]
-    return (
-        f"Of the {rise} rise, the model associates {format_usd(row['tariff_part_usd'])} ({share:.0%}, the Tariff "
-        f"part) with the {named} tariff going to 0, and {format_usd(row['agreement_part_usd'])} (the Agreement part) "
-        f"with having {average}."
-    )
 
 
 def _explain(row: dict) -> None:
@@ -80,13 +49,13 @@ def _explain(row: dict) -> None:
     st.info(f"**{row['description']} → {row['market']}**\n\n**Barrier:** {row['barrier']}.")
     panel.before_after(row, year)
     st.caption(f"Each is for {year}; Export Potential with a Trade Agreement is {word}.")
-    st.markdown(f"{_split(row)} {word.capitalize()}: a tendency the model has learned, not a forecast.")
+    st.markdown(f"{row['value_split']} {word.capitalize()}: a tendency the model has learned, not a forecast.")
     if row["above_export_potential"]:
         st.caption(
             f"UK Actual Exports in {year} are already above Export Potential, though below the level the model "
             "associates with an agreement: the model already rates current trade here as strong."
         )
-    panel.opening(row, body, titled=False)
+    panel.opening(row, body, titled=False, with_tariff_caveat=False)
     panel.from_facts(row, body, with_barrier=False, with_gap=False)
 
 

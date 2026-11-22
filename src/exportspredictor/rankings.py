@@ -16,10 +16,13 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.scenarios import (
-    DEFAULT_MIN_SHARE,
-    DEFAULT_MIN_USD,
+    DEFAULT_MIN_SHARE_TEXT,
+    DEFAULT_MIN_USD_TEXT,
+    TARIFF_KINDS,
     barrier,
+    tariff_kind,
     tariff_percent,
+    value_split,
     with_blocked_opportunity_flag,
 )
 from exportspredictor.sectors import with_sector_names
@@ -70,10 +73,11 @@ DEFAULT_RANK_BY = "gap"
 BLOCKED = RankOrder(
     "blocked",
     "blocked_opportunity_value_usd",
-    "Blocked Opportunity value",
-    "The rise in Export Potential the model associates with adding a Trade Agreement where none is in force (0 where "
-    f"one is), largest first. Blocked Opportunities clear {DEFAULT_MIN_SHARE:.0%} of Baseline Export Potential and "
-    f"${DEFAULT_MIN_USD / 1e6:g}M, and their Actual Exports are below Export Potential with a Trade Agreement.",
+    "Rise with agreement",
+    "The Blocked Opportunity value: the rise in Export Potential the model associates with adding a Trade Agreement "
+    f"where none is in force (0 where one is), largest first. Blocked Opportunities clear {DEFAULT_MIN_SHARE_TEXT} of "
+    f"Baseline Export Potential and {DEFAULT_MIN_USD_TEXT}, and their Actual Exports are below Export Potential with a "
+    "Trade Agreement.",
 )
 # The Blocked Opportunities page's second order (ADR 0011): the tariff-led view, without changing the definition.
 TARIFF_PART = RankOrder(
@@ -244,6 +248,7 @@ def blocked_opportunities(
     - `rise_share`: the Rise share, the value as a share of Baseline Export Potential;
     - `agreement_part_usd`: the Agreement part, the value minus its Tariff part;
     - `barrier`: the Barrier in words (`barrier_label`);
+    - `value_split`: one sentence on how the model splits the value between its two parts (`scenarios.value_split`);
     - `above_export_potential`: Baseline-year Actual Exports above Baseline Export Potential (yet, by room to grow,
       below Export Potential with a Trade Agreement).
 
@@ -278,32 +283,25 @@ def blocked_opportunities(
         barrier=barrier(pl.col("applied_tariff_pct")),
         above_export_potential=pl.col("baseline_actual_exports_usd") > potential,
     )
+    shown = shown.with_columns(value_split(shown))
     return BlockedRanking(rows=shown, summary=summary, markets=markets, order=order)
 
 
-# The Barrier kinds of the split, in the order it lists them (`blocked_opportunity_split`).
-BARRIER_KINDS = ("Tariff above 0", "Tariff 0%", "Tariff unknown")
-ALL_BARRIERS = "All"
-
-
-def barrier_kind(applied_tariff_pct: pl.Expr) -> pl.Expr:
-    """Which `BARRIER_KINDS` a Blocked Opportunity's Baseline-year Applied Tariff (percent; null or NaN where unknown)
-    falls in: above 0 (the only kind that can have a Tariff part), 0%, or unknown."""
-    pct = applied_tariff_pct.cast(pl.Float64).fill_nan(None)
-    above, zero, unknown = BARRIER_KINDS
-    return pl.when(pct.is_null()).then(pl.lit(unknown)).when(pct > 0).then(pl.lit(above)).otherwise(pl.lit(zero))
+# The split's row over every Blocked Opportunity, after one row per kind of Applied Tariff (`scenarios.TARIFF_KINDS`).
+ALL_KINDS = "All"
 
 
 def blocked_opportunity_split(artefacts: Artefacts) -> pl.DataFrame:
-    """The Blocked Opportunity value split into its Tariff part and Agreement part (ADR 0011), by Barrier kind
-    (`BARRIER_KINDS`, every kind listed even when empty) and over all Blocked Opportunities (`ALL_BARRIERS`).
+    """The Blocked Opportunity value split into its Tariff part and Agreement part (ADR 0011), by the kind of its
+    Applied Tariff (`scenarios.TARIFF_KINDS`, every kind listed even when empty) and over all Blocked Opportunities
+    (`ALL_KINDS`).
 
-    Columns: barrier, blocked_opportunities, markets, value_usd, tariff_part_usd, agreement_part_usd,
+    Columns: tariff_kind, blocked_opportunities, markets, value_usd, tariff_part_usd, agreement_part_usd,
     tariff_part_share (of the value), negative_agreement_parts and negative_agreement_part_usd (their sum). The
     Agreement part is the value minus the Tariff part, so it comes out negative wherever the Tariff part is larger.
     Same rule and thresholds as the Blocked Opportunities page (`blocked_opportunities`), with no filter.
     """
-    rows = blocked_opportunities(artefacts).rows.with_columns(barrier=barrier_kind(pl.col("applied_tariff_pct")))
+    rows = blocked_opportunities(artefacts).rows.with_columns(tariff_kind=tariff_kind(pl.col("applied_tariff_pct")))
     agreement = pl.col("agreement_part_usd")
     sums = [
         pl.len().alias("blocked_opportunities"),
@@ -314,9 +312,9 @@ def blocked_opportunity_split(artefacts: Artefacts) -> pl.DataFrame:
         (agreement < 0).sum().alias("negative_agreement_parts"),
         agreement.filter(agreement < 0).sum().alias("negative_agreement_part_usd"),
     ]
-    kinds = pl.DataFrame({"barrier": list(BARRIER_KINDS)})
-    by_kind = kinds.join(rows.group_by("barrier").agg(sums), on="barrier", how="left", maintain_order="left")
-    every = rows.select(sums).with_columns(barrier=pl.lit(ALL_BARRIERS))
+    kinds = pl.DataFrame({"tariff_kind": list(TARIFF_KINDS)})
+    by_kind = kinds.join(rows.group_by("tariff_kind").agg(sums), on="tariff_kind", how="left", maintain_order="left")
+    every = rows.select(sums).with_columns(tariff_kind=pl.lit(ALL_KINDS))
     split = pl.concat([by_kind, every], how="diagonal_relaxed")
     counts = ["blocked_opportunities", "markets", "negative_agreement_parts"]
     return split.with_columns(
@@ -325,6 +323,6 @@ def blocked_opportunity_split(artefacts: Artefacts) -> pl.DataFrame:
     ).with_columns(
         tariff_part_share=pl.when(pl.col("value_usd") > 0).then(pl.col("tariff_part_usd") / pl.col("value_usd"))
     ).select(
-        "barrier", "blocked_opportunities", "markets", "value_usd", "tariff_part_usd", "agreement_part_usd",
+        "tariff_kind", "blocked_opportunities", "markets", "value_usd", "tariff_part_usd", "agreement_part_usd",
         "tariff_part_share", "negative_agreement_parts", "negative_agreement_part_usd",
     )

@@ -85,3 +85,9 @@ def run_scenario(body_json: str, api_url: str) -> dict:
 def rank_orders() -> dict[str, dict]:
     """The ranking orders the API accepts as `rank_by`, by name: title and description."""
     return {order["name"]: order for order in fetch("/opportunities/rank-by", client.api_url())}
+
+
+def blocked_rank_orders() -> dict[str, dict]:
+    """The orders the Blocked Opportunities read accepts as `rank_by`, by name, the default first: title and
+    description."""
+    return {order["name"]: order for order in fetch("/opportunities/blocked/rank-by", client.api_url())}

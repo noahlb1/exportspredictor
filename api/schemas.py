@@ -299,6 +299,7 @@ class BlockedOpportunity(LeaderboardOpportunity):
     tariff_part_usd: float  # the Tariff part: the effect of setting a known Applied Tariff to 0, no agreement added
     agreement_part_usd: float  # the Agreement part: the value minus its Tariff part
     barrier: str  # e.g. "No agreement, tariff 7.5%", "No agreement, tariff 0%", "No agreement, tariff unknown"
+    value_split: str  # one sentence on how the model splits the value between the Tariff part and the Agreement part
     above_export_potential: bool  # Baseline-year Actual Exports above Baseline Export Potential
 
 

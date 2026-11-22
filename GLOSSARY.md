@@ -132,8 +132,12 @@ _Avoid_: tariff effect, tariff component
 The rest of a Blocked Opportunity value: the value minus its Tariff part, so the two always sum to the value. It is the model's association with having an average Trade Agreement at all (standards, customs, legal frameworks and so on), not with any specific deal. It is a remainder, not its own Scenario, because an agreement that keeps its tariff is rare in training (ADR 0006, ADR 0011).
 _Avoid_: agreement component, agreement premium, non-tariff part
 
+**Rise with agreement**:
+The Blocked Opportunities page's label for a Blocked Opportunity value: the rise in Baseline-year Export Potential the model associates with adding a Trade Agreement, in dollars, beside its Rise share. It is also the page's default order (`rank_by=blocked`, the other being the Tariff part). The same figure under a plainer name, so it is Illustrative and associational too (ADR 0011).
+_Avoid_: agreement uplift
+
 **Rise share**:
-A Blocked Opportunity value as a share of its Baseline-year Export Potential: the Blocked Opportunities page's "Rise with agreement" in percent beside its dollar figure, so large and small pairs compare. It is missing where Baseline-year Export Potential is 0. The API field is `rise_share` (ADR 0011).
+A Blocked Opportunity value as a share of its Baseline-year Export Potential: the Rise with agreement in percent beside its dollar figure, so large and small pairs compare. It is missing where Baseline-year Export Potential is 0. The API field is `rise_share` (ADR 0011).
 _Avoid_: uplift, blocked opportunity uplift
 
 **Barrier**:

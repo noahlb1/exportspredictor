@@ -39,6 +39,7 @@ from exportspredictor.model_choice import (
     traded_away,
 )
 from exportspredictor.paths import data_dir
+from exportspredictor.scenarios import DEFAULT_MIN_SHARE_TEXT, DEFAULT_MIN_USD_TEXT
 from exportspredictor.wording import number_text, rate_text, years_text
 
 OWNER = "UNASSIGNED"
@@ -117,8 +118,8 @@ DECISIONS = [
     ("Bloc Scenarios change only member Markets' rows",
      ("EU re-join sets the Trade Agreement, Customs Union and EU flags on EU Markets' rows; CPTPP sets the Trade "
      "Agreement and CPTPP flags on members' rows; each added agreement zeroes the tariff. A Blocked Opportunity "
-     "gains at least 20% and $1M and has room to grow: its Baseline-year Actual Exports are below its Export "
-     "Potential with a Trade Agreement (ADR 0011).")),
+     f"gains at least {DEFAULT_MIN_SHARE_TEXT} and {DEFAULT_MIN_USD_TEXT} and has room to grow: its Baseline-year "
+     "Actual Exports are below its Export Potential with a Trade Agreement (ADR 0011).")),
     ("Headline metric: rank correlation within each Product",
      ("Advisors read the model as a ranking of Markets for one Product, so the headline is the within-Product "
      "Spearman correlation on the UK's full 2023 grid, out-of-fold, against a naive market-share baseline.")),
@@ -226,13 +227,14 @@ def model_card(artefacts: Artefacts) -> dict:
 def blocked_opportunity_summary(artefacts: Artefacts) -> dict:
     """The Blocked Opportunities at the default thresholds and the split of their value (ADR 0011), from the "All"
     row of `rankings.blocked_opportunity_split`, with the sentence the card shows."""
-    row = rankings.blocked_opportunity_split(artefacts).filter(pl.col("barrier") == rankings.ALL_BARRIERS).row(0, named=True)
+    split = rankings.blocked_opportunity_split(artefacts)
+    row = split.filter(pl.col("tariff_kind") == rankings.ALL_KINDS).row(0, named=True)
     count, negative = row["blocked_opportunities"], row["negative_agreement_parts"]
     share = row["tariff_part_share"]
     text = (
-        f"At the default thresholds (no Trade Agreement in force, a Blocked Opportunity value of at least 20% of "
-        f"Baseline Export Potential and at least $1M, and room to grow: Baseline-year Actual Exports below Export "
-        f"Potential with a Trade Agreement), the {artefacts.baseline_year} Baseline holds {count:,} Blocked "
+        f"At the default thresholds (no Trade Agreement in force, a Blocked Opportunity value of at least "
+        f"{DEFAULT_MIN_SHARE_TEXT} of Baseline Export Potential and at least {DEFAULT_MIN_USD_TEXT}, and room to "
+        f"grow: Baseline-year Actual Exports below Export Potential with a Trade Agreement), the {artefacts.baseline_year} Baseline holds {count:,} Blocked "
         f"Opportunities in {row['markets']:,} Markets, with a total Blocked Opportunity value of "
         f"{format_usd(row['value_usd'])} (Illustrative). The Tariff part, the Scenario Effect of setting a known "
         f"Applied Tariff to 0 with no agreement added, is {format_usd(row['tariff_part_usd'])}"

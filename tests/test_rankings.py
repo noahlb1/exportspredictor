@@ -11,7 +11,7 @@ def test_rank_orders_name_a_column_a_title_and_a_description():
     assert list(rankings.RANK_BY) == ["gap", "relative"]
     assert rankings.RANK_BY["relative"].title == "Relative Export Gap"
     assert rankings.RANK_BY["gap"].title == "Export Gap"
-    assert rankings.BLOCKED.title == "Blocked Opportunity value"
+    assert rankings.BLOCKED.title == "Rise with agreement"
     # The description states the default Blocked Opportunity thresholds (20% and $1M).
     assert "20%" in rankings.BLOCKED.description
     assert "$1M" in rankings.BLOCKED.description

@@ -560,3 +560,24 @@ def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatc
     assert paths.count("/opportunities/blocked") == 1
     caption = " ".join(element.value for element in page.caption)
     assert "20%" in caption and "$1.0m" in caption
+
+
+def test_the_tariff_carried_forward_caveat_is_shown_once_with_a_pair_chosen(monkeypatch, blocked_api_url):
+    # The page states it under the summary; the panel does not repeat it as a warning (spec #133, stories 12 and 14).
+    caveat = httpx.get(f"{blocked_api_url}/labels").json()["tariff_carried_forward"]
+    explained = httpx.get(f"{blocked_api_url}/explain/{WHISKY}/IND").json()
+    assert explained["tariff_caveat"]  # whisky's 2024 tariff is carried forward, so the panel would warn
+
+    page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
+
+    assert len([text for text in _panel_texts(page) if caveat in text]) == 1
+    assert not [box for box in page.warning if caveat in box.value]
+
+
+def test_the_order_choices_are_the_apis_blocked_orders(monkeypatch, blocked_api_url):
+    orders = httpx.get(f"{blocked_api_url}/opportunities/blocked/rank-by").json()
+    page = _page(monkeypatch, blocked_api_url)
+
+    order = page.sidebar.radio(key="blocked_rank_by")
+    assert order.options == [entry["title"] for entry in orders]
+    assert all(entry["description"] in order.proto.help for entry in orders)
