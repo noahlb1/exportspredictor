@@ -56,6 +56,10 @@ _NAMED_PARTIES = {
     "EC - ": "European Union",
     "EFTA - ": "European Free Trade Association (EFTA)",
 }
+# Countries listed beside a bloc party that sit on the bloc's side of that record, though not members of the bloc.
+# "United Kingdom - SACU and Mozambique" (the SACUM-UK EPA) lists Mozambique beside SACU; by default it would join the
+# UK on the "other" side, and the record would link SACU with both but not the UK with Mozambique.
+_WITH_BLOC = {1114: {"MOZ": "Southern African Customs Union (SACU)"}}
 # The WTO records keep the UK in the EU's agreements and customs union until the end of
 # the transition period (31 Dec 2020). As a Trading Bloc member (political membership,
 # as Gravity's `eu_o/_d` codes it) the UK left on 31 Jan 2020, which the records' Remarks
@@ -253,7 +257,8 @@ def memberships(rtas: pl.DataFrame) -> pl.DataFrame:
     countries in the bloc while in the agreement, "other" for the rest, and null when the
     agreement has no bloc party. EU - OCT links each territory with the EU, not the
     territories with each other; EU - United Kingdom puts the (former member) UK on the
-    other side.
+    other side. A country in `_WITH_BLOC` sits on its record's bloc side although it is not
+    a member (Mozambique in the UK's agreement with SACU and Mozambique).
     """
     spells = _party_spells(rtas)
     direct = _country_spells(spells)
@@ -276,8 +281,15 @@ def memberships(rtas: pl.DataFrame) -> pl.DataFrame:
         .select("rta_id", "iso3", "start", "group")
         .unique(["rta_id", "iso3", "start"])
     )
+    with_bloc = pl.DataFrame(
+        [(rta_id, iso3, group) for rta_id, countries in _WITH_BLOC.items() for iso3, group in countries.items()],
+        schema={"rta_id": pl.Int64, "iso3": pl.String, "with_group": pl.String}, orient="row",
+    )
     direct = (
         direct.join(on_bloc_side, on=["rta_id", "iso3", "start"], how="left")
+        .join(with_bloc, on=["rta_id", "iso3"], how="left")
+        .with_columns(group=pl.coalesce("group", "with_group"))
+        .drop("with_group")
         .with_columns(
             side=pl.coalesce(
                 "group", pl.when(pl.col("rta_id").is_in(record_groups["rta_id"].implode())).then(pl.lit("other"))
