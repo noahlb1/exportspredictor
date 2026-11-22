@@ -58,6 +58,7 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
         "reexport_hub": "Re-export Hub",
         "sanctioned_market": "Sanctioned Market",
         "restricted_pair": "Restricted Pair",
+        "offset_pair": "Offset Pair",
     }
     assert all(caveat["text"].startswith(caveat["badge"]) for caveat in caveats.values())
     assert "caveats" not in body  # one source: /caveats
@@ -160,6 +161,8 @@ def test_by_product_rows_have_the_documented_shape(client):
         "sanctioned_market_reason",
         "restricted_pair",
         "restricted_pair_reason",
+        "offset_pair",
+        "offset_pair_reason",
         "caveat_texts",
         "potential_range_low_usd",
         "potential_range_high_usd",
@@ -466,6 +469,8 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
         "sanctioned_market_reason",
         "restricted_pair",
         "restricted_pair_reason",
+        "offset_pair",
+        "offset_pair_reason",
         "caveat_texts",
         "potential_range_low_usd",
         "potential_range_high_usd",

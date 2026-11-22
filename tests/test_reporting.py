@@ -255,6 +255,7 @@ def test_each_caveat_tier_s_reach_counts_its_opportunities_overall_and_in_the_to
         ("Re-export Hub", 0, 0, 0),
         ("Sanctioned Market", 2, 0, 2),
         ("Restricted Pair", 1, 1, 1),
+        ("Offset Pair", 0, 0, 0),  # the context holds no Offset Pair
     ]
 
 

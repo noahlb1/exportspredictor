@@ -18,6 +18,10 @@ _Avoid_: good, commodity, item
 An HS2 chapter, used only to group and summarise Products, never as a modelling unit.
 _Avoid_: industry, category
 
+**Heading**:
+A four-digit HS heading, the level between a Sector and a Product; used only to compare a Product with its neighbours, never as a modelling unit.
+_Avoid_: HS4 group, product family
+
 **Exporter**:
 The country a Flow originates from.
 _Avoid_: origin, reporter, supplier
@@ -54,8 +58,12 @@ _Avoid_: embargoed market, closed market, blocked market
 A Product–Market pair whose trade the Market prohibits outright, such as alcoholic beverages into a Market that bans alcohol imports. It is scored and ranked as normal, but shown with a caveat and can be filtered out.
 _Avoid_: banned pair, prohibited product
 
+**Offset Pair**:
+An Opportunity whose Export Gap is at least half offset in its Heading: in the same Market, the other Products of its Heading sell above their Export Potential, net of their own Export Gaps, by at least half of its Export Gap. Its Export Gap may be trade recorded under a neighbouring Product. It is scored and ranked as normal, but shown with a caveat that gives the offset and the Product carrying most of it, and can be filtered out.
+_Avoid_: false gap, duplicate gap, substitute pair
+
 **Caveat Tier**:
-A group of Product–Market pairs, keyed on the Market, the Product or the pair, that is scored and ranked as normal but shown with one caveat, its badge and a filter to hide it. Flagged Products, Re-export Hubs, Sanctioned Markets and Restricted Pairs are Caveat Tiers; Excluded Products are not, as they are left out.
+A group of Product–Market pairs, keyed on the Market, the Product or the pair, that is scored and ranked as normal but shown with one caveat, its badge and a filter to hide it. Flagged Products, Re-export Hubs, Sanctioned Markets, Restricted Pairs and Offset Pairs are Caveat Tiers; Excluded Products are not, as they are left out.
 _Avoid_: flag type, warning level
 
 **Relatedness**:

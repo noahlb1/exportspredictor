@@ -70,12 +70,14 @@ from exportspredictor import (
     ledger,
     loop,
     market_reach,
+    offsets,
     ppml,
     search,
     volatility,
 )
 from exportspredictor.artefacts import ARTEFACT_FORMAT, Artefacts, new_version
 from exportspredictor.caveats import (
+    OFFSET_PAIR,
     TIERS,
     CaveatContext,
     CaveatTier,
@@ -340,18 +342,20 @@ def build_artefacts(
     )
     if rescore is not None:
         report = rescore_earlier_versions(report, rescore, test_year_ledger, version=metadata["version"])
-    bundle = Artefacts(
-        metadata=metadata,
-        fold_models=trained.models,
-        baseline=trained.baseline,
-        baseline_features=trained.baseline_features,
-        history=_history(flows.filter((pl.col("exporter") == UK) & recent), trained.yearly),
-        products=world.products,
-        markets=world.markets,
-        excluded_products=excluded_products(world.products),
-        potential_range_bands=trained.potential_range_bands,
-        market_reach=trained.market_reach,
-        evaluation=report,
+    bundle = mark_caveats(  # the Caveat Tiers, Offset Pairs included, once the Baseline's figures are final
+        Artefacts(
+            metadata=metadata,
+            fold_models=trained.models,
+            baseline=trained.baseline,
+            baseline_features=trained.baseline_features,
+            history=_history(flows.filter((pl.col("exporter") == UK) & recent), trained.yearly),
+            products=world.products,
+            markets=world.markets,
+            excluded_products=excluded_products(world.products),
+            potential_range_bands=trained.potential_range_bands,
+            market_reach=trained.market_reach,
+            evaluation=report,
+        )
     )
     if not parts.ppml_benchmark:
         return bundle
@@ -601,18 +605,20 @@ def build_real_artefacts(
     )
     if rescore is not None:
         report = rescore_earlier_versions(report, rescore, test_year_ledger, version=metadata["version"])
-    bundle = Artefacts(
-        metadata=metadata,
-        fold_models=trained.models,
-        baseline=trained.baseline,
-        baseline_features=trained.baseline_features,
-        history=history,
-        products=baci.products(root),
-        markets=markets,
-        excluded_products=excluded_products(baci.products(root)),
-        potential_range_bands=trained.potential_range_bands,
-        market_reach=trained.market_reach,
-        evaluation=report,
+    bundle = mark_caveats(  # the Caveat Tiers, Offset Pairs included, once the Baseline's figures are final
+        Artefacts(
+            metadata=metadata,
+            fold_models=trained.models,
+            baseline=trained.baseline,
+            baseline_features=trained.baseline_features,
+            history=history,
+            products=baci.products(root),
+            markets=markets,
+            excluded_products=excluded_products(baci.products(root)),
+            potential_range_bands=trained.potential_range_bands,
+            market_reach=trained.market_reach,
+            evaluation=report,
+        )
     )
     if not parts.ppml_benchmark:
         return bundle
@@ -1516,17 +1522,48 @@ def recaveat(
 ) -> Artefacts:
     """A new version of a saved bundle whose Baseline is marked again with the declared Caveat Tiers; no retraining.
 
-    Each tier's columns are replaced in place or added (`caveats.with_caveat_columns`, for the bundle's Baseline
-    year); every other column, table and model is reused. Use it when a tier is added or its table changes, such as
-    a sanctions regime or prohibition in `restrictions`. Flagged Products take the volatility rule `volatile` and
-    record it in the metadata; without it, the rule the bundle recorded (none in a bundle saved before it).
+    Each tier's columns are replaced in place or added (`mark_caveats`, from the bundle's own context); every other
+    column, table and model is reused. Use it when a tier is added or its table changes, such as a sanctions regime
+    or prohibition in `restrictions`. Flagged Products take the volatility rule `volatile` and record it in the
+    metadata; without it, the rule the bundle recorded (none in a bundle saved before it). Offset Pairs are read
+    from the Baseline's own Export Gaps, and their reach is recorded in the metadata (`offsets.METADATA_KEY`).
     """
+    marked = mark_caveats(bundle, tiers=tiers, volatile=volatile)
+    return replace(
+        marked, metadata={**marked.metadata, "version": version or new_version(), "refreshed_from": bundle.version}
+    )
+
+
+def caveat_context(bundle: Artefacts, *, volatile: volatility.VolatileProducts | None = None) -> CaveatContext:
+    """Everything the Caveat Tiers read besides a row's key, from a bundle whose Baseline figures are final: its
+    Baseline year, the volatility rule `volatile` (default: the rule the bundle recorded, if any) and the Offset Pairs
+    of its Baseline's own Export Gaps (`offsets`)."""
     recorded = bundle.metadata.get(volatility.METADATA_KEY)
     if volatile is None and recorded is not None:
         volatile = volatility.VolatileProducts.from_dict(recorded)
-    reasons = {} if volatile is None else volatile.reasons
-    baseline = with_caveat_columns(bundle.baseline, CaveatContext(bundle.baseline_year, reasons), tiers=tiers)
-    metadata = {**bundle.metadata, "version": version or new_version(), "refreshed_from": bundle.version}
+    offset = offsets.offset_pairs(bundle.baseline, products=bundle.products, markets=bundle.markets)
+    return CaveatContext(
+        bundle.baseline_year,
+        flagged_product_reasons={} if volatile is None else volatile.reasons,
+        offset_pair_reasons=offset.reasons,
+    )
+
+
+def mark_caveats(
+    bundle: Artefacts, *, tiers: Sequence[CaveatTier] = TIERS, volatile: volatility.VolatileProducts | None = None
+) -> Artefacts:
+    """`bundle` with its Baseline marked with `tiers` from its own context (`caveat_context`), the volatility rule and
+    the Offset Pairs' reach recorded in the metadata. Every other column, table and model is reused.
+
+    Run it wherever the Baseline's figures become final: the training run, `recaveat`, and any command that rewrites
+    Export Potential on a saved Baseline (`rereach`), so an Offset Pair's caveat always describes the row's figures.
+    """
+    context = caveat_context(bundle, volatile=volatile)
+    baseline = with_caveat_columns(bundle.baseline, context, tiers=tiers)
+    metadata = {
+        **bundle.metadata,
+        offsets.METADATA_KEY: offsets.OffsetPairs(offsets.THRESHOLD, context.offset_pair_reasons).metadata(baseline),
+    }
     if volatile is not None:
         metadata[volatility.METADATA_KEY] = volatile.to_dict()
     return replace(bundle, metadata=metadata, baseline=baseline)
@@ -1636,7 +1673,8 @@ def rereach(
     Every Gap Period year is scored again from `inputs` with the bundle's fold models and feature transform, in its
     Model Form with each year's Market Reach at `beta`; the Baseline, the history's Gap Period years, the Potential
     Range and the Blocked Opportunity values follow, as a training run builds them (`_score_gap_period`). Caveat Tier
-    columns are kept as the bundle marked them. The evaluation report keeps its test-year figures (measured without
+    columns are kept as the bundle marked them, but Offset Pairs, which read the new Export Gaps, are marked again
+    (`mark_caveats`). The evaluation report keeps its test-year figures (measured without
     Market Reach, as its own `model_form` records) with the Potential Range's report replaced. The metadata records
     the Potential Range's coverage of the UK pairs' own Actual Exports before and after (`conformal.pair_coverage`).
     """
@@ -1680,7 +1718,7 @@ def rereach(
         "potential_range": range_metadata,
         "potential_share_of_actual_exports": potential_share_of_actual_exports(baseline),
     }
-    return replace(
+    reached = replace(
         bundle,
         metadata=new,
         baseline=baseline,
@@ -1692,6 +1730,8 @@ def rereach(
             **bundle.evaluation, "potential_range": {**report, "text": conformal.coverage_text(report)}
         },
     )
+    # Offset Pairs read the Export Gaps just rewritten, so they are marked again; the other tiers are kept as marked.
+    return mark_caveats(reached, tiers=[OFFSET_PAIR])
 
 
 def _rereach_latest(root: Path | None = None) -> Path:
@@ -1795,6 +1835,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         marked = recaveat(bundle, volatile=real_volatile_products(bundle))
         print(json.dumps({k: v for k, v in marked.metadata[volatility.METADATA_KEY].items() if k != "products"}),
               flush=True)
+        print(json.dumps(marked.metadata[offsets.METADATA_KEY]), flush=True)
         saved = artefacts.save(marked, artefacts_dir())
         governance.write_model_card(marked, saved)
         print(saved, flush=True)
