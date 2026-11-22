@@ -3,7 +3,8 @@
 - The Leaderboard (`leaderboard_filters`, spec #103 "Leaderboard"): Product search, Market, Sector, Market region,
   Opportunity Type, UK Trade Agreement in force, minimum Export Gap, the hide filters and Rank by, then Reset filters.
 - Blocked Opportunities (`blocked_filters`, spec #103 "Blocked Opportunities"): Product search, Sector, Market region,
-  minimum Blocked Opportunity value, the hide filters, then Reset filters.
+  minimum Blocked Opportunity value, the hide filters, the order (by the rise with agreement or by Tariff part, spec
+  #133), then Reset filters.
 
 There is one hide filter per Caveat Tier the API serves (`/caveats`, e.g. Hide Re-export Hubs), keyed and kept in the
 URL under the tier's `hide_param`. A tier the API marks `hidden_by_default` starts hidden, so a link that shows it
@@ -55,6 +56,9 @@ SHOW_ALL = "show_all"
 # The prefix of the Blocked Opportunities page's widget keys, apart from the Leaderboard's
 BLOCKED_KEY_PREFIX = "blocked_"
 _AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
+# The Blocked Opportunities page's orders (the API's `rank_by`, spec #133): the rise with agreement (the Blocked
+# Opportunity value) first, the default, then the Tariff part.
+BLOCKED_ORDERS = {"blocked": "Rise with agreement", "tariff_part": "Tariff part"}
 _YES_NO = {"yes": True, "no": False}
 _TRUE = "true"
 
@@ -114,6 +118,7 @@ def _blocked_params() -> list[Param]:
         _REGION,
         Param("min_value_usd", to_url=_number, from_url=float),  # minimum Blocked Opportunity value
         *(_flag(name) for name in _hides()),
+        Param("rank_by"),  # `BLOCKED_ORDERS`
     ]
 
 
@@ -146,6 +151,7 @@ def _blocked_defaults() -> dict[str, Any]:
         "region": None,
         "min_value_usd": None,
         **_hides(),
+        "rank_by": next(iter(BLOCKED_ORDERS)),
     }
 
 
@@ -327,7 +333,8 @@ def leaderboard_filters() -> Filters:
 
 def blocked_filters() -> Filters:
     """Draw the Blocked Opportunities page's filters in the sidebar, under its own keys, kept in the URL and for the
-    session; return those in force. There is no Market, order, Opportunity Type or Trade Agreement filter."""
+    session; return those in force, the order among them. There is no Market, Opportunity Type or Trade Agreement
+    filter."""
     defaults, url_params = _blocked_defaults(), _blocked_params()
     _start(url_params, defaults, BLOCKED_KEY_PREFIX)
     with st.sidebar:
@@ -345,6 +352,12 @@ def blocked_filters() -> Filters:
             key=f"{BLOCKED_KEY_PREFIX}min_value_usd", persist_state="session",
         )
         hides = _hide(BLOCKED_KEY_PREFIX)
+        rank_by = st.radio(
+            "Order Products by", list(BLOCKED_ORDERS), format_func=BLOCKED_ORDERS.get,
+            key=f"{BLOCKED_KEY_PREFIX}rank_by", persist_state="session",
+            help="Rise with agreement: the Blocked Opportunity value. Tariff part: the part of it the model associates "
+            "with the Applied Tariff alone, the concrete, checkable part (0 where the tariff is 0% or unknown).",
+        )
         st.button("Reset filters", key=f"{BLOCKED_KEY_PREFIX}reset_filters", on_click=reset_blocked)
 
     values = {
@@ -353,6 +366,7 @@ def blocked_filters() -> Filters:
         "region": region,
         "min_value_usd": min_value_usd,
         **hides,
+        "rank_by": rank_by,
     }
     _write_url(url_params, values, defaults, BLOCKED_KEY_PREFIX)
     params = {**values, **{name: on or None for name, on in hides.items()}}
@@ -371,6 +385,8 @@ def blocked_filters() -> Filters:
             )
         )
     chips += _hidden(hides, BLOCKED_KEY_PREFIX)
+    if rank_by != defaults["rank_by"]:
+        chips.append(_chip(f"Ordered by {BLOCKED_ORDERS[rank_by]}", defaults, "rank_by", prefix=BLOCKED_KEY_PREFIX))
     return Filters(
         {name: value for name, value in params.items() if value is not None},
         chips,
