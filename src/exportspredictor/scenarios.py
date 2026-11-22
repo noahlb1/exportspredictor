@@ -242,10 +242,16 @@ class ScenarioResult:
         """The changed pairs that are Blocked Opportunities under this Scenario (`is_blocked`): the Scenario Effect
         clears both thresholds and the Baseline year's Actual Exports, read from the yearly `history` and added as
         `baseline_actual_exports_usd`, are below the Scenario's Export Potential (room to grow, ADR 0011)."""
-        pairs = with_baseline_actual_exports(self.pairs, history, baseline_year)
-        return pairs.filter(
-            is_blocked("effect_usd", "baseline_potential_usd", "baseline_actual_exports_usd", min_share, min_usd)
+        flagged = with_blocked_opportunity_flag(
+            self.pairs,
+            history,
+            baseline_year,
+            effect="effect_usd",
+            baseline="baseline_potential_usd",
+            min_share=min_share,
+            min_usd=min_usd,
         )
+        return flagged.filter("blocked_opportunity").drop("blocked_opportunity")
 
     def summary(self, *, blocked: int, year: int) -> str:
         """One sentence, worded as an association, never as a cause or a forecast.
@@ -295,19 +301,47 @@ def is_blocked(
     return (effect_ >= min_share * potential) & (effect_ >= min_usd) & room_to_grow
 
 
+def with_blocked_opportunity_flag(
+    pairs: pl.DataFrame,
+    history: pl.DataFrame,
+    baseline_year: int,
+    *,
+    effect: str,
+    baseline: str,
+    min_share: float = DEFAULT_MIN_SHARE,
+    min_usd: float = DEFAULT_MIN_USD,
+) -> pl.DataFrame:
+    """`pairs` plus the Baseline year's UK Actual Exports (`baseline_actual_exports_usd`, from the yearly `history`,
+    0 where there is no Flow) and `blocked_opportunity`, `is_blocked` over the `effect` and `baseline` columns with
+    those Actual Exports: the one way every caller applies the rule, room to grow included (ADR 0011)."""
+    return with_baseline_actual_exports(pairs, history, baseline_year).with_columns(
+        blocked_opportunity=is_blocked(effect, baseline, "baseline_actual_exports_usd", min_share, min_usd)
+    )
+
+
+def barrier(applied_tariff_pct: pl.Expr) -> pl.Expr:
+    """`barrier_label` over a column of Baseline-year Applied Tariffs in percent (null or NaN where unknown)."""
+    pct = applied_tariff_pct.cast(pl.Float64).fill_nan(None)
+    rate = pct.round(1)
+    shown = rate.cast(pl.String).str.replace(r"\.0$", "")  # one decimal, without a trailing ".0"
+    words = (
+        pl.when(pct.is_null())
+        .then(pl.lit("unknown"))
+        .when((rate == 0) & (pct > 0))
+        .then(pl.lit("under 0.1%"))
+        .otherwise(pl.concat_str(shown, pl.lit("%")))
+    )
+    return pl.concat_str(pl.lit("No agreement, tariff "), words)
+
+
 def barrier_label(applied_tariff_pct: float | None) -> str:
     """A Blocked Opportunity's Barrier in words, from its Baseline-year Applied Tariff in percent (None where unknown):
     "No agreement, tariff 7.5%", "No agreement, tariff 0%" or "No agreement, tariff unknown".
 
     The rate is shown to one decimal, without a trailing ".0"; a rate above 0 that rounds to 0 reads "under 0.1%", so
-    a row with a Tariff part never says 0%.
+    a row with a Tariff part never says 0%. One wording: it evaluates `barrier`, the column form pages use.
     """
-    if applied_tariff_pct is None or np.isnan(applied_tariff_pct):
-        return "No agreement, tariff unknown"
-    rate = round(applied_tariff_pct, 1)
-    if rate == 0 and applied_tariff_pct > 0:
-        return "No agreement, tariff under 0.1%"
-    return f"No agreement, tariff {rate:g}%"
+    return pl.select(barrier(pl.lit(applied_tariff_pct, pl.Float64))).item()
 
 
 def run(

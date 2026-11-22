@@ -264,6 +264,28 @@ def test_the_tariff_part_sets_a_known_tariff_to_0_and_never_switches_the_trade_a
     assert (values["tariff_part_usd"] <= values["blocked_opportunity_value_usd"] + 1e-6).all()
 
 
+BARRIERS = [
+    (7.5, "No agreement, tariff 7.5%"),
+    (150.0, "No agreement, tariff 150%"),
+    (12.34, "No agreement, tariff 12.3%"),
+    (0.0, "No agreement, tariff 0%"),
+    (0.04, "No agreement, tariff under 0.1%"),
+    (None, "No agreement, tariff unknown"),
+    (float("nan"), "No agreement, tariff unknown"),
+]
+
+
+@pytest.mark.parametrize(("pct", "words"), BARRIERS)
+def test_the_barrier_is_worded_from_the_applied_tariff(pct, words):
+    assert scenarios.barrier_label(pct) == words
+
+
+def test_the_barrier_column_words_every_row_as_its_label():
+    rates = pl.DataFrame({"applied_tariff_pct": [pct for pct, _ in BARRIERS]}, schema={"applied_tariff_pct": pl.Float64})
+
+    assert rates.select(scenarios.barrier(pl.col("applied_tariff_pct"))).to_series().to_list() == [w for _, w in BARRIERS]
+
+
 def test_the_value_and_its_tariff_part_clip_to_the_same_training_range(fixture_artefacts):
     # A training range whose floor is above 0 (telephones in India priced at ln(1 + t) = 0.9, the floor 0.9): both runs
     # clip the removed tariff to it, so the value is the every-Market agreement Scenario run with that range (ADR 0006).
