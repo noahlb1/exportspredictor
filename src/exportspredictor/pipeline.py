@@ -342,20 +342,10 @@ def build_artefacts(
     )
     if rescore is not None:
         report = rescore_earlier_versions(report, rescore, test_year_ledger, version=metadata["version"])
-    bundle = mark_caveats(  # the Caveat Tiers, Offset Pairs included, once the Baseline's figures are final
-        Artefacts(
-            metadata=metadata,
-            fold_models=trained.models,
-            baseline=trained.baseline,
-            baseline_features=trained.baseline_features,
-            history=_history(flows.filter((pl.col("exporter") == UK) & recent), trained.yearly),
-            products=world.products,
-            markets=world.markets,
-            excluded_products=excluded_products(world.products),
-            potential_range_bands=trained.potential_range_bands,
-            market_reach=trained.market_reach,
-            evaluation=report,
-        )
+    bundle = _built_bundle(
+        trained, metadata, report,
+        history=_history(flows.filter((pl.col("exporter") == UK) & recent), trained.yearly),
+        products=world.products, markets=world.markets,
     )
     if not parts.ppml_benchmark:
         return bundle
@@ -605,24 +595,38 @@ def build_real_artefacts(
     )
     if rescore is not None:
         report = rescore_earlier_versions(report, rescore, test_year_ledger, version=metadata["version"])
-    bundle = mark_caveats(  # the Caveat Tiers, Offset Pairs included, once the Baseline's figures are final
+    bundle = _built_bundle(trained, metadata, report, history=history, products=baci.products(root), markets=markets)
+    if not parts.ppml_benchmark:
+        return bundle
+    return replace(bundle, ppml_benchmark=_timed_benchmark(ppml.real_sector_flows(root, years=ppml_years), bundle))
+
+
+def _built_bundle(
+    trained: "_Trained",
+    metadata: dict,
+    report: dict,
+    *,
+    history: pl.DataFrame,
+    products: pl.DataFrame,
+    markets: pl.DataFrame,
+) -> Artefacts:
+    """The bundle a training run saves, its Baseline marked with the Caveat Tiers (`mark_caveats`, Offset Pairs
+    included) once its figures are final."""
+    return mark_caveats(
         Artefacts(
             metadata=metadata,
             fold_models=trained.models,
             baseline=trained.baseline,
             baseline_features=trained.baseline_features,
             history=history,
-            products=baci.products(root),
+            products=products,
             markets=markets,
-            excluded_products=excluded_products(baci.products(root)),
+            excluded_products=excluded_products(products),
             potential_range_bands=trained.potential_range_bands,
             market_reach=trained.market_reach,
             evaluation=report,
         )
     )
-    if not parts.ppml_benchmark:
-        return bundle
-    return replace(bundle, ppml_benchmark=_timed_benchmark(ppml.real_sector_flows(root, years=ppml_years), bundle))
 
 
 def _file_key(path: Path) -> str:
@@ -1541,11 +1545,10 @@ def caveat_context(bundle: Artefacts, *, volatile: volatility.VolatileProducts |
     recorded = bundle.metadata.get(volatility.METADATA_KEY)
     if volatile is None and recorded is not None:
         volatile = volatility.VolatileProducts.from_dict(recorded)
-    offset = offsets.offset_pairs(bundle.baseline, products=bundle.products, markets=bundle.markets)
     return CaveatContext(
         bundle.baseline_year,
         flagged_product_reasons={} if volatile is None else volatile.reasons,
-        offset_pair_reasons=offset.reasons,
+        offset_pair_reasons=offsets.offset_pairs(bundle.baseline, products=bundle.products, markets=bundle.markets),
     )
 
 
@@ -1560,10 +1563,11 @@ def mark_caveats(
     """
     context = caveat_context(bundle, volatile=volatile)
     baseline = with_caveat_columns(bundle.baseline, context, tiers=tiers)
-    metadata = {
-        **bundle.metadata,
-        offsets.METADATA_KEY: offsets.OffsetPairs(offsets.THRESHOLD, context.offset_pair_reasons).metadata(baseline),
-    }
+    # The reach is recorded whichever `tiers` are marked, so it is read from the Offset Pair tier's own marks.
+    offset_marked = with_caveat_columns(
+        bundle.baseline.select("hs6", "iso3", "export_gap_usd"), context, tiers=[OFFSET_PAIR]
+    )
+    metadata = {**bundle.metadata, offsets.METADATA_KEY: offsets.reach(offset_marked, OFFSET_PAIR.column)}
     if volatile is not None:
         metadata[volatility.METADATA_KEY] = volatile.to_dict()
     return replace(bundle, metadata=metadata, baseline=baseline)

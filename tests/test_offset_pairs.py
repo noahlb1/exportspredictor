@@ -7,18 +7,24 @@ cars (870323) are offset by more than half in Japan, by exactly half in Hong Kon
 
 import io
 import re
-from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 import polars as pl
 import pytest
 import streamlit
-from conftest import CARS, SMALL_CARS, run_page, with_gap_period_figures
+from conftest import (
+    BIG_CARS,
+    CARS,
+    SMALL_CARS,
+    offset_recoded,
+    run_page,
+    with_gap_period_figures,
+)
 from fastapi.testclient import TestClient
 
 from api.main import create_app
-from exportspredictor import pipeline
+from exportspredictor import offsets, pipeline
 from exportspredictor.caveats import OFFSET_PAIR
 from exportspredictor.rankings import rank_opportunities
 
@@ -77,7 +83,7 @@ def test_recaveat_adds_the_tier_to_a_bundle_saved_without_it_and_changes_no_figu
     marked = offset_artefacts
 
     assert set(OFFSET_PAIR.columns) <= set(marked.baseline.columns)
-    assert "offset_pairs" in marked.metadata and "offset_pairs" not in offset_world.metadata
+    assert offsets.METADATA_KEY in marked.metadata and offsets.METADATA_KEY not in offset_world.metadata
     for column in ("export_potential_usd", "baseline_export_potential_usd", "actual_exports_usd", "export_gap_usd"):
         assert marked.baseline[column].equals(offset_world.baseline[column]), column
     order = ["hs6", "iso3", "export_gap_usd"]
@@ -96,7 +102,7 @@ def test_changing_a_pairs_actual_exports_can_change_its_headings_marks_but_no_ex
 
 
 def test_the_metadata_records_the_threshold_and_the_reach_of_the_marked_baseline(offset_artefacts):
-    recorded = offset_artefacts.metadata["offset_pairs"]
+    recorded = offset_artefacts.metadata[offsets.METADATA_KEY]
     positive = offset_artefacts.baseline.filter(pl.col("export_gap_usd") > 0)
 
     assert recorded["threshold"] == 0.5
@@ -111,26 +117,34 @@ def test_the_training_run_marks_the_baseline_and_records_the_reach(fixture_artef
     baseline = fixture_artefacts.baseline
 
     assert not baseline["offset_pair"].any() and baseline["offset_pair_reason"].is_null().all()
-    recorded = fixture_artefacts.metadata["offset_pairs"]
+    recorded = fixture_artefacts.metadata[offsets.METADATA_KEY]
     assert (recorded["threshold"], recorded["offset_pairs"], recorded["offset_export_gap_usd"]) == (0.5, 0, 0.0)
     assert recorded["in_top"] == {"100": 0, "1000": 0, "10000": 0}
 
 
-def test_rereach_marks_offset_pairs_again_from_its_new_figures(fixture_world, fixture_default_artefacts):
-    built = fixture_default_artefacts
-    stale = replace(
-        built,
-        metadata={**built.metadata, "version": "fixture-stale"},
-        baseline=built.baseline.with_columns(offset_pair=pl.lit(True), offset_pair_reason=pl.lit("stale")),
+def test_rereach_marks_offset_pairs_again_from_its_new_figures(fixture_world, offset_artefacts):
+    # Scored again by the fold models, cars to Japan sell above Export Potential (no Opportunity), while cars to Hong
+    # Kong stay offset and big cars to Canada, now a small Opportunity, become offset by the rest of their Heading.
+    scoring = pipeline.fixture_scoring_inputs(
+        fixture_world, baseline_year=offset_artefacts.baseline_year,
+        exporters=offset_artefacts.metadata["exporter_scope"],
     )
-    inputs = pipeline.fixture_scoring_inputs(
-        fixture_world, baseline_year=built.baseline_year, exporters=built.metadata["exporter_scope"]
+    inputs = pipeline.ScoringInputs(
+        grids={year: offset_recoded(grid) for year, grid in scoring.grids.items()},
+        calibration=offset_recoded(scoring.calibration),
+        year_flows=lambda year: offset_recoded(scoring.year_flows(year)),
     )
 
-    reached = pipeline.rereach(stale, inputs, version="fixture-rereach")
+    reached = pipeline.rereach(offset_artefacts, inputs, version="fixture-rereach")
 
-    assert reached.baseline.select(OFFSET_PAIR.columns).equals(built.baseline.select(OFFSET_PAIR.columns))
-    assert reached.metadata["offset_pairs"] == built.metadata["offset_pairs"]
+    assert reached.baseline.filter(hs6=CARS, iso3="JPN")["export_gap_usd"].item() < 0
+    assert _marked(offset_artefacts) == {(CARS, "JPN"), (CARS, "HKG")}
+    assert _marked(reached) == {(CARS, "HKG"), (BIG_CARS, "CAN")}
+    assert reached.baseline.filter(~pl.col("offset_pair"))["offset_pair_reason"].is_null().all()
+    recorded = reached.metadata[offsets.METADATA_KEY]
+    assert (recorded["offset_pairs"], recorded["in_top"]["100"]) == (2, 2)
+    # The other tiers are kept as the bundle marked them: Hong Kong is still a Re-export Hub.
+    assert reached.baseline.filter(hs6=CARS, iso3="HKG")["reexport_hub"].item()
 
 
 # --- The API ---------------------------------------------------------------------------------------------------------
@@ -243,6 +257,7 @@ def test_the_scenarios_page_shows_the_badge_on_an_offset_pair(monkeypatch, offse
     pair_tables = [table.value for table in page.dataframe if "Tariff, Scenario %" in table.value.columns]
     caveats = dict(zip(pair_tables[0]["Product"], pair_tables[0]["Caveats"], strict=True))
     assert caveats["Motor cars, spark-ignition engine of 1,500-3,000 cc"] == "Re-export Hub, Offset Pair"
+
 
 def test_no_api_or_app_code_names_the_tier():
     root = Path(__file__).resolve().parents[1]
