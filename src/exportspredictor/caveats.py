@@ -83,6 +83,9 @@ class CaveatTier:
     # Optional: each flagged row's reason, a string expression; the Baseline and API rows then carry `reason_column`
     reason: Callable[[CaveatContext], pl.Expr] | None = None
     row_text: str | None = None  # a row's caveat text, with "{reason}" for its reason; `text` when None
+    # Whether the app's hide filter starts on: for pairs the UK cannot or should not pursue as ranked. The API's
+    # query parameter still defaults to off, so a read shows every pair unless it asks otherwise.
+    hidden_by_default: bool = False
 
     @property
     def reason_column(self) -> str | None:
@@ -160,6 +163,7 @@ def sanctioned_market_tier(regimes: tuple[SanctionsRegime, ...] = SANCTIONS_REGI
             "Sanctioned Market: this Market is under broad UK trade sanctions ({reason}). It is scored and ranked as "
             "normal, but much UK trade with it may be prohibited: check the sanctions guidance first."
         ),
+        hidden_by_default=True,
     )
 
 
@@ -183,6 +187,7 @@ def restricted_pair_tier(prohibitions: tuple[Prohibition, ...] = PROHIBITIONS) -
             "Restricted Pair: {reason}. It is scored and ranked as normal, but the UK cannot sell it there while the "
             "prohibition stands."
         ),
+        hidden_by_default=True,
     )
 
 
@@ -221,6 +226,7 @@ OFFSET_PAIR = CaveatTier(
         return_dtype=pl.String,
     ),
     row_text="Offset Pair: {reason}. " + _NEIGHBOURING_PRODUCT,
+    hidden_by_default=True,
 )
 
 SANCTIONED_MARKET = sanctioned_market_tier()

@@ -14,7 +14,7 @@ chosen, or when the chosen one is not shown, the top row is. Filters are `app.fi
 import streamlit as st
 
 from app import client, panel
-from app.filters import blocked_filters
+from app.filters import blocked_filters, show_chips
 from app.format import format_usd
 from app.frame import page
 from app.tables import (
@@ -134,9 +134,9 @@ with page(
         summary, rows, year = body["summary"], body["opportunities"], body["baseline_year"]
         thresholds = body["thresholds"]
         count, word = summary["blocked_opportunities"], illustrative()
-        in_force = "; ".join(filters.named) if filters.named else "No filters"
+        show_chips(filters, "blocked")
         st.markdown(
-            f"**{in_force}.** {count:,} Blocked Opportunit{'y' if count == 1 else 'ies'}. Total Blocked Opportunity "
+            f"{'' if filters.chips else '**No filters.** '}{count:,} Blocked Opportunit{'y' if count == 1 else 'ies'}. Total Blocked Opportunity "
             f"value, {word}: {format_usd(summary['blocked_opportunity_value_usd'])}."
         )
         st.caption(
@@ -145,7 +145,7 @@ with page(
             "removing the tariff where none is in force. A pair is a Blocked Opportunity when that value is at least "
             f"{thresholds['min_effect_share']:.0%} of its {year} Export Potential and at least "
             f"{format_usd(thresholds['min_effect_usd'])}. Try other thresholds on the Scenarios page. "
-            f"{labels()['totals_note']['text']}"
+            f"{labels()['totals_note']['text']} {filters.hidden_note}"
         )
         if not rows:
             st.info("No Blocked Opportunities match these filters.")

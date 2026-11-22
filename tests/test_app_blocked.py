@@ -209,11 +209,22 @@ def test_sidebar_filters_narrow_the_markets_and_reset_restores_them(monkeypatch,
     page.sidebar.checkbox(key="blocked_hide_hubs").check().run()
     assert list(_markets(page)["Market"]) == ["India"]
     assert page.query_params["hide_hubs"] == "true"
-    assert any("Re-export Hubs hidden" in element.value for element in page.markdown)
+    assert any("Re-export Hubs hidden" == button.label for button in page.main.button)
 
     page.sidebar.button(key="blocked_reset_filters").click().run()
     assert list(_markets(page)["Market"]) == ["India", "Hong Kong"]
     assert "hide_hubs" not in page.query_params
+
+
+def test_a_filter_chip_removes_only_its_filter(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url)
+    page.sidebar.checkbox(key="blocked_hide_hubs").check().run()
+
+    next(button for button in page.main.button if button.label == "Re-export Hubs hidden").click().run()
+
+    assert list(_markets(page)["Market"]) == ["India", "Hong Kong"]
+    assert page.session_state["blocked_hide_hubs"] is False and "hide_hubs" not in page.query_params
+    assert any("No filters" in element.value for element in page.markdown)
 
 
 def test_the_page_has_no_market_order_type_or_agreement_filter(monkeypatch, blocked_api_url):

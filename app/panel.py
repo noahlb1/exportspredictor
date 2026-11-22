@@ -24,7 +24,7 @@ import streamlit as st
 
 from app import client
 from app.format import format_usd, tariff_text
-from app.tables import MILLION, millions, millions_unit, money_column
+from app.tables import MILLION, millions, millions_unit, money_column, scroll_hint
 from app.ui import fetch, labels, show_caveats, term
 
 TOP_FACTORS = 8
@@ -191,7 +191,8 @@ def _factor_table(rows: pd.DataFrame) -> pd.DataFrame:
 
 
 def factors(body: dict) -> None:
-    """The top factors as a bar chart and a table, every factor in an expander, then how to read them."""
+    """The top factors (the largest effects) as a bar chart and a table, every factor in an expander, each ordered
+    from the highest multiplier to the lowest, then how to read them."""
     st.markdown("**What raised or lowered its Export Potential**")
     st.markdown(
         "Each factor is something the model associates with higher or lower UK exports of this Product to this "
@@ -202,7 +203,9 @@ def factors(body: dict) -> None:
         f"{row['direction']} ×{row['multiplier']:,.2f}" if row["direction"] != "no effect" else "no effect"
         for row in every.to_dict("records")
     ]
-    top = every.head(TOP_FACTORS)
+    # The API orders factors by size of effect: keep the largest, then show each list highest multiplier first.
+    top = every.head(TOP_FACTORS).sort_values("multiplier", ascending=False, kind="stable")
+    every = every.sort_values("multiplier", ascending=False, kind="stable")
     shown = top[top["direction"] != "no effect"].assign(times=lambda t: [f"×{m:,.2f}" for m in t["multiplier"]])
     st.vega_lite_chart(
         {
@@ -246,8 +249,9 @@ def factors(body: dict) -> None:
         width="stretch",
     )
     st.dataframe(_factor_table(top), hide_index=True, column_config=FACTOR_WIDTHS)
-    with st.expander("All factors"):
+    with st.expander(f"All {len(every)} factors"):
         st.dataframe(_factor_table(every), hide_index=True, column_config=FACTOR_WIDTHS)
+        scroll_hint(len(every))
     st.caption(
         "×1.50 means the model associates this factor with 1.5 times the Export Potential it expects on average "
         "(SHAP values); ×0.70 means 30% lower. The factors multiply together into the Export Potential. "

@@ -13,7 +13,7 @@ table). Until a pair is chosen, or when the chosen pair is not among the rows sh
 import streamlit as st
 
 from app import client, panel
-from app.filters import leaderboard_filters, show_all
+from app.filters import leaderboard_filters, show_all, show_chips
 from app.format import format_usd
 from app.frame import page
 from app.panel import MARKET_REACH_HELP
@@ -98,6 +98,7 @@ def _table_and_panel(body: dict, rows: list[dict]) -> None:
         )
     # A new key for each pair makes the panel a new element, so it starts from its top on a new selection.
     with panel_side, st.container(border=True, height=780, key=f"leaderboard_panel_{ids[at][0]}_{ids[at][1]}"):
+        st.caption("↕ Scroll this panel for the facts, the factors and the year-by-year history.")
         panel.show(rows[at])
 
 
@@ -124,19 +125,22 @@ with page(
     else:
         summary, read = body["summary"], body["opportunities"]
         pairs = summary["pairs"]
-        line = st.empty()  # the active-filters line, written once Show all is known
+        show_chips(filters, "leaderboard")
+        line = st.empty()  # the summary line, written once Show all is known
         rows = read if show_all(pairs) else read[:ROWS_SHOWN]
-        in_force = "; ".join(filters.named) if filters.named else "No filters"
         if pairs > read_limit():
             shown = f"Top {len(rows):,} of {pairs:,} pairs: narrow them down with the filters to show them all."
         else:
             shown = f"{len(rows):,} pair{'' if len(rows) == 1 else 's'} shown of {pairs:,}."
         line.markdown(
-            f"**{in_force}.** {shown} "
+            f"{'' if filters.chips else '**No filters.** '}{shown} "
             f"Total positive Export Gap, {body['gap_period_label']}: {format_usd(summary['positive_export_gap_usd'])}."
         )
         order = rank_orders()[body["rank_by"]]
-        st.caption(f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']}")
+        st.caption(
+            f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']} "
+            f"{filters.hidden_note}"
+        )
         if body.get("market_reach"):  # a Market filter: the Market's reach beside its Products' Export Gaps (ADR 0010)
             st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
         st.caption(labels()["totals_note"]["text"])  # beside the summed Export Gap (spec #113)
