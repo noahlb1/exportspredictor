@@ -203,7 +203,8 @@ def test_the_notebook_shows_each_main_result_from_the_reporting_module():
 
     for result in (
         "provenance", "ranking_by_version", "experiments", "experiments_chart", "confirmation", "lift_by_tenth",
-        "event_backtests", "round_count", "ppml_benchmark", "gain_ladder",
+        "event_backtests", "round_count", "ppml_benchmark", "gain_ladder", "blocked_opportunity_split",
+        "agreement_part_variation", "agreement_part_variation_chart",
     ):
         assert f"reporting.{result}(bundle)" in source, result
 

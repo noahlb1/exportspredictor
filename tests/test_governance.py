@@ -546,3 +546,24 @@ def test_the_scenario_note_names_the_served_model_form_with_its_market_reach(car
 
     section = _section(governance.render_model_card(card), "## Illustrative Scenario Effects")
     assert "On the served Model Form (Blend with Market Reach)," in section
+
+
+def test_model_card_states_the_blocked_opportunities_and_the_split_of_their_value(blocked_artefacts):
+    # The Blocked world: 3 Blocked Opportunities in India and Hong Kong, $30.7m, of which whisky in India's Tariff
+    # part is $7.4m (24%).
+    card = governance.model_card(blocked_artefacts)
+    text = governance.render_model_card(card)
+
+    assert card["blocked_opportunities"]["blocked_opportunities"] == 3
+    assert card["blocked_opportunities"]["markets"] == 2
+    section = text.split("## Blocked Opportunities\n", 1)[1].split("\n## ", 1)[0]
+    for words in ("3 Blocked Opportunities in 2 Markets", "$30.7m", "Tariff part", "$7.4m (24%)", "room to grow",
+                  "Illustrative", "none of them"):
+        assert words in section, words
+
+
+def test_the_model_cards_blocked_opportunity_rule_includes_room_to_grow(card):
+    text = governance.render_model_card(card)
+
+    assert "A Blocked Opportunity gains at least 20% and $1M." not in text
+    assert "room to grow" in text.split("## Decisions behind the model", 1)[1]

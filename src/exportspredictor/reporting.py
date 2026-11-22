@@ -20,7 +20,7 @@ import matplotlib
 import polars as pl
 from matplotlib.figure import Figure
 
-from exportspredictor import model_choice, offsets, ppml
+from exportspredictor import model_choice, offsets, ppml, rankings
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.currency import format_usd
@@ -76,7 +76,7 @@ _PROVENANCE = re.compile(re.escape(PROVENANCE_PREFIX) + r" (\S+) \(source: ([^;)
 def provenance(bundle: Artefacts) -> str:
     """Which artefact version the outputs come from, and whether it is real data or the fixture."""
     metadata = bundle.metadata
-    derived = metadata.get("ppml_benchmark_from") or metadata.get("copied_from")
+    derived = metadata.get("blocked_values_from") or metadata.get("ppml_benchmark_from") or metadata.get("copied_from")
     return (
         f"{PROVENANCE_PREFIX} {bundle.version} (source: {metadata.get('source')}; "
         f"Model Form: {bundle.model_form.text.rstrip('.')}"
@@ -377,6 +377,70 @@ def ppml_benchmark(bundle: Artefacts) -> pl.DataFrame | NotRun:
         "coefficient", "std_error", "rows", "dropped_rows", "clusters", "iterations", "converged", "seconds"
     )})
     return ppml.comparison_table(fit, saved["model"])
+
+
+def blocked_opportunity_split(bundle: Artefacts) -> pl.DataFrame:
+    """The Blocked Opportunity value split into its Tariff part and Agreement part, by Barrier kind and in all
+    (`rankings.blocked_opportunity_split`): counts, Markets, dollar sums, the Tariff part's share and how many
+    Agreement parts come out negative (it is the remainder)."""
+    return rankings.blocked_opportunity_split(bundle)
+
+
+VARIATION_MARKETS = 10  # the top Markets (by Blocked Opportunity total) the variation check reads
+VARIATION_TOP = 10  # the top Products by value and by share whose overlap the variation check counts
+
+
+def agreement_part_variation(
+    bundle: Artefacts, *, markets: int = VARIATION_MARKETS, top: int = VARIATION_TOP
+) -> pl.DataFrame:
+    """How Product-specific the Agreement part is: within each of the top `markets` Markets (largest Blocked
+    Opportunity total first), the spread between its Blocked Opportunities of the Agreement part as a share of
+    Baseline-year Export Potential, and how their order changes when sorted by that share instead of by value.
+
+    The Trade Agreement is one flag per Market, so an Agreement part that were the same share for every Product would
+    say the model's agreement association is a Market-level figure. Columns: iso3, market, blocked_opportunities,
+    share_min, share_p10, share_median, share_p90, share_max, order_correlation (Spearman between the order by value
+    and the order by share; null with one Product), top_shared (how many of the `top` Products by value are also
+    among the `top` by share), first_by_value and first_by_share (Product descriptions).
+    """
+    rows = rankings.blocked_opportunities(bundle).rows.with_columns(
+        share=pl.col("agreement_part_usd") / pl.col("baseline_export_potential_usd")
+    )
+    share, value = pl.col("share"), pl.col("blocked_opportunity_value_usd")
+    by_market = rows.group_by("iso3", "market").agg(
+        pl.len().alias("blocked_opportunities"),
+        value.sum().alias("value_usd"),
+        share.min().alias("share_min"),
+        share.quantile(0.1, "linear").alias("share_p10"),
+        share.median().alias("share_median"),
+        share.quantile(0.9, "linear").alias("share_p90"),
+        share.max().alias("share_max"),
+        pl.when(pl.len() > 1).then(pl.corr(value, share, method="spearman")).alias("order_correlation"),
+        pl.col("hs6").sort_by(value, descending=True).head(top).is_in(
+            pl.col("hs6").sort_by(share, descending=True).head(top).implode()
+        ).sum().alias("top_shared"),
+        pl.col("description").sort_by(value, descending=True).first().alias("first_by_value"),
+        pl.col("description").sort_by(share, descending=True).first().alias("first_by_share"),
+    )
+    return (
+        by_market.sort(["value_usd", "market"], descending=[True, False])
+        .head(markets)
+        .drop("value_usd")
+    )
+
+
+def agreement_part_variation_chart(bundle: Artefacts, *, markets: int = VARIATION_MARKETS) -> Chart:
+    """`agreement_part_variation` as bars: each top Market's median Agreement part share of Baseline-year Export
+    Potential, with a line from its 10th to its 90th percentile Product."""
+    data = agreement_part_variation(bundle, markets=markets)
+    bars = [
+        Bar(f"{row['market']} ({row['blocked_opportunities']:,} Products)", 0.0, row["share_median"], ACCENT,
+            f"{row['share_median']:.0%}", low=row["share_p10"], high=row["share_p90"])
+        for row in data.iter_rows(named=True)
+    ]
+    title = ("Agreement part as a share of Baseline-year Export Potential, between the Blocked Opportunities "
+             "of each top Market (bar: median; line: 10th to 90th percentile)")
+    return Chart(title, data, bar_svg(title, bars, axis="Agreement part / Baseline-year Export Potential (0.2 = 20%)"))
 
 
 def gain_ladder(bundle: Artefacts) -> Chart | NotRun:

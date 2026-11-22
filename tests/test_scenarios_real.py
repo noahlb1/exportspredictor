@@ -54,3 +54,27 @@ def test_no_pair_has_a_negative_blocked_opportunity_value_and_the_summary_totals
     assert 0 < summary["blocked_opportunities"] < values.len()
     # The total is over the Blocked Opportunities only, well under the sum over every pair.
     assert 0 < summary["blocked_opportunity_value_usd"] < values.sum()
+
+
+# The artefact the write-up reports (spec #133, ticket #137): rebuilt from 20261122T013004Z's fold models with the
+# Tariff part. A newer version moves these figures, so they are pinned to this one.
+REPORTED_VERSION = "20261122T133316Z"
+
+
+def test_the_reported_artefact_has_its_blocked_opportunity_figures_with_room_to_grow(client):
+    if client.app.state.artefacts.version != REPORTED_VERSION:
+        pytest.skip(f"The served artefacts are not the reported version {REPORTED_VERSION}")
+    body = client.get("/opportunities/blocked", params={"limit": 6000}).json()
+
+    assert body["summary"]["blocked_opportunities"] == 2_169
+    assert body["summary"]["blocked_opportunity_value_usd"] == pytest.approx(18.45e9, rel=0.001)
+    assert len(body["markets"]) == 18
+    rows = body["opportunities"]
+    # Room to grow: every listed pair's Baseline-year Actual Exports are below Export Potential with an agreement.
+    assert all(row["baseline_actual_exports_usd"] < row["potential_with_agreement_usd"] for row in rows)
+    tariff_part = sum(row["tariff_part_usd"] for row in rows)
+    assert tariff_part == pytest.approx(5.8e9, rel=0.01)
+    for row in rows:
+        assert row["tariff_part_usd"] + row["agreement_part_usd"] == pytest.approx(row["blocked_opportunity_value_usd"])
+        if row["barrier"] in ("No agreement, tariff 0%", "No agreement, tariff unknown"):
+            assert row["tariff_part_usd"] == 0

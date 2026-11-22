@@ -17,9 +17,10 @@ from pathlib import Path
 
 import polars as pl
 
-from exportspredictor import comparison, evaluation
+from exportspredictor import comparison, evaluation, rankings
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
+from exportspredictor.currency import format_usd
 from exportspredictor.evaluation import (
     LIMITATIONS,
     offset_pair_limitations,
@@ -116,7 +117,8 @@ DECISIONS = [
     ("Bloc Scenarios change only member Markets' rows",
      ("EU re-join sets the Trade Agreement, Customs Union and EU flags on EU Markets' rows; CPTPP sets the Trade "
      "Agreement and CPTPP flags on members' rows; each added agreement zeroes the tariff. A Blocked Opportunity "
-     "gains at least 20% and $1M.")),
+     "gains at least 20% and $1M and has room to grow: its Baseline-year Actual Exports are below its Export "
+     "Potential with a Trade Agreement (ADR 0011).")),
     ("Headline metric: rank correlation within each Product",
      ("Advisors read the model as a ranking of Markets for one Product, so the headline is the within-Product "
      "Spearman correlation on the UK's full 2023 grid, out-of-fold, against a naive market-share baseline.")),
@@ -191,6 +193,7 @@ def model_card(artefacts: Artefacts) -> dict:
         "model_form": model_form_summary(metadata),
         "round_count": round_count(metadata),
         "illustrative": scenario_note(artefacts),
+        "blocked_opportunities": blocked_opportunity_summary(artefacts),
         "intended_use": INTENDED_USE,
         "out_of_scope": OUT_OF_SCOPE,
         "training_scope": _training_scope(metadata),
@@ -218,6 +221,27 @@ def model_card(artefacts: Artefacts) -> dict:
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
         "decisions": [{"title": t, "text": x} for t, x in [_sampling_decision(metadata), *DECISIONS]],
     }
+
+
+def blocked_opportunity_summary(artefacts: Artefacts) -> dict:
+    """The Blocked Opportunities at the default thresholds and the split of their value (ADR 0011), from the "All"
+    row of `rankings.blocked_opportunity_split`, with the sentence the card shows."""
+    row = rankings.blocked_opportunity_split(artefacts).filter(pl.col("barrier") == rankings.ALL_BARRIERS).row(0, named=True)
+    count, negative = row["blocked_opportunities"], row["negative_agreement_parts"]
+    share = row["tariff_part_share"]
+    text = (
+        f"At the default thresholds (no Trade Agreement in force, a Blocked Opportunity value of at least 20% of "
+        f"Baseline Export Potential and at least $1M, and room to grow: Baseline-year Actual Exports below Export "
+        f"Potential with a Trade Agreement), the {artefacts.baseline_year} Baseline holds {count:,} Blocked "
+        f"Opportunities in {row['markets']:,} Markets, with a total Blocked Opportunity value of "
+        f"{format_usd(row['value_usd'])} (Illustrative). The Tariff part, the Scenario Effect of setting a known "
+        f"Applied Tariff to 0 with no agreement added, is {format_usd(row['tariff_part_usd'])}"
+        + (f" ({share:.0%})" if share is not None else "")
+        + f"; the Agreement part, the remainder, is {format_usd(row['agreement_part_usd'])}. It comes out negative for "
+        + (f"{negative:,} of them ({format_usd(row['negative_agreement_part_usd'])} in all)" if negative else "none of them")
+        + ". Both parts are associations the model has learned, not a causal decomposition."
+    )
+    return {**row, "text": text}
 
 
 def _model_summary(metadata: dict) -> str:
@@ -554,6 +578,7 @@ def render_model_card(card: dict) -> str:
     lines += ["## Model Form", "", card["model_form"]["text"], "", f"**Model:** {card['model']}", "",
               card["round_count"]["text"], ""]
     lines += ["## Illustrative Scenario Effects", "", *_illustrative_lines(card["illustrative"]), ""]
+    lines += ["## Blocked Opportunities", "", card["blocked_opportunities"]["text"], ""]
     if card.get("market_reach_effect"):
         lines += ["## What Market Reach changes", "", card["market_reach_effect"]["text"], ""]
     lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
