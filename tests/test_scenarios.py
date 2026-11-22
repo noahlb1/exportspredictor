@@ -264,6 +264,50 @@ def test_the_tariff_part_sets_a_known_tariff_to_0_and_never_switches_the_trade_a
     assert (values["tariff_part_usd"] <= values["blocked_opportunity_value_usd"] + 1e-6).all()
 
 
+BARRIERS = [
+    (7.5, "No agreement, tariff 7.5%"),
+    (150.0, "No agreement, tariff 150%"),
+    (12.34, "No agreement, tariff 12.3%"),
+    (0.0, "No agreement, tariff 0%"),
+    (0.04, "No agreement, tariff under 0.1%"),
+    (None, "No agreement, tariff unknown"),
+    (float("nan"), "No agreement, tariff unknown"),
+]
+
+
+@pytest.mark.parametrize(("pct", "words"), BARRIERS)
+def test_the_barrier_is_worded_from_the_applied_tariff(pct, words):
+    assert scenarios.barrier_label(pct) == words
+
+
+def test_the_barrier_column_words_every_row_as_its_label():
+    rates = pl.DataFrame({"applied_tariff_pct": [pct for pct, _ in BARRIERS]}, schema={"applied_tariff_pct": pl.Float64})
+
+    assert rates.select(scenarios.barrier(pl.col("applied_tariff_pct"))).to_series().to_list() == [w for _, w in BARRIERS]
+
+
+def test_the_value_and_its_tariff_part_clip_to_the_same_training_range(fixture_artefacts):
+    # A training range whose floor is above 0 (telephones in India priced at ln(1 + t) = 0.9, the floor 0.9): both runs
+    # clip the removed tariff to it, so the value is the every-Market agreement Scenario run with that range (ADR 0006).
+    models, form = fixture_artefacts.fold_models, fixture_artefacts.model_form
+    phones = (pl.col("hs6") == "851712") & (pl.col("iso3") == "IND")
+    features = fixture_artefacts.baseline_features.with_columns(
+        pl.when(phones).then(0.9).otherwise(pl.col("log_applied_tariff")).cast(pl.Float32).alias("log_applied_tariff")
+    )
+    baseline = features.select("hs6", "iso3", baseline_export_potential_usd=export_potential(features, models, form=form))
+    floor_range = (0.9, scenarios.tariff_range(fixture_artefacts.metadata)[1])
+    every_market = scenarios.Scenario(add_agreements=tuple(features["iso3"].unique().sort()))
+    expected = scenarios.run(features, baseline, models, every_market, floor_range, form=form).pairs
+
+    values = scenarios.blocked_opportunity_values(features, baseline, models, tariff_range=floor_range, form=form)
+    compared = values.join(expected, on=["hs6", "iso3"]).filter(pl.col("iso3") == "IND").sort("hs6")
+
+    assert "851712" in compared["hs6"].to_list()
+    assert compared["blocked_opportunity_value_usd"].to_list() == pytest.approx(compared["effect_usd"].to_list(), rel=1e-6)
+    # At the floor, India's telephone tariff cannot fall, so its Tariff part is 0.
+    assert values.filter(phones)["tariff_part_usd"].item() == 0
+
+
 def test_the_tariff_part_is_0_where_the_tariff_is_0_unknown_or_an_agreement_is_in_force(fixture_artefacts):
     unknown = ("220830", "851712")
     features = _unknown_tariffs(fixture_artefacts.baseline_features, unknown)

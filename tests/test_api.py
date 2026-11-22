@@ -1363,6 +1363,68 @@ def test_the_blocked_opportunities_read_carries_the_default_thresholds(blocked_c
     assert thresholds == {"min_effect_share": 0.2, "min_effect_usd": 1_000_000.0}
 
 
+def test_blocked_opportunity_rows_have_the_documented_shape(blocked_client):
+    # Spec #133: the rise in dollars and as a share, its Tariff part and Agreement part, the Barrier and the "above
+    # Export Potential" mark; the old uplift field is gone, since room to grow keeps a dollar level always meaningful.
+    rows = blocked_client.get(BLOCKED_READ).json()["opportunities"]
+
+    assert rows
+    assert set(rows[0]) == {
+        "hs6",
+        "description",
+        "sector",
+        "sector_name",
+        "iso3",
+        "market",
+        "region",
+        "export_potential_usd",
+        "actual_exports_usd",
+        "export_gap_usd",
+        "relative_export_gap",
+        "opportunity_type",
+        "trade_agreement",
+        "blocked_opportunity_value_usd",
+        "blocked_opportunity",
+        "flagged_product",
+        "flagged_product_reason",
+        "reexport_hub",
+        "sanctioned_market",
+        "sanctioned_market_reason",
+        "restricted_pair",
+        "restricted_pair_reason",
+        "offset_pair",
+        "offset_pair_reason",
+        "caveat_texts",
+        "potential_range_low_usd",
+        "potential_range_high_usd",
+        "uncertain_opportunity",
+        "applied_tariff_pct",
+        "baseline_export_potential_usd",
+        "baseline_actual_exports_usd",
+        "potential_with_agreement_usd",
+        "rise_share",
+        "tariff_part_usd",
+        "agreement_part_usd",
+        "barrier",
+        "above_export_potential",
+    }
+    for row in rows:
+        assert isinstance(row["potential_with_agreement_usd"], float)
+        assert isinstance(row["rise_share"], float)
+        assert isinstance(row["tariff_part_usd"], float) and isinstance(row["agreement_part_usd"], float)
+        assert isinstance(row["barrier"], str) and row["barrier"].startswith("No agreement, tariff ")
+        assert isinstance(row["above_export_potential"], bool)
+
+
+def test_the_blocked_opportunities_read_offers_the_order_by_tariff_part(blocked_client):
+    body = blocked_client.get(BLOCKED_READ, params={"rank_by": "tariff_part"}).json()
+
+    assert body["rank_by"] == "tariff_part" and body["order"]["name"] == "tariff_part"
+    parts = [row["tariff_part_usd"] for row in body["opportunities"]]
+    assert parts == sorted(parts, reverse=True)
+    assert blocked_client.get(BLOCKED_READ, params={"rank_by": "gap"}).status_code == 422
+
+
 def test_excluded_product_reasons_are_counted_most_products_first(fixture_artefacts, tmp_path):
     fuels, bullion = "Mineral fuels: pipeline geography", "Bullion: market geography"
     excluded = pl.DataFrame(
