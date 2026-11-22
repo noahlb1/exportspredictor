@@ -16,7 +16,7 @@ Pre-registered before any result was read (the commit that adds this script and
   largest importing Markets (never selected on), the old measure for continuity, and example Markets.
 
 Reads the loop's confirmation folds (2022 held-out scores), the 2021 UK grid and the 2022 BACI Flows (for
-the large-Market measure). Writes `<data>/derived/market_reach_2022/result.json` and `reach_2022.parquet`.
+the large-Market measure). Writes `<data>/derived/market_reach_2022/<FORM>/result.json` and `reach_2022.parquet`.
 
     scripts/wt.ps1 python scripts/research/market_reach_2022/run.py
 """
@@ -46,7 +46,8 @@ FIT_FOLDS, CHECK_FOLDS = (0, 1, 2), (3, 4)
 DOLLAR_FLOOR = 1e7
 EXAMPLES = ["USA", "DEU", "FRA", "CHN", "NLD", "IRL", "JPN", "IND", "KOR", "MEX", "BRA", "VNM", "COL", "BGR",
             "RUS", "IRN", "SAU", "MLT", "CYP", "FLK"]
-OUT = data_dir() / "derived" / "market_reach_2022"
+# #124 wrote the "share" form to the folder itself; later forms write to a subfolder named after the form.
+OUT = data_dir() / "derived" / "market_reach_2022" / market_reach.FORM
 
 
 def held_out_2022() -> pl.DataFrame:

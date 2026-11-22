@@ -68,6 +68,16 @@ def test_uk_australia_and_uk_new_zealand_in_force_from_2023(agreements):
         assert _flag(agreements, "GBR", partner, 2023, "customs_union") == 0
 
 
+def test_uk_sacu_and_mozambique_links_the_uk_with_mozambique_and_the_sacu_members_from_2021(agreements):
+    # "United Kingdom - SACU and Mozambique" lists SACU as a bloc party beside two countries. Mozambique sits with
+    # SACU; putting it beside the UK on the "other" side once left GBR–MOZ without an agreement. (Before 2021 the
+    # UK reached these Markets through the EU's agreement, which only the full export holds.)
+    for partner in ["MOZ", "ZAF", "BWA"]:
+        for year in (2021, 2024):
+            assert _flag(agreements, "GBR", partner, year) == 1
+            assert _flag(agreements, partner, "GBR", year) == 1
+
+
 @pytest.fixture(scope="module")
 def blocs(rtas):
     return policy.bloc_membership(rtas, YEARS)
