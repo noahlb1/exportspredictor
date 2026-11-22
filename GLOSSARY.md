@@ -117,15 +117,23 @@ An Opportunity whose Actual Exports lie inside its Potential Range, so its Expor
 _Avoid_: weak lead, low-confidence opportunity, false positive
 
 **Blocked Opportunity**:
-A UK Product–Market pair whose Export Potential rises materially in a Scenario that removes a Barrier. It is measured apart from the Export Gap, because the Barrier already holds Export Potential down: a pair can be an Opportunity, a Blocked Opportunity, both or neither.
+A UK Product–Market pair with no Trade Agreement in force whose Export Potential rises materially in a Scenario that removes its Barrier (a Blocked Opportunity value of at least 20% of Baseline Export Potential and at least $1M), and which has **room to grow**: its Baseline-year Actual Exports are below its Export Potential with a Trade Agreement. Any Applied Tariff qualifies, including 0% and unknown. It is measured apart from the Export Gap, because the Barrier already holds Export Potential down: a pair can be an Opportunity, a Blocked Opportunity, both or neither. One rule (`scenarios.is_blocked`) decides it on every page (ADR 0011).
 _Avoid_: hidden opportunity, latent demand
 
 **Blocked Opportunity value**:
-The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). The Blocked Opportunities page lists the Blocked Opportunities grouped by Market, ranked by it, apart from the Leaderboard, in Baseline-year figures; there, Baseline Export Potential plus the value is shown as Export Potential with a Trade Agreement, also Illustrative. Where Baseline-year Actual Exports exceed Export Potential, the value is shown instead as a percentage uplift on Export Potential, so no dollar level with a Trade Agreement sits below what the UK already sells.
+The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). It is the sum of its Tariff part and its Agreement part. The Blocked Opportunities page lists the Blocked Opportunities grouped by Market, ranked by it, apart from the Leaderboard, in Baseline-year figures; there, Baseline Export Potential plus the value is shown as Export Potential with a Trade Agreement, also Illustrative.
 _Avoid_: blocked gap, unlock value
 
+**Tariff part**:
+The part of a Blocked Opportunity value the model associates with the Applied Tariff alone: the Scenario Effect of setting a known Applied Tariff to 0 with no Trade Agreement added. It is 0 where the tariff is already 0 or unknown, and on pairs with a Trade Agreement in force. It is the concrete, checkable part of the value (ADR 0011).
+_Avoid_: tariff effect, tariff component
+
+**Agreement part**:
+The rest of a Blocked Opportunity value: the value minus its Tariff part, so the two always sum to the value. It is the model's association with having an average Trade Agreement at all (standards, customs, legal frameworks and so on), not with any specific deal. It is a remainder, not its own Scenario, because an agreement that keeps its tariff is rare in training (ADR 0006, ADR 0011).
+_Avoid_: agreement component, agreement premium, non-tariff part
+
 **Barrier**:
-A trade-policy condition that suppresses Export Potential, namely an Applied Tariff or the absence of a Trade Agreement.
+What holds a Blocked Opportunity's Export Potential down: the absence of a Trade Agreement. Its Applied Tariff, where above 0, is the part the model can price per Product (the Tariff part).
 _Avoid_: blocker, obstacle, friction
 
 **Lift**:
@@ -197,7 +205,7 @@ How every Scenario Effect and Blocked Opportunity value is shown: an upper-end a
 _Avoid_: indicative, estimated, projected
 
 **Trade Agreement**:
-A bilateral or plurilateral preferential trade deal in force between two countries.
+A bilateral or plurilateral preferential trade deal in force between two countries. In the model it is one yes/no flag, on for any WTO-listed free trade agreement or customs union, so a Scenario that adds one means an average agreement as the model has seen them, with tariffs fully removed, not a specific deal.
 _Avoid_: FTA (except as a type of Trade Agreement), deal
 
 **Applied Tariff**:
