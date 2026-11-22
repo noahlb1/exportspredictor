@@ -20,8 +20,11 @@ are not in the Heading sums. It changes no score, rank or metric.
 
 The result (`offset_pairs`, each Offset Pair's reason) reaches the Offset Pair Caveat Tier through
 `caveats.CaveatContext.offset_pair_reasons`, and the pipeline records the tier's reach in the artefact metadata
-(`METADATA_KEY`, `reach`).
+(`METADATA_KEY`, `reach`, `OffsetPairReach`).
 """
+
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -32,22 +35,66 @@ THRESHOLD = 0.5  # the share of a pair's Export Gap the rest of its Heading must
 METADATA_KEY = "offset_pairs"
 
 
-def reach(marked: pl.DataFrame, column: str) -> dict:
+@dataclass(frozen=True)
+class OffsetPairReach:
+    """The rule's reach in a marked Baseline, as the artefact metadata records it (`METADATA_KEY`)."""
+
+    threshold: float
+    offset_pair_count: int
+    opportunities: int
+    in_top: Mapping[int, int]  # depth of the Leaderboard's default ranking -> Offset Pairs among its top rows
+    offset_export_gap_usd: float
+    opportunity_export_gap_usd: float
+    share_of_export_gap: float | None  # None when no Opportunity has a positive Export Gap
+
+    @property
+    def share_of_opportunities(self) -> float:
+        return self.offset_pair_count / self.opportunities if self.opportunities else 0.0
+
+    def in_top_text(self) -> str:
+        """The counts by depth in words, e.g. "21 of the top 100, 159 of the top 1,000 and 1,709 of the top 10,000"."""
+        counts = [f"{count:,} of the top {depth:,}" for depth, count in sorted(self.in_top.items())]
+        return ", ".join(counts[:-1]) + f" and {counts[-1]}" if len(counts) > 1 else "".join(counts)
+
+    def to_dict(self) -> dict:
+        return {
+            "threshold": self.threshold,
+            "offset_pair_count": self.offset_pair_count,
+            "opportunities": self.opportunities,
+            "in_top": {str(depth): count for depth, count in sorted(self.in_top.items())},  # JSON keys are strings
+            "offset_export_gap_usd": self.offset_export_gap_usd,
+            "opportunity_export_gap_usd": self.opportunity_export_gap_usd,
+            "share_of_export_gap": self.share_of_export_gap,
+        }
+
+    @classmethod
+    def from_dict(cls, saved: Mapping) -> "OffsetPairReach":
+        return cls(
+            threshold=saved["threshold"], offset_pair_count=saved["offset_pair_count"],
+            opportunities=saved["opportunities"],
+            in_top={int(depth): count for depth, count in saved["in_top"].items()},
+            offset_export_gap_usd=saved["offset_export_gap_usd"],
+            opportunity_export_gap_usd=saved["opportunity_export_gap_usd"],
+            share_of_export_gap=saved["share_of_export_gap"],
+        )
+
+
+def reach(marked: pl.DataFrame, column: str) -> OffsetPairReach:
     """The rule's reach in a Baseline `marked` with the Offset Pair tier's boolean `column`: the threshold, how many
     Offset Pairs there are, how many are in the top `rankings.REACH_DEPTHS` Opportunities of the Leaderboard's default
     ranking (`rankings.ranked_opportunities`), and the share of summed positive Export Gap they hold."""
     ranked = ranked_opportunities(marked)
     total = float(ranked["export_gap_usd"].sum())
     offset = float(ranked.filter(column)["export_gap_usd"].sum())
-    return {
-        "threshold": THRESHOLD,
-        "offset_pairs": int(ranked[column].sum()),
-        "opportunities": ranked.height,
-        "in_top": {str(depth): count for depth, count in in_top(ranked, column).items()},
-        "offset_export_gap_usd": offset,
-        "opportunity_export_gap_usd": total,
-        "share_of_export_gap": offset / total if total else None,
-    }
+    return OffsetPairReach(
+        threshold=THRESHOLD,
+        offset_pair_count=int(ranked[column].sum()),
+        opportunities=ranked.height,
+        in_top=in_top(ranked, column),
+        offset_export_gap_usd=offset,
+        opportunity_export_gap_usd=total,
+        share_of_export_gap=offset / total if total else None,
+    )
 
 
 def heading(hs6: pl.Expr) -> pl.Expr:

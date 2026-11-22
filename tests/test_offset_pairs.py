@@ -102,14 +102,17 @@ def test_changing_a_pairs_actual_exports_can_change_its_headings_marks_but_no_ex
 
 
 def test_the_metadata_records_the_threshold_and_the_reach_of_the_marked_baseline(offset_artefacts):
-    recorded = offset_artefacts.metadata[offsets.METADATA_KEY]
+    saved = offset_artefacts.metadata[offsets.METADATA_KEY]
+    recorded = offsets.OffsetPairReach.from_dict(saved)
     positive = offset_artefacts.baseline.filter(pl.col("export_gap_usd") > 0)
 
-    assert recorded["threshold"] == 0.5
-    assert recorded["offset_pairs"] == 2 and recorded["opportunities"] == positive.height
-    assert recorded["in_top"] == {"100": 2, "1000": 2, "10000": 2}
-    assert recorded["offset_export_gap_usd"] == pytest.approx(20e6)  # cars to Japan and to Hong Kong, +$10m each
-    assert recorded["share_of_export_gap"] == pytest.approx(20e6 / positive["export_gap_usd"].sum())
+    assert saved["offset_pair_count"] == 2 and "offset_pairs" not in saved
+    assert recorded.threshold == 0.5
+    assert recorded.offset_pair_count == 2 and recorded.opportunities == positive.height
+    assert recorded.in_top == {100: 2, 1000: 2, 10000: 2}
+    assert recorded.offset_export_gap_usd == pytest.approx(20e6)  # cars to Japan and to Hong Kong, +$10m each
+    assert recorded.share_of_export_gap == pytest.approx(20e6 / positive["export_gap_usd"].sum())
+    assert offsets.OffsetPairReach.from_dict(recorded.to_dict()) == recorded
 
 
 def test_the_training_run_marks_the_baseline_and_records_the_reach(fixture_artefacts):
@@ -117,9 +120,9 @@ def test_the_training_run_marks_the_baseline_and_records_the_reach(fixture_artef
     baseline = fixture_artefacts.baseline
 
     assert not baseline["offset_pair"].any() and baseline["offset_pair_reason"].is_null().all()
-    recorded = fixture_artefacts.metadata[offsets.METADATA_KEY]
-    assert (recorded["threshold"], recorded["offset_pairs"], recorded["offset_export_gap_usd"]) == (0.5, 0, 0.0)
-    assert recorded["in_top"] == {"100": 0, "1000": 0, "10000": 0}
+    recorded = offsets.OffsetPairReach.from_dict(fixture_artefacts.metadata[offsets.METADATA_KEY])
+    assert (recorded.threshold, recorded.offset_pair_count, recorded.offset_export_gap_usd) == (0.5, 0, 0.0)
+    assert recorded.in_top == {100: 0, 1000: 0, 10000: 0}
 
 
 def test_rereach_marks_offset_pairs_again_from_its_new_figures(fixture_world, offset_artefacts):
@@ -141,8 +144,8 @@ def test_rereach_marks_offset_pairs_again_from_its_new_figures(fixture_world, of
     assert _marked(offset_artefacts) == {(CARS, "JPN"), (CARS, "HKG")}
     assert _marked(reached) == {(CARS, "HKG"), (BIG_CARS, "CAN")}
     assert reached.baseline.filter(~pl.col("offset_pair"))["offset_pair_reason"].is_null().all()
-    recorded = reached.metadata[offsets.METADATA_KEY]
-    assert (recorded["offset_pairs"], recorded["in_top"]["100"]) == (2, 2)
+    recorded = offsets.OffsetPairReach.from_dict(reached.metadata[offsets.METADATA_KEY])
+    assert (recorded.offset_pair_count, recorded.in_top[100]) == (2, 2)
     # The other tiers are kept as the bundle marked them: Hong Kong is still a Re-export Hub.
     assert reached.baseline.filter(hs6=CARS, iso3="HKG")["reexport_hub"].item()
 
@@ -263,7 +266,7 @@ def test_the_scenarios_page_shows_the_badge_on_an_offset_pair(monkeypatch, offse
 
 # The reach the served artefact 20261120T221726Z records (spec #129, docs/research/offset-pairs.md).
 SERVED_REACH = {
-    "threshold": 0.5, "offset_pairs": 246_790, "opportunities": 898_686,
+    "threshold": 0.5, "offset_pair_count": 246_790, "opportunities": 898_686,
     "in_top": {"100": 21, "1000": 159, "10000": 1_709},
     "offset_export_gap_usd": 18.97e9, "opportunity_export_gap_usd": 97.74e9, "share_of_export_gap": 0.194,
 }
@@ -280,14 +283,16 @@ def test_a_version_with_offset_pairs_states_the_split_as_a_known_limitation(offs
     [limit] = [x for x in evaluation.known_limitations(served) if x["title"] == SPLIT_LIMITATION]
     assert "can be right about a Heading and wrong about the split between its Products" in limit["text"]
     assert "246,790 of 898,686 Opportunities (27%)" in limit["text"]
-    assert "21 of the top 100" in limit["text"]
+    assert "21 of the top 100, 159 of the top 1,000 and 1,709 of the top 10,000" in limit["text"]
     assert limit in governance.model_card(served)["limitations"]
+    # The limitation states only what the version's metadata backs: no worked example from one served Baseline.
+    assert not re.search(r"8411|France|Germany|turbo", limit["text"])
 
 
 def test_a_version_without_offset_pairs_states_no_split_limitation(fixture_artefacts):
     from exportspredictor import evaluation
 
-    assert fixture_artefacts.metadata[offsets.METADATA_KEY]["offset_pairs"] == 0
+    assert fixture_artefacts.metadata[offsets.METADATA_KEY]["offset_pair_count"] == 0
     assert SPLIT_LIMITATION not in [x["title"] for x in evaluation.known_limitations(fixture_artefacts)]
     assert evaluation.offset_pair_limitations({}) == []
 
@@ -314,7 +319,7 @@ def test_the_heading_split_sets_each_product_beside_the_whole_heading(offset_art
 
     split = reporting.heading_split(offset_artefacts, products=(CARS, BIG_CARS), markets=("JPN", "HKG"))
 
-    assert split.columns == ["Market", "Figure", CARS, BIG_CARS, "Whole Heading 8703"]
+    assert split.columns == ["Market", "Figure", f"{CARS} ($m)", f"{BIG_CARS} ($m)", "Whole Heading 8703 ($m)"]
     assert split.rows() == [  # $m; the whole Heading also counts small cars
         ("Japan", "Actual Exports", 20.0, 22.0, 52.0),
         ("Japan", "Export Potential", 30.0, 10.0, 50.0),
@@ -323,6 +328,31 @@ def test_the_heading_split_sets_each_product_beside_the_whole_heading(offset_art
         ("Hong Kong", "Export Potential", 30.0, 10.0, 50.0),
         ("Hong Kong", "Export Gap", 10.0, -4.0, 5.0),
     ]
+
+
+@pytest.fixture(scope="module")
+def served_bundle():
+    from exportspredictor import artefacts as store
+    from exportspredictor.paths import artefacts_dir
+
+    try:
+        bundle = store.load_latest(artefacts_dir())
+    except store.ArtefactsNotFound:
+        pytest.skip("No real artefacts under EXPORTSPREDICTOR_ARTEFACTS_DIR")
+    except store.UnreadableArtefacts as error:
+        pytest.skip(f"The newest real artefacts are not artefact format {store.ARTEFACT_FORMAT}: {error}")
+    if bundle.metadata.get("source", "fixture") == "fixture":
+        pytest.skip("The artefacts are fixture artefacts")
+    return bundle
+
+
+def test_on_the_served_version_the_two_largest_errors_are_offset_pairs_naming_heading_8411(served_bundle):
+    # The worked example of spec #129: turbine parts to France and turbo-jets to Germany, each offset by the other.
+    reasons = _reasons(served_bundle)
+
+    france, germany = reasons[("841191", "FRA")], reasons[("841112", "DEU")]
+    assert "Heading 8411" in france and "mostly Turbo-jets" in france
+    assert "Heading 8411" in germany and "mostly Turbines: parts of turbo-jets" in germany
 
 
 def test_no_api_or_app_code_names_the_tier():
