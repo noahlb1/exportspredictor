@@ -398,6 +398,7 @@ def _every_response(client) -> list:
         "/products",
         "/markets",
         "/opportunities/rank-by",
+        "/opportunities/blocked/rank-by",
         f"/opportunities/by-product/{FIXTURE_HS6}",
         "/opportunities/by-market/JPN",
         "/evaluation",
@@ -795,6 +796,15 @@ def test_leaderboard_rank_orders_offer_the_minimum_export_potentials(client):
     assert orders["relative"]["min_potential_usd_options"] == [0, 1e5, 1e6, 1e7, 1e8]
     assert orders["relative"]["default_min_potential_usd"] == 1e6
     assert orders["gap"].get("min_potential_usd_options") is None
+
+
+def test_the_blocked_rank_orders_are_the_rise_with_agreement_then_the_tariff_part(client):
+    orders = client.get("/opportunities/blocked/rank-by").json()
+
+    assert [(order["name"], order["title"]) for order in orders] == [
+        ("blocked", "Rise with agreement"), ("tariff_part", "Tariff part")
+    ]
+    assert all("associates" in order["description"] for order in orders)
 
 
 @pytest.mark.parametrize("path", [f"/opportunities/by-product/{FIXTURE_HS6}", "/opportunities/by-market/JPN"])
@@ -1406,6 +1416,7 @@ def test_blocked_opportunity_rows_have_the_documented_shape(blocked_client):
         "tariff_part_usd",
         "agreement_part_usd",
         "barrier",
+        "value_split",
         "above_export_potential",
     }
     for row in rows:
@@ -1414,6 +1425,7 @@ def test_blocked_opportunity_rows_have_the_documented_shape(blocked_client):
         assert isinstance(row["tariff_part_usd"], float) and isinstance(row["agreement_part_usd"], float)
         assert isinstance(row["barrier"], str) and row["barrier"].startswith("No agreement, tariff ")
         assert isinstance(row["above_export_potential"], bool)
+        assert isinstance(row["value_split"], str) and "associat" in row["value_split"]
 
 
 def test_the_blocked_opportunities_read_offers_the_order_by_tariff_part(blocked_client):

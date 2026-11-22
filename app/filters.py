@@ -41,6 +41,7 @@ from app import client
 from app.format import format_usd
 from app.ui import (
     ROWS_SHOWN,
+    blocked_rank_orders,
     caveat_tiers,
     fetch,
     labels,
@@ -56,9 +57,6 @@ SHOW_ALL = "show_all"
 # The prefix of the Blocked Opportunities page's widget keys, apart from the Leaderboard's
 BLOCKED_KEY_PREFIX = "blocked_"
 _AGREEMENT_CHOICES = {None: "Any", True: "Yes", False: "No"}
-# The Blocked Opportunities page's orders (the API's `rank_by`, spec #133): the rise with agreement (the Blocked
-# Opportunity value) first, the default, then the Tariff part.
-BLOCKED_ORDERS = {"blocked": "Rise with agreement", "tariff_part": "Tariff part"}
 _YES_NO = {"yes": True, "no": False}
 _TRUE = "true"
 
@@ -118,7 +116,7 @@ def _blocked_params() -> list[Param]:
         _REGION,
         Param("min_value_usd", to_url=_number, from_url=float),  # minimum Blocked Opportunity value
         *(_flag(name) for name in _hides()),
-        Param("rank_by"),  # `BLOCKED_ORDERS`
+        Param("rank_by"),  # one of `blocked_rank_orders()`
     ]
 
 
@@ -151,7 +149,7 @@ def _blocked_defaults() -> dict[str, Any]:
         "region": None,
         "min_value_usd": None,
         **_hides(),
-        "rank_by": next(iter(BLOCKED_ORDERS)),
+        "rank_by": next(iter(blocked_rank_orders())),
     }
 
 
@@ -352,11 +350,11 @@ def blocked_filters() -> Filters:
             key=f"{BLOCKED_KEY_PREFIX}min_value_usd", persist_state="session",
         )
         hides = _hide(BLOCKED_KEY_PREFIX)
+        orders = blocked_rank_orders()
         rank_by = st.radio(
-            "Order Products by", list(BLOCKED_ORDERS), format_func=BLOCKED_ORDERS.get,
+            "Order Products by", list(orders), format_func=lambda name: orders[name]["title"],
             key=f"{BLOCKED_KEY_PREFIX}rank_by", persist_state="session",
-            help="Rise with agreement: the Blocked Opportunity value. Tariff part: the part of it the model associates "
-            "with the Applied Tariff alone, the concrete, checkable part (0 where the tariff is 0% or unknown).",
+            help="\n\n".join(f"**{order['title']}**: {order['description']}" for order in orders.values()),
         )
         st.button("Reset filters", key=f"{BLOCKED_KEY_PREFIX}reset_filters", on_click=reset_blocked)
 
@@ -386,7 +384,9 @@ def blocked_filters() -> Filters:
         )
     chips += _hidden(hides, BLOCKED_KEY_PREFIX)
     if rank_by != defaults["rank_by"]:
-        chips.append(_chip(f"Ordered by {BLOCKED_ORDERS[rank_by]}", defaults, "rank_by", prefix=BLOCKED_KEY_PREFIX))
+        chips.append(
+            _chip(f"Ordered by {orders[rank_by]['title']}", defaults, "rank_by", prefix=BLOCKED_KEY_PREFIX)
+        )
     return Filters(
         {name: value for name, value in params.items() if value is not None},
         chips,

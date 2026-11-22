@@ -10,8 +10,9 @@ The Leaderboard shows the whole panel with `show(row)`, in order:
 
 A page with another opening (Blocked Opportunities leads with its own box naming the pair and its Barrier, then
 `before_after`, the three-bar chart, and a sentence on the split) reads the explanation with `explanation(row)`, draws
-those and `opening(row, body, titled=False)` itself, then `from_facts(row, body, with_barrier=False, with_gap=False)`:
-without the facts its box and chart already give, and without the Export Gap figures, which that page does not show.
+those and `opening(row, body, titled=False, with_tariff_caveat=False)` itself (the page states the carried-forward
+tariff once, above its tables), then `from_facts(row, body, with_barrier=False, with_gap=False)`: without the facts
+its box and chart already give, and without the Export Gap figures, which that page does not show.
 
 A row is a ranking row (`/opportunities/top`, `/opportunities/blocked`): it carries the pair's names, caveats, Trade
 Agreement, Applied Tariff and Blocked Opportunity value. The explanation carries the Gap Period figures, the factors
@@ -56,14 +57,15 @@ def show(row: dict) -> None:
     from_facts(row, body)
 
 
-def opening(row: dict, body: dict, *, titled: bool = True) -> None:
+def opening(row: dict, body: dict, *, titled: bool = True, with_tariff_caveat: bool = True) -> None:
     """The pair (unless `titled` is False: a box above already names it), what it is, its caveats and, when the
-    Baseline year's Applied Tariff is carried forward, that warning."""
+    Baseline year's Applied Tariff is carried forward, that warning (unless `with_tariff_caveat` is False: the page
+    states it once itself)."""
     if titled:
         st.subheader(_title(row))
     st.caption(f"HS6 {row['hs6']} · {row['sector_name']} · {row['region']}")
     show_caveats(row)
-    if body["tariff_caveat"]:
+    if with_tariff_caveat and body["tariff_caveat"]:
         st.warning(body["tariff_caveat"])
 
 

@@ -29,7 +29,8 @@ Scenario Effect of a very large hike flattens; `ScenarioResult.clipped_pairs` co
 `min_share` of their Baseline Export Potential and at least `min_usd`, with room to grow (Baseline-year
 Actual Exports below Export Potential with the effect added). `blocked_opportunity_values` precomputes,
 for every pair without a Trade Agreement, the Scenario Effect of adding one (the value the Blocked
-Opportunities page ranks by) and its Tariff part (`tariff_only`); `barrier_label` words the Barrier.
+Opportunities page ranks by) and its Tariff part (`tariff_only`); `tariff_kind` sorts an Applied Tariff into above 0,
+0% or unknown, `barrier_label` words the Barrier and `value_split` the split of the value between its two parts.
 
 Scenario Effects are associations the model has learned, not causal estimates.
 """
@@ -44,7 +45,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.artefacts import BLOCKED_VALUE_COLUMNS
-from exportspredictor.currency import format_change
+from exportspredictor.currency import format_change, format_usd
 from exportspredictor.features import (
     FEATURES,
     POLICY_FEATURES,
@@ -61,6 +62,9 @@ from exportspredictor.prediction import (
 
 DEFAULT_MIN_SHARE = 0.2
 DEFAULT_MIN_USD = 1_000_000.0
+# The default thresholds in words, for the prose that states them: "20%" and "$1M".
+DEFAULT_MIN_SHARE_TEXT = f"{DEFAULT_MIN_SHARE:.0%}"
+DEFAULT_MIN_USD_TEXT = f"${DEFAULT_MIN_USD / 1e6:g}M"
 TARIFF = "log_applied_tariff"  # ln(1 + t): the policy feature a Scenario's tariffs are set in
 
 
@@ -319,19 +323,95 @@ def with_blocked_opportunity_flag(
     )
 
 
-def barrier(applied_tariff_pct: pl.Expr) -> pl.Expr:
-    """`barrier_label` over a column of Baseline-year Applied Tariffs in percent (null or NaN where unknown)."""
-    pct = applied_tariff_pct.cast(pl.Float64).fill_nan(None)
+# The kinds of Applied Tariff a Blocked Opportunity's Barrier can have, in the order the split lists them. Only a
+# tariff above 0 can have a Tariff part (ADR 0011).
+TARIFF_KINDS = ("Tariff above 0", "Tariff 0%", "Tariff unknown")
+TARIFF_ABOVE_0, TARIFF_0, TARIFF_UNKNOWN = TARIFF_KINDS
+# What having an average Trade Agreement covers, beyond its tariffs (GLOSSARY.md, Agreement part).
+AGREEMENT_SCOPE = "standards, customs, legal frameworks and so on"
+
+
+def _percent(applied_tariff_pct: pl.Expr) -> pl.Expr:
+    return applied_tariff_pct.cast(pl.Float64).fill_nan(None)
+
+
+def tariff_kind(applied_tariff_pct: pl.Expr) -> pl.Expr:
+    """Which of `TARIFF_KINDS` each Baseline-year Applied Tariff (percent; null or NaN where unknown) is: above 0, 0% or
+    unknown. The one definition the Barrier, the value split and the split by kind share."""
+    pct = _percent(applied_tariff_pct)
+    return (
+        pl.when(pct.is_null()).then(pl.lit(TARIFF_UNKNOWN)).when(pct > 0).then(pl.lit(TARIFF_ABOVE_0))
+        .otherwise(pl.lit(TARIFF_0))
+    )
+
+
+def _tariff_rate(applied_tariff_pct: pl.Expr) -> pl.Expr:
+    """The rate in words: one decimal without a trailing ".0" ("7.5%", "0%"), "under 0.1%" for a rate above 0 that
+    rounds to 0 (so a row with a Tariff part never says 0%), "unknown" for a missing one."""
+    pct, kind = _percent(applied_tariff_pct), tariff_kind(applied_tariff_pct)
     rate = pct.round(1)
-    shown = rate.cast(pl.String).str.replace(r"\.0$", "")  # one decimal, without a trailing ".0"
-    words = (
-        pl.when(pct.is_null())
+    shown = rate.cast(pl.String).str.replace(r"\.0$", "")
+    return (
+        pl.when(kind == TARIFF_UNKNOWN)
         .then(pl.lit("unknown"))
-        .when((rate == 0) & (pct > 0))
+        .when((kind == TARIFF_ABOVE_0) & (rate == 0))
         .then(pl.lit("under 0.1%"))
         .otherwise(pl.concat_str(shown, pl.lit("%")))
     )
-    return pl.concat_str(pl.lit("No agreement, tariff "), words)
+
+
+def barrier(applied_tariff_pct: pl.Expr) -> pl.Expr:
+    """`barrier_label` over a column of Baseline-year Applied Tariffs in percent (null or NaN where unknown)."""
+    return pl.concat_str(pl.lit("No agreement, tariff "), _tariff_rate(applied_tariff_pct))
+
+
+def _split_sentence(value_usd: float, tariff_part_usd: float, kind: str, rate: str) -> str:
+    rise, average = format_usd(value_usd), f"an average Trade Agreement ({AGREEMENT_SCOPE})"
+    agreement_part_usd = value_usd - tariff_part_usd
+    tariff = f"the Applied Tariff of {rate}"
+    if kind == TARIFF_UNKNOWN:
+        return (
+            f"The Applied Tariff is not known, so the model prices no Tariff part: the {rise} rise rests entirely on "
+            f"its association with {average}."
+        )
+    if kind == TARIFF_0:
+        return (
+            f"The Applied Tariff is already 0%, so the {rise} rise rests entirely on the model's association with "
+            f"{average}, not on any tariff."
+        )
+    if tariff_part_usd <= 0:
+        return (
+            f"The model associates none of the {rise} rise with {tariff} alone (a Tariff part of 0): it rests "
+            f"entirely on its association with {average}."
+        )
+    if agreement_part_usd < 0:
+        return (
+            f"The model associates {tariff} going to 0 alone with {format_usd(tariff_part_usd)} (the Tariff part), "
+            f"more than the {rise} rise it associates with a whole Trade Agreement: having {average} as well is "
+            f"associated with {format_usd(-agreement_part_usd)} less (a negative Agreement part, the remainder)."
+        )
+    return (
+        f"Of the {rise} rise, the model associates {format_usd(tariff_part_usd)} "
+        f"({tariff_part_usd / value_usd:.0%}, the Tariff part) with {tariff} going to 0, and "
+        f"{format_usd(agreement_part_usd)} (the Agreement part) with having {average}."
+    )
+
+
+def value_split(rows: pl.DataFrame) -> pl.Series:
+    """One sentence per Blocked Opportunity on how the model splits its value (`blocked_opportunity_value_usd`) between
+    its Tariff part (`tariff_part_usd`) and its Agreement part, from its Applied Tariff (`applied_tariff_pct`).
+
+    Only a known tariff above 0 is said to go to 0; on a 0% or unknown tariff the rise rests entirely on the model's
+    association with an average Trade Agreement. Where the Tariff part exceeds the value, the Agreement part (the
+    remainder) is negative and is worded so, never as a share above 100% (ADR 0011).
+    """
+    named = rows.select(
+        "blocked_opportunity_value_usd",
+        "tariff_part_usd",
+        kind=tariff_kind(pl.col("applied_tariff_pct")),
+        rate=_tariff_rate(pl.col("applied_tariff_pct")),
+    )
+    return pl.Series("value_split", [_split_sentence(*row) for row in named.iter_rows()], dtype=pl.String)
 
 
 def barrier_label(applied_tariff_pct: float | None) -> str:

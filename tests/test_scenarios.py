@@ -459,3 +459,68 @@ def test_the_summary_writes_counts_with_thousands_separators():
     result = scenarios.ScenarioResult(scenario=scenarios.Scenario(add_agreements=("DEU",)), pairs=pairs)
 
     assert "with 5,526 Blocked Opportunities." in result.summary(blocked=5526, year=2024)
+
+
+def _kinds(rates):
+    frame = pl.DataFrame({"applied_tariff_pct": rates}, schema={"applied_tariff_pct": pl.Float64})
+    return frame.select(scenarios.tariff_kind(pl.col("applied_tariff_pct"))).to_series().to_list()
+
+
+def test_a_tariff_is_of_one_kind_above_0_0_percent_or_unknown():
+    assert _kinds([7.5, 0.04, 0.0, None, float("nan")]) == [
+        "Tariff above 0", "Tariff above 0", "Tariff 0%", "Tariff unknown", "Tariff unknown"
+    ]
+    assert scenarios.TARIFF_KINDS == ("Tariff above 0", "Tariff 0%", "Tariff unknown")
+
+
+def _split(value, tariff_part, pct):
+    rows = pl.DataFrame(
+        {"blocked_opportunity_value_usd": [value], "tariff_part_usd": [tariff_part], "applied_tariff_pct": [pct]},
+        schema={"blocked_opportunity_value_usd": pl.Float64, "tariff_part_usd": pl.Float64,
+                "applied_tariff_pct": pl.Float64},
+    )
+    [sentence] = scenarios.value_split(rows).to_list()
+    return sentence
+
+
+def test_the_value_split_names_the_tariff_part_its_share_and_the_agreement_part():
+    sentence = _split(18.5e6, 7.4e6, 150.0)
+
+    assert sentence == (
+        "Of the $18.5m rise, the model associates $7.4m (40%, the Tariff part) with the Applied Tariff of 150% going "
+        "to 0, and $11.1m (the Agreement part) with having an average Trade Agreement (standards, customs, legal "
+        "frameworks and so on)."
+    )
+
+
+def test_a_0_percent_or_unknown_tariff_rests_the_rise_entirely_on_an_average_agreement():
+    zero, unknown = _split(5.1e6, 0.0, 0.0), _split(5.1e6, 0.0, None)
+
+    assert "already 0%" in zero and "rests entirely" in zero and "not on any tariff" in zero
+    assert "not known" in unknown and "no Tariff part" in unknown and "rests entirely" in unknown
+    for sentence in (zero, unknown):
+        assert "going to 0" not in sentence and "average Trade Agreement" in sentence
+
+
+def test_a_tariff_with_no_tariff_part_says_the_model_associates_none_of_the_rise_with_it():
+    sentence = _split(7.1e6, 0.0, 12.0)
+
+    assert "none of the $7.1m rise" in sentence and "Applied Tariff of 12%" in sentence
+    assert "rests entirely" in sentence
+
+
+def test_a_tariff_under_0_1_percent_is_named_as_a_rate_not_as_a_kind_of_tariff():
+    sentence = _split(4e6, 1e6, 0.04)
+
+    assert "the Applied Tariff of under 0.1% going to 0" in sentence
+    assert "the under 0.1% tariff" not in sentence
+
+
+def test_a_tariff_part_above_the_value_reads_as_a_negative_agreement_part_never_a_share_above_100_percent():
+    # The Agreement part is the remainder, so it is negative where the Tariff part exceeds the value (ADR 0011).
+    sentence = _split(4e6, 6e6, 9.0)
+
+    assert "$6.0m (the Tariff part)" in sentence and "more than the $4.0m rise" in sentence
+    assert "$2.0m less" in sentence and "negative Agreement part" in sentence
+    assert "150%" not in sentence and "-$" not in sentence
+    assert "%," not in sentence  # no share is printed

@@ -82,6 +82,7 @@ from exportspredictor.lookups import search_products
 from exportspredictor.model_choice import event_backtest_note, how_chosen
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.rankings import (
+    BLOCKED_ORDERS,
     DEFAULT_MIN_POTENTIAL_USD,
     MAX_ROWS,
     MIN_POTENTIAL_USD_OPTIONS,
@@ -240,6 +241,11 @@ def create_app(
             RankOrderOut(name=o.name, title=o.title, description=o.description, **(minimums if o.min_potential else {}))
             for o in RANK_BY.values()
         ]
+
+    @app.get("/opportunities/blocked/rank-by", response_model=list[RankOrderOut])
+    def blocked_rank_orders():
+        """The orders the Blocked Opportunities read accepts as `rank_by`, the default first."""
+        return [RankOrderOut(name=o.name, title=o.title, description=o.description) for o in BLOCKED_ORDERS.values()]
 
     @app.get("/opportunities/top", response_model=models.Leaderboard)
     def top(
@@ -555,10 +561,6 @@ def scenario_response(
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
     total = result.total()
 
-    def shown(rows: pl.DataFrame) -> list[dict]:
-        """The top `limit` rows, each with its Baseline-year Actual Exports."""
-        return rows.head(request.limit).to_dicts()
-
     return models.ScenarioResponse(
         **_metadata(artefacts),
         scenario=ScenarioIn.model_validate(asdict(result.scenario)),
@@ -572,8 +574,8 @@ def scenario_response(
         .head(request.limit)
         .join(products, on="hs6", how="left", maintain_order="left")
         .to_dicts(),
-        top_pairs=shown(top),
-        blocked_opportunities=shown(blocked),
+        top_pairs=top.head(request.limit).to_dicts(),
+        blocked_opportunities=blocked.head(request.limit).to_dicts(),
         blocked_count=blocked.height,
         clipped_pairs=result.clipped_pairs,
         note=scenario_note(artefacts),

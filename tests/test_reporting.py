@@ -316,10 +316,10 @@ def test_what_market_reach_changes_is_the_saved_sentence_or_a_not_run_line(fixtu
 # --- Blocked Opportunities: the split of the value and how Product-specific its Agreement part is (spec #133) -----
 
 
-def test_the_blocked_opportunity_split_counts_each_barrier_and_parts_sum_to_the_value(blocked_artefacts):
+def test_the_blocked_opportunity_split_counts_each_kind_of_tariff_and_parts_sum_to_the_value(blocked_artefacts):
     # The Blocked world: whisky ($18.5m, tariff 150%, Tariff part 40% of its value) and jewellery ($7.1m, tariff
     # above 0, Tariff part 0) in India; jewellery in Hong Kong ($5.1m, tariff 0%).
-    split = {row["barrier"]: row for row in reporting.blocked_opportunity_split(blocked_artefacts).iter_rows(named=True)}
+    split = {row["tariff_kind"]: row for row in reporting.blocked_opportunity_split(blocked_artefacts).iter_rows(named=True)}
 
     assert list(split) == ["Tariff above 0", "Tariff 0%", "Tariff unknown", "All"]
     assert [split[b]["blocked_opportunities"] for b in split] == [2, 1, 0, 3]
@@ -333,6 +333,19 @@ def test_the_blocked_opportunity_split_counts_each_barrier_and_parts_sum_to_the_
     assert everything["negative_agreement_parts"] == 0
 
 
+def test_the_top_blocked_opportunities_table_lists_the_largest_with_their_barrier_and_both_parts(blocked_artefacts):
+    table = reporting.top_blocked_opportunities(blocked_artefacts, limit=2)
+
+    assert table.columns == [
+        "hs6", "description", "market", "barrier", "baseline_export_potential_usd", "blocked_opportunity_value_usd",
+        "tariff_part_usd", "agreement_part_usd", "above_export_potential",
+    ]
+    assert table["hs6"].to_list() == ["220830", "711319"]  # whisky ($18.5m) then jewellery in India ($7.1m)
+    assert table["market"].to_list() == ["India", "India"]
+    assert table["barrier"][0] == "No agreement, tariff 150%"
+    assert table["tariff_part_usd"][0] == pytest.approx(0.4 * 18.5e6, rel=0.01)
+
+
 def test_a_tariff_part_above_its_value_is_counted_as_a_negative_agreement_part(blocked_artefacts):
     # The Agreement part is the remainder, so it is negative wherever the Tariff part exceeds the value.
     jewellery_india = (pl.col("hs6") == "711319") & (pl.col("iso3") == "IND")
@@ -341,7 +354,7 @@ def test_a_tariff_part_above_its_value_is_counted_as_a_negative_agreement_part(b
         .otherwise(pl.col("tariff_part_usd"))
     )
     split = reporting.blocked_opportunity_split(replace(blocked_artefacts, baseline=baseline))
-    everything = split.filter(pl.col("barrier") == "All").row(0, named=True)
+    everything = split.filter(pl.col("tariff_kind") == "All").row(0, named=True)
 
     assert everything["negative_agreement_parts"] == 1
     assert everything["negative_agreement_part_usd"] == pytest.approx(-0.5 * 7.1e6, rel=0.02)
@@ -390,7 +403,7 @@ def test_the_agreement_part_variation_chart_draws_each_markets_median_share_and_
 
 def test_an_artefact_without_blocked_opportunities_has_an_empty_split_and_variation(fixture_artefacts):
     # The unscaled fixture's values are all under $1M, so it has no Blocked Opportunity.
-    everything = reporting.blocked_opportunity_split(fixture_artefacts).filter(pl.col("barrier") == "All").row(0, named=True)
+    everything = reporting.blocked_opportunity_split(fixture_artefacts).filter(pl.col("tariff_kind") == "All").row(0, named=True)
 
     assert everything["blocked_opportunities"] == 0 and everything["value_usd"] == 0
     assert reporting.agreement_part_variation(fixture_artefacts).is_empty()

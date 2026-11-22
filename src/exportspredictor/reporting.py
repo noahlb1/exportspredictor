@@ -379,8 +379,21 @@ def ppml_benchmark(bundle: Artefacts) -> pl.DataFrame | NotRun:
     return ppml.comparison_table(fit, saved["model"])
 
 
+TOP_BLOCKED = 10  # how many of the largest Blocked Opportunities the write-up lists
+
+
+def top_blocked_opportunities(bundle: Artefacts, *, limit: int = TOP_BLOCKED) -> pl.DataFrame:
+    """The largest Blocked Opportunities by value, as the Blocked Opportunities page orders them
+    (`rankings.blocked_opportunities`): each with its Barrier, Baseline-year Export Potential, value, Tariff part and
+    Agreement part, and whether its Actual Exports are already above Export Potential."""
+    return rankings.blocked_opportunities(bundle, limit=limit).rows.select(
+        "hs6", "description", "market", "barrier", "baseline_export_potential_usd", "blocked_opportunity_value_usd",
+        "tariff_part_usd", "agreement_part_usd", "above_export_potential",
+    )
+
+
 def blocked_opportunity_split(bundle: Artefacts) -> pl.DataFrame:
-    """The Blocked Opportunity value split into its Tariff part and Agreement part, by Barrier kind and in all
+    """The Blocked Opportunity value split into its Tariff part and Agreement part, by kind of Applied Tariff and in all
     (`rankings.blocked_opportunity_split`): counts, Markets, dollar sums, the Tariff part's share and how many
     Agreement parts come out negative (it is the remainder)."""
     return rankings.blocked_opportunity_split(bundle)
