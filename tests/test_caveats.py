@@ -45,12 +45,13 @@ PAIR = _tier(
 )
 
 
-def test_the_declared_tiers_are_flagged_products_re_export_hubs_sanctioned_markets_and_restricted_pairs():
+def test_the_declared_tiers_are_flagged_products_re_export_hubs_sanctioned_markets_restricted_and_offset_pairs():
     assert [(tier.column, tier.badge, tier.key, tier.hide_param) for tier in TIERS] == [
         ("flagged_product", "Flagged Product", "product", "hide_flagged"),
         ("reexport_hub", "Re-export Hub", "market", "hide_hubs"),
         ("sanctioned_market", "Sanctioned Market", "market", "hide_sanctioned"),
         ("restricted_pair", "Restricted Pair", "pair", "hide_restricted"),
+        ("offset_pair", "Offset Pair", "pair", "hide_offset"),
     ]
 
 
@@ -59,8 +60,9 @@ def test_the_declared_tiers_mark_the_baseline_as_before():
 
     assert marked.columns == [
         "hs6", "iso3", "flagged_product", "flagged_product_reason", "reexport_hub", "sanctioned_market", "sanctioned_market_reason",
-        "restricted_pair", "restricted_pair_reason",
+        "restricted_pair", "restricted_pair_reason", "offset_pair", "offset_pair_reason",
     ]
+    assert not marked["offset_pair"].any()  # the context holds no Offset Pair
     assert marked["flagged_product"].to_list() == [True, False, False, False]
     assert marked["reexport_hub"].to_list() == [True, False, False, False]
     assert marked["sanctioned_market"].to_list() == [False, False, False, False]

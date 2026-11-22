@@ -164,6 +164,101 @@ def blocked_api_url(blocked_artefacts_dir):
         yield url
 
 
+# The Offset world (spec #129): the Blocked world with a Heading of three Products. Telephones and medicaments are
+# recoded as two more Products of Heading 8703, beside cars (870323), so Heading 8703 holds three Products in every
+# Market. Its twelve pairs get round Gap Period figures, so their Export Gaps are exact.
+CARS, BIG_CARS, SMALL_CARS = "870323", "870324", "870322"
+OFFSET_RECODED = {
+    "851712": (BIG_CARS, "Motor cars, spark-ignition engine of more than 3,000 cc"),
+    "300490": (SMALL_CARS, "Motor cars, spark-ignition engine of more than 1,000 cc but not more than 1,500 cc"),
+}
+# (iso3, hs6) -> (Export Potential, Actual Exports) in $m; the Export Gap is the difference.
+OFFSET_FIGURES = {
+    # Japan: cars +10, offset by 12 (the rest of the Heading nets to -12): an Offset Pair. Small cars' Export Gap is
+    # zero, so they are no Opportunity, though the Heading as a whole sells above Export Potential.
+    ("JPN", CARS): (30, 20), ("JPN", BIG_CARS): (10, 22), ("JPN", SMALL_CARS): (10, 10),
+    # Hong Kong: cars +10, offset by exactly half (big cars -4, small cars -1): an Offset Pair, and a Blocked
+    # Opportunity of the Blocked world.
+    ("HKG", CARS): (30, 20), ("HKG", BIG_CARS): (10, 14), ("HKG", SMALL_CARS): (10, 11),
+    # Canada: cars +10, offset by 4.99, just under half: big cars' surplus of 6 is netted against small cars' +1.01.
+    ("CAN", CARS): (30, 20), ("CAN", BIG_CARS): (10, 16), ("CAN", SMALL_CARS): (10, 8.99),
+    # India: every Product of the Heading under-sells.
+    ("IND", CARS): (30, 20), ("IND", BIG_CARS): (10, 7), ("IND", SMALL_CARS): (10, 9),
+}
+
+
+def offset_recoded(table: pl.DataFrame) -> pl.DataFrame:
+    """`table` (with `hs6`) in the Offset world's Product codes (`OFFSET_RECODED`)."""
+    recode = {old: new for old, (new, _) in OFFSET_RECODED.items()}
+    return table.with_columns(pl.col("hs6").cast(pl.String).replace(recode))
+
+
+def with_gap_period_figures(bundle, figures):
+    """`bundle` with these pairs' Gap Period Export Potential and Actual Exports (`{(iso3, hs6): (potential, actual)}`,
+    in $m), their Export Gap the difference."""
+    table = pl.DataFrame(
+        [(iso3, hs6, potential * 1e6, actual * 1e6) for (iso3, hs6), (potential, actual) in figures.items()],
+        schema={"iso3": pl.String, "hs6": pl.String, "potential": pl.Float64, "actual": pl.Float64},
+        orient="row",
+    )
+    baseline = (
+        bundle.baseline.join(table, on=["hs6", "iso3"], how="left")
+        .with_columns(
+            export_potential_usd=pl.coalesce("potential", "export_potential_usd"),
+            actual_exports_usd=pl.coalesce("actual", "actual_exports_usd"),
+        )
+        .with_columns(export_gap_usd=pl.col("export_potential_usd") - pl.col("actual_exports_usd"))
+        .select(bundle.baseline.columns)
+    )
+    return replace(bundle, baseline=baseline)
+
+
+@pytest.fixture(scope="session")
+def offset_world(blocked_artefacts):
+    """The Offset world as saved before the Offset Pair tier: its Baseline lacks the tier's columns."""
+    from exportspredictor import offsets
+    from exportspredictor.caveats import OFFSET_PAIR
+
+    descriptions = {new: description for new, description in OFFSET_RECODED.values()}
+    bundle = blocked_artefacts
+    products = offset_recoded(bundle.products).with_columns(
+        description=pl.col("hs6").replace_strict(descriptions, default=pl.col("description")),
+        sector=pl.col("hs6").str.slice(0, 2),
+    )
+    recoded_bundle = replace(
+        bundle,
+        baseline=offset_recoded(bundle.baseline).drop(OFFSET_PAIR.columns, strict=False),
+        baseline_features=offset_recoded(bundle.baseline_features),
+        history=offset_recoded(bundle.history),
+        products=products,
+        metadata={key: value for key, value in bundle.metadata.items() if key != offsets.METADATA_KEY},
+    )
+    return with_gap_period_figures(recoded_bundle, OFFSET_FIGURES)
+
+
+@pytest.fixture(scope="session")
+def offset_artefacts(offset_world):
+    """The Offset world marked with the declared Caveat Tiers (`recaveat`): cars to Japan and to Hong Kong are its
+    Offset Pairs."""
+    from exportspredictor.pipeline import recaveat
+
+    return recaveat(offset_world, version="fixture-offset")
+
+
+@pytest.fixture(scope="session")
+def offset_artefacts_dir(offset_artefacts, tmp_path_factory):
+    root = tmp_path_factory.mktemp("offset_artefacts")
+    store.save(offset_artefacts, root)
+    return root
+
+
+@pytest.fixture(scope="session")
+def offset_api_url(offset_artefacts_dir):
+    """The API serving the Offset world (`offset_artefacts`) for the whole session."""
+    with serve_api(offset_artefacts_dir) as url:
+        yield url
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

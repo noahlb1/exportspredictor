@@ -54,7 +54,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor import artefacts as store
-from exportspredictor import baci, ledger, market_reach
+from exportspredictor import baci, ledger, market_reach, offsets
 from exportspredictor.conformal import COVERAGE, COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
@@ -244,8 +244,29 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
         *range_limitations(artefacts.potential_range_bands),
         *size_coverage_limitations(report.get("potential_range")),
         *uk_pair_coverage_limitations(artefacts.metadata, report.get("potential_range")),
+        *offset_pair_limitations(artefacts.metadata),
         *LIMITATIONS,
     ]
+
+
+def offset_pair_limitations(metadata: dict) -> list[dict]:
+    """When a version's Baseline holds Offset Pairs (`offsets.METADATA_KEY`, spec #129): the model can be right about a
+    Heading and wrong about the split between its Products. None for a version that records no Offset Pair."""
+    saved = metadata.get(offsets.METADATA_KEY)
+    if not saved:
+        return []
+    reach = offsets.OffsetPairReach.from_dict(saved)
+    if not reach.offset_pair_count:
+        return []
+    return [{
+        "title": "Right about a Heading, wrong about the split between its Products",
+        "text": "The model can be right about a Heading and wrong about the split between its Products, so an Export "
+        "Gap can sit beside a surplus one Product away in the same Market. No feature can see the split without "
+        "reading the UK's own trade with the pair's Market. Opportunities whose Export Gap the rest of their Heading "
+        f"offsets by at least {reach.threshold:.0%} are marked as Offset Pairs: {reach.offset_pair_count:,} of "
+        f"{reach.opportunities:,} Opportunities ({reach.share_of_opportunities:.0%}), {reach.in_top_text()}. Their "
+        "Export Gap may be trade recorded under a neighbouring Product.",
+    }]
 
 
 # UK-pair coverage further than this below the Potential Range's target is a known limitation (spec #113 story 13).

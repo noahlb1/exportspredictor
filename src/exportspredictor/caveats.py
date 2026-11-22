@@ -13,11 +13,13 @@ A tier is one `CaveatTier` declaration in `TIERS`. Everything else reads the dec
 
 A tier is keyed on the Market (`iso3`), the Product (`hs6`) or the pair (both): its `flags` expression, and its
 `reason` expression if any, may read only its key's columns. `flags` and `reason` take a `CaveatContext`, so a tier
-can depend on the Baseline year (a sanctions regime in force that year) or, once a field is added to the context, on
-other inputs the pipeline holds.
+can depend on the Baseline year (a sanctions regime in force that year) or on other inputs the pipeline holds, such
+as the volatility rule's Flagged Products or the Offset Pairs of the Baseline's own Export Gaps
+(`pipeline.caveat_context` builds the whole context from a bundle).
 
 To add a tier: declare it (its membership usually lives in a module of its own, as Flagged Products and Re-export
-Hubs live in `exclusions` and `volatility`, and Sanctioned Markets and Restricted Pairs in `restrictions`), append it to `TIERS`, add
+Hubs live in `exclusions` and `volatility`, Sanctioned Markets and Restricted Pairs in `restrictions`, and Offset Pairs
+in `offsets`), append it to `TIERS`, add
 its term to GLOSSARY.md, and write an artefact version whose Baseline carries its columns
 (`python -m exportspredictor.pipeline recaveat`, which applies `with_caveat_columns` to the saved Baseline). No API
 or app code changes.
@@ -62,6 +64,8 @@ class CaveatContext:
     # Products flagged by the volatility rule (`volatility.VolatileProducts.reasons`, hs6 -> reason), read from the
     # UK's exports in the training years; Sector 71 is flagged whatever this holds.
     flagged_product_reasons: Mapping[str, str] = field(default_factory=dict)
+    # Offset Pairs (`offsets.offset_pairs`, (hs6, iso3) -> reason), read from the Baseline's own Export Gaps.
+    offset_pair_reasons: Mapping[tuple[str, str], str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -182,10 +186,47 @@ def restricted_pair_tier(prohibitions: tuple[Prohibition, ...] = PROHIBITIONS) -
     )
 
 
+def _pair() -> pl.Expr:
+    """Each row's pair as a struct (hs6, iso3), for a set test or lookup against (hs6, iso3) keys (`_pairs`)."""
+    return pl.struct(pl.col("hs6").cast(pl.String), pl.col("iso3").cast(pl.String))
+
+
+def _pairs(pairs: Mapping[tuple[str, str], str]) -> pl.Series:
+    """The (hs6, iso3) keys of `pairs` as a Series of structs matching `_pair`."""
+    return pl.DataFrame(list(pairs), schema={"hs6": pl.String, "iso3": pl.String}, orient="row").to_struct("pair")
+
+
+_NEIGHBOURING_PRODUCT = "Its Export Gap may be trade recorded under a neighbouring Product."
+
+OFFSET_PAIR = CaveatTier(
+    column="offset_pair",
+    badge="Offset Pair",
+    plural="Offset Pairs",
+    text=(
+        "Offset Pair: the UK already sells above Export Potential in the other Products of this Product's Heading in "
+        f"this Market, by at least half of its Export Gap. {_NEIGHBOURING_PRODUCT}"
+    ),
+    key="pair",
+    hide_param="hide_offset",
+    hide_description=(
+        "Leave out Offset Pairs (Opportunities at least half offset by the UK's sales above Export Potential in the "
+        "other Products of their Heading in that Market)"
+    ),
+    # A set test and a lookup on the pair: about 250,000 Offset Pairs on the real Baseline.
+    flags=lambda context: _pair().is_in(_pairs(context.offset_pair_reasons).implode()),
+    reason=lambda context: _pair().replace_strict(
+        _pairs(context.offset_pair_reasons),
+        pl.Series(list(context.offset_pair_reasons.values()), dtype=pl.String),
+        default=None,
+        return_dtype=pl.String,
+    ),
+    row_text="Offset Pair: {reason}. " + _NEIGHBOURING_PRODUCT,
+)
+
 SANCTIONED_MARKET = sanctioned_market_tier()
 RESTRICTED_PAIR = restricted_pair_tier()
 
-TIERS: tuple[CaveatTier, ...] = (FLAGGED_PRODUCT, REEXPORT_HUB, SANCTIONED_MARKET, RESTRICTED_PAIR)
+TIERS: tuple[CaveatTier, ...] = (FLAGGED_PRODUCT, REEXPORT_HUB, SANCTIONED_MARKET, RESTRICTED_PAIR, OFFSET_PAIR)
 
 
 def caveat_texts(row: Mapping, tiers: Sequence[CaveatTier] = TIERS) -> list[str]:
