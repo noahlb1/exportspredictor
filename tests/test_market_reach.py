@@ -47,6 +47,21 @@ def test_a_markets_offset_is_its_uk_share_against_the_pooled_share_from_other_fo
     assert fold_0["PER"]["offset"] == pytest.approx(math.log(2 / 3))
 
 
+def test_products_the_market_imports_from_no_other_exporter_do_not_count_as_sent():
+    """The Falkland Islands case: it reports no imports, so BACI sees many UK Products there that no other
+    Exporter supplies. Counted as sent, they pushed its 'share' to about 3 and its multiplier to about 230×."""
+    only_uk = pl.DataFrame(
+        [(2021, 1, f"9{i:05d}", "KEN", 10.0, 0.0) for i in range(20)],
+        schema=["year", "fold", "hs6", "importer", "value_usd", "log_demand_loo"], orient="row",
+    ).with_columns(pl.col("fold").cast(pl.Int8))
+    plain = market_reach.reach_table(_uk_rows(), 2022, n_folds=2, pseudo_count=1.0)
+    table = market_reach.reach_table(pl.concat([_uk_rows(), only_uk]), 2022, n_folds=2, pseudo_count=1.0)
+    ken = _fold_table(table, 0)["KEN"]
+    assert ken["products_sent"] == 3  # of the 4 KEN imports from others, as without the UK-only Products
+    assert ken["products_sent"] <= ken["products_imported"]
+    assert table.equals(plain)
+
+
 def test_a_pairs_own_flows_and_every_uk_flow_of_the_scored_year_leave_its_offset_unchanged():
     rows = _uk_rows()
     before = market_reach.reach_table(rows, 2022, n_folds=2)
@@ -109,7 +124,7 @@ def test_a_scenarios_relative_effect_is_unchanged_by_market_reach():
 
 def test_the_pre_registered_settings_are_fixed_in_code():
     """Committed before any 2022 result was read (#124); the note cites the commit."""
-    assert market_reach.FORM == "share"
+    assert market_reach.FORM == "nested_share"  # #124's "share" was not nested; the fix kept everything else
     assert market_reach.BETA_GRID == (0.0, 0.5, 1.0, 2.0, 4.0)
     assert market_reach.PSEUDO_COUNT == 5.0
     assert market_reach.LAG_YEARS == 1

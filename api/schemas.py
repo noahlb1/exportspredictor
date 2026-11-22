@@ -119,7 +119,7 @@ class MarketReachOut(BaseModel):
     """A Market's Market Reach (ADR 0010): how widely the UK sends its Products there against how widely expected."""
 
     year: int  # the reference year whose UK Flows it is learned from (the Baseline year − 1)
-    products_sent: int  # the Market's Products with a UK Flow that year
+    products_sent: int  # of products_imported, those with a UK Flow too (so at most products_imported)
     products_imported: int  # the Market's Products imported from other Exporters that year
     products_expected: float  # products_imported × the UK's share across every Market
     # Log of the share of the Market's imported Products the UK sends, against that share across Markets, shrunk

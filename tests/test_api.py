@@ -1455,16 +1455,16 @@ def test_excluded_product_reasons_are_counted_most_products_first(fixture_artefa
 
 
 def _jpn_counts(world, year: int) -> tuple[int, int]:
-    """The UK's Products sent to Japan in `year`, and those Japan imported from other Exporters, from the Flows."""
+    """Japan's Products imported from other Exporters in `year` that the UK sent too, and all Japan imported from
+    other Exporters, from the Flows."""
     from exportspredictor.exclusions import drop_excluded
     from exportspredictor.fixture import UK
 
     flows = drop_excluded(world.flows.filter((pl.col("year") == year) & (pl.col("importer") == "JPN")))
     flowing = flows.filter(pl.col("value_usd") > 0)
-    return (
-        flowing.filter(pl.col("exporter") == UK)["hs6"].n_unique(),
-        flowing.filter(pl.col("exporter") != UK)["hs6"].n_unique(),
-    )
+    from_others = set(flowing.filter(pl.col("exporter") != UK)["hs6"])
+    from_uk = set(flowing.filter(pl.col("exporter") == UK)["hs6"])
+    return len(from_uk & from_others), len(from_others)
 
 
 def test_the_market_view_serves_the_markets_reach_in_the_reference_year(client, fixture_world, fixture_artefacts):
@@ -1477,7 +1477,7 @@ def test_the_market_view_serves_the_markets_reach_in_the_reference_year(client, 
         assert (reach["products_sent"], reach["products_imported"]) == (sent, imported)
         assert 0 < reach["products_expected"] <= imported
         assert reach["text"].startswith(
-            f"In {year} the UK sent {sent:,} Products to Japan, which imported {imported:,} from other Exporters"
+            f"In {year} Japan imported {imported:,} Products from other Exporters and the UK sent {sent:,} of them"
         )
         assert f"about {reach['products_expected']:,.0f} were expected" in reach["text"]
     assert client.get("/opportunities/top").json()["market_reach"] is None

@@ -106,3 +106,14 @@ Market Reach associates broad UK reach into a Market with higher Export Potentia
   - Compute c once with `market_reach.rescale_constant` on the Baseline grid, store it, and apply it with `market_reach.apply` inside `prediction.export_potential`. Never recompute c per Scenario, or the Scenario's level would be renormalised away.
   - Add Market Reach's settings to `ledger.FINGERPRINT_KEYS`.
 - **#127 (Phase 2 base).** Apply the same `reach_table` (2021 grid, scored year 2022) and `apply` with `CHOSEN_BETA` to the fold-0 Blend of each Arm. The cached base's fold-0 measure with Reach at β = 4 is 0.6169 (0.5771 without).
+
+## Re-check: sent nested in imported (`nested_share`)
+
+The first form counted every UK Flow as sent, so a Market could have more Products "sent" than "imported". Only the Falkland Islands did (839 against 264 above, offset +2.06), and its served multiplier of about 230× made it the fourth Market by Blocked Opportunity value. The fix counts as sent only the pairs that imported also counts (ADR 0010, *Amendment*). The same script was run again unchanged apart from the form; it now writes to `<data>/derived/market_reach_2022/<FORM>/`, and #124's result stays in the folder itself.
+
+| Form | Chosen β | Pooled measure | Gain over the Blend (0.5635) | Folds 3–4 gain | Falkland Islands offset |
+|---|---|---|---|---|---|
+| `share` (#124) | 4 | 0.6041 | +0.0406 | +0.0406 | +2.06 |
+| `nested_share` | 4 | 0.6084 | +0.0449 | +0.0449 | +0.35 |
+
+The Win Threshold is 0.008869, so the nested form is adopted under the same gate. Every fold gains (+0.044 to +0.045, against +0.040 to +0.041). The other example Markets move by about 0.01 (Ireland +0.907, the United States +0.761, Iran −0.939). The offset's percentiles are −3.63, −1.39, −0.34, +0.30 and +0.71. The 30 largest Markets' measure is unchanged (0.5635 against 0.5635). The test year was not read.

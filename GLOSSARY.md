@@ -183,7 +183,7 @@ How Export Potential is made from the fold models. The served form is a **Blend*
 _Avoid_: ensemble, model type
 
 **Market Reach**:
-How widely the UK sends its Products to a Market, against how widely the ranking expects it to, learned from the UK's other Products. It scales the Export Potential of every UK pair in the Market alike, learned from other folds' pairs in the year before (ADR 0010).
+How widely the UK sends its Products to a Market, against how widely the ranking expects it to, learned from the UK's other Products. It is the share of the Products the Market imports from other Exporters that the UK sends there too, against the UK's share across Markets. It scales the Export Potential of every UK pair in the Market alike, so dollar figures built on Export Potential (a Blocked Opportunity value and its $1M floor among them) follow it; learned from other folds' pairs in the year before (ADR 0010).
 _Avoid_: market penetration, market share, UK presence
 
 **Configuration Fingerprint**:

@@ -7,21 +7,32 @@ UK's *other* Products in the same Market, and Export Potential becomes
 
     Export Potential × exp(β · offset) × c,
 
-with c one constant so that the UK's summed Export Potential over the grid is unchanged. It
-moves the ranking, not the dollar level. The offset is the same for every Product of a
-Market, so a Scenario's relative effect is unchanged.
+with c one constant so that the UK's summed Export Potential over the grid is unchanged. Only
+that grand total is kept: each Market's dollar level moves with its multiplier, so every
+dollar figure built on Export Potential (a Scenario Effect in dollars, a Blocked Opportunity
+value and the $1M floor it must clear) follows Market Reach. The offset is the same for every
+Product of a Market, so a Scenario's relative effect is unchanged.
 
-**The form (pre-registered, the open review's share form).** For fold k and scored year t,
+**The form (the open review's share form, nested).** For fold k and scored year t,
 the offset of Market m is learned from the UK pairs *outside* fold k in year t − `LAG_YEARS`:
 
     offset = log((sent + a) / (imported + 2a)) − log((Σ sent + a) / (Σ imported + 2a)),
 
-where `sent` counts the Market's source pairs with a UK Flow, `imported` those whose Product
-the Market imports from any other Exporter (`log_demand_loo` > 0), the sums run over every
-Market's source pairs, and a is `PSEUDO_COUNT`. The first term is the share of the Products
-the Market imports that the UK sends there, shrunk towards a half; the second is the UK's pooled share, the share expected of every
-Market, so an offset of 0 means "as expected". `products_expected` is that pooled share
-times `imported`. A Market with no source pairs gets 0.
+where `imported` counts the Market's source pairs whose Product the Market imports from any
+other Exporter (`log_demand_loo` > 0), `sent` those of them that also have a UK Flow, the sums
+run over every Market's source pairs, and a is `PSEUDO_COUNT`. The first term is the share of
+the Products the Market imports from others that the UK sends there too, shrunk towards a half;
+the second is the UK's pooled share, the share expected of every Market, so an offset of 0
+means "as expected". `products_expected` is that pooled share times `imported`. A Market with
+no source pairs gets 0.
+
+`sent` is nested in `imported`, so the share is at most 1 and the offset is bounded. The first
+form (#124, "share") counted every UK Flow as sent. A Market that reports no imports of its own
+is seen in BACI only through its Exporters' declarations, so the UK could send it many Products
+"no other Exporter" supplies: the Falkland Islands' share was about 3, its offset about 2.1
+(Ireland, the next, 0.92) and its multiplier about 230×, which made it the fourth Market by
+Blocked Opportunity value. The nested form ("nested_share") was re-checked on 2022 under the
+same pre-registered procedure (`docs/research/market-reach-2022.md`, ADR 0010).
 
 **Leakage (ADR 0001).** A pair is held out with its fold, so its own Flows (any year) never
 enter its offset; and only year t − 1 is read, so no UK Flow of the scored year does. The
@@ -32,7 +43,8 @@ into the target Market in other Products, which a feature may not use.
 tie-proof Selection Measure, and is kept only if it beats the Win Threshold on the pooled
 five-fold 2022 grid (`scripts/research/market_reach_2022/`). `FORM`, `BETA_GRID`,
 `PSEUDO_COUNT` and `LAG_YEARS` were committed before any result was read (#124, ed982b0);
-the experiment chose and adopted `CHOSEN_BETA` (`docs/research/market-reach-2022.md`).
+the experiment chose and adopted `CHOSEN_BETA` (`docs/research/market-reach-2022.md`). The
+nested form changed only which pairs count as sent, and was re-run through the same script.
 
 The model associates broad UK reach into a Market with higher Export Potential there; it
 does not say that reach causes exports.
@@ -49,12 +61,12 @@ from exportspredictor.features import FEATURES
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, with_folds
 from exportspredictor.prediction import MarketReach, ModelForm
 
-FORM = "share"  # the open review's share form (its rank-expectation form is the alternative not taken)
+FORM = "nested_share"  # the open review's share form with sent nested in imported (#124's "share" was not nested)
 BETA_GRID = (0.0, 0.5, 1.0, 2.0, 4.0)
 PSEUDO_COUNT = 5.0
 LAG_YEARS = 1
 # Chosen from BETA_GRID on folds 0–2 of 2022 and adopted on the five-fold check (+0.0406 against a Win
-# Threshold of 0.008869): docs/research/market-reach-2022.md.
+# Threshold of 0.008869; chosen again for the nested form, +0.0449): docs/research/market-reach-2022.md.
 CHOSEN_BETA = 4.0
 DEMAND = "log_demand_loo"  # the Market's imports of the Product from Exporters other than the UK (log1p)
 TABLE_COLUMNS = ("fold", "importer", "products_sent", "products_imported", "products_expected", "offset")
@@ -74,7 +86,7 @@ def reach_table(
     source = uk_rows.filter(pl.col("year") == scored_year - LAG_YEARS).select(
         "fold",
         pl.col("importer").cast(pl.String),
-        sent=pl.when(pl.col("value_usd") > 0).then(count).otherwise(0),
+        sent=pl.when((pl.col("value_usd") > 0) & (pl.col(DEMAND) > 0)).then(count).otherwise(0),
         imported=pl.when(pl.col(DEMAND) > 0).then(count).otherwise(0),
     )
     a = pseudo_count
@@ -265,10 +277,9 @@ def pair_figures(
 
 def reach_text(sent: int, imported: int, expected: float, market: str, year: int) -> str:
     """A Market's reach in one sentence, so a Market the UK reaches less widely than expected stays visible beside
-    Product-level Export Gaps.
-
-    The UK can send Products the Market imports from no other Exporter, so `sent` may exceed `imported`."""
+    Product-level Export Gaps. `sent` counts only Products the Market also imports from other Exporters, so it
+    is at most `imported`."""
     return (
-        f"In {year} the UK sent {sent:,} Products to {market}, which imported {imported:,} from other Exporters; "
+        f"In {year} {market} imported {imported:,} Products from other Exporters and the UK sent {sent:,} of them; "
         f"at the UK's usual reach across Markets, about {expected:,.0f} were expected."
     )
