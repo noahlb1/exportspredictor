@@ -363,6 +363,14 @@ def test_the_agreement_part_variation_spreads_its_share_between_products_within_
     assert hong_kong["order_correlation"] is None
 
 
+def test_the_agreement_part_variation_counts_the_products_in_both_top_lists(blocked_artefacts):
+    # How many of a Market's top Products by value are also among its top Products by share: India has two
+    # Products, so with the top one of each it shares none (whisky leads by value, jewellery by share).
+    variation = reporting.agreement_part_variation(blocked_artefacts, top=1)
+
+    assert variation["top_shared"].to_list() == [0, 1]
+
+
 def test_the_agreement_part_variation_keeps_only_the_top_markets(blocked_artefacts):
     assert reporting.agreement_part_variation(blocked_artefacts, markets=1)["iso3"].to_list() == ["IND"]
 
@@ -372,3 +380,12 @@ def test_the_agreement_part_variation_chart_draws_each_markets_median_share_and_
 
     assert chart.data["iso3"].to_list() == ["IND", "HKG"]
     assert "India" in chart.svg
+
+
+def test_an_artefact_without_blocked_opportunities_has_an_empty_split_and_variation(fixture_artefacts):
+    # The unscaled fixture's values are all under $1M, so it has no Blocked Opportunity.
+    everything = reporting.blocked_opportunity_split(fixture_artefacts).filter(pl.col("barrier") == "All").row(0, named=True)
+
+    assert everything["blocked_opportunities"] == 0 and everything["value_usd"] == 0
+    assert reporting.agreement_part_variation(fixture_artefacts).is_empty()
+    assert reporting.agreement_part_variation_chart(fixture_artefacts).data.is_empty()

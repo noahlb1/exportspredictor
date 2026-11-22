@@ -387,9 +387,12 @@ def blocked_opportunity_split(bundle: Artefacts) -> pl.DataFrame:
 
 
 VARIATION_MARKETS = 10  # the top Markets (by Blocked Opportunity total) the variation check reads
+VARIATION_TOP = 10  # the top Products by value and by share whose overlap the variation check counts
 
 
-def agreement_part_variation(bundle: Artefacts, *, markets: int = VARIATION_MARKETS) -> pl.DataFrame:
+def agreement_part_variation(
+    bundle: Artefacts, *, markets: int = VARIATION_MARKETS, top: int = VARIATION_TOP
+) -> pl.DataFrame:
     """How Product-specific the Agreement part is: within each of the top `markets` Markets (largest Blocked
     Opportunity total first), the spread between its Blocked Opportunities of the Agreement part as a share of
     Baseline-year Export Potential, and how their order changes when sorted by that share instead of by value.
@@ -397,7 +400,8 @@ def agreement_part_variation(bundle: Artefacts, *, markets: int = VARIATION_MARK
     The Trade Agreement is one flag per Market, so an Agreement part that were the same share for every Product would
     say the model's agreement association is a Market-level figure. Columns: iso3, market, blocked_opportunities,
     share_min, share_p10, share_median, share_p90, share_max, order_correlation (Spearman between the order by value
-    and the order by share; null with one Product), first_by_value and first_by_share (Product descriptions).
+    and the order by share; null with one Product), top_shared (how many of the `top` Products by value are also
+    among the `top` by share), first_by_value and first_by_share (Product descriptions).
     """
     rows = rankings.blocked_opportunities(bundle).rows.with_columns(
         share=pl.col("agreement_part_usd") / pl.col("baseline_export_potential_usd")
@@ -412,6 +416,9 @@ def agreement_part_variation(bundle: Artefacts, *, markets: int = VARIATION_MARK
         share.quantile(0.9, "linear").alias("share_p90"),
         share.max().alias("share_max"),
         pl.when(pl.len() > 1).then(pl.corr(value, share, method="spearman")).alias("order_correlation"),
+        pl.col("hs6").sort_by(value, descending=True).head(top).is_in(
+            pl.col("hs6").sort_by(share, descending=True).head(top).implode()
+        ).sum().alias("top_shared"),
         pl.col("description").sort_by(value, descending=True).first().alias("first_by_value"),
         pl.col("description").sort_by(share, descending=True).first().alias("first_by_share"),
     )
