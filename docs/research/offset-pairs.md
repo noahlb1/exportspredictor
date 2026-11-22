@@ -16,7 +16,7 @@ Script: `scripts/research/offset_pairs/run.py`. Output: `data/derived/offset_pai
 
 - **Heading**: the first four digits of a Product's HS6 code. Here it only groups a Product with its neighbours; the model is not trained or measured at this level.
 - **The rule (spec #129).** For each Market and Heading, the Heading gap is the summed Export Gap of every scored Product of the Heading in that Market. A pair is an **Offset Pair** when its Export Gap is positive (it is an Opportunity), its Heading has at least two scored Products in that Market, and the Heading gap is at most half of its own Export Gap. Equivalently, the rest of the Heading sells above its Export Potential by at least half of the pair's Export Gap. The offset is the pair's Export Gap minus the Heading gap.
-- The script applies the rule on its own, without the package's Offset Pair code (#130), so the two can be checked against each other (#132). Excluded Products are not on the Baseline, so they are left out of every Heading sum.
+- The script applies the rule on its own, without the package's Offset Pair code (#130), so the two can be checked against each other (#132). They agree: the metadata `recaveat` recorded on version `20261122T010816Z` (made from `20261120T221726Z`, no score changed) gives the same 246,790 Offset Pairs, 21 / 159 / 1,709 by rank and $18.97bn of $97.74bn. Excluded Products are not on the Baseline, so they are left out of every Heading sum.
 
 ## 1. Heading 8411 in France and Germany
 

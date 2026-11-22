@@ -259,6 +259,72 @@ def test_the_scenarios_page_shows_the_badge_on_an_offset_pair(monkeypatch, offse
     assert caveats["Motor cars, spark-ignition engine of 1,500-3,000 cc"] == "Re-export Hub, Offset Pair"
 
 
+# --- Written up: the known limitation and the notebook's tables -------------------------------------------------------
+
+# The reach the served artefact 20261120T221726Z records (spec #129, docs/research/offset-pairs.md).
+SERVED_REACH = {
+    "threshold": 0.5, "offset_pairs": 246_790, "opportunities": 898_686,
+    "in_top": {"100": 21, "1000": 159, "10000": 1_709},
+    "offset_export_gap_usd": 18.97e9, "opportunity_export_gap_usd": 97.74e9, "share_of_export_gap": 0.194,
+}
+SPLIT_LIMITATION = "Right about a Heading, wrong about the split between its Products"
+
+
+def test_a_version_with_offset_pairs_states_the_split_as_a_known_limitation(offset_artefacts):
+    from dataclasses import replace
+
+    from exportspredictor import evaluation, governance
+
+    served = replace(offset_artefacts, metadata={**offset_artefacts.metadata, offsets.METADATA_KEY: SERVED_REACH})
+
+    [limit] = [x for x in evaluation.known_limitations(served) if x["title"] == SPLIT_LIMITATION]
+    assert "can be right about a Heading and wrong about the split between its Products" in limit["text"]
+    assert "246,790 of 898,686 Opportunities (27%)" in limit["text"]
+    assert "21 of the top 100" in limit["text"]
+    assert limit in governance.model_card(served)["limitations"]
+
+
+def test_a_version_without_offset_pairs_states_no_split_limitation(fixture_artefacts):
+    from exportspredictor import evaluation
+
+    assert fixture_artefacts.metadata[offsets.METADATA_KEY]["offset_pairs"] == 0
+    assert SPLIT_LIMITATION not in [x["title"] for x in evaluation.known_limitations(fixture_artefacts)]
+    assert evaluation.offset_pair_limitations({}) == []
+
+
+def test_the_notebook_states_the_reach_from_the_metadata(offset_artefacts):
+    from dataclasses import replace
+
+    from exportspredictor import reporting
+
+    served = replace(offset_artefacts, metadata={**offset_artefacts.metadata, offsets.METADATA_KEY: SERVED_REACH})
+    unmarked = replace(offset_artefacts, metadata={
+        key: value for key, value in offset_artefacts.metadata.items() if key != offsets.METADATA_KEY
+    })
+
+    assert reporting.offset_pair_reach(served) == (
+        "Offset Pairs: 246,790 of 898,686 Opportunities (27%); 21 of the top 100, 159 of the top 1,000 and 1,709 of "
+        "the top 10,000; $19.0bn of $97.7bn of positive Export Gap (19%)."
+    )
+    assert reporting.offset_pair_reach(unmarked) == repr(reporting.NotRun("The Offset Pair tier"))
+
+
+def test_the_heading_split_sets_each_product_beside_the_whole_heading(offset_artefacts):
+    from exportspredictor import reporting
+
+    split = reporting.heading_split(offset_artefacts, products=(CARS, BIG_CARS), markets=("JPN", "HKG"))
+
+    assert split.columns == ["Market", "Figure", CARS, BIG_CARS, "Whole Heading 8703"]
+    assert split.rows() == [  # $m; the whole Heading also counts small cars
+        ("Japan", "Actual Exports", 20.0, 22.0, 52.0),
+        ("Japan", "Export Potential", 30.0, 10.0, 50.0),
+        ("Japan", "Export Gap", 10.0, -12.0, -2.0),
+        ("Hong Kong", "Actual Exports", 20.0, 14.0, 45.0),
+        ("Hong Kong", "Export Potential", 30.0, 10.0, 50.0),
+        ("Hong Kong", "Export Gap", 10.0, -4.0, 5.0),
+    ]
+
+
 def test_no_api_or_app_code_names_the_tier():
     root = Path(__file__).resolve().parents[1]
     named = [
