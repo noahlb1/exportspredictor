@@ -16,8 +16,7 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.scenarios import (
-    BLOCKED_MIN_SHARE_TEXT,
-    BLOCKED_MIN_USD_TEXT,
+    BLOCKED_RULE,
     TARIFF_KINDS,
     barrier,
     tariff_kind,
@@ -75,9 +74,7 @@ BLOCKED = RankOrder(
     "blocked_opportunity_value_usd",
     "Rise with agreement",
     "The Blocked Opportunity value: the rise in Export Potential the model associates with adding a Trade Agreement "
-    f"where none is in force (0 where one is), largest first. Blocked Opportunities clear {BLOCKED_MIN_SHARE_TEXT} of "
-    f"Baseline Export Potential and {BLOCKED_MIN_USD_TEXT}, and their Actual Exports are below Export Potential with a "
-    "Trade Agreement.",
+    f"where none is in force (0 where one is), largest first. {BLOCKED_RULE}",
 )
 # The Blocked Opportunities page's second order (ADR 0011): the tariff-led view, without changing the definition.
 TARIFF_PART = RankOrder(

@@ -107,6 +107,7 @@ class Labels(BaseModel):
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
     totals_note: TotalsNote  # beside every summed figure (spec #113, "Totals understate")
     trade_agreement_meaning: str  # what "a Trade Agreement" means in the model (spec #133, ADR 0011)
+    blocked_rule: str  # the Blocked Opportunity rule at the fixed thresholds, in one sentence (ADR 0012)
 
 
 class MarketOut(BaseModel):
@@ -819,6 +820,12 @@ class ScenarioResponse(BaseModel):
     # rate it sets; an unknown tariff counts in neither. None for every other kind of Scenario.
     pairs_raised: int | None = None
     pairs_lowered: int | None = None
+    # A tariff Scenario's line on the pairs it sets, raises and lowers, naming the rate the model reads when the rate
+    # was clipped; None for every other kind of Scenario (`ScenarioResult.tariff_directions_text`).
+    tariff_directions: str | None = None
+    # The Blocked Opportunity prose (`ScenarioResult.blocked_note`): the Blocked Opportunities section's caption when
+    # `adds_agreement`, otherwise the line saying this Scenario adds none; each states the fixed rule.
+    blocked_note: str
     note: ScenarioNote  # Scenario Effects are Illustrative: the label and the benchmarks beside them
 
 

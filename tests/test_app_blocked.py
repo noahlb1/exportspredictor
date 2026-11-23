@@ -239,7 +239,7 @@ def test_the_active_filters_line_states_the_count_and_the_illustrative_total(mon
     assert "3 Blocked Opportunities" in line and "illustrative" in line and "$30.7m" in line
     caption = " ".join(element.value for element in page.caption)
     assert "$ millions" in caption and "2024" in caption and "Scenario Builder" in caption
-    assert "20%" in caption and "$1.0m" in caption
+    assert "20%" in caption and "$1M" in caption
     # Spec #113 "Totals understate": the note beside the summed values, with the share the artefact records.
     note = httpx.get(f"{blocked_api_url}/labels").json()["totals_note"]["text"]
     assert note in caption and "about 82% of Actual Exports" in note
@@ -248,7 +248,8 @@ def test_the_active_filters_line_states_the_count_and_the_illustrative_total(mon
 def test_the_caption_says_with_no_uk_trade_agreement_in_force_and_states_room_to_grow(monkeypatch, blocked_api_url):
     page = _page(monkeypatch, blocked_api_url)
 
-    caption = next(element.value for element in page.caption if "Blocked Opportunity value is" in element.value)
+    caption = next(element.value for element in page.caption if "room to grow" in element.value)
+    assert httpx.get(f"{blocked_api_url}/labels").json()["blocked_rule"] in caption  # one wording (ADR 0012)
     assert "with no UK Trade Agreement in force" in caption
     assert "where none is in force" not in caption  # read as "no tariff" (spec #133, story 13)
     assert "room to grow" in caption and "Actual Exports" in caption
@@ -558,7 +559,7 @@ def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatc
     assert not page.exception
     assert paths.count("/opportunities/blocked") == 1
     caption = " ".join(element.value for element in page.caption)
-    assert "20%" in caption and "$1.0m" in caption
+    assert "20%" in caption and "$1M" in caption
 
 
 def test_the_page_sends_no_one_to_try_other_thresholds(monkeypatch, blocked_api_url):

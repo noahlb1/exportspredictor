@@ -13,14 +13,14 @@ flags, and a bloc Scenario changes only the rows of the bloc's member Markets:
 - EU re-join: a Trade Agreement with every EU member, the Customs Union flag and the
   UK's EU membership flag (`eu_o`), as for any pair of EU members in training. Since 2021
   the UK has a Trade Agreement with each, so its Scenario Effect comes from the other two.
-
-`offered_presets` leaves out a preset that changes nothing in the Baseline (Leave, while
-the UK belongs to no tracked Trading Bloc).
 - EU Customs Union only: the Customs Union flag alone.
 - CPTPP: a Trade Agreement with every member and the UK's CPTPP flag, with accession
   treated as complete. The 2024 Baseline has no UK CPTPP membership (the 1 July rule).
 - Leave: for each bloc the UK is in, its membership flag, Trade Agreement and Customs
   Union with that bloc's members are switched off.
+
+`offered_presets` leaves out a preset that changes nothing in the Baseline (Leave, while
+the UK belongs to no tracked Trading Bloc).
 
 **Tariffs** (ADR 0006). Adding a Trade Agreement (directly, in a preset or in a Blocked
 Opportunity value) sets a known Applied Tariff to 0 (an unknown one stays unknown), and removing one restores the Importer's
@@ -36,6 +36,11 @@ Actual Exports below Export Potential with the effect added). `blocked_opportuni
 for every pair without a Trade Agreement, the Scenario Effect of adding one (the value the Blocked
 Opportunities page ranks by) and its Tariff part (`tariff_only`); `tariff_kind` sorts an Applied Tariff into above 0,
 0% or unknown, `barrier_label` words the Barrier and `value_split` the split of the value between its two parts.
+`BLOCKED_RULE` is the rule in one sentence, the wording every page and report states it in.
+
+**Wording.** A result words itself for the API, the app and the notebook alike: `summary` frames it,
+`tariff_directions_text` says what a tariff Scenario raises and lowers, and `blocked_note` gives its Blocked
+Opportunity prose (the section's caption, or the line saying it adds no Trade Agreement where none is in force).
 
 Scenario Effects are associations the model has learned, not causal estimates.
 """
@@ -73,6 +78,19 @@ BLOCKED_MIN_USD = 1_000_000.0
 # The thresholds in words, for the prose that states them: "20%" and "$1M".
 BLOCKED_MIN_SHARE_TEXT = f"{BLOCKED_MIN_SHARE:.0%}"
 BLOCKED_MIN_USD_TEXT = f"${BLOCKED_MIN_USD / 1e6:g}M"
+# The Blocked Opportunity rule in one sentence (ADR 0011, ADR 0012), the one wording of it: the Blocked Opportunities
+# page, a Scenario's Blocked Opportunity prose, the page's rank order and the model card all state it so.
+BLOCKED_RULE = (
+    "A pair with no UK Trade Agreement in force is a Blocked Opportunity when its Blocked Opportunity value, the rise "
+    f"in Export Potential the model associates with adding one, is at least {BLOCKED_MIN_SHARE_TEXT} of its Baseline "
+    f"Export Potential and at least {BLOCKED_MIN_USD_TEXT}, and it has room to grow: its Baseline-year Actual Exports "
+    "are below its Export Potential with a Trade Agreement."
+)
+# A Scenario that adds no Trade Agreement where none is in force shows this line in place of Blocked Opportunities.
+ADDS_NO_AGREEMENT = (
+    "Blocked Opportunities are measured by adding a Trade Agreement where none is in force, and this Scenario adds "
+    f"none. {BLOCKED_RULE}"
+)
 TARIFF = "log_applied_tariff"  # ln(1 + t): the policy feature a Scenario's tariffs are set in
 
 
@@ -288,6 +306,58 @@ class ScenarioResult:
         ).row(0)
         return int(raised), int(lowered)
 
+    def tariff_directions_text(self) -> str | None:
+        """For a tariff change, one line on how many pairs it sets to the rate and how many of those it raises and
+        lowers (`tariff_directions`); None for any other kind of Scenario, or one that changes nothing.
+
+        When the rate lay beyond the training range, the counts are against the rate the model reads, the edge of
+        that range, so the line names that rate too (ADR 0006)."""
+        directions, tariff = self.tariff_directions(), self.scenario.tariff
+        if directions is None or tariff is None or self.changes_nothing:
+            return None
+        raised, lowered = directions
+        sets = f"This sets {_pairs(self.pairs.height)} to {tariff.rate_pct:g}%"
+        counts = f"it raises {raised:,} and lowers {lowered:,}"
+        read = self.pairs["scenario_tariff_pct"].drop_nulls()
+        if self.clipped_pairs and not read.is_empty():
+            # One rate for every changed pair, so every one is held at the same edge.
+            return (
+                f"{sets}, which the model reads as {read.max():,.1f}%, the edge of the training range: against that "
+                f"rate {counts}."
+            )
+        return f"{sets}: {counts}."
+
+    def blocked_note(self, *, hidden: Sequence[str], shown: int, count: int) -> str:
+        """The Blocked Opportunity prose beside the result. A Scenario that adds no Trade Agreement where none is in
+        force gets the neutral line (`ADDS_NO_AGREEMENT`). One that adds one gets its Blocked Opportunities section's
+        caption: the fixed rule (`BLOCKED_RULE`), the Caveat Tiers hidden as by default (`hidden`, their plurals), why
+        a Market's Scenario Effect differs from its Blocked Opportunity total and, for a preset, from a pair's value,
+        and how many of the `count` Blocked Opportunities the `shown` rows are (ADR 0012)."""
+        if not self.adds_agreement:
+            return ADDS_NO_AGREEMENT
+        from exportspredictor.illustrative import ILLUSTRATIVE  # it imports this module
+
+        parts = [
+            (
+                "These are the Blocked Opportunities of the Markets this Scenario adds a Trade Agreement with, with the "
+                f"same figures ({ILLUSTRATIVE}) as the Blocked Opportunities page. The rule is fixed. {BLOCKED_RULE}"
+            )
+        ]
+        if hidden:
+            parts.append(f"{_names(hidden)} are hidden here, as they are by default on the Blocked Opportunities page.")
+        parts.append(
+            "A Market's Scenario Effect covers every pair the Scenario changes, while its Blocked Opportunity total "
+            "sums only its Blocked Opportunities, so the two differ."
+        )
+        if self.scenario.preset is not None:
+            parts.append(
+                "A preset also changes other conditions (the Customs Union, membership of a Trading Bloc), so its "
+                "Scenario Effect for a pair can differ from that pair's Blocked Opportunity value."
+            )
+        if count > shown:
+            parts.append(f"The largest {shown:,} of {count:,} are listed.")
+        return " ".join(parts)
+
     def blocked_opportunities(
         self,
         history: pl.DataFrame,
@@ -333,6 +403,17 @@ class ScenarioResult:
             f"The model associates this Scenario with {change} in UK Export Potential in the Markets it changes, "
             "holding everything else at the Baseline: a learned association, not a forecast."
         )
+
+
+def _pairs(count: int) -> str:
+    """A count of pairs in words: "1 pair", "1,234 pairs"."""
+    return f"{count:,} pair" if count == 1 else f"{count:,} pairs"
+
+
+def _names(names: Sequence[str]) -> str:
+    """Names joined for a sentence: "A", "A and B", "A, B and C"."""
+    *rest, last = names
+    return f"{', '.join(rest)} and {last}" if rest else last
 
 
 def is_blocked(

@@ -178,6 +178,7 @@ def create_app(
                 text=totals_note(share, gap_period_label(artefacts.gap_years)),
             ),
             trade_agreement_meaning=TRADE_AGREEMENT_MEANING,
+            blocked_rule=scenarios.BLOCKED_RULE,
         )
 
     @app.get("/caveats", response_model=list[CaveatTierOut])
@@ -598,6 +599,12 @@ def scenario_response(
         clipped_pairs=result.clipped_pairs,
         pairs_raised=raised,
         pairs_lowered=lowered,
+        tariff_directions=result.tariff_directions_text(),
+        blocked_note=result.blocked_note(
+            hidden=[tier.plural for tier in tiers if tier.hidden_by_default],
+            shown=len(blocked or []),
+            count=blocked_count or 0,
+        ),
         note=scenario_note(artefacts),
     )
 
