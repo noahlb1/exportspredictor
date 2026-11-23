@@ -231,6 +231,7 @@ def test_markets_lists_every_market_with_name_and_region(client):
         "iso3": "JPN",
         "name": "Japan",
         "region": "East Asia & Pacific",
+        "scenario": True,
     }
     assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND", "HKG"}
 

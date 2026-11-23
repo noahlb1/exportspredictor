@@ -289,6 +289,21 @@ def test_threshold_inputs_default_to_the_apis_thresholds(monkeypatch, api_url):
     assert page.number_input(key="min_usd").value == defaults["min_effect_usd"] / 1e6
 
 
+@pytest.mark.parametrize("picker", ["add", "remove", "tariff_markets"])
+def test_every_market_picker_offers_exactly_the_markets_a_scenario_accepts(
+    open_page, live_api, unscenario_artefacts_dir, picker
+):
+    with live_api(unscenario_artefacts_dir) as url:
+        page = open_page(url, SCENARIOS)
+        kind = "Tariff change" if picker == "tariff_markets" else "Custom Trade Agreements"
+        page.radio(key="kind").set_value(kind).run()
+
+        offered = page.multiselect(key=picker).options
+        assert not page.exception
+
+    assert sorted(offered) == ["Canada", "Hong Kong", "India", "Japan"]  # not the United Kingdom or Mayotte
+
+
 def test_tariff_sectors_are_offered_by_name(monkeypatch, api_url):
     page = _scenarios_page(monkeypatch, api_url)
     page.radio(key="kind").set_value("Tariff change").run()

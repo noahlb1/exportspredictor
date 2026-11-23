@@ -45,6 +45,7 @@ from api.schemas import (
     Labels,
     LeaderboardQuery,
     LeaderboardSummary,
+    MarketListed,
     MarketOut,
     MarketReachOut,
     PairMarketReachOut,
@@ -225,10 +226,14 @@ def create_app(
         """Each Sector that has Products in the artefact, by code (HS2 chapter) and name, in code order."""
         return [SectorOut(code=row["sector"], name=row["sector_name"]) for row in sectors_of(artefacts.products).iter_rows(named=True)]
 
-    @app.get("/markets", response_model=list[MarketOut])
+    @app.get("/markets", response_model=list[MarketListed])
     def markets(artefacts: store.Artefacts = Depends(loaded)):
-        """Every Market, by name."""
-        return [_pick(MarketOut, row) for row in artefacts.markets.sort("name").iter_rows(named=True)]
+        """Every Market, by name, each flagged `scenario` when a Scenario accepts it."""
+        accepted = scenarios.accepted_markets(artefacts.baseline_features)
+        return [
+            _pick(MarketListed, {**row, "scenario": row["iso3"] in accepted})
+            for row in artefacts.markets.sort("name").iter_rows(named=True)
+        ]
 
     @app.get("/opportunities/rank-by", response_model=list[RankOrderOut])
     def rank_orders():
