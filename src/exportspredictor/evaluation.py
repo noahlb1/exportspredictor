@@ -244,9 +244,10 @@ LIMITATIONS = [
         "title": "Some Trade Agreements carry most-favoured-nation tariffs",
         "text": "TRAINS records no preferential rates in some Markets' schedules where a Trade Agreement is in force, "
         "so every Exporter with an agreement there carries the Market's MFN rate. Among UK Markets these are Canada, "
-        "Israel, Serbia, Vietnam, Ghana, Côte d'Ivoire, Cameroon and Kenya. Türkiye charges UK goods its MFN rates "
-        f"in the data from {LAST_TRAINS_YEAR}, when the UK left the EU customs union, because TRAINS holds no rates "
-        "under the UK–Türkiye agreement. These pairs have a Trade Agreement, so they have no Blocked Opportunity "
+        "Israel, Serbia, Vietnam, Ghana, Côte d'Ivoire, Cameroon and Kenya. The UK left the EU customs union, and "
+        "with it its customs union with Türkiye, at the end of 2020. TRAINS holds no rates under the UK–Türkiye "
+        "agreement that followed, so in the data Türkiye charges UK goods its MFN rates from then on (the tariff data "
+        f"end in {LAST_TRAINS_YEAR}, and later years carry those rates forward). These pairs have a Trade Agreement, so they have no Blocked Opportunity "
         "value or Tariff part, but their Export Potential reads them as dutiable.",
     },
 ]
