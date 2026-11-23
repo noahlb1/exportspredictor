@@ -33,9 +33,9 @@ def test_every_table_of_the_real_review_pack_is_non_empty_at_its_documented_size
     assert set(pack) == set(review.TABLES)
     for name, table in pack.items():
         assert not table.is_empty(), name
-    assert pack["top_opportunities"].height == review.TOP
-    assert pack["top_opportunities_by_market"].height == review.GROUPS * review.GROUP_TOP
-    assert pack["top_opportunities_by_product"].height == review.GROUPS * review.GROUP_TOP
+    assert pack["top_opportunities"].height == review.TOP_N
+    assert pack["top_opportunities_by_market"].height == review.TOP_GROUPS * review.GROUP_TOP
+    assert pack["top_opportunities_by_product"].height == review.TOP_GROUPS * review.GROUP_TOP
     assert pack["pair_sample"].height == review.SAMPLE_SIZE
 
 

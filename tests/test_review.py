@@ -67,9 +67,9 @@ def test_the_top_opportunities_are_the_leaderboards_top_opportunities_in_order(b
     leaderboard = rankings.ranking(bundle).rows.filter(pl.col("export_gap_usd") > 0)
 
     table = pack["top_opportunities"]
-    assert _pairs(table) == _pairs(leaderboard.head(review.TOP))
+    assert _pairs(table) == _pairs(leaderboard.head(review.TOP_N))
     assert table["rank"].to_list() == list(range(1, table.height + 1))
-    assert table["export_gap_usd"].to_list() == leaderboard.head(review.TOP)["export_gap_usd"].to_list()
+    assert table["export_gap_usd"].to_list() == leaderboard.head(review.TOP_N)["export_gap_usd"].to_list()
 
 
 @pytest.mark.parametrize(("table", "key", "groups"), [
@@ -78,7 +78,7 @@ def test_the_top_opportunities_are_the_leaderboards_top_opportunities_in_order(b
 ])
 def test_each_top_group_lists_its_top_opportunities_as_its_own_ranking_does(bundle, pack, table, key, groups):
     # The groups are those with the largest total Export Gap among their Opportunities, in that order.
-    top_groups = getattr(rankings.ranking(bundle), groups).head(review.GROUPS)[key].to_list()
+    top_groups = getattr(rankings.ranking(bundle), groups).head(review.TOP_GROUPS)[key].to_list()
     expected = []
     for code in top_groups:
         own = rankings.ranking(bundle, **{key: code}).rows.filter(pl.col("export_gap_usd") > 0)
@@ -94,9 +94,9 @@ def test_the_blocked_opportunity_tables_are_the_one_sources(bundle, pack):
     blocked = rankings.blocked_opportunities(bundle)
 
     assert pack["top_blocked_opportunities"].height == 3  # the Blocked world's three
-    assert _pairs(pack["top_blocked_opportunities"]) == _pairs(blocked.rows.head(review.TOP))
+    assert _pairs(pack["top_blocked_opportunities"]) == _pairs(blocked.rows.head(review.TOP_N))
     assert pack["top_blocked_opportunities"]["blocked_opportunity_value_usd"].to_list() == (
-        blocked.rows.head(review.TOP)["blocked_opportunity_value_usd"].to_list()
+        blocked.rows.head(review.TOP_N)["blocked_opportunity_value_usd"].to_list()
     )
     assert pack["blocked_opportunities_by_market"].equals(rankings.blocked_by(blocked.rows, "iso3", "market"))
     assert pack["blocked_opportunities_by_product"].equals(rankings.blocked_by(blocked.rows, "hs6", "description"))
@@ -114,10 +114,15 @@ def test_each_offered_presets_largest_scenario_effects_are_those_scenarios_run_g
             bundle.baseline_features, bundle.baseline, bundle.fold_models, scenarios.Scenario(preset=preset.name),
             tariff_range=tariff_range, form=bundle.model_form,
         )
-        expected = result.pairs.head(review.TOP)
+        # Largest by absolute size (spec #140, user story 7), so a fall under an adding preset can reach the reviewer.
+        expected = result.pairs.sort(
+            pl.col("effect_usd").abs(), "hs6", "iso3", descending=[True, False, False]
+        ).head(review.TOP_N)
         shown = table.filter(pl.col("scenario") == preset.title)
         assert _pairs(shown) == _pairs(expected)
         assert shown["effect_usd"].to_list() == pytest.approx(expected["effect_usd"].to_list())
+        sizes = [abs(effect) for effect in shown["effect_usd"]]
+        assert sizes == sorted(sizes, reverse=True)
 
 
 def test_the_pair_sample_has_the_requested_size_and_the_baselines_own_figures(bundle, market_imports):
