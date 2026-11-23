@@ -12,6 +12,12 @@ from a second cached read with the Market's filter (so every pair of the Market 
 capped), under the Market's Market Reach sentence. Clicking any value of a row chooses its Market or its pair, and the
 detail panel (`app.panel`) under both tables, at full page width, explains the chosen pair. Until one is clicked, the
 top Market and its top pair are chosen.
+
+By Product swaps the two: Products on the left with the same counts and totals, the chosen Product's Markets on the
+right from a read with the Product's filter. The Wide table lists every shown pair across the page in
+`LEADERBOARD_SHOWN`, the other columns hidden but offered. The chosen pair is kept across the three views wherever it
+is still shown, and each grouping keeps its own chosen group. The view is in the URL (`view=product` or `view=wide`;
+By Market is left out) and kept for the session; Reset filters leaves it, as it is not a filter.
 """
 
 import streamlit as st
@@ -115,6 +121,7 @@ def _layout(filters: Filters) -> Layout:
         panel=panel.show,
         read_group=read_group,
         above_right=_market_reach,
+        url_param="view",
     )
 
 

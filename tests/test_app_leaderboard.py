@@ -1,7 +1,7 @@
 """The Leaderboard, the app's default page, run with AppTest through the router against a live local API on
 fixture artefacts: its sidebar filters (Product search and Market included), the filters in the URL, Reset filters,
 the active-filters line, the By Market view (Markets on the left, the chosen Market's Products on the right, the
-panel underneath), the Wide table and the CSV."""
+panel underneath), By Product, the Wide table, the chosen pair across views, the view in the URL and the CSV."""
 
 import io
 import json
@@ -197,6 +197,172 @@ def test_the_right_table_lists_every_pair_of_the_market_when_the_main_read_is_ca
     assert japan > 500  # more than the page shows of the capped main read
     assert len(_right(page)) == japan
     assert any(f"{japan:,} Products" in text for text in _texts(page))
+
+
+# --- By Product: Products on the left, the chosen Product's Markets on the right ---------------------
+
+PRODUCT_RIGHT_COLUMNS = ["Market", *RIGHT_COLUMNS[1:]]
+
+
+def _by_product(page: AppTest) -> AppTest:
+    page.segmented_control[0].set_value("By Product").run()
+    return page
+
+
+def test_by_product_lists_products_by_total_export_gap_and_the_top_products_markets(monkeypatch, fixture_api_url):
+    page = _by_product(_home(monkeypatch, fixture_api_url))
+
+    assert not page.exception
+    products = _by_market(fixture_api_url)["products"]
+    left = _left(page)
+    assert list(left.columns) == ["Product", "Pairs", "Total Export Gap"]
+    assert list(left["Product"]) == [product["description"] for product in products]
+    assert list(left["Pairs"]) == [product["pairs"] for product in products]
+    totals = list(left["Total Export Gap"])
+    assert totals == sorted(totals, reverse=True)
+    assert totals == pytest.approx([product["positive_export_gap_usd"] / 1e6 for product in products])
+    top = products[0]
+    markets = _by_market(fixture_api_url, product=top["hs6"])["opportunities"]
+    right = _right(page)
+    assert list(right.columns) == PRODUCT_RIGHT_COLUMNS
+    assert list(right["Market"]) == [row["market"] for row in markets]
+    assert any(f"**{top['description']}**" in text and f"{len(markets)} Markets" in text for text in _texts(page))
+    assert _panel_heading(page) == f"{top['description']} → {markets[0]['market']}"
+
+
+def test_clicking_a_product_lists_its_markets_and_explains_its_top_pair(monkeypatch, fixture_api_url):
+    page = _by_product(_home(monkeypatch, fixture_api_url))
+
+    page.session_state["leaderboard_group_hs6"] = WHISKY
+    page.run()
+
+    whisky = _by_market(fixture_api_url, product=WHISKY)["opportunities"]
+    assert list(_right(page)["Market"]) == [row["market"] for row in whisky]
+    assert set(_right(page)["Market"]) == {"Japan", "Canada", "India", "Hong Kong"}
+    assert _panel_heading(page) == f"{whisky[0]['description']} → {whisky[0]['market']}"
+
+
+def test_by_product_lists_every_market_of_the_product_when_the_main_read_is_capped(monkeypatch, too_many_api):
+    page = _by_product(_home(monkeypatch, too_many_api))
+
+    page.session_state["leaderboard_group_hs6"] = WHISKY
+    page.run()
+
+    whisky = _by_market(too_many_api, product=WHISKY)["opportunities"]
+    assert len(_right(page)) == len(whisky) == 4
+    assert list(_right(page)["Market"]) == [row["market"] for row in whisky]
+
+
+def test_a_product_search_leaves_one_product_on_the_left_by_product(monkeypatch, fixture_api_url):
+    page = _by_product(_search(monkeypatch, fixture_api_url, WHISKY))
+
+    assert list(_left(page)["Product"]) == [_by_market(fixture_api_url, product=WHISKY)["products"][0]["description"]]
+    assert set(_right(page)["Market"]) == {"Japan", "Canada", "India", "Hong Kong"}
+
+
+# --- The Wide table ---------------------------------------------------------------------------------
+
+
+def test_the_wide_table_lists_every_shown_pair_with_the_panel_underneath(monkeypatch, several_hundred_api):
+    page = _home(monkeypatch, several_hundred_api, view="wide")
+
+    # One table across the page: no left table of groups (the panel below has tables of its own)
+    assert not any("Pairs" in table.value.columns for table in page.dataframe)
+    assert len(page.dataframe[0].value) == 500
+    top = _api_rows(several_hundred_api)[0]
+    assert _panel_heading(page) == f"{top['description']} → {top['market']}"
+
+    page.toggle(key="show_all").set_value(True).run()
+
+    assert len(page.dataframe[0].value) == 620
+
+
+# --- Selection across views -------------------------------------------------------------------------
+
+
+def test_a_chosen_pair_survives_a_view_switch_where_it_is_still_shown(monkeypatch, fixture_api_url):
+    page = _click(_home(monkeypatch, fixture_api_url), market="IND", pair=(WHISKY, "IND"))
+    india = f"{_panel_heading(page).split(' → ')[0]} → India"
+    assert WHISKY in " ".join(_texts(page))
+
+    page.segmented_control[0].set_value("Wide table").run()
+    assert _panel_heading(page) == india
+    table = page.dataframe[0]
+    rows = list(zip(table.value["HS6"], table.value["Market"], strict=True))
+    assert _tinted(table) == {rows.index((WHISKY, "India"))}
+
+    page.session_state["leaderboard_group_hs6"] = WHISKY  # By Product with whisky chosen: India is among its Markets
+    page.segmented_control[0].set_value("By Product").run()
+    assert _panel_heading(page) == india
+    assert _tinted(page.dataframe[1]) == {list(_right(page)["Market"]).index("India")}
+
+    page.segmented_control[0].set_value("By Market").run()
+    assert _panel_heading(page) == india
+
+
+def test_a_pair_no_longer_shown_gives_way_to_the_groups_top_pair(monkeypatch, fixture_api_url):
+    page = _click(_home(monkeypatch, fixture_api_url), market="IND", pair=(WHISKY, "IND"))
+
+    _by_product(page)
+    page.session_state["leaderboard_group_hs6"] = JEWELLERY
+    page.run()
+
+    jewellery = _by_market(fixture_api_url, product=JEWELLERY)["opportunities"]
+    assert _panel_heading(page) == f"{jewellery[0]['description']} → {jewellery[0]['market']}"
+
+
+def test_each_grouping_remembers_its_own_chosen_group(monkeypatch, fixture_api_url):
+    page = _click(_home(monkeypatch, fixture_api_url), market="IND")
+    _by_product(page)
+    page.session_state["leaderboard_group_hs6"] = WHISKY
+    page.run()
+
+    page.segmented_control[0].set_value("By Market").run()
+    assert _tinted(page.dataframe[0]) == {list(_left(page)["Market"]).index("India")}
+
+    _by_product(page)
+    assert _tinted(page.dataframe[0]) == {[p["hs6"] for p in _by_market(fixture_api_url)["products"]].index(WHISKY)}
+
+
+# --- The view in the URL ----------------------------------------------------------------------------
+
+
+def test_the_view_is_written_to_the_url_and_the_default_leaves_no_parameter(monkeypatch, fixture_api_url):
+    page = _home(monkeypatch, fixture_api_url)
+    assert "view" not in page.query_params
+
+    page.segmented_control[0].set_value("By Product").run()
+    assert page.query_params["view"] == "product"
+
+    page.segmented_control[0].set_value("Wide table").run()
+    assert page.query_params["view"] == "wide"
+
+    page.segmented_control[0].set_value("By Market").run()
+    assert "view" not in page.query_params
+
+
+@pytest.mark.parametrize(("value", "view"), [("product", "By Product"), ("wide", "Wide table")])
+def test_a_link_naming_the_view_opens_it(monkeypatch, fixture_api_url, value, view):
+    page = _home(monkeypatch, fixture_api_url, view=value)
+
+    assert not page.exception
+    assert page.segmented_control[0].value == view
+    assert page.query_params["view"] == value
+
+
+def test_the_view_persists_for_the_session_across_pages(monkeypatch, fixture_api_url):
+    page = _home(monkeypatch, fixture_api_url)
+    page.segmented_control[0].set_value("By Product").run()
+
+    page.switch_page("pages/scenarios.py")
+    page.query_params.clear()  # a page switch leaves the Leaderboard's parameters behind
+    page.run()
+    page.switch_page("pages/leaderboard.py")
+    page.query_params.clear()
+    page.run()
+
+    assert page.segmented_control[0].value == "By Product"
+    assert page.query_params["view"] == "product"
 
 
 def test_the_filters_sit_in_the_sidebar_with_a_reset_button(monkeypatch, fixture_api_url):
@@ -489,7 +655,7 @@ def test_reset_filters_restores_the_full_ranking_and_a_clean_url(monkeypatch, fi
     page.sidebar.button(key="reset_filters").click().run()
 
     assert len(_table(page)) == 20
-    assert page.query_params == {}
+    assert page.query_params == {"view": "wide"}  # the view is not a filter: Reset filters keeps it
     assert page.sidebar.text_input(key="product_query").value == ""
     assert page.sidebar.selectbox(key="market").value is None
     assert "No filters" in _active_filters(page)
@@ -508,8 +674,8 @@ def test_filters_persist_for_the_session_across_pages(monkeypatch, fixture_api_u
 
     assert not page.exception
     assert page.sidebar.selectbox(key="market").value == "JPN"
-    assert set(_table(page)["Market"]) == {"Japan"}
     assert page.query_params == {"market": "JPN"}
+    assert set(_table(page)["Market"]) == {"Japan"}
 
 
 # --- The table and the CSV -----------------------------------------------------------------------
@@ -693,8 +859,8 @@ def test_reset_filters_switches_show_all_off(monkeypatch, several_hundred_api):
 
     page.sidebar.button(key="reset_filters").click().run()
 
-    assert page.toggle(key="show_all").value is False and len(_table(page)) == 500
-    assert page.query_params == {}
+    assert page.toggle(key="show_all").value is False and page.query_params == {}
+    assert len(_table(page)) == 500
 
 
 def test_above_6000_pairs_the_page_shows_the_top_500_and_points_to_the_filters(monkeypatch, too_many_api, downloads):

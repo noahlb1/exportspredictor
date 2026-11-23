@@ -101,7 +101,7 @@ Export Gap divided by Export Potential: the share of an Opportunity's Export Pot
 _Avoid_: percentage gap, headroom ratio
 
 **Leaderboard**:
-Every UK Product–Market pair ranked by Export Gap (or Relative Export Gap), with the Advisor's filters and a summary of the filtered pairs. It is the app's home page; Blocked Opportunities are listed on a page of their own.
+Every UK Product–Market pair ranked by Export Gap (or Relative Export Gap), with the Advisor's filters and a summary of the filtered pairs. It is the app's home page; Blocked Opportunities are listed on a page of their own, laid out the same way. Its pairs are shown By Market (the default), By Product, or in a Wide table, with the chosen pair's detail panel underneath.
 _Avoid_: top list, dashboard, league table
 
 **Opportunity Type**:
