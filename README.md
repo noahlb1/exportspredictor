@@ -8,6 +8,11 @@ The served model is the **Blend** with **Market Reach**: Export Potential blends
 
 **Known limitation: which form the 2023 figures were read on.** The 2023 figures above were read once (Test-year Ledger, fingerprint `a748777eac4b`) on Market Reach's first form, which let a Market's share exceed 1. The served version carries the corrected form (sent nested in imported, chosen again on 2022: ADR 0010, Amendment), a new Configuration Fingerprint that has not read 2023 itself (ADR 0009). Its own 2023 figures come from the next frozen version's one read. The model card and the Model Evaluation page's limitations say the same.
 
+**Known limitations from the output review.** A reviewer who had not seen the code read the served outputs before release (#161). Three limitations it found are now in the model card and the Model Evaluation page:
+- **The Potential Range lies below Export Potential for small pairs** (under about $8k). Most comparable pairs of that size trade nothing, and Export Potential is an average that the few which do trade pull up.
+- **A Tariff part is not a tariff elasticity.** The model's response to a tariff is more a step than a slope, so removing a tariff of 1% or less can be associated with a rise of tens of percent (turbo-jets to China: +37%). Read it as Illustrative.
+- **Some Trade Agreements carry most-favoured-nation tariffs.** TRAINS records no preferential rates for some agreements in force, among them Canada's and Israel's, and none for UK goods under the UK–Türkiye agreement, so those pairs read as dutiable.
+
 The model underneath is v2's: it trains on the top 100 Exporters into every Market, leaves out Excluded Products, uses the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. Its feature files fill GDP and population for small Markets that lacked them; an Exporter count feature was tried on 2022 and dropped. The notebook and the model card (`model_card.md` in the artefact folder) give the detail.
 
 ## Run the app (one command)
