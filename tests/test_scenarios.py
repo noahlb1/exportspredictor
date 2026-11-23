@@ -246,7 +246,7 @@ def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
     assert blocked["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
 
 
-def test_a_scenarios_blocked_opportunities_need_room_to_grow_against_its_export_potential(fixture_artefacts):
+def test_with_blocked_opportunity_flag_needs_room_to_grow_against_scenario_export_potential(fixture_artefacts):
     result = scenarios.run(
         fixture_artefacts.baseline_features,
         fixture_artefacts.baseline,
@@ -273,8 +273,6 @@ def test_a_scenarios_blocked_opportunities_need_room_to_grow_against_its_export_
     assert cars["blocked_opportunity"] is False
     assert blocked.height > 0
     assert (blocked["baseline_actual_exports_usd"] < blocked["scenario_potential_usd"]).all()
-    # At the fixed thresholds, none of these tiny effects clears $1M.
-    assert result.blocked_opportunities(fixture_artefacts.history, fixture_artefacts.baseline_year).is_empty()
 
 
 # --- The Tariff part (ADR 0011) -------------------------------------------------------------

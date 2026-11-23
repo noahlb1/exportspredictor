@@ -778,7 +778,6 @@ class PairEffect(BaseModel):
     baseline_tariff_pct: float | None  # the Applied Tariff (percent) in the Baseline; None where unknown
     scenario_tariff_pct: float | None  # and under the Scenario (clipped to the training range)
     baseline_actual_exports_usd: float  # UK Actual Exports in the Baseline year (0 where there is no Flow)
-    blocked_opportunity: bool
     # `tiered` adds each Caveat Tier's column here (and its reason column, if any), as on ranking rows
 
 
@@ -971,8 +970,8 @@ def _caveat_texts_validator(tiers: tuple[CaveatTier, ...]) -> dict:
 @cache
 def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
     """The models carrying `tiers`: each tier's hide filter on the ranking queries (after `region`), and its column
-    (then its reason column, if any) on ranking rows and Scenario pairs (after `blocked_opportunity`) and on
-    explanations (after `opportunity_type`)."""
+    (then its reason column, if any) on ranking rows (after `blocked_opportunity`), on Scenario pairs (after
+    `baseline_actual_exports_usd`) and on explanations (after `opportunity_type`)."""
     hides = {
         tier.hide_param: (bool, Field(False, description=tier.hide_description)) for tier in tiers
     }
@@ -988,7 +987,7 @@ def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
         _rebuilt(row, after="blocked_opportunity", added=columns, validators=texts)
         for row in (MarketOpportunity, ProductOpportunity, LeaderboardOpportunity, BlockedOpportunity)
     )
-    pair = _rebuilt(PairEffect, after="blocked_opportunity", added=columns, validators=texts)
+    pair = _rebuilt(PairEffect, after="baseline_actual_exports_usd", added=columns, validators=texts)
     return Tiered(
         RankingQuery=_rebuilt(RankingQuery, after="region", added=hides),
         LeaderboardQuery=_rebuilt(LeaderboardQuery, after="region", added=hides),
