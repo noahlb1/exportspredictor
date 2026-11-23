@@ -493,11 +493,24 @@ def test_by_market_unknown_rank_by_returns_422(client):
     assert client.get("/opportunities/by-market/JPN", params={"rank_by": "size"}).status_code == 422
 
 
-def test_scenario_summary_states_the_effect_in_usd_only(client):
-    body = client.post("/scenarios", json={"add_agreements": ["IND"]}).json()
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"add_agreements": ["IND"]},
+        {"preset": "cptpp"},
+        {"tariff": {"markets": ["JPN"], "rate_pct": 1000.0}},
+    ],
+    ids=["add-india", "cptpp", "tariff"],
+)
+def test_the_scenario_summary_frames_the_result_without_its_figures(client, payload):
+    # #149: the response's fields (and the page's metrics) carry the effect, share and count; the sentence only frames.
+    body = client.post("/scenarios", json=payload).json()
 
-    assert re.search(r"change of [+-]\$[0-9,.]+(bn|m|k)? ", body["summary"])
-    assert "£" not in body["summary"]
+    assert body["changes_nothing"] is False
+    summary = body["summary"]
+    assert "associates" in summary and "not a forecast" in summary
+    assert not re.search(r"\d", summary)
+    assert "$" not in summary and "%" not in summary and "£" not in summary
 
 
 def test_scenario_top_pairs_can_be_asked_for_one_market(client):

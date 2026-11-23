@@ -360,7 +360,21 @@ def test_a_scenario_that_changes_nothing_says_so(monkeypatch, api_url):
     page.button(key="run").click().run()
 
     assert not page.exception
-    assert page.warning  # the API's summary, shown as a warning instead of a table
+    # #149: nothing is wrong, so the API's summary is a neutral box, not a warning, and there is no table.
+    assert any("changes nothing" in box.value for box in page.info)
+    assert not page.warning
+    assert not page.dataframe
+
+
+def test_a_scenario_that_is_not_valid_stays_a_warning(monkeypatch, api_url):
+    # Nothing added or removed: the Advisor must change something, so this one is a warning.
+    page = _scenarios_page(monkeypatch, api_url)
+
+    page.radio(key="kind").set_value("Custom Trade Agreements").run()
+    page.button(key="run").click().run()
+
+    assert not page.exception
+    assert any("This Scenario is not valid" in box.value for box in page.warning)
     assert not page.dataframe
 
 
@@ -375,15 +389,91 @@ def test_the_note_is_not_shown_before_a_run(monkeypatch, api_url, fixture_artefa
     assert note_text not in text
 
 
-def test_a_run_shows_the_apis_scenario_note_beside_the_scenario_effect(monkeypatch, api_url):
-    note = httpx.post(f"{api_url}/scenarios", json={"add_agreements": ["IND"], "limit": 100}).json()["note"]
+def test_a_run_shows_the_apis_scenario_note_in_the_blocked_opportunities_pages_expander(monkeypatch, blocked_api_url):
+    # #149: the note sits closed under the figures, in the expander the Blocked Opportunities page uses.
+    note = httpx.post(f"{blocked_api_url}/scenarios", json=INDIA).json()["note"]
+    page = _run_india(monkeypatch, blocked_api_url)
+    [blocked_expander] = run_page(BLOCKED_PAGE).expander
 
-    text = _page_text(_run_india(monkeypatch, api_url))
-
+    [expander] = [box for box in page.expander if box.label == blocked_expander.label]
+    text = " ".join(str(element.value) for element in [*expander.info, *expander.markdown])
     assert note["label"] in text and note["text"] in text
     for part in ("benchmark", "model_association", "event_backtest"):
         assert note[part]["text"] in text
     assert note["blend"]["text"] in text
+
+
+def test_no_caption_repeats_the_association_caveat_and_the_amounts_caption_names_the_clickable_tables(
+    monkeypatch, api_url
+):
+    # #149 (F10, F14): the subtitle and the Illustrative note carry the caveat; only Markets and pairs can be clicked.
+    page = _run_india(monkeypatch, api_url)
+
+    captions = [element.value for element in page.caption]
+    assert not [caption for caption in captions if "not causal" in caption or "learned from past trade" in caption]
+    [amounts] = [caption for caption in captions if caption.startswith("Amounts in")]
+    assert "Click a Market or a pair" in amounts
+    assert "any value" not in amounts
+
+
+def _result_order(node) -> list[str]:
+    """The result's parts in the order the page renders them, an expander as one part (its contents not walked)."""
+    kind = type(node).__name__
+    value = str(getattr(node, "value", ""))
+    if kind == "Expander":
+        return ["Illustrative expander"]
+    if kind == "Metric":
+        return [f"metric: {node.label.split(',')[0]}"]
+    if kind == "Subheader":
+        return [value]
+    if kind == "Markdown" and value.startswith("The model associates this Scenario"):
+        return ["summary"]
+    if kind == "Markdown" and "it raises" in value:
+        return ["raised and lowered"]
+    if kind == "Markdown" and "this Scenario adds none" in value:
+        return ["neutral line"]
+    if kind == "Info" and "training range" in value:
+        return ["clipped-tariff note"]
+    children = getattr(node, "children", {})
+    return [part for index in sorted(children) for part in _result_order(children[index])]
+
+
+def test_a_tariff_result_renders_in_the_tickets_order(monkeypatch, api_url):
+    page = _scenarios_page(monkeypatch, api_url)
+    page.radio(key="kind").set_value("Tariff change").run()
+    page.multiselect(key="tariff_markets").set_value(["JPN"]).run()
+    page.number_input(key="tariff_rate").set_value(1000.0).run()  # beyond the training range: the note applies
+    page.button(key="run").click().run()
+
+    assert not page.exception
+    assert _result_order(page.main) == [
+        "summary",
+        "clipped-tariff note",
+        "raised and lowered",
+        "metric: Scenario Effect",
+        "metric: Share of Baseline",
+        "Illustrative expander",
+        "Change per Market",
+        "Pairs most affected in Japan",
+        "Top Products gaining",
+        "neutral line",
+    ]
+
+
+def test_a_result_adding_an_agreement_renders_in_the_tickets_order(monkeypatch, blocked_api_url):
+    page = _run_india(monkeypatch, blocked_api_url)
+
+    assert _result_order(page.main) == [
+        "summary",
+        "metric: Scenario Effect",
+        "metric: Share of Baseline",
+        "metric: Blocked Opportunities",
+        "Illustrative expander",
+        "Change per Market",
+        "Pairs most affected in India",
+        "Top Products gaining",
+        "Blocked Opportunities",
+    ]
 
 
 def test_the_scenario_effect_figure_says_illustrative(monkeypatch, api_url):
@@ -439,8 +529,10 @@ def test_the_tariff_mode_runs_and_says_when_the_effect_flattens_beyond_the_train
 
     assert not page.exception
     assert "associates" in " ".join(element.value for element in page.markdown)
-    clip = [element.value for element in page.warning if "training range" in element.value]
+    # #149: a neutral box, information about the model rather than an error.
+    clip = [element.value for element in page.info if "training range" in element.value]
     assert clip and "5" in clip[0]  # the clipped pairs, counted by the API
+    assert not page.warning
     assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan"}
 
 
@@ -454,7 +546,7 @@ def test_a_tariff_within_the_training_range_shows_no_clip_message(monkeypatch, a
     page.button(key="run").click().run()
 
     assert not page.exception
-    assert not [element.value for element in page.warning if "training range" in element.value]
+    assert "training range" not in _page_text(page)
     assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan"}
 
 

@@ -50,7 +50,7 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor.artefacts import BLOCKED_VALUE_COLUMNS
-from exportspredictor.currency import format_change, format_usd
+from exportspredictor.currency import format_usd
 from exportspredictor.features import (
     FEATURES,
     POLICY_FEATURES,
@@ -309,11 +309,12 @@ class ScenarioResult:
         )
         return flagged.filter("blocked_opportunity").drop("blocked_opportunity")
 
-    def summary(self, *, blocked: int | None, year: int) -> str:
+    def summary(self, *, year: int) -> str:
         """One sentence, worded as an association, never as a cause or a forecast.
 
-        `blocked` is the number of Blocked Opportunities, None for a Scenario that adds no Trade Agreement (the
-        sentence then counts none), and `year` the Baseline year; the effect is in nominal USD.
+        It frames the result without its figures (#149): the Scenario Effect, its share of the Baseline and the
+        Blocked Opportunity count are the result's own fields, shown once each beside it. `year` is the Baseline year,
+        named only when the Scenario changes nothing.
         """
         if self.changes_nothing and self.scenario.preset == "leave":
             return (
@@ -326,16 +327,11 @@ class ScenarioResult:
                 f"{year} Baseline (for example, the Trade Agreement already exists or the tariff is already that "
                 "rate), so there is no Scenario Effect."
             )
-        total = self.total()
-        markets = self.pairs["iso3"].n_unique()
-        market_word = "Market" if markets == 1 else "Markets"
-        blocked_word = "Blocked Opportunity" if blocked == 1 else "Blocked Opportunities"
-        with_blocked = "" if blocked is None else f", with {blocked:,} {blocked_word}"
+        effect = self.total()["effect_usd"]
+        change = "a rise" if effect > 0 else "a fall" if effect < 0 else "no net change"
         return (
-            f"The model associates this Scenario with a change of {format_change(total['effect_usd'])} "
-            f"({total['effect_share']:+.1%}) in UK Export Potential "
-            f"across {markets:,} {market_word}, against the {year} Baseline{with_blocked}. "
-            "This is a learned association, not a forecast."
+            f"The model associates this Scenario with {change} in UK Export Potential in the Markets it changes, "
+            "holding everything else at the Baseline: a learned association, not a forecast."
         )
 
 

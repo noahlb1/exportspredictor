@@ -1,9 +1,12 @@
 """Scenarios: re-predict UK Export Potential under a Trading Bloc preset, custom Trade Agreements or a tariff change.
 
 The page reads top to bottom (spec #103, "Scenarios"): what a Trade Agreement means in the model (spec #133), the
-builder in a box, then, once **Run Scenario** is pressed, the summary, the figures beside the Illustrative note,
-Change per Market, the pairs most affected in the selected Market, Top Products gaining and, last, Blocked
-Opportunities.
+builder in a box, then, once **Run Scenario** is pressed, the result in the before/after style of the Blocked
+Opportunities page (#149): the summary (framing only; each figure is stated once, in the metrics), the clipped-tariff
+note when it applies, a tariff Scenario's raised/lowered line, the metrics, the Illustrative note closed in the Blocked
+Opportunities page's expander, Change per Market, the pairs most affected in the selected Market, Top Products gaining
+and, last, Blocked Opportunities. Only an invalid Scenario is a warning; "changes nothing" and the clipped-tariff note
+are neutral boxes.
 
 Blocked Opportunities have one source (ADR 0012). Only a Scenario that adds a Trade Agreement with a Market that has
 none in force (`adds_agreement`) shows them: the Blocked Opportunity metric and a section listing those Markets'
@@ -13,9 +16,9 @@ panel (`app.panel.blocked_opportunity`). Any other Scenario shows one neutral li
 A link with `?add=IND` (ISO3 codes, comma-separated) fills the builder with Custom Trade Agreements adding those
 Markets, once, without running it (`prefill`); the Blocked Opportunities page links each Market this way.
 
-Clicking any value selects its row and tints it, as on the other pages (`app.tables.pick_row`). The page remembers
-the choice in session state, so a test can set it as a click does: `scenario_market` (ISO3; the top Market when unset
-or not in the result) drives the drill-down, and `scenario_drill_pair` / `scenario_blocked_pair` (`{"hs6", "iso3"}`)
+Clicking any value in a Market or pair table selects its row and tints it, as on the other pages
+(`app.tables.pick_row`); Top Products gaining cannot be clicked. The page remembers the choice in session state, so a
+test can set it as a click does: `scenario_market` (ISO3; the top Market when unset or not in the result) drives the drill-down, and `scenario_drill_pair` / `scenario_blocked_pair` (`{"hs6", "iso3"}`)
 open a pair's box under that table; no pair is selected until one is clicked.
 """
 
@@ -253,14 +256,15 @@ def tariff_directions(result: dict) -> str | None:
 
 
 def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
-    """A Scenario's result, in order: summary, figures and note, Change per Market, the selected Market's pairs, Top
-    Products gaining, Blocked Opportunities. Table keys carry the run, so a new run starts with fresh selections."""
+    """A Scenario's result, in order (#149): summary, clipped-tariff note, raised/lowered line, metrics, the
+    Illustrative expander, Change per Market, the selected Market's pairs, Top Products gaining, then Blocked
+    Opportunities or the neutral line. Table keys carry the run, so a new run starts with fresh selections."""
     run_key = hashlib.sha1(shown.encode()).hexdigest()[:12]
     year, word = result["baseline_year"], illustrative()
     config = columns(year)
     st.markdown(result["summary"])
     if result["clipped_pairs"]:
-        st.warning(
+        st.info(
             f"{result['clipped_pairs']:,} pairs were given a tariff beyond the training range, the "
             "tariffs the model has seen. It is held at the edge of that range, so the Scenario Effect "
             "flattens beyond it: the model associates no further change with a higher tariff."
@@ -268,24 +272,18 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     directions = tariff_directions(result)
     if directions is not None:
         st.markdown(directions)
-    st.caption(
-        "Scenario Effects are associations the model has learned from past trade, not causal "
-        "forecasts: the model associates these policy conditions with this change in Export "
-        f"Potential, holding everything else at the {year} Baseline."
-    )
     total = result["total"]
-    figures, note = st.columns([1, 1])
+    figures = st.columns([1, 1])[0]  # the metrics keep to half the width, as before the note moved under them
     metrics = figures.columns(3 if result["adds_agreement"] else 2)
     metrics[0].metric(f"Scenario Effect, {word}", format_change(total["effect_usd"]))
     metrics[1].metric("Share of Baseline", f"{total['effect_share']:+.1%}")
     if result["adds_agreement"]:
         metrics[2].metric("Blocked Opportunities", f"{result['blocked_count']:,}")
-    with note:
-        scenario_note(result["note"])
+    scenario_note(result["note"])
 
     st.caption(
         f"Amounts in {millions_unit()}, for the Baseline year {year}. Scenario Effects are {word}. "
-        f"Click any value to select its row. {labels()['totals_note']['text']}"
+        f"Click a Market or a pair to select its row. {labels()['totals_note']['text']}"
     )
 
     st.subheader("Change per Market")
@@ -433,6 +431,6 @@ with page(
             st.error(f"The API is unavailable: {error}")
         else:
             if result["changes_nothing"]:
-                st.warning(result["summary"])
+                st.info(result["summary"])  # nothing is wrong: only an invalid Scenario is a warning
             else:
                 show_result(result, shown, market_names)

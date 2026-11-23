@@ -584,7 +584,7 @@ def scenario_response(
         thresholds=Thresholds(),
         market=request.market,
         changes_nothing=result.changes_nothing,
-        summary=result.summary(blocked=blocked_count, year=artefacts.baseline_year),
+        summary=result.summary(year=artefacts.baseline_year),
         total=total,
         markets=result.by_market().join(markets, on="iso3", how="left", maintain_order="left").to_dicts(),
         products=result.by_product()
