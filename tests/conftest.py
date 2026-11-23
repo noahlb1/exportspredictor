@@ -186,6 +186,19 @@ def blocked_api_url(blocked_artefacts_dir):
         yield url
 
 
+@pytest.fixture(scope="session")
+def unscenario_artefacts_dir(fixture_artefacts, tmp_path_factory):
+    """The fixture artefacts with two more Markets a Scenario does not accept, having no UK feature rows: the United
+    Kingdom and Mayotte."""
+    extra = pl.DataFrame(
+        {"iso3": ["GBR", "MYT"], "name": ["United Kingdom", "Mayotte"], "region": ["Europe & Central Asia"] * 2}
+    )
+    markets = pl.concat([fixture_artefacts.markets, extra.cast(dict(fixture_artefacts.markets.schema))])
+    root = tmp_path_factory.mktemp("unscenario_artefacts")
+    store.save(replace(fixture_artefacts, markets=markets), root)
+    return root
+
+
 # The Offset world (spec #129): the Blocked world with a Heading of three Products. Telephones and medicaments are
 # recoded as two more Products of Heading 8703, beside cars (870323), so Heading 8703 holds three Products in every
 # Market. Its twelve pairs get round Gap Period figures, so their Export Gaps are exact.

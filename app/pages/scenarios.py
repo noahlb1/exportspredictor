@@ -333,7 +333,8 @@ with page(
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
         st.stop()
-    market_names = {market["iso3"]: market["name"] for market in markets}
+    # Only the Markets a Scenario accepts, in every picker and in the `?add=` link.
+    market_names = {market["iso3"]: market["name"] for market in markets if market["scenario"]}
     prefill(market_names)
     st.caption(labels()["trade_agreement_meaning"])
 

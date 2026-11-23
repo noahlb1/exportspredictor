@@ -115,6 +115,12 @@ class MarketOut(BaseModel):
     region: str
 
 
+class MarketListed(MarketOut):
+    """A Market as `GET /markets` lists it, flagged when a Scenario accepts it."""
+
+    scenario: bool  # true when the Market has UK feature rows in the Baseline year (never the United Kingdom)
+
+
 class MarketReachOut(BaseModel):
     """A Market's Market Reach (ADR 0010): how widely the UK sends its Products there against how widely expected."""
 

@@ -170,6 +170,14 @@ class Scenario:
             raise InvalidScenario(f"Unknown Markets: {sorted(unknown)}.")
 
 
+def accepted_markets(baseline_features: pl.DataFrame) -> set[str]:
+    """The Markets (ISO3) a Scenario accepts: those with UK feature rows in the Baseline year.
+
+    The United Kingdom is never one, and nor is a Market the UK has no Baseline-year rows with.
+    """
+    return set(baseline_features["iso3"].unique().to_list())
+
+
 def tariff_range(metadata: dict) -> tuple[float, float]:
     """The training range of `ln(1 + t)` in artefact metadata: the bounds Scenario tariffs are clipped to."""
     low, high = FeatureTransform.from_dict(metadata["feature_transform"]).bounds[TARIFF]
@@ -206,7 +214,7 @@ def _apply(
     baseline_features: pl.DataFrame, scenario: Scenario, tariff_range: tuple[float, float] | None
 ) -> tuple[pl.DataFrame, int]:
     """`apply`, and the number of pairs whose Scenario tariff was clipped to the training range."""
-    scenario.validate(baseline_features["iso3"].unique(), _sectors(baseline_features))
+    scenario.validate(accepted_markets(baseline_features), _sectors(baseline_features))
     changed = baseline_features
     clipped = pl.repeat(False, baseline_features.height, eager=True)
     for column, condition, value in _changes(baseline_features, scenario):

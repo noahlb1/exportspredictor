@@ -520,6 +520,31 @@ def test_the_thresholds_read_is_gone(client):
     assert client.get("/scenarios/thresholds").status_code == 404
 
 
+@pytest.fixture(scope="module")
+def unscenario_client(unscenario_artefacts_dir):
+    with TestClient(create_app(unscenario_artefacts_dir)) as client:
+        yield client
+
+
+def test_markets_flag_the_markets_a_scenario_accepts(unscenario_client):
+    flags = {market["iso3"]: market["scenario"] for market in unscenario_client.get("/markets").json()}
+
+    assert flags == {"JPN": True, "CAN": True, "IND": True, "HKG": True, "GBR": False, "MYT": False}
+
+
+def test_a_scenario_naming_any_market_flagged_true_is_accepted(unscenario_client):
+    accepted = [market["iso3"] for market in unscenario_client.get("/markets").json() if market["scenario"]]
+
+    assert unscenario_client.post("/scenarios", json={"add_agreements": accepted}).status_code == 200
+    tariff = {"tariff": {"markets": accepted, "rate_pct": 5.0}}
+    assert unscenario_client.post("/scenarios", json=tariff).status_code == 200
+
+
+@pytest.mark.parametrize("iso3", ["GBR", "MYT"])
+def test_a_scenario_naming_a_market_flagged_false_is_refused(unscenario_client, iso3):
+    assert unscenario_client.post("/scenarios", json={"add_agreements": [iso3]}).status_code == 422
+
+
 def test_rank_orders_are_served_with_titles(client):
     body = client.get("/opportunities/rank-by").json()
 
