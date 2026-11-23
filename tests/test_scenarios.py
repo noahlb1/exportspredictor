@@ -539,3 +539,11 @@ def test_a_tariff_part_above_the_value_reads_as_a_negative_agreement_part_never_
     assert "$2.0m less" in sentence and "negative Agreement part" in sentence
     assert "150%" not in sentence and "-$" not in sentence
     assert "%," not in sentence  # no share is printed
+
+
+def test_the_cptpp_preset_says_the_uk_acceded_at_the_end_of_the_baseline_year_and_what_moves_existing_partners():
+    # Review flag M5 (#161): an Advisor reads "join CPTPP" as status quo since December 2024.
+    description = scenarios.PRESETS["cptpp"].description
+
+    assert "15 December 2024" in description
+    assert "CPTPP membership" in description
