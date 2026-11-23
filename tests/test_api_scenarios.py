@@ -539,6 +539,45 @@ def test_a_hike_beyond_the_training_range_reports_clipped_pairs(client):
     assert all(row["effect_usd"] <= 0 for row in body["top_pairs"])
 
 
+def _post(client, payload: dict) -> dict:
+    response = client.post("/scenarios", json={**payload, "limit": 1000})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_tariff_scenario_counts_the_pairs_it_raises_and_lowers(client):
+    # India's Baseline tariffs: whisky 150%, medicines 10%, jewellery 20%, telephones unknown, cars 60%.
+    body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 30}})
+
+    assert len(body["top_pairs"]) == 5  # the unknown tariff is changed too, but counts in neither
+    assert body["pairs_raised"] == 2  # medicines and jewellery
+    assert body["pairs_lowered"] == 2  # whisky and cars
+
+
+def test_a_rate_between_two_known_tariffs_raises_one_pair_and_lowers_the_other(client):
+    # Medicines (chapter 30) at 10% and jewellery (chapter 71) at 20%, set to 15%.
+    body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 15, "sectors": ["30", "71"]}})
+
+    assert (body["pairs_raised"], body["pairs_lowered"]) == (1, 1)
+
+
+def test_a_pair_already_at_the_set_rate_counts_in_neither(client):
+    body = _post(client, {"tariff": {"markets": ["IND", "JPN"], "rate_pct": 10}})
+
+    # Japan's five 0% tariffs rise; India's whisky, jewellery and cars fall; medicines stay at 10%.
+    assert (body["pairs_raised"], body["pairs_lowered"]) == (5, 3)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"add_agreements": ["IND"]}, {"remove_agreements": ["JPN"]}, {"preset": "cptpp"}, {"add_agreements": ["JPN"]}],
+)
+def test_a_scenario_that_is_no_tariff_change_has_no_raised_or_lowered_counts(client, payload):
+    body = _post(client, payload)
+
+    assert body["pairs_raised"] is None and body["pairs_lowered"] is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [

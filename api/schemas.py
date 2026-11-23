@@ -803,6 +803,10 @@ class ScenarioResponse(BaseModel):
     # Pairs whose Scenario tariff lay beyond the training range and was clipped to it, so
     # their Scenario Effect flattens there (ADR 0006).
     clipped_pairs: int
+    # A tariff Scenario's changed pairs whose known Baseline Applied Tariff was below (raised) or above (lowered) the
+    # rate it sets; an unknown tariff counts in neither. None for every other kind of Scenario.
+    pairs_raised: int | None = None
+    pairs_lowered: int | None = None
     note: ScenarioNote  # Scenario Effects are Illustrative: the label and the benchmarks beside them
 
 
