@@ -230,6 +230,25 @@ LIMITATIONS = [
         + ", ".join(sorted(GDP_GAPS.values()))
         + ", so the model reads their size from their trade alone, and their Export Potential is less reliable.",
     },
+    {
+        # Review flag H1 (#161).
+        "title": "A Tariff part is not a tariff elasticity",
+        "text": "The model's response to an Applied Tariff is more a step than a slope: it separates duty-free pairs "
+        "from dutiable ones, which differ in more than their tariff. So removing a tariff of 1% or less can be "
+        "associated with a rise of tens of percent in Export Potential (on the 2024 Baseline, turbo-jets to China "
+        "at 1%: +37%), far more per tariff point than trade elasticities suggest. A Tariff part is Illustrative: the "
+        "part of the agreement association the model ties to the tariff, not the priced effect of a tariff cut.",
+    },
+    {
+        # Review flag H3 (#161).
+        "title": "Some Trade Agreements carry most-favoured-nation tariffs",
+        "text": "TRAINS records no preferential rates in some Markets' schedules where a Trade Agreement is in force, "
+        "so every Exporter with an agreement there carries the Market's MFN rate. Among UK Markets these are Canada, "
+        "Israel, Serbia, Vietnam, Ghana, Côte d'Ivoire, Cameroon and Kenya. Türkiye charges UK goods its MFN rates "
+        f"in the data from {LAST_TRAINS_YEAR}, when the UK left the EU customs union, because TRAINS holds no rates "
+        "under the UK–Türkiye agreement. These pairs have a Trade Agreement, so they have no Blocked Opportunity "
+        "value or Tariff part, but their Export Potential reads them as dutiable.",
+    },
 ]
 
 
@@ -242,12 +261,36 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
     return [
         *result_limitations(artefacts.metadata, report),
         *range_limitations(artefacts.potential_range_bands),
+        *range_below_potential_limitations(artefacts.potential_range_bands),
         *size_coverage_limitations(report.get("potential_range")),
         *uk_pair_coverage_limitations(artefacts.metadata, report.get("potential_range")),
         *offset_pair_limitations(artefacts.metadata),
         *read_configuration_limitations(artefacts.metadata, report),
         *LIMITATIONS,
     ]
+
+
+def range_below_potential_limitations(bands: pl.DataFrame) -> list[dict]:
+    """When a log-scale band's upper offset is negative, its pairs' whole Potential Range lies below their Export
+    Potential (review flag M4, #161). Stated up to the lower edge of the band above the last such band; none for
+    dollar-offset versions or when every upper offset is positive."""
+    if bands.is_empty() or "high_offset_log" not in bands.columns:
+        return []
+    ordered = bands.sort("min_export_potential_usd")
+    negative = [i for i, offset in enumerate(ordered["high_offset_log"]) if offset < 0]
+    if not negative:
+        return []
+    above = negative[-1] + 1
+    size = (
+        f"under {format_usd(ordered['min_export_potential_usd'][above])}" if above < ordered.height else "of every size"
+    )
+    return [{
+        "title": "The Potential Range lies below Export Potential for small pairs",
+        "text": f"For many pairs with Export Potential {size}, the whole Potential Range lies below Export Potential. "
+        "Most comparable pairs of that size trade nothing, and Export Potential is an average that the few which do "
+        "trade pull up, so at least 90% of comparable pairs trade less than it. A range such as $0 to $200 beside an "
+        "Export Potential of $1.3k is that pattern, not an error.",
+    }]
 
 
 # A Model Form's fitted values, which a rebuild of the same configuration recomputes (ADR 0010): no change of form.
