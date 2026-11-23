@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from api.schemas import (
     BlockedMarket,
+    BlockedProduct,
     BlockedSummary,
     Caveat,
     CaveatTierOut,
@@ -272,14 +273,17 @@ def create_app(
     ):
         """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the fixed thresholds, room to
         grow included), ranked by Blocked Opportunity value or by Tariff part, in Baseline-year figures with the value's
-        Tariff part and Agreement part and the Barrier, with a summary and per-Market totals over every filtered one. An
-        unknown Product answers 404, as does an Excluded Product, with its reason."""
+        Tariff part and Agreement part and the Barrier, with a summary and per-Market and per-Product totals over every
+        filtered one. An unknown Market or Product answers 404, as does an Excluded Product, with its reason."""
+        if query.market is not None:
+            _market(artefacts, query.market)
         _check_product(artefacts, query.product)
         found = blocked_opportunities(
             artefacts,
             hs6=query.product,
             sector=query.sector,
             region=query.region,
+            markets=None if query.market is None else [query.market],
             min_value_usd=query.min_value_usd,
             hide=_hidden(query, tiers),
             rank_by=query.rank_by,
@@ -290,6 +294,7 @@ def create_app(
             **_metadata(artefacts),
             summary=BlockedSummary(**found.summary),
             markets=[_pick(BlockedMarket, row) for row in found.markets.iter_rows(named=True)],
+            products=[_pick(BlockedProduct, row) for row in found.products.iter_rows(named=True)],
             opportunities=[_pick(models.BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)],
             thresholds=Thresholds(),
             rank_by=order.name,

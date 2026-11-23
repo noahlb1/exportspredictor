@@ -208,10 +208,11 @@ class LeaderboardQuery(RankingQuery, _OneProduct):
 
 
 class BlockedQuery(_FilterQuery, _OneProduct):
-    """The Blocked Opportunities page's filters and order: the shared filters, one Product, a minimum Blocked Opportunity
-    value, and its own orders (by value or by Tariff part). It has no Market filter (the page groups by Market); an
-    unknown parameter, such as `market`, or a ranking order such as `gap`, is a 422."""
+    """The Blocked Opportunities page's filters and order: the shared filters, one Product, one Market, a minimum
+    Blocked Opportunity value, and its own orders (by value or by Tariff part). An unknown parameter, such as
+    `opportunity_type`, or a ranking order such as `gap`, is a 422."""
 
+    market: str | None = Field(None, description="One Market, by ISO3 code, e.g. IND; 404 if unknown")
     min_value_usd: float | None = Field(None, ge=0, description="Minimum Blocked Opportunity value, in USD")
     rank_by: BlockedRankBy = Field(
         BLOCKED.name, description="; ".join(f"{order.name}: {order.title}" for order in BLOCKED_ORDERS.values())
@@ -316,6 +317,15 @@ class BlockedMarket(BaseModel):
     blocked_opportunity_value_usd: float
 
 
+class BlockedProduct(BaseModel):
+    """One Product's filtered Blocked Opportunities: their count and total Blocked Opportunity value."""
+
+    hs6: str
+    description: str
+    blocked_opportunities: int
+    blocked_opportunity_value_usd: float
+
+
 class BlockedOpportunity(LeaderboardOpportunity):
     """A Blocked Opportunity: the ranking row plus its Baseline-year figures."""
 
@@ -340,6 +350,7 @@ class BlockedOpportunities(_Ranking):
     order: RankOrderOut  # the order's title and (associational) description, for the page caption
     summary: BlockedSummary
     markets: list[BlockedMarket]  # per-Market totals over every filtered Blocked Opportunity, largest total first
+    products: list[BlockedProduct]  # per-Product totals, the same way
     opportunities: list[BlockedOpportunity]
     thresholds: "Thresholds"  # the fixed thresholds every Blocked Opportunity here clears, defined below
     # Blocked Opportunity values are Illustrative: the same note as the Scenario response, defined below

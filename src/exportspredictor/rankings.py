@@ -235,11 +235,13 @@ def ranking(artefacts: Artefacts, *, limit: int | None = None, **filters) -> Ran
 
 @dataclass(frozen=True)
 class BlockedRanking:
-    """The Blocked Opportunities page's answer: the Blocked Opportunities, their summary and their per-Market totals."""
+    """The Blocked Opportunities page's answer: the Blocked Opportunities, their summary and their per-Market and
+    per-Product totals."""
 
     rows: pl.DataFrame  # the top `limit` Blocked Opportunities, in the chosen order (`BLOCKED_ORDERS`)
     summary: dict  # over every filtered Blocked Opportunity: their count and total Blocked Opportunity value (USD)
     markets: pl.DataFrame  # iso3, market, blocked_opportunities, blocked_opportunity_value_usd; largest total first
+    products: pl.DataFrame  # hs6, description, blocked_opportunities, blocked_opportunity_value_usd; the same order
     order: RankOrder  # the order the rows are in (one of `BLOCKED_ORDERS`), for the page caption
 
 
@@ -272,8 +274,8 @@ def blocked_opportunities(
 
     Filters keep one Product (`hs6`), one Sector, one Market region, the Markets named in `markets` (ISO3; a
     Scenario's, ADR 0012), a Blocked Opportunity value of at least `min_value_usd`, and drop the rows of the Caveat
-    Tiers named in `hide`. The summary and the per-Market totals cover every filtered Blocked Opportunity whatever the
-    order; `limit` then keeps the top rows.
+    Tiers named in `hide`. The summary and the per-Market and per-Product totals (`blocked_by`) cover every filtered
+    Blocked Opportunity whatever the order; `limit` then keeps the top rows.
     """
     order = BLOCKED_ORDERS[rank_by]
     rows = rank_opportunities(
@@ -289,11 +291,6 @@ def blocked_opportunities(
     value = pl.col("blocked_opportunity_value_usd")
     if min_value_usd is not None:
         rows = rows.filter(value >= min_value_usd)
-    markets = (
-        rows.group_by("iso3", "market", maintain_order=True)
-        .agg(blocked_opportunities=pl.len(), blocked_opportunity_value_usd=value.sum())
-        .sort(["blocked_opportunity_value_usd", "market"], descending=[True, False])
-    )
     summary = {"blocked_opportunities": rows.height, "blocked_opportunity_value_usd": float(rows["blocked_opportunity_value_usd"].sum())}
     shown = rows if limit is None else rows.head(limit)
     potential = pl.col("baseline_export_potential_usd")
@@ -305,7 +302,24 @@ def blocked_opportunities(
         above_export_potential=pl.col("baseline_actual_exports_usd") > potential,
     )
     shown = shown.with_columns(value_split(shown))
-    return BlockedRanking(rows=shown, summary=summary, markets=markets, order=order)
+    return BlockedRanking(
+        rows=shown,
+        summary=summary,
+        markets=blocked_by(rows, "iso3", "market"),
+        products=blocked_by(rows, "hs6", "description"),
+        order=order,
+    )
+
+
+def blocked_by(rows: pl.DataFrame, code: str, name: str) -> pl.DataFrame:
+    """The Blocked Opportunities' totals per group (per Market: `iso3`, `market`; per Product: `hs6`, `description`):
+    the group's code and name, its count (`blocked_opportunities`) and total Blocked Opportunity value
+    (`blocked_opportunity_value_usd`), largest total first, ties by name. The groups add up to the summary."""
+    return (
+        rows.group_by(code, name)
+        .agg(blocked_opportunities=pl.len(), blocked_opportunity_value_usd=pl.col("blocked_opportunity_value_usd").sum())
+        .sort(["blocked_opportunity_value_usd", name, code], descending=[True, False, False])
+    )
 
 
 # The split's row over every Blocked Opportunity, after one row per kind of Applied Tariff (`scenarios.TARIFF_KINDS`).

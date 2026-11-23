@@ -303,11 +303,9 @@ def leaderboard_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
     return pd.concat([table[columns], pd.DataFrame(dollars), table[rest]], axis=1)
 
 
-# The Blocked Opportunities page (spec #103, "Blocked Opportunities"; spec #133, the before and after): a Markets table
-# and the chosen Market's Products table, every figure for the Baseline year. The Export Gap is not on this page.
+# The Blocked Opportunities page (spec #103, "Blocked Opportunities"; spec #133, the before and after; spec #151, the
+# shared layout of `app.views`): every figure for the Baseline year. The Export Gap is not on this page.
 BLOCKED_FORMATS: dict[str, str | Callable] = {
-    "Blocked Opportunities": "{:,}",
-    "Total value": ONE_DECIMAL,
     "Actual Exports": ONE_DECIMAL,
     "Export Potential": ONE_DECIMAL,
     "With a Trade Agreement": ONE_DECIMAL,
@@ -317,33 +315,20 @@ BLOCKED_FORMATS: dict[str, str | Callable] = {
 }
 
 
-def blocked_markets_frame(markets: list[dict]) -> pd.DataFrame:
-    """The per-Market totals (`/opportunities/blocked` `markets`): Market, count and total value in $ millions."""
-    raw = pd.DataFrame(markets)
-    return pd.DataFrame(
-        {
-            "Market": raw["market"],
-            "Blocked Opportunities": raw["blocked_opportunities"],
-            "Total value": millions(raw["blocked_opportunity_value_usd"]),
-        }
-    )
-
-
-def blocked_markets_columns(body: dict) -> dict:
-    """The column config of `blocked_markets_frame`, with a tooltip on every heading."""
-    return {
-        "Market": st.column_config.TextColumn(
-            "Market", help="The Market the UK exports to.", width=MARKET_WIDTH
-        ),
-        "Blocked Opportunities": st.column_config.NumberColumn(
-            "Blocked Opportunities", help="The Market's Blocked Opportunities under the filters.", width="small"
-        ),
-        "Total value": money_column(
-            "Total value",
-            f"The sum of their Blocked Opportunity values, {body['baseline_year']}: the listed pairs only. "
-            f"{illustrative().capitalize()}.",
-        ),
-    }
+# The columns of `blocked_products_frame(rows, with_market=True)` the page shows: the Wide table shows them all; the
+# right table of By Market or By Product leaves out the one it is grouped by.
+BLOCKED_SHOWN = [
+    "Product",
+    "Market",
+    "Barrier",
+    "Actual Exports",
+    "Export Potential",
+    "With a Trade Agreement",
+    "Rise with agreement",
+    "Rise %",
+    "Tariff part",
+    "Above Export Potential",
+]
 
 
 def blocked_products_frame(rows: list[dict], *, with_market: bool = False) -> pd.DataFrame:

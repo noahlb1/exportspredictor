@@ -447,9 +447,49 @@ def test_baseline_year_actual_exports_match_the_history_with_0_where_there_is_no
     assert any(row["baseline_actual_exports_usd"] != pytest.approx(row["actual_exports_usd"]) for row in rows)
 
 
-def test_the_blocked_read_refuses_an_order_a_market_or_an_unknown_filter(blocked_client):
-    for params in ({"rank_by": "gap"}, {"market": "IND"}, {"opportunity_type": "Expand"}, {"colour": "red"}):
+def test_the_blocked_read_refuses_a_ranking_order_or_an_unknown_filter(blocked_client):
+    # Rewritten for spec #151: the read now takes `market` (below); a Leaderboard-only filter is still refused.
+    for params in ({"rank_by": "gap"}, {"opportunity_type": "Expand"}, {"colour": "red"}):
         assert blocked_client.get("/opportunities/blocked", params=params).status_code == 422, params
+
+
+def test_the_blocked_reads_product_totals_cover_every_filtered_blocked_opportunity_not_only_the_limit(blocked_client):
+    # Whisky: India's $18.5m alone; jewellery: India's $7.1m and Hong Kong's $5.1m (Blocked world, $ millions).
+    body = _blocked(blocked_client, limit=1)
+
+    assert len(body["opportunities"]) == 1
+    assert [(p["hs6"], p["blocked_opportunities"]) for p in body["products"]] == [(WHISKY, 1), (JEWELLERY, 2)]
+    assert [round(p["blocked_opportunity_value_usd"] / 1e6, 1) for p in body["products"]] == [18.5, 12.2]
+    assert body["products"][0]["description"] == "Whiskies"
+    assert sum(p["blocked_opportunities"] for p in body["products"]) == body["summary"]["blocked_opportunities"]
+    assert sum(p["blocked_opportunity_value_usd"] for p in body["products"]) == pytest.approx(
+        body["summary"]["blocked_opportunity_value_usd"]
+    )
+
+
+def test_the_blocked_reads_product_totals_follow_the_filters(blocked_client):
+    india = _blocked(blocked_client, region="South Asia", min_value_usd=1e7)
+    hubs_hidden = _blocked(blocked_client, hide_hubs=True)
+
+    assert [(p["hs6"], p["blocked_opportunities"]) for p in india["products"]] == [(WHISKY, 1)]
+    assert [(p["hs6"], p["blocked_opportunities"]) for p in hubs_hidden["products"]] == [(WHISKY, 1), (JEWELLERY, 1)]
+
+
+def test_the_blocked_reads_market_filter_keeps_one_market(blocked_client):
+    body = _blocked(blocked_client, market="HKG")
+
+    assert [(row["hs6"], row["iso3"]) for row in body["opportunities"]] == [(JEWELLERY, "HKG")]
+    assert [market["iso3"] for market in body["markets"]] == ["HKG"]
+    assert [product["hs6"] for product in body["products"]] == [JEWELLERY]
+    assert body["summary"]["blocked_opportunities"] == 1
+    india = _blocked(blocked_client, market="IND", product=JEWELLERY)
+    assert [(row["hs6"], row["iso3"]) for row in india["opportunities"]] == [(JEWELLERY, "IND")]
+
+
+def test_the_blocked_read_answers_404_for_an_unknown_market(blocked_client):
+    response = blocked_client.get("/opportunities/blocked", params={"market": "XYZ"})
+
+    assert response.status_code == 404 and "Unknown Market" in response.json()["detail"]
 
 
 def test_the_blocked_read_answers_404_for_an_unknown_or_excluded_product(blocked_client):

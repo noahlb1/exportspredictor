@@ -395,7 +395,9 @@ def test_a_run_shows_the_apis_scenario_note_in_the_blocked_opportunities_pages_e
     # #149: the note sits closed under the figures, in the expander the Blocked Opportunities page uses.
     note = httpx.post(f"{blocked_api_url}/scenarios", json=INDIA).json()["note"]
     page = _run_india(monkeypatch, blocked_api_url)
-    [blocked_expander] = run_page(BLOCKED_PAGE).expander
+    # The note is the Blocked Opportunities page's last expander: since spec #151 a pair's panel, with its own
+    # expanders, is open above it.
+    blocked_expander = run_page(BLOCKED_PAGE).expander[-1]
 
     [expander] = [box for box in page.expander if box.label == blocked_expander.label]
     text = " ".join(str(element.value) for element in [*expander.info, *expander.markdown])
