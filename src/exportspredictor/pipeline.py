@@ -121,8 +121,8 @@ from exportspredictor.paths import data_dir
 from exportspredictor.prediction import MODEL_ALONE, ModelForm, reach_multiplier
 from exportspredictor.rankings import DEFAULT_MIN_POTENTIAL_USD
 from exportspredictor.scenarios import (
-    DEFAULT_MIN_SHARE,
-    DEFAULT_MIN_USD,
+    BLOCKED_MIN_SHARE,
+    BLOCKED_MIN_USD,
     TARIFF,
     blocked_opportunity_values,
     with_blocked_opportunity_values,
@@ -799,8 +799,8 @@ def _train_and_score(
         },
         # The defaults the tables were built and are ranked with (spec #39 *Artefacts*).
         "thresholds": {
-            "blocked_min_share": DEFAULT_MIN_SHARE,
-            "blocked_min_usd": DEFAULT_MIN_USD,
+            "blocked_min_share": BLOCKED_MIN_SHARE,
+            "blocked_min_usd": BLOCKED_MIN_USD,
             "relative_gap_min_potential_usd": DEFAULT_MIN_POTENTIAL_USD,
             "potential_range_coverage": conformal.COVERAGE,
             "potential_range_bands": conformal.N_BANDS,

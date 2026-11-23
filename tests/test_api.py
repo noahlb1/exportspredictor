@@ -404,7 +404,6 @@ def _every_response(client) -> list:
         "/evaluation",
         f"/explain/{FIXTURE_HS6}/JPN",
         "/scenarios/presets",
-        "/scenarios/thresholds",
     ]
     bodies = [client.get(path).json() for path in gets]
     bodies.append(client.post("/scenarios", json={"add_agreements": ["IND"]}).json())

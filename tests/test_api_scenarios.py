@@ -32,7 +32,7 @@ def test_presets_lists_the_four_trading_bloc_presets(client):
 
 
 def test_a_custom_scenario_adding_an_agreement_returns_non_negative_effects(client):
-    response = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0, "min_effect_usd": 0})
+    response = client.post("/scenarios", json={"add_agreements": ["IND"]})
 
     assert response.status_code == 200
     body = response.json()
@@ -98,29 +98,29 @@ def test_a_preset_scenario_succeeds(client):
     assert {row["iso3"] for row in body["markets"]} == {"JPN", "CAN"}
 
 
-def test_blocked_opportunity_thresholds_are_respected(client):
-    loose = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0, "min_effect_usd": 0}).json()
-    strict = client.post(
-        "/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0.2, "min_effect_usd": 1e15}
-    ).json()
-    share = 0.3
-    middle = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": share, "min_effect_usd": 0}).json()
+@pytest.mark.parametrize(
+    "thresholds",
+    [{"min_effect_share": 0}, {"min_effect_usd": 0}, {"min_effect_share": 0.2, "min_effect_usd": 1_000_000}],
+)
+def test_a_scenario_request_carrying_thresholds_is_refused(client, thresholds):
+    # The thresholds are fixed (ADR 0012): no client can bring back a second Blocked Opportunity rule.
+    response = client.post("/scenarios", json={"add_agreements": ["IND"], **thresholds})
 
-    # Medicaments in India clear thresholds of 0 but have no room to grow (ADR 0011).
-    assert len(loose["top_pairs"]) == 5 and len(loose["blocked_opportunities"]) == 4
-    assert strict["blocked_opportunities"] == []
-    assert all(row["effect_share"] >= share for row in middle["blocked_opportunities"])
-    expected = {
-        (r["hs6"], r["iso3"])
-        for r in loose["top_pairs"]
-        if r["effect_share"] >= share and r["baseline_actual_exports_usd"] < r["scenario_potential_usd"]
-    }
-    assert {(r["hs6"], r["iso3"]) for r in middle["blocked_opportunities"]} == expected
-    assert middle["thresholds"] == {"min_effect_share": share, "min_effect_usd": 0}
+    assert response.status_code == 422
 
 
-def test_default_thresholds_are_20_percent_and_one_million_dollars(client):
-    body = client.post("/scenarios", json={"add_agreements": ["IND"]}).json()
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"add_agreements": ["IND"]},
+        {"preset": "cptpp"},
+        {"remove_agreements": ["JPN"]},
+        {"tariff": {"markets": ["JPN"], "rate_pct": 25}},
+        {"add_agreements": ["JPN"]},  # changes nothing
+    ],
+)
+def test_every_scenario_response_states_the_fixed_thresholds_20_percent_and_one_million_dollars(client, payload):
+    body = client.post("/scenarios", json=payload).json()
 
     assert body["thresholds"] == {"min_effect_share": 0.2, "min_effect_usd": 1_000_000}
 
@@ -133,7 +133,6 @@ def test_default_thresholds_are_20_percent_and_one_million_dollars(client):
         {"preset": "not-a-preset"},
         {"add_agreements": ["XXX"]},
         {"add_agreements": ["IND"], "remove_agreements": ["IND"]},
-        {"add_agreements": ["IND"], "min_effect_share": -0.1},
     ],
 )
 def test_an_invalid_scenario_returns_422(client, payload):
@@ -413,20 +412,13 @@ def test_the_blocked_read_answers_404_for_an_unknown_or_excluded_product(blocked
     assert excluded.status_code == 404 and "Excluded Product" in excluded.json()["detail"]
 
 
-def test_a_scenarios_blocked_opportunities_need_room_to_grow_against_its_export_potential(client):
-    # Thresholds at 0, so only room to grow decides. Cars in Hong Kong: the UK already sells more than the Scenario's
-    # Export Potential.
-    body = client.post("/scenarios", json={"add_agreements": ["HKG"], "min_effect_share": 0, "min_effect_usd": 0}).json()
-    pairs = {(row["hs6"], row["iso3"]): row for row in body["top_pairs"]}
-    blocked = {(row["hs6"], row["iso3"]) for row in body["blocked_opportunities"]}
+def test_a_scenarios_blocked_opportunities_are_its_flagged_pairs(client):
+    body = client.post("/scenarios", json={"add_agreements": ["HKG"], "limit": 1000}).json()
+    flagged = {(row["hs6"], row["iso3"]) for row in body["top_pairs"] if row["blocked_opportunity"]}
 
-    cars = pairs[(CARS, "HKG")]
-    assert cars["effect_usd"] >= 0 and cars["baseline_actual_exports_usd"] > cars["scenario_potential_usd"]
-    assert cars["blocked_opportunity"] is False and (CARS, "HKG") not in blocked
-    assert blocked and body["blocked_count"] == len(blocked)
-    for pair in blocked:
-        assert pairs[pair]["blocked_opportunity"]
-        assert pairs[pair]["baseline_actual_exports_usd"] < pairs[pair]["scenario_potential_usd"]
+    # The fixture's tiny Scenario Effects clear no $1M threshold; the rule's room to grow is tested in the package.
+    assert {(row["hs6"], row["iso3"]) for row in body["blocked_opportunities"]} == flagged
+    assert body["blocked_count"] == len(flagged)
 
 
 def test_blocked_value_matches_a_scenario_adding_that_agreement(client):
@@ -454,7 +446,7 @@ def test_by_market_unknown_rank_by_returns_422(client):
 
 
 def test_scenario_summary_states_the_effect_in_usd_only(client):
-    body = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0, "min_effect_usd": 0}).json()
+    body = client.post("/scenarios", json={"add_agreements": ["IND"]}).json()
 
     assert re.search(r"change of [+-]\$[0-9,.]+(bn|m|k)? ", body["summary"])
     assert "£" not in body["summary"]
@@ -477,8 +469,9 @@ def test_scenario_drill_down_market_must_be_known(client):
     assert client.post("/scenarios", json={"preset": "cptpp", "market": "ZZZ"}).status_code == 422
 
 
-def test_default_thresholds_are_served(client):
-    assert client.get("/scenarios/thresholds").json() == {"min_effect_share": 0.2, "min_effect_usd": 1_000_000}
+def test_the_thresholds_read_is_gone(client):
+    # Nothing to read: the thresholds are fixed, and every response applying them states them (ADR 0012).
+    assert client.get("/scenarios/thresholds").status_code == 404
 
 
 def test_rank_orders_are_served_with_titles(client):
@@ -493,7 +486,7 @@ def test_rank_orders_are_served_with_titles(client):
 
 
 def _scenario(client, payload: dict) -> dict:
-    response = client.post("/scenarios", json={**payload, "min_effect_share": 0, "min_effect_usd": 0, "limit": 1000})
+    response = client.post("/scenarios", json={**payload, "limit": 1000})
     assert response.status_code == 200, response.text
     return response.json()
 
