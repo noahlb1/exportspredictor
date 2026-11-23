@@ -11,8 +11,9 @@ and the default thresholds. Every figure, the Barrier, both parts of the value a
 the API; the page computes and words none of them. Left, the Markets table, largest total first; clicking any value
 chooses a Market, remembered under `MARKET` (the top Market until one is chosen), with a note on why its total differs
 from a Scenario and a link to that Scenario. Right, the chosen Market's Products, and under it, once one is clicked
-(remembered as (HS6, ISO3) under `PAIR`), its panel: a neutral box naming the pair and its Barrier, the three-bar before
-and after, one sentence on the split, its caveats, then the shared panel (`app.panel`) from its facts on. The
+(remembered as (HS6, ISO3) under `PAIR`), its panel (`app.panel.blocked_opportunity`, shared with the Scenario Builder): a neutral box naming the pair and its
+Barrier, the three-bar before and after, one sentence on the split, its caveats, then the rest of the shared panel from
+its facts on. The
 carried-forward tariff caveat is stated once, under the summary, not again in the panel. Filters are
 `app.filters.blocked_filters`, kept apart from the Leaderboard's.
 """
@@ -39,24 +40,6 @@ from app.ui import caveat_tiers, fetch, illustrative, labels, read_limit, scenar
 MARKET = "blocked_market"  # the chosen Market, ISO3
 PAIR = "blocked_pair"  # the chosen Blocked Opportunity, (HS6, ISO3)
 SCENARIOS = "pages/scenarios.py"
-
-
-def _explain(row: dict) -> None:
-    """The chosen Blocked Opportunity's panel: a neutral box naming the pair and its Barrier, the before and after, the
-    split, the caveats, then the shared panel from its facts on, without the Export Gap or the facts given above."""
-    body = panel.explanation(row)
-    year, word = body["baseline_year"], illustrative()
-    st.info(f"**{row['description']} → {row['market']}**\n\n**Barrier:** {row['barrier']}.")
-    panel.before_after(row, year)
-    st.caption(f"Each is for {year}; Export Potential with a Trade Agreement is {word}.")
-    st.markdown(f"{row['value_split']} {word.capitalize()}: a tendency the model has learned, not a forecast.")
-    if row["above_export_potential"]:
-        st.caption(
-            f"UK Actual Exports in {year} are already above Export Potential, though below the level the model "
-            "associates with an agreement: the model already rates current trade here as strong."
-        )
-    panel.opening(row, body, titled=False, with_tariff_caveat=False)
-    panel.from_facts(row, body, with_barrier=False, with_gap=False)
 
 
 def _markets_and_products(body: dict, rows: list[dict]) -> None:
@@ -99,7 +82,7 @@ def _markets_and_products(body: dict, rows: list[dict]) -> None:
         row = products[chosen]
         # A new key for each pair makes the panel a new element, so it starts from its top on a new selection.
         with st.container(border=True, key=f"blocked_panel_{row['hs6']}_{row['iso3']}"):
-            _explain(row)
+            panel.blocked_opportunity(row)
 
 
 with page(
