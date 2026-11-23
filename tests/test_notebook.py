@@ -207,6 +207,8 @@ def test_the_notebook_shows_each_main_result_from_the_reporting_module():
         "agreement_part_variation", "agreement_part_variation_chart",
     ):
         assert f"reporting.{result}(bundle)" in source, result
+    # The preset table reads the presets the notebook runs (spec #157).
+    assert "reporting.preset_scenarios(bundle, preset_results)" in source
 
 
 def test_notebook_imports_from_the_package():
