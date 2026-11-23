@@ -126,7 +126,10 @@ PRESETS = {
         Preset(
             "cptpp",
             "CPTPP",
-            "A Trade Agreement with every CPTPP member, with accession treated as complete.",
+            "A Trade Agreement with every CPTPP member, with accession treated as complete. The UK joined on "
+            "15 December 2024, too late for the 2024 policy data to count it, so this Scenario shows what the model "
+            "associates with membership. Most members already have a UK Trade Agreement, and for them the Scenario "
+            "Effect comes from CPTPP membership alone.",
         ),
         Preset(
             "leave",

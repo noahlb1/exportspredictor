@@ -186,6 +186,15 @@ def test_the_folder_holds_one_csv_per_table_and_a_readme_naming_each_table_and_c
     assert sorted(path.name for path in folder.iterdir()) == sorted([*(f"{name}.csv" for name in pack), "README.md"])
 
 
+def test_the_readme_says_to_read_hs6_codes_as_text_so_their_leading_zero_survives(bundle, pack, tmp_path):
+    # Review flag L1 (#161): the CSV holds 030214, but a reader that guesses types shows 30214.
+    folder = review.write(pack, tmp_path / "review_pack", version="fixture-test", baseline_year=bundle.baseline_year)
+    readme = (folder / "README.md").read_text("utf-8")
+
+    assert "leading zero" in readme
+    assert "as text" in readme
+
+
 def test_the_readme_speaks_in_domain_terms_not_code_or_modelling_history(bundle, pack, tmp_path):
     folder = review.write(pack, tmp_path / "review_pack", version="fixture-test", baseline_year=bundle.baseline_year)
     readme = (folder / "README.md").read_text("utf-8")
