@@ -460,15 +460,6 @@ def test_the_blocked_read_answers_404_for_an_unknown_or_excluded_product(blocked
     assert excluded.status_code == 404 and "Excluded Product" in excluded.json()["detail"]
 
 
-def test_a_scenarios_blocked_opportunities_are_its_flagged_pairs(client):
-    body = client.post("/scenarios", json={"add_agreements": ["HKG"], "limit": 1000}).json()
-    flagged = {(row["hs6"], row["iso3"]) for row in body["top_pairs"] if row["blocked_opportunity"]}
-
-    # The fixture's tiny Scenario Effects clear no $1M threshold; the rule's room to grow is tested in the package.
-    assert {(row["hs6"], row["iso3"]) for row in body["blocked_opportunities"]} == flagged
-    assert body["blocked_count"] == len(flagged)
-
-
 def test_blocked_value_matches_a_scenario_adding_that_agreement(client):
     [india] = client.get("/opportunities/top", params={"product": FIXTURE_HS6, "market": "IND"}).json()["opportunities"]
     scenario = client.post("/scenarios", json={"add_agreements": ["IND"]}).json()
@@ -662,6 +653,27 @@ def test_a_scenario_that_is_no_tariff_change_has_no_raised_or_lowered_counts(cli
     body = _post(client, payload)
 
     assert body["pairs_raised"] is None and body["pairs_lowered"] is None
+    assert body["tariff_directions"] is None
+
+
+def test_a_tariff_scenario_words_the_pairs_it_raises_and_lowers(client):
+    body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 30}})
+
+    assert body["tariff_directions"] == "This sets 5 pairs to 30%: it raises 2 and lowers 2."
+
+
+def test_a_clipped_tariff_rate_is_worded_as_the_rate_the_model_reads(client):
+    # 5000% lies beyond the training range, so every pair is held at its edge; the counts are against that edge.
+    body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 5000}})
+    [edge] = {row["scenario_tariff_pct"] for row in body["top_pairs"] if row["scenario_tariff_pct"] is not None}
+
+    line = body["tariff_directions"]
+    assert body["clipped_pairs"] > 0 and edge < 5000
+    # The edge is whisky's 150%, so whisky is unchanged and left out; the other four rise or are unknown.
+    assert line.startswith("This sets 4 pairs to 5000%")
+    assert f"{edge:,.1f}%" in line and "edge of the training range" in line
+    assert f"it raises {body['pairs_raised']} and lowers {body['pairs_lowered']}" in line
+    assert "remov" not in line
 
 
 @pytest.mark.parametrize(
@@ -795,3 +807,34 @@ def test_adding_two_markets_lists_both_ranked_by_value_and_limited(blocked_clien
     assert values == sorted(values, reverse=True)
     assert top["blocked_opportunities"] == expected[:2]
     assert top["blocked_count"] == count == 3
+
+
+# --- The Blocked Opportunity prose a Scenario carries (#142 final review): worded once, in the package -------------
+
+
+@pytest.mark.parametrize(
+    "payload", [{"tariff": {"markets": ["IND"], "rate_pct": 30}}, {"preset": "cptpp"}, {"remove_agreements": ["JPN"]}]
+)
+def test_a_scenario_adding_no_agreement_carries_the_neutral_line_with_the_rule(blocked_client, payload):
+    rule = blocked_client.get("/labels").json()["blocked_rule"]
+
+    note = _post(blocked_client, payload)["blocked_note"]
+
+    assert note.startswith(
+        "Blocked Opportunities are measured by adding a Trade Agreement where none is in force, and this Scenario "
+        "adds none."
+    )
+    assert rule in note
+
+
+def test_a_scenario_adding_an_agreement_carries_the_rule_the_hidden_tiers_and_why_the_totals_differ(blocked_client):
+    rule = blocked_client.get("/labels").json()["blocked_rule"]
+    hidden = [tier["plural"] for tier in blocked_client.get("/caveats").json() if tier["hidden_by_default"]]
+
+    note = _post(blocked_client, {"add_agreements": ["IND"]})["blocked_note"]
+
+    assert rule in note and "fixed" in note
+    assert hidden and all(plural in note for plural in hidden)
+    assert "covers every pair" in note and "only its Blocked Opportunities" in note
+    assert "Illustrative" in note
+    assert "preset" not in note and "adds none" not in note

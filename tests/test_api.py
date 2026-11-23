@@ -69,6 +69,10 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     # (spec #133).
     meaning = body["trade_agreement_meaning"]
     assert "average agreement" in meaning and "not a specific deal" in meaning and "one yes/no flag" in meaning
+    # The Blocked Opportunity rule at the fixed thresholds (ADR 0012), stated once for every page.
+    rule = body["blocked_rule"]
+    assert "20% of its Baseline Export Potential" in rule and "$1M" in rule
+    assert "with no UK Trade Agreement in force" in rule and "room to grow" in rule
 
 
 def test_labels_serve_the_caution_line_every_page_shows_under_its_heading(client):

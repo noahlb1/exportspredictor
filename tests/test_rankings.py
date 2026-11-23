@@ -17,7 +17,7 @@ def test_rank_orders_name_a_column_a_title_and_a_description():
     assert "$1M" in rankings.BLOCKED.description
     # It never speaks of removing a tariff, which a 0% row has none of, and states room to grow (ADR 0011).
     assert "removing the tariff" not in rankings.BLOCKED.description
-    assert "Actual Exports are below Export Potential with a Trade Agreement" in rankings.BLOCKED.description
+    assert "Actual Exports are below its Export Potential with a Trade Agreement" in rankings.BLOCKED.description
 
 
 def test_ranks_by_export_gap_by_default(fixture_artefacts):

@@ -300,7 +300,7 @@ def test_adding_india_shows_the_blocked_opportunities_pages_rows_in_its_products
 
 def test_choosing_a_scenario_blocked_opportunity_opens_the_shared_before_and_after_panel(monkeypatch, blocked_api_url):
     page = _run_india(monkeypatch, blocked_api_url)
-    page.session_state["scenario_blocked_pair"] = {"hs6": WHISKY, "iso3": "IND"}
+    page.session_state["scenario_blocked_pair"] = (WHISKY, "IND")
     page.run()
 
     assert not page.exception
@@ -319,6 +319,8 @@ def test_a_scenario_adding_no_trade_agreement_shows_one_neutral_line_instead(mon
     assert len(page.dataframe) == BLOCKED  # Change per Market, the drill-down and Top Products gaining only
     [line] = [element.value for element in page.markdown if "this Scenario adds none" in element.value]
     assert "Blocked Opportunities are measured by adding a Trade Agreement" in line
+    assert httpx.get(f"{blocked_api_url}/labels").json()["blocked_rule"] in line  # spec #142, story 6
+    assert "20%" in line and "$1M" in line
     [link] = [link for link in page.page_link if "Blocked Opportunities" in link.proto.label]
     assert link.proto.page.endswith(BLOCKED_PAGE) or "Blocked_Opportunities" in link.proto.page
 
@@ -331,7 +333,7 @@ def test_the_blocked_opportunities_caption_states_the_rule_the_hidden_tiers_and_
     page = _run_india(monkeypatch, blocked_api_url)
 
     caption = _blocked_caption(page)
-    assert "20%" in caption and "$1.0m" in caption and "fixed" in caption
+    assert "20%" in caption and "$1M" in caption and "fixed" in caption
     assert "Export Potential with a Trade Agreement" in caption and "Scenario Export Potential" not in caption
     assert hidden and all(tier["plural"] in caption for tier in hidden)
     assert "covers every pair" in caption and "only its Blocked Opportunities" in caption
@@ -598,7 +600,7 @@ def test_the_blocked_opportunities_line_states_the_fixed_rule_in_the_adaptive_fo
     page = _run_india(monkeypatch, api_url)
 
     line = next(element.value for element in page.caption if "room to grow" in element.value)
-    assert "20%" in line and "$1.0m" in line and "$1,000,000" not in line
+    assert "20%" in line and "$1M" in line and "$1,000,000" not in line
     assert "fixed" in line  # the rule is stated, not offered for tuning (ADR 0012)
     assert "whatever their Actual Exports" not in line  # spec #133: room to grow
     assert "Actual Exports" in line and "Export Potential with a Trade Agreement" in line  # as on that page
@@ -647,3 +649,11 @@ def test_a_prefilled_builder_can_be_changed(open_page, api_url):
     page.radio(key="kind").set_value("Trading Bloc preset").run()
 
     assert page.radio(key="kind").value == "Trading Bloc preset"
+
+
+def test_the_illustrative_expander_is_worded_true_for_a_scenario_with_no_blocked_opportunities(monkeypatch, api_url):
+    # #142 final review: the expander qualifies the Scenario Effect too, often with no Blocked Opportunity value shown.
+    page = _run_tariff(monkeypatch, api_url)
+
+    [expander] = [box for box in page.expander if box.label.startswith("Illustrative")]
+    assert expander.label == "Illustrative: what these figures are read against"

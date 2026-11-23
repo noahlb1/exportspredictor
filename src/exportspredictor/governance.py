@@ -39,7 +39,7 @@ from exportspredictor.model_choice import (
     traded_away,
 )
 from exportspredictor.paths import data_dir
-from exportspredictor.scenarios import BLOCKED_MIN_SHARE_TEXT, BLOCKED_MIN_USD_TEXT
+from exportspredictor.scenarios import BLOCKED_RULE
 from exportspredictor.wording import number_text, rate_text, years_text
 
 OWNER = "UNASSIGNED"
@@ -117,9 +117,8 @@ DECISIONS = [
      "the EU Trading Bloc in 2020 (31 January) but stays in the Customs Union and EU agreements for 2020.")),
     ("Bloc Scenarios change only member Markets' rows",
      ("EU re-join sets the Trade Agreement, Customs Union and EU flags on EU Markets' rows; CPTPP sets the Trade "
-     "Agreement and CPTPP flags on members' rows; each added agreement zeroes the tariff. A Blocked Opportunity "
-     f"gains at least {BLOCKED_MIN_SHARE_TEXT} and {BLOCKED_MIN_USD_TEXT} and has room to grow: its Baseline-year "
-     "Actual Exports are below its Export Potential with a Trade Agreement (ADR 0011).")),
+     f"Agreement and CPTPP flags on members' rows; each added agreement zeroes the tariff. {BLOCKED_RULE} (ADR 0011, "
+     "ADR 0012)")),
     ("Headline metric: rank correlation within each Product",
      ("Advisors read the model as a ranking of Markets for one Product, so the headline is the within-Product "
      "Spearman correlation on the UK's full 2023 grid, out-of-fold, against a naive market-share baseline.")),
@@ -232,9 +231,7 @@ def blocked_opportunity_summary(artefacts: Artefacts) -> dict:
     count, negative = row["blocked_opportunities"], row["negative_agreement_parts"]
     share = row["tariff_part_share"]
     text = (
-        f"At the fixed thresholds (no Trade Agreement in force, a Blocked Opportunity value of at least "
-        f"{BLOCKED_MIN_SHARE_TEXT} of Baseline Export Potential and at least {BLOCKED_MIN_USD_TEXT}, and room to "
-        f"grow: Baseline-year Actual Exports below Export Potential with a Trade Agreement), the {artefacts.baseline_year} Baseline holds {count:,} Blocked "
+        f"{BLOCKED_RULE} At these fixed thresholds, the {artefacts.baseline_year} Baseline holds {count:,} Blocked "
         f"Opportunities in {row['markets']:,} Markets, with a total Blocked Opportunity value of "
         f"{format_usd(row['value_usd'])} (Illustrative). The Tariff part, the Scenario Effect of setting a known "
         f"Applied Tariff to 0 with no agreement added, is {format_usd(row['tariff_part_usd'])}"

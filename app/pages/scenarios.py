@@ -19,8 +19,13 @@ Markets, once, without running it (`prefill`); the Blocked Opportunities page li
 
 Clicking any value in a Market or pair table selects its row and tints it, as on the other pages
 (`app.tables.pick_row`); Top Products gaining cannot be clicked. The page remembers the choice in session state, so a
-test can set it as a click does: `scenario_market` (ISO3; the top Market when unset or not in the result) drives the drill-down, and `scenario_drill_pair` / `scenario_blocked_pair` (`{"hs6", "iso3"}`)
-open a pair's box under that table; no pair is selected until one is clicked.
+test can set it as a click does: `scenario_market` (ISO3; the top Market when unset or not in the result) drives the
+drill-down, `scenario_drill_pair` (`{"hs6", "iso3"}`) and `scenario_blocked_pair` ((HS6, ISO3), as on the Blocked
+Opportunities page) open a pair's box under that table; no pair is selected until one is clicked.
+
+The page words nothing about a result: the summary, the raised/lowered line (`tariff_directions`) and the Blocked
+Opportunity prose (`blocked_note`: the section's caption or the neutral line, each stating the fixed rule) come from
+the API, worded in `exportspredictor.scenarios`.
 """
 
 import hashlib
@@ -33,10 +38,7 @@ from app import client, panel
 from app.format import format_change, format_usd, tariff_text
 from app.frame import page
 from app.tables import (
-    BLOCKED_FORMATS,
     ONE_DECIMAL,
-    blocked_products_columns,
-    blocked_products_frame,
     caveats_column,
     millions,
     millions_unit,
@@ -239,23 +241,6 @@ def pair_box(row: dict) -> None:
         )
 
 
-def _pairs(count: int) -> str:
-    return f"{count:,} pair" if count == 1 else f"{count:,} pairs"
-
-
-def tariff_directions(result: dict) -> str | None:
-    """For a tariff Scenario, one line on how many pairs it sets to the rate and how many of those it raises and
-    lowers (a pair with an unknown Baseline tariff counts in neither); None for any other Scenario."""
-    tariff = result["scenario"].get("tariff")
-    if tariff is None or result.get("pairs_raised") is None:
-        return None
-    changed = sum(market["pairs"] for market in result["markets"])
-    return (
-        f"This sets {_pairs(changed)} to {tariff['rate_pct']:g}%: it raises {result['pairs_raised']:,} "
-        f"and lowers {result['pairs_lowered']:,}."
-    )
-
-
 def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     """A Scenario's result, in order (#149): summary, clipped-tariff note, raised/lowered line, metrics, the
     Illustrative expander, Change per Market, the selected Market's pairs, Top Products gaining, then Blocked
@@ -270,9 +255,8 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
             "tariffs the model has seen. It is held at the edge of that range, so the Scenario Effect "
             "flattens beyond it: the model associates no further change with a higher tariff."
         )
-    directions = tariff_directions(result)
-    if directions is not None:
-        st.markdown(directions)
+    if result["tariff_directions"] is not None:
+        st.markdown(result["tariff_directions"])
     total = result["total"]
     figures = st.columns([1, 1])[0]  # the metrics keep to half the width, as before the note moved under them
     metrics = figures.columns(3 if result["adds_agreement"] else 2)
@@ -316,49 +300,8 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     if result["adds_agreement"]:
         blocked_section(result, run_key)
     else:
-        st.markdown(
-            "Blocked Opportunities are measured by adding a Trade Agreement where none is in force, and this Scenario "
-            "adds none."
-        )
+        st.markdown(result["blocked_note"])  # this Scenario adds none, then the fixed rule
         st.page_link(BLOCKED_PAGE, label="Open the Blocked Opportunities page", icon=":material/arrow_forward:")
-
-
-def _names(plurals: list[str]) -> str:
-    """Names joined for a sentence: "A", "A and B", "A, B and C"."""
-    *rest, last = plurals
-    return f"{', '.join(rest)} and {last}" if rest else last
-
-
-def blocked_caption(result: dict, hidden: list[str], shown: int) -> str:
-    """The Blocked Opportunities section's caption: the fixed rule (ADR 0012), the Caveat Tiers hidden as by default
-    (`hidden`, their plurals), why a Market's Scenario Effect differs from its Blocked Opportunity total and, for a
-    preset, from a pair's value, and how many of them the `shown` rows are."""
-    year, word, thresholds = result["baseline_year"], illustrative(), result["thresholds"]
-    count = result["blocked_count"]
-    parts = [
-        (
-            "These are the Blocked Opportunities of the Markets this Scenario adds a Trade Agreement with, with the "
-            "same figures as the Blocked Opportunities page. The rule is fixed: a pair with no UK Trade Agreement in "
-            f"force is a Blocked Opportunity when its Blocked Opportunity value, the rise in {year} Export Potential the "
-            f"model associates with adding one ({word}), is at least {thresholds['min_effect_share']:.0%} of its {year} "
-            f"Export Potential and at least {format_usd(thresholds['min_effect_usd'])}, and it has room to grow: its "
-            f"{year} Actual Exports are below its Export Potential with a Trade Agreement."
-        )
-    ]
-    if hidden:
-        parts.append(f"{_names(hidden)} are hidden here, as they are by default on the Blocked Opportunities page.")
-    parts.append(
-        "A Market's Scenario Effect covers every pair the Scenario changes, while its Blocked Opportunity total sums "
-        "only its Blocked Opportunities, so the two differ."
-    )
-    if result["scenario"].get("preset") is not None:
-        parts.append(
-            "A preset also changes other conditions (the Customs Union, membership of a Trading Bloc), so its Scenario "
-            "Effect for a pair can differ from that pair's Blocked Opportunity value."
-        )
-    if count > shown:
-        parts.append(f"The largest {shown:,} of {count:,} are listed.")
-    return " ".join(parts)
 
 
 def blocked_section(result: dict, run_key: str) -> None:
@@ -368,7 +311,7 @@ def blocked_section(result: dict, run_key: str) -> None:
     rows = result["blocked_opportunities"]
     hidden = [tier for tier in caveat_tiers() if tier["hidden_by_default"]]
     st.subheader("Blocked Opportunities")
-    st.caption(blocked_caption(result, [tier["plural"] for tier in hidden], len(rows)))
+    st.caption(result["blocked_note"])
     if hidden:
         st.page_link(
             BLOCKED_PAGE,
@@ -379,23 +322,9 @@ def blocked_section(result: dict, run_key: str) -> None:
     if not rows:
         st.info("No pair in these Markets is a Blocked Opportunity.")
         return
-    chosen = pick_row_if_chosen(
-        blocked_products_frame(rows, with_market=True),
-        [{"hs6": row["hs6"], "iso3": row["iso3"]} for row in rows],
-        key=f"blocked_{run_key}",
-        remembered=BLOCKED_PAIR,
-        formats=BLOCKED_FORMATS,
-        column_config=blocked_products_columns(result),
+    panel.blocked_opportunities(
+        rows, result, key=f"blocked_{run_key}", remembered=BLOCKED_PAIR, noun="pair", with_market=True
     )
-    if chosen is None:
-        st.caption(
-            "Click a pair to see its before and after, and how much of the rise the model associates with the tariff."
-        )
-        return
-    row = rows[chosen]
-    # A new key for each pair makes the panel a new element, so it starts from its top on a new selection.
-    with st.container(border=True, key=f"scenario_blocked_panel_{row['hs6']}_{row['iso3']}"):
-        panel.blocked_opportunity(row)
 
 
 with page(
