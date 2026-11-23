@@ -358,27 +358,6 @@ class ScenarioResult:
             parts.append(f"The largest {shown:,} of {count:,} are listed.")
         return " ".join(parts)
 
-    def blocked_opportunities(
-        self,
-        history: pl.DataFrame,
-        baseline_year: int,
-        min_share: float = BLOCKED_MIN_SHARE,
-        min_usd: float = BLOCKED_MIN_USD,
-    ) -> pl.DataFrame:
-        """The changed pairs that are Blocked Opportunities under this Scenario (`is_blocked`): the Scenario Effect
-        clears both thresholds and the Baseline year's Actual Exports, read from the yearly `history` and added as
-        `baseline_actual_exports_usd`, are below the Scenario's Export Potential (room to grow, ADR 0011)."""
-        flagged = with_blocked_opportunity_flag(
-            self.pairs,
-            history,
-            baseline_year,
-            effect="effect_usd",
-            baseline="baseline_potential_usd",
-            min_share=min_share,
-            min_usd=min_usd,
-        )
-        return flagged.filter("blocked_opportunity").drop("blocked_opportunity")
-
     def summary(self, *, year: int) -> str:
         """One sentence, worded as an association, never as a cause or a forecast.
 
