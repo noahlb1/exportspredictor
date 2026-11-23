@@ -1,4 +1,5 @@
-"""Scenarios: re-predict UK Export Potential under a Trading Bloc preset, custom Trade Agreements or a tariff change.
+"""The Scenario Builder: the Advisor builds a Scenario (a Trading Bloc preset, Trade Agreements added or removed, or
+a tariff change) and sees the change in UK Export Potential the model associates with it.
 
 The page reads top to bottom (spec #103, "Scenarios"): what a Trade Agreement means in the model (spec #133), the
 builder in a box, then, once **Run Scenario** is pressed, the result in the before/after style of the Blocked
@@ -398,8 +399,9 @@ def blocked_section(result: dict, run_key: str) -> None:
 
 
 with page(
-    "Scenarios",
-    "Re-predict UK Export Potential under a Trading Bloc preset, custom Trade Agreements or a tariff change.",
+    "Scenario Builder",
+    "Build a Scenario (a Trading Bloc preset, Trade Agreements added or removed, or a tariff change) and see the "
+    "change in UK Export Potential the model associates with it.",
 ):
     try:
         presets = fetch("/scenarios/presets", client.api_url())

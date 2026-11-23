@@ -10,8 +10,8 @@ from collections.abc import Iterable
 # Under the heading of every page that shows figures (CLAUDE.md: language about results stays associational).
 CAUTION = "Figures are associations the model has learned, not causes or forecasts."
 
-# What "a Trade Agreement" means in the model (GLOSSARY.md, ADR 0011), said on the Blocked Opportunities and Scenarios
-# pages.
+# What "a Trade Agreement" means in the model (GLOSSARY.md, ADR 0011), said on the Blocked Opportunities page and
+# the Scenario Builder.
 TRADE_AGREEMENT_MEANING = (
     "A Trade Agreement here is one yes/no flag in the model, on for any WTO-listed free trade agreement or customs "
     "union, so adding one means an average agreement as the model has seen them, with tariffs fully removed, not a "
