@@ -172,7 +172,7 @@ def _with_caveats(columns: list[str], table: pl.DataFrame) -> list[str]:
 
 def _ranked(rows: pl.DataFrame) -> pl.DataFrame:
     """`rank_opportunities` rows as the pack shows them: its Opportunities only, ranked from 1, without model inputs."""
-    rows = rows.filter(pl.col("export_gap_usd") > 0).rename({"trade_agreement": "trade_agreement_in_force"})
+    rows = rows.filter(rankings.IS_OPPORTUNITY).rename({"trade_agreement": "trade_agreement_in_force"})
     return rows.select(_with_caveats(_OPPORTUNITY, rows)).with_row_index("rank", offset=1)
 
 

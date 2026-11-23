@@ -306,7 +306,7 @@ def flagged_products_by_reason(bundle: Artefacts) -> pl.DataFrame:
     return (
         bundle.baseline.filter("flagged_product")
         .group_by(Reason="flagged_product_reason")
-        .agg(Products=pl.col("hs6").n_unique(), Opportunities=(pl.col("export_gap_usd") > 0).sum().cast(pl.Int64))
+        .agg(Products=pl.col("hs6").n_unique(), Opportunities=rankings.IS_OPPORTUNITY.sum().cast(pl.Int64))
         .sort(["Products", "Opportunities", "Reason"], descending=[True, True, False])
     )
 
