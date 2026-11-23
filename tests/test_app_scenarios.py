@@ -88,6 +88,14 @@ def test_the_page_is_empty_until_a_scenario_is_run(monkeypatch, api_url):
     assert "Change per Market" in _page_text(page)
 
 
+def test_the_preset_selectbox_offers_exactly_the_presets_the_api_returns(monkeypatch, api_url):
+    # The fixture Baseline has no EU member Market and the UK in no Trading Bloc, so only CPTPP is offered.
+    page = _scenarios_page(monkeypatch, api_url)
+
+    assert page.selectbox(key="preset").options == ["CPTPP"]
+    assert [preset["title"] for preset in httpx.get(f"{api_url}/scenarios/presets").json()] == ["CPTPP"]
+
+
 def test_the_builder_has_no_sidebar_controls(monkeypatch, api_url):
     page = _run_cptpp(monkeypatch, api_url)
 
@@ -106,10 +114,11 @@ def test_a_line_says_when_the_controls_differ_from_the_result_shown(monkeypatch,
     page = _run_cptpp(monkeypatch, api_url)
     assert not _stale(page)
 
-    page.selectbox(key="preset").set_value("eu_rejoin").run()
+    page.radio(key="kind").set_value("Custom Trade Agreements").run()
     assert _stale(page)
     assert page.dataframe  # the earlier result stays on screen under the line
 
+    page.radio(key="kind").set_value("Trading Bloc preset").run()
     page.selectbox(key="preset").set_value("cptpp").run()
     assert not _stale(page)  # back to the controls of the result shown
 

@@ -151,7 +151,7 @@ Run this before a release, against `podman compose up` with real artefacts, in a
 - [ ] Click any value of a pair in the drill-down or in Blocked Opportunities (no pair is tinted before): that row is tinted, and a box under that table shows its caveats, its Baseline and Scenario Export Potential, the Scenario Effect and both Applied Tariffs. Its link opens the Leaderboard on that Product and Market.
 - [ ] The tables are in $ millions with the unit stated once above them, and the Blocked Opportunities table has a Baseline-year Actual Exports column. The caption above the tables ends with the median-type note on summed Export Potential, with its N%.
 - [ ] The drill-down and Blocked Opportunities tables have a Caveats column: add a Trade Agreement with Saudi Arabia, and its alcoholic beverages read "Restricted Pair"; an Offset Pair's row reads "Offset Pair" there too.
-- [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists, or the Leave preset in 2024) says so.
+- [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists) says so. The preset list leaves out a preset that changes nothing in the Baseline year (Leave, in 2024).
 - [ ] In tariff mode, set a tariff above the highest one in training for one Market (e.g. 5000% for the USA; on the real artefact the training range ends at 3,000%): the Scenario Effect is never a rise, and the page says the effect flattens beyond the training range. Removing a Trade Agreement (e.g. with Japan) shows the restored 2021 MFN tariff in the pair tables.
 - [ ] After a run, the page states the EU–Japan Event Backtest result (predicted against observed) beside the Scenario Effect.
 
