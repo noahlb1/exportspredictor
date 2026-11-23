@@ -315,6 +315,17 @@ def test_what_market_reach_changes_is_the_saved_sentence_or_a_not_run_line(fixtu
     )
 
 
+def test_what_market_reach_changes_states_the_served_uk_pair_coverage(fixture_artefacts):
+    # The notebook prints what the model card and the API state (#162).
+    report = fixture_artefacts.evaluation
+    effect = {**report["market_reach_effect"], "uk_pair_coverage": {"with": 0.7351, "without": 0.8072}}
+    served = {**report["potential_range"], "uk_pair_coverage": {"with_market_reach": 0.7346, "without_market_reach": 0.8068}}
+    stale = {**report, "market_reach_effect": effect, "potential_range": served}
+
+    assert "holds 73% with it against 81% without" in reporting.market_reach_effect(
+        replace(fixture_artefacts, evaluation=stale))
+
+
 # --- Blocked Opportunities: the split of the value and how Product-specific its Agreement part is (spec #133) -----
 
 

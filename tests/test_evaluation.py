@@ -725,6 +725,24 @@ def test_a_market_reach_effect_saved_with_flat_size_matched_lift_reads_nested(re
     assert saved["market_reach_effect"]["lift"] == flat
 
 
+def test_a_version_upgraded_by_rereach_states_one_uk_pair_coverage_in_its_market_reach_effect(report):
+    # `rereach` rewrote the Potential Range's UK-pair coverage (73.5%) but not the saved Market Reach block (73.5% under
+    # the first form, printed 74%), so one card said both (#162). The block reads the served figure.
+    effect = report["market_reach_effect"]
+    saved = {
+        **report,
+        "market_reach_effect": {**effect, "uk_pair_coverage": {"with": 0.7351, "without": 0.8072}},
+        "potential_range": {**report["potential_range"],
+                            "uk_pair_coverage": {"with_market_reach": 0.7346, "without_market_reach": 0.8068}},
+    }
+
+    read = evaluation.relabelled(saved)["market_reach_effect"]
+
+    assert read["uk_pair_coverage"] == {"with": 0.7346, "without": 0.8068}
+    assert "holds 73% with it against 81% without" in read["text"]
+    assert read["selection_measure"] == effect["selection_measure"]
+
+
 # --- Which configuration the test-year figures were read on (ADR 0009, #160) -------------
 
 READ_ON_EARLIER = "The test-year figures were read on an earlier configuration"

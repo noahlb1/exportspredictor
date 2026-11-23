@@ -52,7 +52,7 @@ INTENDED_USE = [
     "(Opportunities) or by the Scenario Effect of adding a Trade Agreement (Blocked Opportunities)."),
     ("Explore how the model associates Trade Agreement and Trading Bloc Scenarios with UK Export Potential, "
     "as an order of magnitude and a starting point for policy analysis."),
-    "Explain, for one pair, which fundamentals raised or lowered its Export Potential (the Why? page).",
+    "Explain, for one pair, which fundamentals raised or lowered its Export Potential (the detail panel under the Leaderboard and Blocked Opportunities tables).",
     "Every output is a lead for a person to check against sector knowledge, not a decision.",
 ]
 

@@ -145,7 +145,7 @@ What holds a Blocked Opportunity's Export Potential down: the absence of a Trade
 _Avoid_: blocker, obstacle, friction
 
 **Lift**:
-How many times more likely Product–Market pairs with large Export Gaps are than random pairs to grow or appear in later years. It describes a tendency, not a forecast.
+How many times more likely Product–Market pairs with large Export Gaps are than random pairs to grow or appear in later years. **Size-matched Lift** compares them instead with pairs of similar Export Potential, so it says whether a large Export Gap points at growth beyond what a pair's size already does. It describes a tendency, not a forecast.
 _Avoid_: hit rate, conversion
 
 **Event Backtest**:

@@ -20,7 +20,7 @@ Calibration is done separately within 20 equal-count bands of Export Potential (
 ## Outcome (spec #66, artefact `20261118T185910Z`)
 
 - **The Uncertain Opportunity is reported as a share, not shown per row.** On the served version 904,649 of 1,032,453 Opportunities (88%) are Uncertain Opportunities, so a badge on each one no longer separated one Opportunity from another. The badge, its caveat on the labels the API serves and the "Hide Uncertain Opportunities" filter were removed from the ranking pages and the ranking query.
-- **The Potential Range itself is unchanged.** Its calibration, the artefact's tables (each UK pair keeps its range and its `uncertain_opportunity` flag) and the artefact format stay as decided above. The range is still shown on the Why? page for a pair, and the Model Evaluation page states its held-out coverage and the share of Opportunities whose Actual Exports lie inside it.
+- **The Potential Range itself is unchanged.** Its calibration, the artefact's tables (each UK pair keeps its range and its `uncertain_opportunity` flag) and the artefact format stay as decided above. The range is still shown in a pair's detail panel (the page once called Why?), and the Model Evaluation page states its held-out coverage and the share of Opportunities whose Actual Exports lie inside it.
 
 ## Amendment: residuals on the log scale (artefact `20261120T133841Z`)
 
