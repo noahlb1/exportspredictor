@@ -63,7 +63,10 @@ TABLES = {
 COLUMNS = {
     "rank": "Position within the table (or within its Market or Product), from 1.",
     "scenario": "The Trading Bloc preset Scenario.",
-    "hs6": "The Product's six-digit HS code.",
+    "hs6": (
+        "The Product's six-digit HS code, written with its leading zero (030214); read it as text, as a spreadsheet "
+        "or a reader that guesses types drops the zero (30214)."
+    ),
     "description": "The Product's name.",
     "sector_name": "The Product's Sector (HS2 chapter).",
     "iso3": "The Market's three-letter country code.",
