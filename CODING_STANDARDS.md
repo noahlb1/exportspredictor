@@ -5,7 +5,7 @@ Read in review. These are judgement calls; the rules in CLAUDE.md ("Shape" and "
 ## Where logic lives
 
 - **`api/` only translates HTTP.** It validates, calls `src/exportspredictor`, and shapes the response. Ranking, sorting, filtering, Scenario wording, money formatting and currency conversion belong in the package, so the notebook gets the same behaviour.
-- **One definition per constant or option.** Thresholds, ranking orders and preset names are defined once in the package. The API's schemas derive from that definition, and the app reads it from an endpoint (as `/scenarios/thresholds` and `/opportunities/rank-by` do) rather than copying the literal.
+- **One definition per constant or option.** Thresholds, ranking orders and preset names are defined once in the package. The API's schemas derive from that definition, and the app reads it from an endpoint (as `/opportunities/rank-by` does) rather than copying the literal.
 - **A query has one entry point.** A new filter or order on rankings goes into `rankings.rank_opportunities`, not into a second sort in the API.
 
 ## Names

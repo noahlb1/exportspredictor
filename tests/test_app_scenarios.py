@@ -119,7 +119,8 @@ def test_a_line_says_when_the_controls_differ_from_the_result_shown(monkeypatch,
     page.selectbox(key="preset").set_value("cptpp").run()
     assert not _stale(page)  # back to the controls of the result shown
 
-    page.selectbox(key="preset").set_value("eu_rejoin").run()
+    page.radio(key="kind").set_value("Custom Trade Agreements").run()
+    page.multiselect(key="add").set_value(["IND"]).run()
     page.button(key="run").click().run()
     assert not _stale(page)
 
