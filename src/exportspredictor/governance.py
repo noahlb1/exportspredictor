@@ -26,6 +26,7 @@ from exportspredictor.evaluation import (
     offset_pair_limitations,
     parts_not_run,
     range_limitations,
+    read_configuration_limitations,
     result_limitations,
     size_coverage_limitations,
     uk_pair_coverage_limitations,
@@ -215,7 +216,7 @@ def model_card(artefacts: Artefacts) -> dict:
             *range_limitations(artefacts.potential_range_bands),
             *size_coverage_limitations(report.get("potential_range")),
             *uk_pair_coverage_limitations(metadata, report.get("potential_range")),
-            *offset_pair_limitations(metadata), *LIMITATIONS,
+            *offset_pair_limitations(metadata), *read_configuration_limitations(metadata, report), *LIMITATIONS,
         ],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
