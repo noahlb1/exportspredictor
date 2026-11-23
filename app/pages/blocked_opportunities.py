@@ -145,5 +145,4 @@ with page(
                 mime="text/csv",
                 key="csv",
             )
-        with st.expander(f"{labels()['illustrative']['badge']}: what the Blocked Opportunity value is read against"):
-            scenario_note(body["note"])
+        scenario_note(body["note"])

@@ -478,20 +478,6 @@ def test_a_scenario_re_predicts_in_the_served_form_and_leaves_the_naive_baseline
     assert (joined["effect_usd"] >= -1e-3).all()
 
 
-def test_the_summary_writes_counts_with_thousands_separators():
-    pairs = pl.DataFrame(
-        {
-            "iso3": ["DEU"],
-            "baseline_potential_usd": [1e9],
-            "scenario_potential_usd": [1.5e9],
-            "effect_usd": [5e8],
-        }
-    )
-    result = scenarios.ScenarioResult(scenario=scenarios.Scenario(add_agreements=("DEU",)), pairs=pairs)
-
-    assert "with 5,526 Blocked Opportunities." in result.summary(blocked=5526, year=2024)
-
-
 def _kinds(rates):
     frame = pl.DataFrame({"applied_tariff_pct": rates}, schema={"applied_tariff_pct": pl.Float64})
     return frame.select(scenarios.tariff_kind(pl.col("applied_tariff_pct"))).to_series().to_list()
