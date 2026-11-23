@@ -56,6 +56,12 @@ def _left_helps(body: dict) -> tuple[str, str]:
     )
 
 
+def _group_total(grouping: Grouping, body: dict) -> None:
+    """Above the chosen group's pairs: their total value, Illustrative, from the group read's summary."""
+    del grouping
+    st.markdown(f"Total value, {illustrative()}: {format_usd(body['summary']['blocked_opportunity_value_usd'])}.")
+
+
 def _scenario_link(grouping: Grouping, code: str, name: str) -> None:
     """Under the Markets table: why a Market's total differs from a Scenario, and a link to that Scenario."""
     if grouping.view != BY_MARKET:
@@ -84,7 +90,7 @@ def _layout(filters: Filters) -> Layout:
         count="blocked_opportunities",
         total="blocked_opportunity_value_usd",
         count_heading="Blocked Opportunities",
-        total_heading="Total value",
+        total_heading=f"Total value, {illustrative()}",
         left_helps=_left_helps,
         frame=lambda rows: blocked_products_frame(rows, with_market=True),
         columns=blocked_products_columns,
@@ -93,6 +99,7 @@ def _layout(filters: Filters) -> Layout:
         wide_columns=BLOCKED_SHOWN,
         panel=panel.blocked_opportunity,
         read_group=read_group,
+        above_right=_group_total,
         under_left=_scenario_link,
         url_param="view",
     )

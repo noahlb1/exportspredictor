@@ -22,6 +22,7 @@ from exportspredictor import artefacts as store
 
 SCENARIOS = "pages/scenarios.py"
 BLOCKED_PAGE = "pages/blocked_opportunities.py"
+NOTE_EXPANDER = ": what these figures are read against"  # the end of the Scenario note expander's label
 # The page's tables, in order once a Scenario has run.
 MARKETS, DRILL_DOWN, PRODUCTS, BLOCKED = range(4)
 INDIA = {"add_agreements": ["IND"], "limit": 100}
@@ -395,11 +396,11 @@ def test_a_run_shows_the_apis_scenario_note_in_the_blocked_opportunities_pages_e
     # #149: the note sits closed under the figures, in the expander the Blocked Opportunities page uses.
     note = httpx.post(f"{blocked_api_url}/scenarios", json=INDIA).json()["note"]
     page = _run_india(monkeypatch, blocked_api_url)
-    # The note is the Blocked Opportunities page's last expander: since spec #151 a pair's panel, with its own
-    # expanders, is open above it.
-    blocked_expander = run_page(BLOCKED_PAGE).expander[-1]
+    # The Blocked Opportunities page's note expander, found by its label: since spec #151 a pair's panel, with
+    # expanders of its own, is open on that page too.
+    [label] = [box.label for box in run_page(BLOCKED_PAGE).expander if box.label.endswith(NOTE_EXPANDER)]
 
-    [expander] = [box for box in page.expander if box.label == blocked_expander.label]
+    [expander] = [box for box in page.expander if box.label == label]
     text = " ".join(str(element.value) for element in [*expander.info, *expander.markdown])
     assert note["label"] in text and note["text"] in text
     for part in ("benchmark", "model_association", "event_backtest"):

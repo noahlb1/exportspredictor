@@ -139,10 +139,10 @@ def test_the_leaderboard_opens_by_market_with_the_top_markets_products_and_its_t
     assert page.segmented_control[0].value == "By Market"
     markets = _by_market(fixture_api_url)["markets"]
     left = _left(page)
-    assert list(left.columns) == ["Market", "Pairs", "Total Export Gap"]
+    assert list(left.columns) == ["Market", "Pairs", "Total positive Export Gap"]
     assert list(left["Market"]) == [market["market"] for market in markets]
     assert list(left["Pairs"]) == [market["pairs"] for market in markets]
-    assert list(left["Total Export Gap"]) == pytest.approx([m["positive_export_gap_usd"] / 1e6 for m in markets])
+    assert list(left["Total positive Export Gap"]) == pytest.approx([m["positive_export_gap_usd"] / 1e6 for m in markets])
     top = markets[0]
     products = _by_market(fixture_api_url, market=top["iso3"])["opportunities"]
     right = _right(page)
@@ -215,10 +215,10 @@ def test_by_product_lists_products_by_total_export_gap_and_the_top_products_mark
     assert not page.exception
     products = _by_market(fixture_api_url)["products"]
     left = _left(page)
-    assert list(left.columns) == ["Product", "Pairs", "Total Export Gap"]
+    assert list(left.columns) == ["Product", "Pairs", "Total positive Export Gap"]
     assert list(left["Product"]) == [product["description"] for product in products]
     assert list(left["Pairs"]) == [product["pairs"] for product in products]
-    totals = list(left["Total Export Gap"])
+    totals = list(left["Total positive Export Gap"])
     assert totals == sorted(totals, reverse=True)
     assert totals == pytest.approx([product["positive_export_gap_usd"] / 1e6 for product in products])
     top = products[0]

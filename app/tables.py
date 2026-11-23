@@ -25,7 +25,7 @@ MILLION = 1_000_000
 TINT = {"background-color": "rgba(42, 120, 214, 0.28)", "font-weight": "600"}
 # Pixels: a long Product name otherwise widens its column until the columns after it scroll out of sight.
 PRODUCT_WIDTH = 200
-MARKET_WIDTH = 90  # px, in the narrow Markets table of Blocked Opportunities
+MARKET_WIDTH = 90  # px, the Market column of a narrow table (`market_column`)
 # Pixels: Streamlit's table row height, and the height it gives a table with no `height` (about ten rows).
 ROW_HEIGHT, DEFAULT_TABLE_HEIGHT = 35, 400
 ONE_DECIMAL = "{:.1f}"  # how a $ millions or percent column reads in a `pick_row` table, as `money_column` does
@@ -120,6 +120,11 @@ def _remember(key: str, remembered: str) -> Callable[[], None]:
 def product_column() -> "st.column_config.TextColumn":
     """Every table's Product column: a fixed width, so the columns after it stay in view."""
     return st.column_config.TextColumn("Product", help="The Product (HS6, 2012 edition).", width=PRODUCT_WIDTH)
+
+
+def market_column(width: int | None = MARKET_WIDTH) -> "st.column_config.TextColumn":
+    """Every table's Market column: `MARKET_WIDTH` wide in a narrow table, or Streamlit's own width (`None`)."""
+    return st.column_config.TextColumn("Market", help="The Market the UK exports to.", width=width)
 
 
 def millions(values: Iterable[float | None]) -> pd.Series:
@@ -239,7 +244,7 @@ def leaderboard_columns(body: dict) -> dict:
     year, averaged = body["baseline_year"], body["gap_period_label"]
     return {
         "Product": product_column(),
-        "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to."),
+        "Market": market_column(width=None),
         "Export Gap": money_column("Export Gap", term("export_gap")),
         "Export Potential": money_column("Export Potential", term("export_potential")),
         "Actual Exports": money_column("Actual Exports", term("actual_exports")),
@@ -358,7 +363,7 @@ def blocked_products_columns(body: dict) -> dict:
     year, word = body["baseline_year"], illustrative().capitalize()
     return {
         "Product": product_column(),
-        "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to.", width=MARKET_WIDTH),
+        "Market": market_column(),
         "Barrier": st.column_config.TextColumn(
             "Barrier",
             help=f"What holds this pair's Export Potential down: no UK Trade Agreement is in force, with its {year} "

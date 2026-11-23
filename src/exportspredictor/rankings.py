@@ -5,8 +5,9 @@ Every ranking view (the API's `/opportunities/top`, `/opportunities/by-product` 
 once; `summarise` sizes the filtered rows for the Leaderboard's summary, and `summarise_by` per Market and per
 Product for its By Market and By Product views. The Blocked Opportunities
 page's read (`/opportunities/blocked`) is `blocked_opportunities`: only Blocked Opportunities, ordered by
-`BLOCKED` or `TARIFF_PART`, with per-Market totals and Baseline-year figures. A new ranking order is one entry in `RANK_BY`; a new row field is added in
-`rank_opportunities`.
+`BLOCKED` or `TARIFF_PART`, with per-Market and per-Product totals (`blocked_by`) and Baseline-year figures. Both
+kinds of group total go through `_totals_by`. A new ranking order is one entry in `RANK_BY`; a new row field is added
+in `rank_opportunities`.
 """
 
 from collections.abc import Iterable
@@ -204,10 +205,18 @@ def summarise_by(rows: pl.DataFrame, code: str, name: str) -> pl.DataFrame:
     """`summarise` per group of ranked rows (per Market: `iso3`, `market`; per Product: `hs6`, `description`): the
     group's code and name, its pair count (`pairs`) and total positive Export Gap (`positive_export_gap_usd`), largest
     total first, ties by name. The groups add up to `summarise` over the same rows."""
+    gap = pl.col("export_gap_usd").clip(lower_bound=0).sum().cast(pl.Float64)
+    return _totals_by(rows, code, name, count="pairs", total=gap.alias("positive_export_gap_usd"))
+
+
+def _totals_by(rows: pl.DataFrame, code: str, name: str, *, count: str, total: pl.Expr) -> pl.DataFrame:
+    """Per group of `rows` (by `code` and `name`): the code, the name, the row count as `count` and the aggregate
+    `total` under its own name; largest total first, ties by name, then code."""
+    total_name = total.meta.output_name()
     return (
         rows.group_by(code, name)
-        .agg(pairs=pl.len(), positive_export_gap_usd=pl.col("export_gap_usd").clip(lower_bound=0).sum().cast(pl.Float64))
-        .sort(["positive_export_gap_usd", name, code], descending=[True, False, False])
+        .agg(pl.len().alias(count), total)
+        .sort([total_name, name, code], descending=[True, False, False])
     )
 
 
@@ -315,11 +324,7 @@ def blocked_by(rows: pl.DataFrame, code: str, name: str) -> pl.DataFrame:
     """The Blocked Opportunities' totals per group (per Market: `iso3`, `market`; per Product: `hs6`, `description`):
     the group's code and name, its count (`blocked_opportunities`) and total Blocked Opportunity value
     (`blocked_opportunity_value_usd`), largest total first, ties by name. The groups add up to the summary."""
-    return (
-        rows.group_by(code, name)
-        .agg(blocked_opportunities=pl.len(), blocked_opportunity_value_usd=pl.col("blocked_opportunity_value_usd").sum())
-        .sort(["blocked_opportunity_value_usd", name, code], descending=[True, False, False])
-    )
+    return _totals_by(rows, code, name, count="blocked_opportunities", total=pl.col("blocked_opportunity_value_usd").sum())
 
 
 # The split's row over every Blocked Opportunity, after one row per kind of Applied Tariff (`scenarios.TARIFF_KINDS`).

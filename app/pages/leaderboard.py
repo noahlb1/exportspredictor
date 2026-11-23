@@ -51,7 +51,7 @@ STEPS = "leaderboard_steps"  # whether the three steps are shown; closed with Go
 STEP_TEXTS = [
     (
         "1 · Read the ranking.",
-        "Markets are on the left, the largest total Export Gap first. Click one to list its Products on the right.",
+        "Markets are on the left, the largest total positive Export Gap first. Click one to list its Products on the right.",
     ),
     (
         "2 · Open a pair.",
@@ -111,7 +111,7 @@ def _layout(filters: Filters) -> Layout:
         count="pairs",
         total="positive_export_gap_usd",
         count_heading="Pairs",
-        total_heading="Total Export Gap",
+        total_heading="Total positive Export Gap",
         left_helps=_left_helps,
         frame=leaderboard_frame,
         columns=leaderboard_columns,

@@ -30,6 +30,7 @@ PAGE = "pages/blocked_opportunities.py"
 WHISKY, JEWELLERY, CARS, CRUDE_OIL = "220830", "711319", "870323", "270900"
 JEWELLERY_NAME = "Articles of jewellery and parts thereof, of precious metal other than silver"
 BLOCKED_PAIRS = [(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG")]
+TOTAL = "Total value, illustrative"  # the left table's total heading: visibly Illustrative (story 19)
 PRODUCT_COLUMNS = [
     "Product",
     "Barrier",
@@ -162,15 +163,16 @@ def test_markets_are_listed_largest_total_first_with_the_top_markets_products_sh
     assert page.header[0].value == "Blocked Opportunities"
     assert page.segmented_control[0].value == "By Market"
     markets = _markets(page)
-    assert list(markets.columns) == ["Market", "Blocked Opportunities", "Total value"]
+    assert list(markets.columns) == ["Market", "Blocked Opportunities", TOTAL]
     assert list(markets["Market"]) == ["India", "Hong Kong"]
     assert list(markets["Blocked Opportunities"]) == [2, 1]
-    assert [round(value, 1) for value in markets["Total value"]] == [25.6, 5.1]  # $18.5m + $7.1m; $5.1m
+    assert [round(value, 1) for value in markets[TOTAL]] == [25.6, 5.1]  # $18.5m + $7.1m; $5.1m
     helps = {name.removeprefix("name:"): column.get("help", "") for name, column in
              json.loads(page.dataframe[0].proto.columns).items()}
-    assert "llustrative" in helps["Total value"] and "under the filters" in helps["Blocked Opportunities"]
-    # The top Market's Products are shown on open.
+    assert "llustrative" in helps[TOTAL] and "under the filters" in helps["Blocked Opportunities"]
+    # The top Market's Products are shown on open, under a line giving the Market's total as Illustrative.
     assert set(_products(page)["Product"]) == {"Whiskies", JEWELLERY_NAME}
+    assert any("Total value, illustrative: $25.6m." in element.value for element in page.markdown)
 
 
 def test_the_top_markets_top_pair_is_chosen_on_open_with_its_panel_under_the_tables(monkeypatch, blocked_api_url):
@@ -190,10 +192,10 @@ def test_by_product_lists_products_with_their_totals_and_the_chosen_products_mar
 
     assert not page.exception
     products = _markets(page)
-    assert list(products.columns) == ["Product", "Blocked Opportunities", "Total value"]
+    assert list(products.columns) == ["Product", "Blocked Opportunities", TOTAL]
     assert list(products["Product"]) == ["Whiskies", JEWELLERY_NAME]
     assert list(products["Blocked Opportunities"]) == [1, 2]
-    assert [round(value, 1) for value in products["Total value"]] == [18.5, 12.2]  # jewellery: $7.1m + $5.1m
+    assert [round(value, 1) for value in products[TOTAL]] == [18.5, 12.2]  # jewellery: $7.1m + $5.1m
     assert list(_shown(page.dataframe[1])["Market"]) == ["India"]
 
     _click(page, product=JEWELLERY)
@@ -205,6 +207,23 @@ def test_by_product_lists_products_with_their_totals_and_the_chosen_products_mar
     assert _panel_box(page) == f"{JEWELLERY_NAME} → India"
 
     _click(page, pair=(JEWELLERY, "HKG"))
+    assert _panel_box(page) == f"{JEWELLERY_NAME} → Hong Kong"
+
+
+def test_the_right_table_lists_every_pair_of_the_market_when_the_main_read_is_capped(monkeypatch, blocked_api_url):
+    # Story 17. The read limit lowered to 2 caps the main read at whisky and jewellery in India; Hong Kong's
+    # jewellery is left out of it, yet listed once Hong Kong is chosen, from the read with Hong Kong's filter.
+    monkeypatch.setattr("app.ui.read_limit", lambda: 2)
+    page = _page(monkeypatch, blocked_api_url)
+    assert any("top 2 of 3 Blocked Opportunities" in caption.value for caption in page.caption)
+    capped = _read(blocked_api_url, limit=2)
+    assert capped["summary"]["blocked_opportunities"] == 3
+    assert (JEWELLERY, "HKG") not in [(row["hs6"], row["iso3"]) for row in capped["opportunities"]]
+
+    _click(page, market="HKG")
+
+    assert list(_products(page)["Product"]) == [JEWELLERY_NAME]
+    assert list(_markets(page)["Market"]) == ["India", "Hong Kong"]  # the totals cover every pair, whatever the cap
     assert _panel_box(page) == f"{JEWELLERY_NAME} → Hong Kong"
 
 

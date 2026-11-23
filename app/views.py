@@ -4,7 +4,7 @@ page width.
 
 `show(layout, body, rows)` draws, in order:
 
-1. the view switch, a segmented control ("By Market", "By Product", "Wide table"; `Layout.views`, the first is the
+1. the view switch, a segmented control ("By Market", "By Product", "Wide table"; `VIEWS`, the first is the
    default), with the page's `caption` beside it;
 2. By Market or By Product (`GROUPINGS`): the left table of groups (each Market or Product with its count and total,
    as the API serves them in `body[grouping.totals]`, largest first) and, at 1:2 width, the right table of the chosen
@@ -43,8 +43,8 @@ import pandas as pd
 import streamlit as st
 
 from app.tables import (
-    MARKET_WIDTH,
     ONE_DECIMAL,
+    market_column,
     millions,
     money_column,
     pick_row,
@@ -69,11 +69,16 @@ class Grouping:
     param: str  # the read's filter that keeps one group: "market" or "product"
     member: str  # what one right-table row is: "Product" or "Market"
     members: str  # plural of `member`
+    column: Callable[[], object]  # the column config of `heading`: `market_column` or `product_column`
 
 
 GROUPINGS = {
-    BY_MARKET: Grouping(BY_MARKET, "iso3", "market", "Market", "markets", "market", "Product", "Products"),
-    BY_PRODUCT: Grouping(BY_PRODUCT, "hs6", "description", "Product", "products", "product", "Market", "Markets"),
+    BY_MARKET: Grouping(
+        BY_MARKET, "iso3", "market", "Market", "markets", "market", "Product", "Products", market_column
+    ),
+    BY_PRODUCT: Grouping(
+        BY_PRODUCT, "hs6", "description", "Product", "products", "product", "Market", "Markets", product_column
+    ),
 }
 
 
@@ -84,7 +89,7 @@ class Layout:
     - `page`: the prefix of the page's session-state keys, e.g. "leaderboard".
     - `count`, `total`: the fields of a group-total row (`body[grouping.totals]`), e.g. "pairs" and
       "positive_export_gap_usd"; the total is in dollars and shown in $ millions.
-    - `count_heading`, `total_heading`: the left table's headings, e.g. "Pairs", "Total Export Gap".
+    - `count_heading`, `total_heading`: the left table's headings, e.g. "Pairs", "Total positive Export Gap".
     - `left_helps(body)`: their tooltips, (count, total).
     - `frame(rows)`: the pair table of ranking rows (`leaderboard_frame`, `blocked_products_frame`); `columns(body)`
       its column config; `formats` its `pick_row` formats.
@@ -95,7 +100,6 @@ class Layout:
       `opportunities` are the right table's rows.
     - `above_right(grouping, body)`: optional, drawn above the right table after its line, with the group read's body.
     - `under_left(grouping, code, name)`: optional, drawn under the left table, with the chosen group.
-    - `views`: the views offered, the first the default.
     - `url_param`: the view's query parameter, or None to keep the view out of the URL.
     """
 
@@ -114,7 +118,6 @@ class Layout:
     read_group: Callable[[Grouping, str], dict]
     above_right: Callable[[Grouping, dict], None] | None = None
     under_left: Callable[[Grouping, str, str], None] | None = None
-    views: tuple[str, ...] = VIEWS
     url_param: str | None = None
 
 
@@ -178,8 +181,7 @@ def _grouped(layout: Layout, grouping: Grouping, body: dict) -> dict | None:
             codes, key=f"{layout.page}_groups_{grouping.code}", remembered=f"{layout.page}_group_{grouping.code}",
             formats={layout.count_heading: "{:,}", layout.total_heading: ONE_DECIMAL},
             column_config={
-                grouping.heading: product_column() if grouping.heading == "Product"
-                else st.column_config.TextColumn("Market", help="The Market the UK exports to.", width=MARKET_WIDTH),
+                grouping.heading: grouping.column(),
                 layout.count_heading: st.column_config.NumberColumn(layout.count_heading, help=count_help, width="small"),
                 layout.total_heading: money_column(layout.total_heading, total_help),
             },
@@ -212,11 +214,11 @@ def _grouped(layout: Layout, grouping: Grouping, body: dict) -> dict | None:
 def _switch(layout: Layout) -> str:
     """The view switch, its value kept for the session and, with `url_param`, in the URL."""
     key = view_key(layout.page)
-    st.session_state.setdefault(key, layout.views[0])
+    st.session_state.setdefault(key, VIEWS[0])
     if layout.url_param:
         _read_url(layout, key)
     view = st.segmented_control(
-        "View", list(layout.views), key=key, required=True, label_visibility="collapsed", persist_state="session"
+        "View", list(VIEWS), key=key, required=True, label_visibility="collapsed", persist_state="session"
     )
     if layout.url_param:
         _write_url(layout, view)
@@ -234,7 +236,7 @@ def _read_url(layout: Layout, key: str) -> None:
     value = st.query_params.get(layout.url_param)
     if value is None or value == st.session_state.get(_written(layout)):
         return
-    views = {_URL_VALUES.get(view): view for view in layout.views}
+    views = {_URL_VALUES.get(view): view for view in VIEWS}
     if value in views:
         st.session_state[key] = views[value]
 
@@ -242,7 +244,7 @@ def _read_url(layout: Layout, key: str) -> None:
 def _write_url(layout: Layout, view: str) -> None:
     """Keep the view in the URL, unless it is the default."""
     assert layout.url_param
-    value = None if view == layout.views[0] else _URL_VALUES.get(view)
+    value = None if view == VIEWS[0] else _URL_VALUES.get(view)
     if value is None:
         if layout.url_param in st.query_params:
             del st.query_params[layout.url_param]
