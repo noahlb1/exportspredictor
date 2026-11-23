@@ -138,6 +138,7 @@ def create_app(
     app.state.clock = clock
     app.state.last_attempt = None
     app.state.load_error = None
+    app.state.offered_presets = {}  # per artefact version: the presets that change something in its Baseline
     app.state.tiers = tiers  # a Baseline without one of their columns is refused (`artefacts.load`)
 
     @app.get("/health", response_model=Health, response_model_exclude_none=True)
@@ -387,9 +388,13 @@ def create_app(
         )
 
     @app.get("/scenarios/presets", response_model=list[PresetOut])
-    def presets():
-        """The Trading Bloc presets, in display order."""
-        return [PresetOut(**vars(preset)) for preset in scenarios.PRESETS.values()]
+    def presets(request: Request, artefacts: store.Artefacts = Depends(loaded)):
+        """The Trading Bloc presets that change something in the Baseline year, in display order."""
+        cache = request.app.state.offered_presets
+        if artefacts.version not in cache:
+            offered = scenarios.offered_presets(artefacts.baseline_features, scenarios.tariff_range(artefacts.metadata))
+            cache[artefacts.version] = [PresetOut(**vars(preset)) for preset in offered]
+        return cache[artefacts.version]
 
     @app.get("/scenarios/thresholds", response_model=Thresholds)
     def thresholds():

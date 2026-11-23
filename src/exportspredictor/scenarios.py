@@ -11,7 +11,11 @@ on that pair. `check_only_policy_changed` guards that nothing else moves.
 flags, and a bloc Scenario changes only the rows of the bloc's member Markets:
 
 - EU re-join: a Trade Agreement with every EU member, the Customs Union flag and the
-  UK's EU membership flag (`eu_o`), as for any pair of EU members in training.
+  UK's EU membership flag (`eu_o`), as for any pair of EU members in training. Since 2021
+  the UK has a Trade Agreement with each, so its Scenario Effect comes from the other two.
+
+`offered_presets` leaves out a preset that changes nothing in the Baseline (Leave, while
+the UK belongs to no tracked Trading Bloc).
 - EU Customs Union only: the Customs Union flag alone.
 - CPTPP: a Trade Agreement with every member and the UK's CPTPP flag, with accession
   treated as complete. The 2024 Baseline has no UK CPTPP membership (the 1 July rule).
@@ -89,7 +93,8 @@ PRESETS = {
         Preset(
             "eu_rejoin",
             "EU re-join",
-            "A Trade Agreement with every EU member, plus the Customs Union and EU membership.",
+            "The Customs Union and EU membership with every EU member, plus a Trade Agreement with any member that has "
+            "none in the Baseline year; since 2021 the UK already has a Trade Agreement with each.",
         ),
         Preset(
             "eu_customs_union",
@@ -177,6 +182,20 @@ def apply(
     tariff the Scenario sets is clipped to `tariff_range` (of `ln(1 + t)`), when given.
     """
     return _apply(baseline_features, scenario, tariff_range)[0]
+
+
+def offered_presets(baseline_features: pl.DataFrame, tariff_range: tuple[float, float] | None = None) -> list[Preset]:
+    """The presets that change something in this Baseline, in display order.
+
+    A preset is left out when `apply` returns no rows for it, the same rows `run` re-predicts, so a preset offered
+    here never runs to `ScenarioResult.changes_nothing`. Leave is left out of a Baseline where the UK belongs to no
+    tracked Trading Bloc, and comes back by itself in one where it does.
+    """
+    return [
+        preset
+        for preset in PRESETS.values()
+        if not apply(baseline_features, Scenario(preset=preset.name), tariff_range).is_empty()
+    ]
 
 
 def _apply(

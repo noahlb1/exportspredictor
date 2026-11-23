@@ -24,11 +24,57 @@ def client(fixture_artefacts_dir):
         yield client
 
 
-def test_presets_lists_the_four_trading_bloc_presets(client):
+def test_presets_leave_out_those_that_change_nothing_in_the_baseline(client):
+    # The fixture Baseline has no EU member Market and the UK in no Trading Bloc, so only CPTPP changes anything.
     body = client.get("/scenarios/presets").json()
 
-    assert [preset["name"] for preset in body] == ["eu_rejoin", "eu_customs_union", "cptpp", "leave"]
+    assert [preset["name"] for preset in body] == ["cptpp"]
     assert {"name", "title", "description"} == set(body[0])
+
+
+def test_presets_offer_leave_and_the_eu_in_a_baseline_where_they_change_something(fixture_artefacts, tmp_path):
+    # India is made an EU member, so the EU presets reach it, and so is the UK, so Leave has a Trading Bloc to leave.
+    features = fixture_artefacts.baseline_features
+    india = pl.col("iso3") == "IND"
+    flags = {"eu_d": india, "eu_o": india}
+    changed = features.with_columns(
+        pl.when(rows).then(1).otherwise(pl.col(column)).cast(features.schema[column]).alias(column)
+        for column, rows in flags.items()
+    )
+    store.save(replace(fixture_artefacts, baseline_features=changed), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as member:
+        names = [preset["name"] for preset in member.get("/scenarios/presets").json()]
+        runs = {name: member.post("/scenarios", json={"preset": name}).json() for name in names}
+
+    assert names == ["eu_rejoin", "eu_customs_union", "cptpp", "leave"]
+    assert not any(body["changes_nothing"] for body in runs.values())
+
+
+def test_eu_rejoin_is_described_by_the_customs_union_and_membership_not_a_trade_agreement_already_held(
+    fixture_artefacts, tmp_path
+):
+    # India is made an EU member, so EU re-join is offered.
+    features = fixture_artefacts.baseline_features
+    eu = features.with_columns(
+        pl.when(pl.col("iso3") == "IND").then(1).otherwise(pl.col("eu_d")).cast(features.schema["eu_d"]).alias("eu_d")
+    )
+    store.save(replace(fixture_artefacts, baseline_features=eu), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as member:
+        presets = {preset["name"]: preset for preset in member.get("/scenarios/presets").json()}
+    description = presets["eu_rejoin"]["description"]
+
+    assert description.startswith("The Customs Union and EU membership with every EU member")
+    assert "the UK already has a Trade Agreement with each" in description
+    assert not description.startswith("A Trade Agreement")
+
+
+def test_no_offered_preset_runs_to_changes_nothing(client):
+    for preset in client.get("/scenarios/presets").json():
+        body = client.post("/scenarios", json={"preset": preset["name"]}).json()
+
+        assert body["changes_nothing"] is False, preset["name"]
 
 
 def test_a_custom_scenario_adding_an_agreement_returns_non_negative_effects(client):
