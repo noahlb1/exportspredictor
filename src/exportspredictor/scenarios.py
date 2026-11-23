@@ -241,15 +241,24 @@ class ScenarioResult:
     (Applied Tariff, percent; null where unknown), sorted by effect_usd, largest first.
     `clipped_pairs`: pairs whose Scenario tariff lay beyond the training range and was
     clipped to it, so their Scenario Effect is that of the range's edge.
+    `added_agreements`: the Markets (ISO3, sorted) the Scenario adds a Trade Agreement with: it turns the Trade
+    Agreement flag on for their pairs, and they have none in force in the Baseline year (ADR 0012).
     """
 
     scenario: Scenario
     pairs: pl.DataFrame
     clipped_pairs: int = 0
+    added_agreements: tuple[str, ...] = ()
 
     @property
     def changes_nothing(self) -> bool:
         return self.pairs.is_empty()
+
+    @property
+    def adds_agreement(self) -> bool:
+        """Whether the Scenario adds a Trade Agreement with a Market that has none in force in the Baseline year:
+        only then does it show Blocked Opportunities, those of `added_agreements` (ADR 0012)."""
+        return bool(self.added_agreements)
 
     def by_market(self) -> pl.DataFrame:
         """Baseline, Scenario and effect totals per Market, largest effect first."""
@@ -300,11 +309,11 @@ class ScenarioResult:
         )
         return flagged.filter("blocked_opportunity").drop("blocked_opportunity")
 
-    def summary(self, *, blocked: int, year: int) -> str:
+    def summary(self, *, blocked: int | None, year: int) -> str:
         """One sentence, worded as an association, never as a cause or a forecast.
 
-        `blocked` is the number of Blocked Opportunities and `year` the Baseline year; the
-        effect is in nominal USD.
+        `blocked` is the number of Blocked Opportunities, None for a Scenario that adds no Trade Agreement (the
+        sentence then counts none), and `year` the Baseline year; the effect is in nominal USD.
         """
         if self.changes_nothing and self.scenario.preset == "leave":
             return (
@@ -321,10 +330,11 @@ class ScenarioResult:
         markets = self.pairs["iso3"].n_unique()
         market_word = "Market" if markets == 1 else "Markets"
         blocked_word = "Blocked Opportunity" if blocked == 1 else "Blocked Opportunities"
+        with_blocked = "" if blocked is None else f", with {blocked:,} {blocked_word}"
         return (
             f"The model associates this Scenario with a change of {format_change(total['effect_usd'])} "
             f"({total['effect_share']:+.1%}) in UK Export Potential "
-            f"across {markets:,} {market_word}, against the {year} Baseline, with {blocked:,} {blocked_word}. "
+            f"across {markets:,} {market_word}, against the {year} Baseline{with_blocked}. "
             "This is a learned association, not a forecast."
         )
 
@@ -506,7 +516,23 @@ def run(
         )
         .sort("effect_usd", "hs6", "iso3", descending=[True, False, False])
     )
-    return ScenarioResult(scenario=scenario, pairs=pairs, clipped_pairs=clipped_pairs)
+    return ScenarioResult(
+        scenario=scenario,
+        pairs=pairs,
+        clipped_pairs=clipped_pairs,
+        added_agreements=_added_agreements(baseline_features, changed),
+    )
+
+
+def _added_agreements(baseline_features: pl.DataFrame, changed: pl.DataFrame) -> tuple[str, ...]:
+    """The Markets (ISO3, sorted) whose pairs `changed` (rows `apply` returned) turns the Trade Agreement flag on for,
+    from off in `baseline_features`: the Markets a Scenario adds a Trade Agreement with where none is in force. A
+    removal, a tariff change or a Customs Union alone adds none."""
+    before = baseline_features.select("hs6", "iso3", before="trade_agreement")
+    turned_on = changed.join(before, on=["hs6", "iso3"]).filter(
+        (pl.col("trade_agreement") == 1) & (pl.col("before") == 0)
+    )
+    return tuple(turned_on["iso3"].unique().sort().to_list())
 
 
 def blocked_opportunity_values(

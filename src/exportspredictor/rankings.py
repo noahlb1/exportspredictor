@@ -232,6 +232,7 @@ def blocked_opportunities(
     hs6: str | None = None,
     sector: str | None = None,
     region: str | None = None,
+    markets: Iterable[str] | None = None,
     min_value_usd: float | None = None,
     hide: Iterable[str] = (),
     rank_by: str = BLOCKED.name,
@@ -252,9 +253,10 @@ def blocked_opportunities(
     - `above_export_potential`: Baseline-year Actual Exports above Baseline Export Potential (yet, by room to grow,
       below Export Potential with a Trade Agreement).
 
-    Filters keep one Product (`hs6`), one Sector, one Market region, a Blocked Opportunity value of at least
-    `min_value_usd`, and drop the rows of the Caveat Tiers named in `hide`. The summary and the per-Market totals
-    cover every filtered Blocked Opportunity whatever the order; `limit` then keeps the top rows.
+    Filters keep one Product (`hs6`), one Sector, one Market region, the Markets named in `markets` (ISO3; a
+    Scenario's, ADR 0012), a Blocked Opportunity value of at least `min_value_usd`, and drop the rows of the Caveat
+    Tiers named in `hide`. The summary and the per-Market totals cover every filtered Blocked Opportunity whatever the
+    order; `limit` then keeps the top rows.
     """
     order = BLOCKED_ORDERS[rank_by]
     rows = rank_opportunities(
@@ -265,6 +267,8 @@ def blocked_opportunities(
         hide=hide,
         rank_by=order.name,
     ).filter("blocked_opportunity")
+    if markets is not None:
+        rows = rows.filter(pl.col("iso3").is_in(list(markets)))
     value = pl.col("blocked_opportunity_value_usd")
     if min_value_usd is not None:
         rows = rows.filter(value >= min_value_usd)

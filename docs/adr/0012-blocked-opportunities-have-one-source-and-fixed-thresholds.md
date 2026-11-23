@@ -29,4 +29,29 @@ The Blocked Opportunities page keeps its minimum-value filter, worded as a filte
 
 ## One source
 
-To be completed by [#148](https://github.com/noahlb1/exportspredictor/issues/148): a Scenario that adds a Trade Agreement lists the precomputed Blocked Opportunities of the Markets it adds one with, and why a preset's Scenario Effect for a pair can differ from that pair's Blocked Opportunity value.
+Built in [#148](https://github.com/noahlb1/exportspredictor/issues/148), from the review's findings F1, F3, F4 and F12.
+
+A Blocked Opportunity is a pair with no Trade Agreement in force, measured by adding one (ADR 0011). Every Blocked Opportunity figure is read from one place: the Blocked Opportunity values the artefact precomputes on its Baseline, ranked by `rankings.blocked_opportunities`, which `/opportunities/blocked` serves.
+
+A Scenario **adds an agreement** for a Market when it turns the Trade Agreement flag on for that Market's pairs and the Market has no Trade Agreement in force in the Baseline year (`ScenarioResult.added_agreements`). Custom additions and CPTPP can add one, and so could EU re-join, though in the 2024 Baseline every EU member already has one. Removals, tariff changes, EU Customs Union only and Leave never add one.
+
+- When a Scenario adds an agreement, `POST /scenarios` answers `adds_agreement: true` and lists the Blocked Opportunities of those Markets: the rows `/opportunities/blocked` serves, in its row shape, with the Caveat Tiers the app hides by default hidden, ranked by Blocked Opportunity value and limited by `limit`; `blocked_count` counts them all. The Scenario Builder shows them in the Blocked Opportunities page's Products table and before/after panel.
+- Otherwise `adds_agreement` is false and both blocked fields are `null`, never an empty list and 0, and the page shows one neutral line: Blocked Opportunities are measured by adding a Trade Agreement, and this Scenario adds none.
+
+### Why a Scenario lists figures that are not its own Scenario Effects
+
+Until now the Scenarios page applied `is_blocked` to whatever Scenario it ran, so it called pairs Blocked Opportunities that the glossary would not: 4,734 for EU re-join, though every EU Market already has a UK Trade Agreement; 2,223 for EU Customs Union only, which adds none; and 10 for a 10% tariff on the USA, pairs whose tariff that Scenario lowers. Restricting the rule to Scenarios that add an agreement, and reading the rows from the precomputed table, means a pair is a Blocked Opportunity on the Scenario Builder exactly when it is one on the Blocked Opportunities page, with the same value, Tariff part and Agreement part. A test at the API checks this for India.
+
+For a custom addition nothing changes in the figures: the review found the same count, and a $0 maximum difference over the top 100 pairs, for the USA, China, India, the UAE, Saudi Arabia and Indonesia. A custom addition sets exactly what the Blocked Opportunity value sets, the Trade Agreement flag and a known Applied Tariff to 0, so the two are the same re-prediction.
+
+### Why a preset's Scenario Effect for a pair can differ from its value
+
+A preset changes more than the agreement flag. CPTPP also sets CPTPP membership, and EU re-join sets the Customs Union and EU membership. So a preset's Scenario Effect for a pair can differ from that pair's Blocked Opportunity value, which adds the agreement alone. The Scenario Builder lists the value, not the preset's own effect, and its caption says why in one sentence.
+
+A Market's Scenario Effect and its Blocked Opportunity total differ for a second reason, which holds for custom additions too: the Scenario Effect covers every pair the Scenario changes, while the total sums only the pairs that clear the fixed rule. Adding the USA is associated with +$18.2bn, against a Blocked Opportunity total of $13.1bn over 1,340 pairs. Both are Illustrative associations, not forecasts (ADR 0008).
+
+### Considered options
+
+- **Keep applying `is_blocked` to each Scenario's own Scenario Effects.** Rejected: it reports Blocked Opportunities for Scenarios that add no Trade Agreement, and a preset's figures for a pair disagree with the Blocked Opportunities page.
+- **List a preset's own Scenario Effects only for the Markets it adds an agreement with.** Rejected: it fixes the first problem but not the second, and keeps two sources for one figure.
+- **Read the precomputed Blocked Opportunities of the Markets the Scenario adds an agreement with.** Chosen: one source, parity by construction, and no extra prediction.
