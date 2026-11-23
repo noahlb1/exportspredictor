@@ -117,7 +117,7 @@ An Opportunity whose Actual Exports lie inside its Potential Range, so its Expor
 _Avoid_: weak lead, low-confidence opportunity, false positive
 
 **Blocked Opportunity**:
-A UK Product–Market pair with no Trade Agreement in force whose Export Potential rises materially in a Scenario that removes its Barrier (a Blocked Opportunity value of at least 20% of Baseline Export Potential and at least $1M), and which has **room to grow**: its Baseline-year Actual Exports are below its Export Potential with a Trade Agreement. Any Applied Tariff qualifies, including 0% and unknown. It is measured apart from the Export Gap, because the Barrier already holds Export Potential down: a pair can be an Opportunity, a Blocked Opportunity, both or neither. One rule (`scenarios.is_blocked`) decides it on every page (ADR 0011).
+A UK Product–Market pair with no Trade Agreement in force whose Export Potential rises materially in a Scenario that removes its Barrier (a Blocked Opportunity value of at least 20% of Baseline Export Potential and at least $1M), and which has **room to grow**: its Baseline-year Actual Exports are below its Export Potential with a Trade Agreement. Any Applied Tariff qualifies, including 0% and unknown. It is measured apart from the Export Gap, because the Barrier already holds Export Potential down: a pair can be an Opportunity, a Blocked Opportunity, both or neither. One rule (`scenarios.is_blocked`) decides it on every page (ADR 0011), and a Scenario shows the Blocked Opportunities of the Markets it adds a Trade Agreement with, read from the same precomputed values (ADR 0012).
 _Avoid_: hidden opportunity, latent demand
 
 **Blocked Opportunity value**:
@@ -207,6 +207,10 @@ _Avoid_: what-if, shock, simulation
 **Scenario Effect**:
 The change in Export Potential between the Baseline and a Scenario.
 _Avoid_: impact, uplift
+
+**Scenario Builder**:
+The app page where an Advisor builds a Scenario (a Trading Bloc preset, Trade Agreements added or removed, or a tariff change) and sees the Scenario Effect the model associates with it. Its name says the Advisor builds their own Scenario rather than picking one from a list.
+_Avoid_: what-if tool, scenario simulator
 
 **Illustrative**:
 How every Scenario Effect and Blocked Opportunity value is shown: an upper-end association the model has learned, beside its benchmarks (the PPML benchmark, the model's own Trade Agreement association and the Event Backtest result), never a forecast and never selected on (ADR 0008).

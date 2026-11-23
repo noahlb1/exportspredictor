@@ -16,8 +16,7 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.scenarios import (
-    DEFAULT_MIN_SHARE_TEXT,
-    DEFAULT_MIN_USD_TEXT,
+    BLOCKED_RULE,
     TARIFF_KINDS,
     barrier,
     tariff_kind,
@@ -75,9 +74,7 @@ BLOCKED = RankOrder(
     "blocked_opportunity_value_usd",
     "Rise with agreement",
     "The Blocked Opportunity value: the rise in Export Potential the model associates with adding a Trade Agreement "
-    f"where none is in force (0 where one is), largest first. Blocked Opportunities clear {DEFAULT_MIN_SHARE_TEXT} of "
-    f"Baseline Export Potential and {DEFAULT_MIN_USD_TEXT}, and their Actual Exports are below Export Potential with a "
-    "Trade Agreement.",
+    f"where none is in force (0 where one is), largest first. {BLOCKED_RULE}",
 )
 # The Blocked Opportunities page's second order (ADR 0011): the tariff-led view, without changing the definition.
 TARIFF_PART = RankOrder(
@@ -137,7 +134,7 @@ def rank_opportunities(
     Opportunity Type, the Baseline year's Export Potential and the Blocked Opportunity value
     in nominal USD with its Tariff part (`tariff_part_usd`), the Baseline year's UK Actual Exports
     (`baseline_actual_exports_usd`, 0 where there is no Flow), flags a Blocked Opportunity by `is_blocked` at the
-    default thresholds against the Baseline year, room to grow included (`blocked_opportunity`), gives the Baseline Applied Tariff in percent from the Baseline policy features
+    fixed thresholds against the Baseline year, room to grow included (`blocked_opportunity`), gives the Baseline Applied Tariff in percent from the Baseline policy features
     (`applied_tariff_pct`, null where unknown), and carries the Baseline's Caveat Tier columns
     (`caveats.TIERS`, ADR 0005) and its Potential Range with the `uncertain_opportunity`
     (Uncertain Opportunity) flag (ADR 0007).
@@ -232,12 +229,13 @@ def blocked_opportunities(
     hs6: str | None = None,
     sector: str | None = None,
     region: str | None = None,
+    markets: Iterable[str] | None = None,
     min_value_usd: float | None = None,
     hide: Iterable[str] = (),
     rank_by: str = BLOCKED.name,
     limit: int | None = None,
 ) -> BlockedRanking:
-    """The Blocked Opportunities (`is_blocked` at the default thresholds, room to grow included), in Baseline-year
+    """The Blocked Opportunities (`is_blocked` at the fixed thresholds, room to grow included), in Baseline-year
     figures, ordered by Blocked Opportunity value (`rank_by="blocked"`) or by Tariff part (`"tariff_part"`).
 
     Each row is a `rank_opportunities` row (with `baseline_export_potential_usd`, `baseline_actual_exports_usd`,
@@ -252,9 +250,10 @@ def blocked_opportunities(
     - `above_export_potential`: Baseline-year Actual Exports above Baseline Export Potential (yet, by room to grow,
       below Export Potential with a Trade Agreement).
 
-    Filters keep one Product (`hs6`), one Sector, one Market region, a Blocked Opportunity value of at least
-    `min_value_usd`, and drop the rows of the Caveat Tiers named in `hide`. The summary and the per-Market totals
-    cover every filtered Blocked Opportunity whatever the order; `limit` then keeps the top rows.
+    Filters keep one Product (`hs6`), one Sector, one Market region, the Markets named in `markets` (ISO3; a
+    Scenario's, ADR 0012), a Blocked Opportunity value of at least `min_value_usd`, and drop the rows of the Caveat
+    Tiers named in `hide`. The summary and the per-Market totals cover every filtered Blocked Opportunity whatever the
+    order; `limit` then keeps the top rows.
     """
     order = BLOCKED_ORDERS[rank_by]
     rows = rank_opportunities(
@@ -265,6 +264,8 @@ def blocked_opportunities(
         hide=hide,
         rank_by=order.name,
     ).filter("blocked_opportunity")
+    if markets is not None:
+        rows = rows.filter(pl.col("iso3").is_in(list(markets)))
     value = pl.col("blocked_opportunity_value_usd")
     if min_value_usd is not None:
         rows = rows.filter(value >= min_value_usd)

@@ -247,7 +247,7 @@ def leaderboard_columns(body: dict) -> dict:
             f"{illustrative().capitalize()}.",
         ),
         "Blocked Opportunity": st.column_config.CheckboxColumn(
-            "Blocked Opportunity", help="The Blocked Opportunity value clears the default thresholds."
+            "Blocked Opportunity", help="The Blocked Opportunity value clears the fixed thresholds."
         ),
         "Caveats": caveats_column(),
         "Opportunity Type": st.column_config.TextColumn("Opportunity Type", help=term("opportunity_type")),
@@ -333,14 +333,16 @@ def blocked_markets_columns(body: dict) -> dict:
     }
 
 
-def blocked_products_frame(rows: list[dict]) -> pd.DataFrame:
+def blocked_products_frame(rows: list[dict], *, with_market: bool = False) -> pd.DataFrame:
     """One Market's Blocked Opportunities as a before and after, all for the Baseline year, money in $ millions:
-    Product, Barrier, Actual Exports, Export Potential, Export Potential with a Trade Agreement, the rise ($ and share
-    of Export Potential), its Tariff part and the "above Export Potential" mark. Every figure is the API's."""
+    Product (then its Market, `with_market`, where the rows span Markets, as on the Scenario Builder), Barrier, Actual
+    Exports, Export Potential, Export Potential with a Trade Agreement, the rise ($ and share of Export Potential), its
+    Tariff part and the "above Export Potential" mark. Every figure is the API's."""
     raw = pd.DataFrame(rows)
     return pd.DataFrame(
         {
             "Product": raw["description"],
+            **({"Market": raw["market"]} if with_market else {}),
             "Barrier": raw["barrier"],
             "Actual Exports": millions(raw["baseline_actual_exports_usd"]),
             "Export Potential": millions(raw["baseline_export_potential_usd"]),
@@ -358,6 +360,7 @@ def blocked_products_columns(body: dict) -> dict:
     year, word = body["baseline_year"], illustrative().capitalize()
     return {
         "Product": product_column(),
+        "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to.", width=MARKET_WIDTH),
         "Barrier": st.column_config.TextColumn(
             "Barrier",
             help=f"What holds this pair's Export Potential down: no UK Trade Agreement is in force, with its {year} "

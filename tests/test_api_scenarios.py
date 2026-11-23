@@ -24,15 +24,61 @@ def client(fixture_artefacts_dir):
         yield client
 
 
-def test_presets_lists_the_four_trading_bloc_presets(client):
+def test_presets_leave_out_those_that_change_nothing_in_the_baseline(client):
+    # The fixture Baseline has no EU member Market and the UK in no Trading Bloc, so only CPTPP changes anything.
     body = client.get("/scenarios/presets").json()
 
-    assert [preset["name"] for preset in body] == ["eu_rejoin", "eu_customs_union", "cptpp", "leave"]
+    assert [preset["name"] for preset in body] == ["cptpp"]
     assert {"name", "title", "description"} == set(body[0])
 
 
+def test_presets_offer_leave_and_the_eu_in_a_baseline_where_they_change_something(fixture_artefacts, tmp_path):
+    # India is made an EU member, so the EU presets reach it, and so is the UK, so Leave has a Trading Bloc to leave.
+    features = fixture_artefacts.baseline_features
+    india = pl.col("iso3") == "IND"
+    flags = {"eu_d": india, "eu_o": india}
+    changed = features.with_columns(
+        pl.when(rows).then(1).otherwise(pl.col(column)).cast(features.schema[column]).alias(column)
+        for column, rows in flags.items()
+    )
+    store.save(replace(fixture_artefacts, baseline_features=changed), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as member:
+        names = [preset["name"] for preset in member.get("/scenarios/presets").json()]
+        runs = {name: member.post("/scenarios", json={"preset": name}).json() for name in names}
+
+    assert names == ["eu_rejoin", "eu_customs_union", "cptpp", "leave"]
+    assert not any(body["changes_nothing"] for body in runs.values())
+
+
+def test_eu_rejoin_is_described_by_the_customs_union_and_membership_not_a_trade_agreement_already_held(
+    fixture_artefacts, tmp_path
+):
+    # India is made an EU member, so EU re-join is offered.
+    features = fixture_artefacts.baseline_features
+    eu = features.with_columns(
+        pl.when(pl.col("iso3") == "IND").then(1).otherwise(pl.col("eu_d")).cast(features.schema["eu_d"]).alias("eu_d")
+    )
+    store.save(replace(fixture_artefacts, baseline_features=eu), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as member:
+        presets = {preset["name"]: preset for preset in member.get("/scenarios/presets").json()}
+    description = presets["eu_rejoin"]["description"]
+
+    assert description.startswith("The Customs Union and EU membership with every EU member")
+    assert "the UK already has a Trade Agreement with each" in description
+    assert not description.startswith("A Trade Agreement")
+
+
+def test_no_offered_preset_runs_to_changes_nothing(client):
+    for preset in client.get("/scenarios/presets").json():
+        body = client.post("/scenarios", json={"preset": preset["name"]}).json()
+
+        assert body["changes_nothing"] is False, preset["name"]
+
+
 def test_a_custom_scenario_adding_an_agreement_returns_non_negative_effects(client):
-    response = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0, "min_effect_usd": 0})
+    response = client.post("/scenarios", json={"add_agreements": ["IND"]})
 
     assert response.status_code == 200
     body = response.json()
@@ -98,29 +144,29 @@ def test_a_preset_scenario_succeeds(client):
     assert {row["iso3"] for row in body["markets"]} == {"JPN", "CAN"}
 
 
-def test_blocked_opportunity_thresholds_are_respected(client):
-    loose = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0, "min_effect_usd": 0}).json()
-    strict = client.post(
-        "/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0.2, "min_effect_usd": 1e15}
-    ).json()
-    share = 0.3
-    middle = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": share, "min_effect_usd": 0}).json()
+@pytest.mark.parametrize(
+    "thresholds",
+    [{"min_effect_share": 0}, {"min_effect_usd": 0}, {"min_effect_share": 0.2, "min_effect_usd": 1_000_000}],
+)
+def test_a_scenario_request_carrying_thresholds_is_refused(client, thresholds):
+    # The thresholds are fixed (ADR 0012): no client can bring back a second Blocked Opportunity rule.
+    response = client.post("/scenarios", json={"add_agreements": ["IND"], **thresholds})
 
-    # Medicaments in India clear thresholds of 0 but have no room to grow (ADR 0011).
-    assert len(loose["top_pairs"]) == 5 and len(loose["blocked_opportunities"]) == 4
-    assert strict["blocked_opportunities"] == []
-    assert all(row["effect_share"] >= share for row in middle["blocked_opportunities"])
-    expected = {
-        (r["hs6"], r["iso3"])
-        for r in loose["top_pairs"]
-        if r["effect_share"] >= share and r["baseline_actual_exports_usd"] < r["scenario_potential_usd"]
-    }
-    assert {(r["hs6"], r["iso3"]) for r in middle["blocked_opportunities"]} == expected
-    assert middle["thresholds"] == {"min_effect_share": share, "min_effect_usd": 0}
+    assert response.status_code == 422
 
 
-def test_default_thresholds_are_20_percent_and_one_million_dollars(client):
-    body = client.post("/scenarios", json={"add_agreements": ["IND"]}).json()
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"add_agreements": ["IND"]},
+        {"preset": "cptpp"},
+        {"remove_agreements": ["JPN"]},
+        {"tariff": {"markets": ["JPN"], "rate_pct": 25}},
+        {"add_agreements": ["JPN"]},  # changes nothing
+    ],
+)
+def test_every_scenario_response_states_the_fixed_thresholds_20_percent_and_one_million_dollars(client, payload):
+    body = client.post("/scenarios", json=payload).json()
 
     assert body["thresholds"] == {"min_effect_share": 0.2, "min_effect_usd": 1_000_000}
 
@@ -133,7 +179,6 @@ def test_default_thresholds_are_20_percent_and_one_million_dollars(client):
         {"preset": "not-a-preset"},
         {"add_agreements": ["XXX"]},
         {"add_agreements": ["IND"], "remove_agreements": ["IND"]},
-        {"add_agreements": ["IND"], "min_effect_share": -0.1},
     ],
 )
 def test_an_invalid_scenario_returns_422(client, payload):
@@ -148,7 +193,9 @@ def test_a_scenario_that_changes_nothing_is_reported_as_such(client, payload):
 
     assert body["changes_nothing"] is True
     assert body["total"]["effect_usd"] == 0
-    assert body["markets"] == body["top_pairs"] == body["blocked_opportunities"] == []
+    assert body["markets"] == body["top_pairs"] == []
+    assert body["adds_agreement"] is False
+    assert body["blocked_opportunities"] is None and body["blocked_count"] is None
     assert "changes nothing" in body["summary"]
 
 
@@ -413,22 +460,6 @@ def test_the_blocked_read_answers_404_for_an_unknown_or_excluded_product(blocked
     assert excluded.status_code == 404 and "Excluded Product" in excluded.json()["detail"]
 
 
-def test_a_scenarios_blocked_opportunities_need_room_to_grow_against_its_export_potential(client):
-    # Thresholds at 0, so only room to grow decides. Cars in Hong Kong: the UK already sells more than the Scenario's
-    # Export Potential.
-    body = client.post("/scenarios", json={"add_agreements": ["HKG"], "min_effect_share": 0, "min_effect_usd": 0}).json()
-    pairs = {(row["hs6"], row["iso3"]): row for row in body["top_pairs"]}
-    blocked = {(row["hs6"], row["iso3"]) for row in body["blocked_opportunities"]}
-
-    cars = pairs[(CARS, "HKG")]
-    assert cars["effect_usd"] >= 0 and cars["baseline_actual_exports_usd"] > cars["scenario_potential_usd"]
-    assert cars["blocked_opportunity"] is False and (CARS, "HKG") not in blocked
-    assert blocked and body["blocked_count"] == len(blocked)
-    for pair in blocked:
-        assert pairs[pair]["blocked_opportunity"]
-        assert pairs[pair]["baseline_actual_exports_usd"] < pairs[pair]["scenario_potential_usd"]
-
-
 def test_blocked_value_matches_a_scenario_adding_that_agreement(client):
     [india] = client.get("/opportunities/top", params={"product": FIXTURE_HS6, "market": "IND"}).json()["opportunities"]
     scenario = client.post("/scenarios", json={"add_agreements": ["IND"]}).json()
@@ -453,11 +484,24 @@ def test_by_market_unknown_rank_by_returns_422(client):
     assert client.get("/opportunities/by-market/JPN", params={"rank_by": "size"}).status_code == 422
 
 
-def test_scenario_summary_states_the_effect_in_usd_only(client):
-    body = client.post("/scenarios", json={"add_agreements": ["IND"], "min_effect_share": 0, "min_effect_usd": 0}).json()
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"add_agreements": ["IND"]},
+        {"preset": "cptpp"},
+        {"tariff": {"markets": ["JPN"], "rate_pct": 1000.0}},
+    ],
+    ids=["add-india", "cptpp", "tariff"],
+)
+def test_the_scenario_summary_frames_the_result_without_its_figures(client, payload):
+    # #149: the response's fields (and the page's metrics) carry the effect, share and count; the sentence only frames.
+    body = client.post("/scenarios", json=payload).json()
 
-    assert re.search(r"change of [+-]\$[0-9,.]+(bn|m|k)? ", body["summary"])
-    assert "£" not in body["summary"]
+    assert body["changes_nothing"] is False
+    summary = body["summary"]
+    assert "associates" in summary and "not a forecast" in summary
+    assert not re.search(r"\d", summary)
+    assert "$" not in summary and "%" not in summary and "£" not in summary
 
 
 def test_scenario_top_pairs_can_be_asked_for_one_market(client):
@@ -477,8 +521,34 @@ def test_scenario_drill_down_market_must_be_known(client):
     assert client.post("/scenarios", json={"preset": "cptpp", "market": "ZZZ"}).status_code == 422
 
 
-def test_default_thresholds_are_served(client):
-    assert client.get("/scenarios/thresholds").json() == {"min_effect_share": 0.2, "min_effect_usd": 1_000_000}
+def test_the_thresholds_read_is_gone(client):
+    # Nothing to read: the thresholds are fixed, and every response applying them states them (ADR 0012).
+    assert client.get("/scenarios/thresholds").status_code == 404
+
+
+@pytest.fixture(scope="module")
+def unscenario_client(unscenario_artefacts_dir):
+    with TestClient(create_app(unscenario_artefacts_dir)) as client:
+        yield client
+
+
+def test_markets_flag_the_markets_a_scenario_accepts(unscenario_client):
+    flags = {market["iso3"]: market["scenario"] for market in unscenario_client.get("/markets").json()}
+
+    assert flags == {"JPN": True, "CAN": True, "IND": True, "HKG": True, "GBR": False, "MYT": False}
+
+
+def test_a_scenario_naming_any_market_flagged_true_is_accepted(unscenario_client):
+    accepted = [market["iso3"] for market in unscenario_client.get("/markets").json() if market["scenario"]]
+
+    assert unscenario_client.post("/scenarios", json={"add_agreements": accepted}).status_code == 200
+    tariff = {"tariff": {"markets": accepted, "rate_pct": 5.0}}
+    assert unscenario_client.post("/scenarios", json=tariff).status_code == 200
+
+
+@pytest.mark.parametrize("iso3", ["GBR", "MYT"])
+def test_a_scenario_naming_a_market_flagged_false_is_refused(unscenario_client, iso3):
+    assert unscenario_client.post("/scenarios", json={"add_agreements": [iso3]}).status_code == 422
 
 
 def test_rank_orders_are_served_with_titles(client):
@@ -493,7 +563,7 @@ def test_rank_orders_are_served_with_titles(client):
 
 
 def _scenario(client, payload: dict) -> dict:
-    response = client.post("/scenarios", json={**payload, "min_effect_share": 0, "min_effect_usd": 0, "limit": 1000})
+    response = client.post("/scenarios", json={**payload, "limit": 1000})
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -546,6 +616,66 @@ def test_a_hike_beyond_the_training_range_reports_clipped_pairs(client):
     assert all(row["effect_usd"] <= 0 for row in body["top_pairs"])
 
 
+def _post(client, payload: dict) -> dict:
+    response = client.post("/scenarios", json={**payload, "limit": 1000})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_tariff_scenario_counts_the_pairs_it_raises_and_lowers(client):
+    # India's Baseline tariffs: whisky 150%, medicines 10%, jewellery 20%, telephones unknown, cars 60%.
+    body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 30}})
+
+    assert len(body["top_pairs"]) == 5  # the unknown tariff is changed too, but counts in neither
+    assert body["pairs_raised"] == 2  # medicines and jewellery
+    assert body["pairs_lowered"] == 2  # whisky and cars
+
+
+def test_a_rate_between_two_known_tariffs_raises_one_pair_and_lowers_the_other(client):
+    # Medicines (chapter 30) at 10% and jewellery (chapter 71) at 20%, set to 15%.
+    body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 15, "sectors": ["30", "71"]}})
+
+    assert (body["pairs_raised"], body["pairs_lowered"]) == (1, 1)
+
+
+def test_a_pair_already_at_the_set_rate_counts_in_neither(client):
+    body = _post(client, {"tariff": {"markets": ["IND", "JPN"], "rate_pct": 10}})
+
+    # Japan's five 0% tariffs rise; India's whisky, jewellery and cars fall; medicines stay at 10%.
+    assert (body["pairs_raised"], body["pairs_lowered"]) == (5, 3)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"add_agreements": ["IND"]}, {"remove_agreements": ["JPN"]}, {"preset": "cptpp"}, {"add_agreements": ["JPN"]}],
+)
+def test_a_scenario_that_is_no_tariff_change_has_no_raised_or_lowered_counts(client, payload):
+    body = _post(client, payload)
+
+    assert body["pairs_raised"] is None and body["pairs_lowered"] is None
+    assert body["tariff_directions"] is None
+
+
+def test_a_tariff_scenario_words_the_pairs_it_raises_and_lowers(client):
+    body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 30}})
+
+    assert body["tariff_directions"] == "This sets 5 pairs to 30%: it raises 2 and lowers 2."
+
+
+def test_a_clipped_tariff_rate_is_worded_as_the_rate_the_model_reads(client):
+    # 5000% lies beyond the training range, so every pair is held at its edge; the counts are against that edge.
+    body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 5000}})
+    [edge] = {row["scenario_tariff_pct"] for row in body["top_pairs"] if row["scenario_tariff_pct"] is not None}
+
+    line = body["tariff_directions"]
+    assert body["clipped_pairs"] > 0 and edge < 5000
+    # The edge is whisky's 150%, so whisky is unchanged and left out; the other four rise or are unknown.
+    assert line.startswith("This sets 4 pairs to 5000%")
+    assert f"{edge:,.1f}%" in line and "edge of the training range" in line
+    assert f"it raises {body['pairs_raised']} and lowers {body['pairs_lowered']}" in line
+    assert "remov" not in line
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -562,3 +692,149 @@ def test_an_invalid_tariff_scenario_returns_422(client, payload):
     response = client.post("/scenarios", json=payload)
 
     assert response.status_code == 422
+
+
+# --- A Scenario's Blocked Opportunities (#148, ADR 0012): one source, the Blocked Opportunities read -------------
+
+
+def _default_hidden(client) -> dict[str, bool]:
+    """The hide filters of the Caveat Tiers the app hides by default, all on."""
+    return {tier["hide_param"]: True for tier in client.get("/caveats").json() if tier["hidden_by_default"]}
+
+
+def _blocked_in(client, *markets: str, **params) -> tuple[list[dict], int]:
+    """The Blocked Opportunities read's rows in `markets` and their count, default-hidden Caveat Tiers hidden."""
+    body = _blocked(client, **_default_hidden(client), **params)
+    rows = [row for row in body["opportunities"] if row["iso3"] in markets]
+    count = sum(market["blocked_opportunities"] for market in body["markets"] if market["iso3"] in markets)
+    return rows, count
+
+
+def test_adding_a_trade_agreement_with_india_lists_the_blocked_opportunities_read_for_india(blocked_client):
+    expected, count = _blocked_in(blocked_client, "IND")
+
+    body = _post(blocked_client, {"add_agreements": ["IND"]})
+
+    assert body["adds_agreement"] is True
+    assert body["blocked_opportunities"] == expected
+    assert body["blocked_count"] == count == 2
+    assert {(row["hs6"], row["iso3"]) for row in expected} == {(WHISKY, "IND"), (JEWELLERY, "IND")}
+    for row in body["blocked_opportunities"]:
+        assert set(row) >= {"blocked_opportunity_value_usd", "tariff_part_usd", "agreement_part_usd", "barrier"}
+
+
+def test_a_scenario_lists_the_market_s_blocked_opportunities_with_the_default_hidden_caveat_tiers_hidden(
+    offset_artefacts_dir,
+):
+    # In the Offset world, cars in Hong Kong is a Blocked Opportunity and an Offset Pair, a tier hidden by default.
+    with TestClient(create_app(offset_artefacts_dir)) as offset:
+        everything = _blocked(offset)["opportunities"]
+        shown, count = _blocked_in(offset, "HKG")
+        body = _post(offset, {"add_agreements": ["HKG"]})
+
+    offset_pairs = {(row["hs6"], row["iso3"]) for row in everything if row["iso3"] == "HKG" and row["offset_pair"]}
+    assert offset_pairs == {(CARS, "HKG")}
+    assert body["blocked_opportunities"] == shown
+    assert body["blocked_count"] == count
+    assert not offset_pairs & {(row["hs6"], row["iso3"]) for row in body["blocked_opportunities"]}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"tariff": {"markets": ["IND"], "rate_pct": 0}},
+        {"preset": "eu_customs_union"},
+        {"remove_agreements": ["JPN"]},
+        {"add_agreements": ["JPN"]},  # Japan already has one
+        {"add_agreements": ["CAN"]},  # and so has Canada
+    ],
+)
+def test_a_scenario_adding_no_trade_agreement_where_none_is_in_force_has_no_blocked_opportunities(
+    blocked_client, payload
+):
+    body = _post(blocked_client, payload)
+
+    assert body["adds_agreement"] is False
+    assert body["blocked_opportunities"] is None
+    assert body["blocked_count"] is None
+    assert "Blocked Opportunit" not in body["summary"]
+
+
+def test_eu_customs_union_adds_no_agreement_where_eu_re_join_adds_one(fixture_artefacts, tmp_path):
+    # India is made an EU member: the Customs Union alone adds no Trade Agreement, EU re-join adds one with India.
+    features = fixture_artefacts.baseline_features
+    eu = features.with_columns(
+        pl.when(pl.col("iso3") == "IND").then(1).otherwise(pl.col("eu_d")).cast(features.schema["eu_d"]).alias("eu_d")
+    )
+    store.save(replace(fixture_artefacts, baseline_features=eu), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as member:
+        customs_union = _post(member, {"preset": "eu_customs_union"})
+        rejoin = _post(member, {"preset": "eu_rejoin"})
+
+    assert customs_union["changes_nothing"] is False
+    assert customs_union["adds_agreement"] is False and customs_union["blocked_count"] is None
+    assert rejoin["adds_agreement"] is True and rejoin["blocked_count"] == 0  # the fixture's values are under $1M
+
+
+def test_cptpp_adds_no_agreement_where_every_member_already_has_one(client):
+    # Japan and Canada, the fixture's CPTPP members, both have a Trade Agreement in force.
+    body = _post(client, {"preset": "cptpp"})
+
+    assert body["changes_nothing"] is False
+    assert body["adds_agreement"] is False and body["blocked_opportunities"] is None
+
+
+def test_a_mixed_scenario_lists_only_the_blocked_opportunities_of_the_market_it_adds(blocked_client):
+    expected, count = _blocked_in(blocked_client, "IND")
+
+    body = _post(blocked_client, {"add_agreements": ["IND"], "remove_agreements": ["JPN"]})
+
+    assert body["adds_agreement"] is True
+    assert {row["iso3"] for row in body["markets"]} == {"IND", "JPN"}
+    assert body["blocked_opportunities"] == expected
+    assert body["blocked_count"] == count == 2
+
+
+def test_adding_two_markets_lists_both_ranked_by_value_and_limited(blocked_client):
+    expected, count = _blocked_in(blocked_client, "IND", "HKG")
+
+    body = _post(blocked_client, {"add_agreements": ["IND", "HKG"]})
+    top = blocked_client.post("/scenarios", json={"add_agreements": ["IND", "HKG"], "limit": 2}).json()
+
+    assert body["blocked_opportunities"] == expected
+    values = [row["blocked_opportunity_value_usd"] for row in expected]
+    assert values == sorted(values, reverse=True)
+    assert top["blocked_opportunities"] == expected[:2]
+    assert top["blocked_count"] == count == 3
+
+
+# --- The Blocked Opportunity prose a Scenario carries (#142 final review): worded once, in the package -------------
+
+
+@pytest.mark.parametrize(
+    "payload", [{"tariff": {"markets": ["IND"], "rate_pct": 30}}, {"preset": "cptpp"}, {"remove_agreements": ["JPN"]}]
+)
+def test_a_scenario_adding_no_agreement_carries_the_neutral_line_with_the_rule(blocked_client, payload):
+    rule = blocked_client.get("/labels").json()["blocked_rule"]
+
+    note = _post(blocked_client, payload)["blocked_note"]
+
+    assert note.startswith(
+        "Blocked Opportunities are measured by adding a Trade Agreement where none is in force, and this Scenario "
+        "adds none."
+    )
+    assert rule in note
+
+
+def test_a_scenario_adding_an_agreement_carries_the_rule_the_hidden_tiers_and_why_the_totals_differ(blocked_client):
+    rule = blocked_client.get("/labels").json()["blocked_rule"]
+    hidden = [tier["plural"] for tier in blocked_client.get("/caveats").json() if tier["hidden_by_default"]]
+
+    note = _post(blocked_client, {"add_agreements": ["IND"]})["blocked_note"]
+
+    assert rule in note and "fixed" in note
+    assert hidden and all(plural in note for plural in hidden)
+    assert "covers every pair" in note and "only its Blocked Opportunities" in note
+    assert "Illustrative" in note
+    assert "preset" not in note and "adds none" not in note

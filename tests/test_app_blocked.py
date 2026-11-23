@@ -238,8 +238,8 @@ def test_the_active_filters_line_states_the_count_and_the_illustrative_total(mon
     # 18.5 + 7.1 + 5.1 = $30.7m
     assert "3 Blocked Opportunities" in line and "illustrative" in line and "$30.7m" in line
     caption = " ".join(element.value for element in page.caption)
-    assert "$ millions" in caption and "2024" in caption and "Scenarios page" in caption
-    assert "20%" in caption and "$1.0m" in caption
+    assert "$ millions" in caption and "2024" in caption and "Scenario Builder" in caption
+    assert "20%" in caption and "$1M" in caption
     # Spec #113 "Totals understate": the note beside the summed values, with the share the artefact records.
     note = httpx.get(f"{blocked_api_url}/labels").json()["totals_note"]["text"]
     assert note in caption and "about 82% of Actual Exports" in note
@@ -248,7 +248,8 @@ def test_the_active_filters_line_states_the_count_and_the_illustrative_total(mon
 def test_the_caption_says_with_no_uk_trade_agreement_in_force_and_states_room_to_grow(monkeypatch, blocked_api_url):
     page = _page(monkeypatch, blocked_api_url)
 
-    caption = next(element.value for element in page.caption if "Blocked Opportunity value is" in element.value)
+    caption = next(element.value for element in page.caption if "room to grow" in element.value)
+    assert httpx.get(f"{blocked_api_url}/labels").json()["blocked_rule"] in caption  # one wording (ADR 0012)
     assert "with no UK Trade Agreement in force" in caption
     assert "where none is in force" not in caption  # read as "no tariff" (spec #133, story 13)
     assert "room to grow" in caption and "Actual Exports" in caption
@@ -272,13 +273,13 @@ def test_the_markets_table_explains_its_totals_and_links_the_market_to_a_scenari
 
     note = next(element.value for element in page.caption if "Scenario Effect" in element.value)
     assert "only" in note and "every pair" in note
-    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenarios"]
-    assert "Trade Agreement with India" in link.proto.label
-    assert link.proto.query_string == "add=IND"  # the Scenarios page prefills it (`?add=`)
+    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenario_Builder"]
+    assert link.proto.label == "Scenario Builder: a Trade Agreement with India"  # #150: names the page it opens
+    assert link.proto.query_string == "add=IND"  # the Scenario Builder prefills it (`?add=`)
 
     page.session_state["blocked_market"] = "HKG"
     page.run()
-    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenarios"]
+    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenario_Builder"]
     assert "Hong Kong" in link.proto.label and link.proto.query_string == "add=HKG"
 
 
@@ -556,10 +557,27 @@ def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatc
     page = _page(monkeypatch, blocked_api_url)
 
     assert not page.exception
-    assert "/scenarios/thresholds" not in paths
     assert paths.count("/opportunities/blocked") == 1
     caption = " ".join(element.value for element in page.caption)
-    assert "20%" in caption and "$1.0m" in caption
+    assert "20%" in caption and "$1M" in caption
+
+
+def test_the_page_sends_no_one_to_try_other_thresholds(monkeypatch, blocked_api_url):
+    # The thresholds are fixed (ADR 0012): there are no other thresholds to try.
+    page = _page(monkeypatch, blocked_api_url)
+
+    assert not page.exception
+    assert "Try other thresholds" not in " ".join(_texts(page))
+
+
+def test_the_minimum_value_filter_reads_as_a_filter_on_the_list(monkeypatch, blocked_api_url):
+    # Worded so it isn't taken for the fixed thresholds: it only narrows the list shown.
+    page = _page(monkeypatch, blocked_api_url)
+
+    minimum = page.sidebar.number_input(key="blocked_min_value_usd")
+    assert minimum.label.startswith("Show only pairs worth at least")
+    assert "threshold" not in minimum.label.lower()
+    assert "only narrows the list" in minimum.help and "fixed" in minimum.help
 
 
 def test_the_tariff_carried_forward_caveat_is_shown_once_with_a_pair_chosen(monkeypatch, blocked_api_url):
@@ -581,3 +599,29 @@ def test_the_order_choices_are_the_apis_blocked_orders(monkeypatch, blocked_api_
     order = page.sidebar.radio(key="blocked_rank_by")
     assert order.options == [entry["title"] for entry in orders]
     assert all(entry["description"] in order.proto.help for entry in orders)
+
+
+# --- The panel as the shared panel module's function (spec #142: the Scenario Builder calls it too) ---------------
+
+
+def _render_blocked_panel(hs6: str, iso3: str) -> None:
+    """A script for AppTest: one Blocked Opportunity's panel, drawn by the shared panel module alone."""
+    import httpx
+
+    from app import client, panel
+
+    rows = httpx.get(f"{client.api_url()}/opportunities/blocked").json()["opportunities"]
+    [row] = [row for row in rows if (row["hs6"], row["iso3"]) == (hs6, iso3)]
+    panel.blocked_opportunity(row)
+
+
+def test_the_shared_panel_module_draws_a_blocked_opportunitys_panel_on_its_own(monkeypatch, blocked_api_url):
+    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", blocked_api_url)
+    page = AppTest.from_function(_render_blocked_panel, args=(WHISKY, "IND"), default_timeout=30).run()
+
+    assert not page.exception
+    [box] = [box for box in page.info if "Whiskies → India" in box.value]
+    assert "No agreement, tariff 150%" in box.value
+    [before_after] = [chart for chart in _charts(page) if "figure" in chart.columns]
+    assert list(before_after["text"]) == ["$38.1m", "$61.6m", "$80.0m"]
+    assert any("$7.4m" in element.value and "Tariff part" in element.value for element in page.markdown)

@@ -1,17 +1,31 @@
-"""Scenarios: re-predict UK Export Potential under a Trading Bloc preset, custom Trade Agreements or a tariff change.
+"""The Scenario Builder: the Advisor builds a Scenario (a Trading Bloc preset, Trade Agreements added or removed, or
+a tariff change) and sees the change in UK Export Potential the model associates with it.
 
 The page reads top to bottom (spec #103, "Scenarios"): what a Trade Agreement means in the model (spec #133), the
-builder in a box, then, once **Run Scenario** is pressed, the summary, the three figures beside the Illustrative note,
-Change per Market, the pairs most affected in the selected Market, Top Products gaining and Blocked Opportunities
-(each with room to grow, ADR 0011).
+builder in a box, then, once **Run Scenario** is pressed, the result in the before/after style of the Blocked
+Opportunities page (#149): the summary (framing only; each figure is stated once, in the metrics), the clipped-tariff
+note when it applies, a tariff Scenario's raised/lowered line, the metrics, the Illustrative note closed in the Blocked
+Opportunities page's expander, Change per Market, the pairs most affected in the selected Market, Top Products gaining
+and, last, Blocked Opportunities. Only an invalid Scenario is a warning; "changes nothing" and the clipped-tariff note
+are neutral boxes.
+
+Blocked Opportunities have one source (ADR 0012). Only a Scenario that adds a Trade Agreement with a Market that has
+none in force (`adds_agreement`) shows them: the Blocked Opportunity metric and a section listing those Markets'
+Blocked Opportunities as the Blocked Opportunities page does, in its Products table (with a Market column) and its
+panel (`app.panel.blocked_opportunity`). Any other Scenario shows one neutral line instead, with a link to that page.
 
 A link with `?add=IND` (ISO3 codes, comma-separated) fills the builder with Custom Trade Agreements adding those
 Markets, once, without running it (`prefill`); the Blocked Opportunities page links each Market this way.
 
-Clicking any value selects its row and tints it, as on the other pages (`app.tables.pick_row`). The page remembers
-the choice in session state, so a test can set it as a click does: `scenario_market` (ISO3; the top Market when unset
-or not in the result) drives the drill-down, and `scenario_drill_pair` / `scenario_blocked_pair` (`{"hs6", "iso3"}`)
-open a pair's box under that table; no pair is selected until one is clicked.
+Clicking any value in a Market or pair table selects its row and tints it, as on the other pages
+(`app.tables.pick_row`); Top Products gaining cannot be clicked. The page remembers the choice in session state, so a
+test can set it as a click does: `scenario_market` (ISO3; the top Market when unset or not in the result) drives the
+drill-down, `scenario_drill_pair` (`{"hs6", "iso3"}`) and `scenario_blocked_pair` ((HS6, ISO3), as on the Blocked
+Opportunities page) open a pair's box under that table; no pair is selected until one is clicked.
+
+The page words nothing about a result: the summary, the raised/lowered line (`tariff_directions`) and the Blocked
+Opportunity prose (`blocked_note`: the section's caption or the neutral line, each stating the fixed rule) come from
+the API, worded in `exportspredictor.scenarios`.
 """
 
 import hashlib
@@ -20,7 +34,7 @@ import json
 import pandas as pd
 import streamlit as st
 
-from app import client
+from app import client, panel
 from app.format import format_change, format_usd, tariff_text
 from app.frame import page
 from app.tables import (
@@ -36,6 +50,7 @@ from app.tables import (
 )
 from app.ui import (
     caveat_badges,
+    caveat_tiers,
     fetch,
     illustrative,
     labels,
@@ -53,6 +68,7 @@ MARKET = "scenario_market"
 DRILL_PAIR = "scenario_drill_pair"
 BLOCKED_PAIR = "scenario_blocked_pair"
 LEADERBOARD = "pages/leaderboard.py"
+BLOCKED_PAGE = "pages/blocked_opportunities.py"
 ADD_PARAM = "add"  # URL parameter: ISO3 codes, comma-separated, to add a Trade Agreement with (`prefill`)
 APPLIED_LINK = "_scenario_add_link"  # the `add` link already applied to the builder
 # How each numeric column reads in a click-to-select table (a Styler's formats replace the column config's).
@@ -61,14 +77,14 @@ FORMATS = {
     "Effect, % of Baseline": "{:.1%}",
     "Baseline": ONE_DECIMAL,
     "Scenario": ONE_DECIMAL,
-    "Actual Exports": ONE_DECIMAL,
     "Tariff, Baseline %": ONE_DECIMAL,
     "Tariff, Scenario %": ONE_DECIMAL,
 }
 
 
-def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str, str], defaults: dict) -> dict:
-    """The Scenario controls; returns the request body they describe."""
+def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str, str]) -> dict:
+    """The Scenario controls; returns the request body they describe. There are no threshold controls: the Blocked
+    Opportunity thresholds are fixed (ADR 0012)."""
     preset_info = {preset["name"]: preset for preset in presets}
     kind = st.radio("Scenario", [PRESET, CUSTOM, TARIFF], key="kind", horizontal=True)
     if kind == PRESET:
@@ -105,24 +121,7 @@ def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str
             "Remove the Trade Agreement with", list(market_names), format_func=market_names.get, key="remove"
         )
         body = {"add_agreements": add, "remove_agreements": remove}
-
-    st.markdown("**Blocked Opportunity thresholds**: a pair counts when its Scenario Effect clears both.")
-    left, right = st.columns(2)
-    min_share = left.number_input(
-        "Minimum Scenario Effect, % of Baseline Export Potential",
-        min_value=0.0,
-        value=defaults["min_effect_share"] * 100,
-        step=5.0,
-        key="min_share",
-    )
-    min_usd = right.number_input(
-        "Minimum Scenario Effect, USD million",
-        min_value=0.0,
-        value=defaults["min_effect_usd"] / 1e6,
-        step=0.5,
-        key="min_usd",
-    )
-    return body | {"min_effect_share": min_share / 100, "min_effect_usd": min_usd * 1e6, "limit": ROWS}
+    return body | {"limit": ROWS}
 
 
 def prefill(market_names: dict[str, str]) -> None:
@@ -162,9 +161,6 @@ def columns(year: int) -> dict:
         ),
         "Baseline": money_column("Baseline", f"Baseline Export Potential, {year}."),
         "Scenario": money_column("Scenario", f"Export Potential under the Scenario, {year}."),
-        "Actual Exports": money_column(
-            "Actual Exports", f"UK Actual Exports in the Baseline year {year}; 0 where there was no Flow that year."
-        ),
         "Pairs changed": st.column_config.NumberColumn(
             "Pairs changed", help="Product–Market pairs whose Export Potential the Scenario changes."
         ),
@@ -190,27 +186,24 @@ def effects(rows: list[dict], names: dict[str, str]) -> pd.DataFrame:
     return frame
 
 
-def pairs_frame(rows: list[dict], *, with_market: bool, with_exports: bool) -> pd.DataFrame:
-    """A table of Product–Market pairs, with both Applied Tariffs (and Baseline-year Actual Exports if asked), then
-    each pair's caveat badges."""
-    frame = effects(rows, {"description": "Product", **({"market": "Market"} if with_market else {})})
+def pairs_frame(rows: list[dict]) -> pd.DataFrame:
+    """One Market's most affected pairs, with both Applied Tariffs, then each pair's caveat badges."""
+    frame = effects(rows, {"description": "Product"})
     raw = pd.DataFrame(rows)
-    if with_exports:
-        frame["Actual Exports"] = millions(raw["baseline_actual_exports_usd"])
     frame["Tariff, Baseline %"] = pd.Series(raw["baseline_tariff_pct"], dtype="float64")
     frame["Tariff, Scenario %"] = pd.Series(raw["scenario_tariff_pct"], dtype="float64")
     frame["Caveats"] = [caveat_badges(row) for row in rows]
     return frame
 
 
-def pair_table(rows: list[dict], key: str, table_key: str, year: int, *, with_market: bool, with_exports: bool) -> None:
+def pair_table(rows: list[dict], key: str, table_key: str, year: int) -> None:
     """A table of pairs where clicking any value chooses a pair (remembered under `key` as {"hs6", "iso3"}), and the
     chosen pair's box under it. No pair is chosen until one is clicked."""
     if not rows:
         st.info("No pairs to list.")
         return
     chosen = pick_row_if_chosen(
-        pairs_frame(rows, with_market=with_market, with_exports=with_exports),
+        pairs_frame(rows),
         [{"hs6": row["hs6"], "iso3": row["iso3"]} for row in rows],
         key=table_key,
         remembered=key,
@@ -249,35 +242,33 @@ def pair_box(row: dict) -> None:
 
 
 def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
-    """A Scenario's result, in order: summary, figures and note, Change per Market, the selected Market's pairs, Top
-    Products gaining, Blocked Opportunities. Table keys carry the run, so a new run starts with fresh selections."""
+    """A Scenario's result, in order (#149): summary, clipped-tariff note, raised/lowered line, metrics, the
+    Illustrative expander, Change per Market, the selected Market's pairs, Top Products gaining, then Blocked
+    Opportunities or the neutral line. Table keys carry the run, so a new run starts with fresh selections."""
     run_key = hashlib.sha1(shown.encode()).hexdigest()[:12]
     year, word = result["baseline_year"], illustrative()
     config = columns(year)
     st.markdown(result["summary"])
     if result["clipped_pairs"]:
-        st.warning(
+        st.info(
             f"{result['clipped_pairs']:,} pairs were given a tariff beyond the training range, the "
             "tariffs the model has seen. It is held at the edge of that range, so the Scenario Effect "
             "flattens beyond it: the model associates no further change with a higher tariff."
         )
-    st.caption(
-        "Scenario Effects are associations the model has learned from past trade, not causal "
-        "forecasts: the model associates these policy conditions with this change in Export "
-        f"Potential, holding everything else at the {year} Baseline."
-    )
+    if result["tariff_directions"] is not None:
+        st.markdown(result["tariff_directions"])
     total = result["total"]
-    figures, note = st.columns([1, 1])
-    a, b, c = figures.columns(3)
-    a.metric(f"Scenario Effect, {word}", format_change(total["effect_usd"]))
-    b.metric("Share of Baseline", f"{total['effect_share']:+.1%}")
-    c.metric("Blocked Opportunities", f"{result['blocked_count']:,}")
-    with note:
-        scenario_note(result["note"])
+    figures = st.columns([1, 1])[0]  # the metrics keep to half the width, as before the note moved under them
+    metrics = figures.columns(3 if result["adds_agreement"] else 2)
+    metrics[0].metric(f"Scenario Effect, {word}", format_change(total["effect_usd"]))
+    metrics[1].metric("Share of Baseline", f"{total['effect_share']:+.1%}")
+    if result["adds_agreement"]:
+        metrics[2].metric("Blocked Opportunities", f"{result['blocked_count']:,}")
+    scenario_note(result["note"])
 
     st.caption(
         f"Amounts in {millions_unit()}, for the Baseline year {year}. Scenario Effects are {word}. "
-        f"Click any value to select its row. {labels()['totals_note']['text']}"
+        f"Click a Market or a pair to select its row. {labels()['totals_note']['text']}"
     )
 
     st.subheader("Change per Market")
@@ -299,42 +290,62 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
         st.error(f"The drill-down failed: {error}")
     else:
         drill_key = f"drill_{run_key}_{iso3}"
-        pair_table(drilled["top_pairs"], DRILL_PAIR, drill_key, year, with_market=False, with_exports=False)
+        pair_table(drilled["top_pairs"], DRILL_PAIR, drill_key, year)
 
     st.subheader("Top Products gaining")
     product_table = effects(result["products"], {"description": "Product"})
     product_table["Pairs changed"] = [product["pairs"] for product in result["products"]]
     st.dataframe(product_table, hide_index=True, column_config=config)
 
+    if result["adds_agreement"]:
+        blocked_section(result, run_key)
+    else:
+        st.markdown(result["blocked_note"])  # this Scenario adds none, then the fixed rule
+        st.page_link(BLOCKED_PAGE, label="Open the Blocked Opportunities page", icon=":material/arrow_forward:")
+
+
+def blocked_section(result: dict, run_key: str) -> None:
+    """The Blocked Opportunities of the Markets the Scenario adds a Trade Agreement with, as the API reads them from
+    the Blocked Opportunities page's own table (ADR 0012): the caption, a link to that page with the default-hidden
+    Caveat Tiers shown, its Products table with a Market column and, once a pair is clicked, its shared panel."""
+    rows = result["blocked_opportunities"]
+    hidden = [tier for tier in caveat_tiers() if tier["hidden_by_default"]]
     st.subheader("Blocked Opportunities")
-    st.caption(
-        f"{result['blocked_count']:,} pairs have a Scenario Effect of at least "
-        f"{result['thresholds']['min_effect_share']:.0%} of Baseline Export Potential and at least "
-        f"{format_usd(result['thresholds']['min_effect_usd'])}, and room to grow: {year} Actual Exports below their "
-        f"Scenario Export Potential. The largest {ROWS} are listed."
+    st.caption(result["blocked_note"])
+    if hidden:
+        st.page_link(
+            BLOCKED_PAGE,
+            label="See the hidden pairs on the Blocked Opportunities page",
+            icon=":material/arrow_forward:",
+            query_params={tier["hide_param"]: "false" for tier in hidden},
+        )
+    if not rows:
+        st.info("No pair in these Markets is a Blocked Opportunity.")
+        return
+    panel.blocked_opportunities(
+        rows, result, key=f"blocked_{run_key}", remembered=BLOCKED_PAIR, noun="pair", with_market=True
     )
-    blocked_key = f"blocked_{run_key}"
-    pair_table(result["blocked_opportunities"], BLOCKED_PAIR, blocked_key, year, with_market=True, with_exports=True)
 
 
 with page(
-    "Scenarios",
-    "Re-predict UK Export Potential under a Trading Bloc preset, custom Trade Agreements or a tariff change.",
+    "Scenario Builder",
+    "Build a Scenario (a Trading Bloc preset, Trade Agreements added or removed, or a tariff change) and see the "
+    "change in UK Export Potential the model associates with it.",
 ):
     try:
         presets = fetch("/scenarios/presets", client.api_url())
         markets = fetch("/markets", client.api_url())
         sectors = {sector["code"]: sector["name"] for sector in fetch("/sectors", client.api_url())}
-        defaults = fetch("/scenarios/thresholds", client.api_url())
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
         st.stop()
-    market_names = {market["iso3"]: market["name"] for market in markets}
+    # Only the Markets a Scenario accepts, in every picker and in the `?add=` link.
+    market_names = {market["iso3"]: market["name"] for market in markets if market["scenario"]}
     prefill(market_names)
     st.caption(labels()["trade_agreement_meaning"])
 
     with st.container(border=True):
-        body_json = json.dumps(builder(presets, market_names, sectors, defaults), sort_keys=True)
+        body_json = json.dumps(builder(presets, market_names, sectors), sort_keys=True)
         st.button("Run Scenario", key="run", type="primary", on_click=run, args=(body_json,))
 
     shown = st.session_state.get("scenario_body")
@@ -351,6 +362,6 @@ with page(
             st.error(f"The API is unavailable: {error}")
         else:
             if result["changes_nothing"]:
-                st.warning(result["summary"])
+                st.info(result["summary"])  # nothing is wrong: only an invalid Scenario is a warning
             else:
                 show_result(result, shown, market_names)

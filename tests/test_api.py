@@ -65,9 +65,14 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
     assert body["last_tariff_year"] == 2021
     assert "carried forward from 2021" in body["tariff_carried_forward"]
-    # What "a Trade Agreement" means in the model, said on the Blocked Opportunities and Scenarios pages (spec #133).
+    # What "a Trade Agreement" means in the model, said on the Blocked Opportunities page and the Scenario Builder
+    # (spec #133).
     meaning = body["trade_agreement_meaning"]
     assert "average agreement" in meaning and "not a specific deal" in meaning and "one yes/no flag" in meaning
+    # The Blocked Opportunity rule at the fixed thresholds (ADR 0012), stated once for every page.
+    rule = body["blocked_rule"]
+    assert "20% of its Baseline Export Potential" in rule and "$1M" in rule
+    assert "with no UK Trade Agreement in force" in rule and "room to grow" in rule
 
 
 def test_labels_serve_the_caution_line_every_page_shows_under_its_heading(client):
@@ -231,6 +236,7 @@ def test_markets_lists_every_market_with_name_and_region(client):
         "iso3": "JPN",
         "name": "Japan",
         "region": "East Asia & Pacific",
+        "scenario": True,
     }
     assert {market["iso3"] for market in response.json()} == {"JPN", "CAN", "IND", "HKG"}
 
@@ -404,7 +410,6 @@ def _every_response(client) -> list:
         "/evaluation",
         f"/explain/{FIXTURE_HS6}/JPN",
         "/scenarios/presets",
-        "/scenarios/thresholds",
     ]
     bodies = [client.get(path).json() for path in gets]
     bodies.append(client.post("/scenarios", json={"add_agreements": ["IND"]}).json())

@@ -22,7 +22,7 @@ from exportspredictor.rankings import (
     MAX_ROWS,
     RANK_BY,
 )
-from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, PRESETS
+from exportspredictor.scenarios import BLOCKED_MIN_SHARE, BLOCKED_MIN_USD, PRESETS
 
 
 class Health(BaseModel):
@@ -107,12 +107,19 @@ class Labels(BaseModel):
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
     totals_note: TotalsNote  # beside every summed figure (spec #113, "Totals understate")
     trade_agreement_meaning: str  # what "a Trade Agreement" means in the model (spec #133, ADR 0011)
+    blocked_rule: str  # the Blocked Opportunity rule at the fixed thresholds, in one sentence (ADR 0012)
 
 
 class MarketOut(BaseModel):
     iso3: str
     name: str
     region: str
+
+
+class MarketListed(MarketOut):
+    """A Market as `GET /markets` lists it, flagged when a Scenario accepts it."""
+
+    scenario: bool  # true when the Market has UK feature rows in the Baseline year (never the United Kingdom)
 
 
 class MarketReachOut(BaseModel):
@@ -221,7 +228,7 @@ class _Values(BaseModel):
     opportunity_type: OpportunityType  # how far the UK already trades the pair over the Gap Period
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
     blocked_opportunity_value_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
-    # that effect clears the default Blocked Opportunity thresholds and the pair has room to grow (`is_blocked`)
+    # that effect clears the fixed Blocked Opportunity thresholds and the pair has room to grow (`is_blocked`)
     blocked_opportunity: bool
     # `tiered` adds each Caveat Tier's column here (and its reason column, if any), e.g. reexport_hub (ADR 0005)
     # The Potential Range (ADR 0007): where Actual Exports fall 80% of the time for comparable pairs
@@ -304,7 +311,7 @@ class BlockedOpportunity(LeaderboardOpportunity):
 
 
 class BlockedOpportunities(_Ranking):
-    """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the default thresholds), by Blocked
+    """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the fixed thresholds), by Blocked
     Opportunity value or by Tariff part."""
 
     rank_by: BlockedRankBy
@@ -312,7 +319,7 @@ class BlockedOpportunities(_Ranking):
     summary: BlockedSummary
     markets: list[BlockedMarket]  # per-Market totals over every filtered Blocked Opportunity, largest total first
     opportunities: list[BlockedOpportunity]
-    thresholds: "Thresholds"  # the default thresholds every Blocked Opportunity here clears, defined below
+    thresholds: "Thresholds"  # the fixed thresholds every Blocked Opportunity here clears, defined below
     # Blocked Opportunity values are Illustrative: the same note as the Scenario response, defined below
     note: "ScenarioNote"
 
@@ -690,14 +697,16 @@ class ScenarioIn(BaseModel):
 
 
 class Thresholds(BaseModel):
-    """The Blocked Opportunity thresholds; the defaults are the package's."""
+    """The fixed Blocked Opportunity thresholds (ADR 0012), stated in every response that applies them so prose can
+    say "20% and $1M". No request carries them."""
 
-    min_effect_share: float = Field(DEFAULT_MIN_SHARE, ge=0, description="Blocked Opportunity: effect ≥ this share of Baseline")
-    min_effect_usd: float = Field(DEFAULT_MIN_USD, ge=0, description="Blocked Opportunity: effect ≥ this many USD")
+    min_effect_share: float = Field(BLOCKED_MIN_SHARE, description="Blocked Opportunity: effect ≥ this share of Baseline")
+    min_effect_usd: float = Field(BLOCKED_MIN_USD, description="Blocked Opportunity: effect ≥ this many USD")
 
 
-class ScenarioRequest(ScenarioIn, Thresholds):
-    """The Scenario, the Blocked Opportunity thresholds, and how many rows to return."""
+class ScenarioRequest(ScenarioIn):
+    """The Scenario and how many rows to return. Threshold fields are refused like any unknown field: the thresholds
+    are fixed (ADR 0012)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -796,11 +805,27 @@ class ScenarioResponse(BaseModel):
     markets: list[MarketEffect]  # every changed Market, largest effect first
     products: list[ProductEffect]  # top Products by effect
     top_pairs: list[PairEffect]  # top Product–Market pairs by effect (of `market` only, if given)
-    blocked_opportunities: list[PairEffect]  # pairs clearing both thresholds, largest first
-    blocked_count: int  # all Blocked Opportunities, before `limit`
+    # The Scenario adds a Trade Agreement with a Market that has none in force in the Baseline year (ADR 0012). Only then
+    # does it have Blocked Opportunities: those of the Markets it adds one with, as `/opportunities/blocked` serves them
+    # (read from the precomputed Blocked Opportunity table, not from this Scenario's own Scenario Effects), with the
+    # Caveat Tiers the app hides by default hidden, by Blocked Opportunity value, largest first. Both fields are None
+    # (not empty and 0) when `adds_agreement` is false.
+    adds_agreement: bool
+    blocked_opportunities: list[BlockedOpportunity] | None
+    blocked_count: int | None  # all of them, before `limit`
     # Pairs whose Scenario tariff lay beyond the training range and was clipped to it, so
     # their Scenario Effect flattens there (ADR 0006).
     clipped_pairs: int
+    # A tariff Scenario's changed pairs whose known Baseline Applied Tariff was below (raised) or above (lowered) the
+    # rate it sets; an unknown tariff counts in neither. None for every other kind of Scenario.
+    pairs_raised: int | None = None
+    pairs_lowered: int | None = None
+    # A tariff Scenario's line on the pairs it sets, raises and lowers, naming the rate the model reads when the rate
+    # was clipped; None for every other kind of Scenario (`ScenarioResult.tariff_directions_text`).
+    tariff_directions: str | None = None
+    # The Blocked Opportunity prose (`ScenarioResult.blocked_note`): the Blocked Opportunities section's caption when
+    # `adds_agreement`, otherwise the line saying this Scenario adds none; each states the fixed rule.
+    blocked_note: str
     note: ScenarioNote  # Scenario Effects are Illustrative: the label and the benchmarks beside them
 
 
@@ -945,5 +970,5 @@ def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
         MarketOpportunities=_rebuilt(MarketOpportunities, opportunities=list[product]),
         Explanation=_rebuilt(Explanation, after="opportunity_type", added=columns, validators=texts),
         PairEffect=pair,
-        ScenarioResponse=_rebuilt(ScenarioResponse, top_pairs=list[pair], blocked_opportunities=list[pair]),
+        ScenarioResponse=_rebuilt(ScenarioResponse, top_pairs=list[pair], blocked_opportunities=list[blocked] | None),
     )

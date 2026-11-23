@@ -7,12 +7,14 @@ figure is for the Baseline year.
 
 One cached read (`/opportunities/blocked`) gives every filtered Blocked Opportunity (up to `app.ui.read_limit()`), in
 the order chosen in the sidebar (by the rise with agreement, or by Tariff part), with the summary, the per-Market totals
-and the default thresholds. Every figure, the Barrier, both parts of the value and the sentence splitting it come from
+and the fixed thresholds (ADR 0012). Every figure, the Barrier, both parts of the value and the sentence splitting it come from
 the API; the page computes and words none of them. Left, the Markets table, largest total first; clicking any value
 chooses a Market, remembered under `MARKET` (the top Market until one is chosen), with a note on why its total differs
 from a Scenario and a link to that Scenario. Right, the chosen Market's Products, and under it, once one is clicked
-(remembered as (HS6, ISO3) under `PAIR`), its panel: a neutral box naming the pair and its Barrier, the three-bar before
-and after, one sentence on the split, its caveats, then the shared panel (`app.panel`) from its facts on. The
+(remembered as (HS6, ISO3) under `PAIR`), its panel (the table and the panel are `app.panel.blocked_opportunities`,
+shared with the Scenario Builder): a neutral box naming the pair and its
+Barrier, the three-bar before and after, one sentence on the split, its caveats, then the rest of the shared panel from
+its facts on. The
 carried-forward tariff caveat is stated once, under the summary, not again in the panel. Filters are
 `app.filters.blocked_filters`, kept apart from the Leaderboard's.
 """
@@ -28,35 +30,14 @@ from app.tables import (
     blocked_csv,
     blocked_markets_columns,
     blocked_markets_frame,
-    blocked_products_columns,
-    blocked_products_frame,
     millions_unit,
     pick_row,
-    pick_row_if_chosen,
 )
 from app.ui import caveat_tiers, fetch, illustrative, labels, read_limit, scenario_note
 
 MARKET = "blocked_market"  # the chosen Market, ISO3
 PAIR = "blocked_pair"  # the chosen Blocked Opportunity, (HS6, ISO3)
 SCENARIOS = "pages/scenarios.py"
-
-
-def _explain(row: dict) -> None:
-    """The chosen Blocked Opportunity's panel: a neutral box naming the pair and its Barrier, the before and after, the
-    split, the caveats, then the shared panel from its facts on, without the Export Gap or the facts given above."""
-    body = panel.explanation(row)
-    year, word = body["baseline_year"], illustrative()
-    st.info(f"**{row['description']} → {row['market']}**\n\n**Barrier:** {row['barrier']}.")
-    panel.before_after(row, year)
-    st.caption(f"Each is for {year}; Export Potential with a Trade Agreement is {word}.")
-    st.markdown(f"{row['value_split']} {word.capitalize()}: a tendency the model has learned, not a forecast.")
-    if row["above_export_potential"]:
-        st.caption(
-            f"UK Actual Exports in {year} are already above Export Potential, though below the level the model "
-            "associates with an agreement: the model already rates current trade here as strong."
-        )
-    panel.opening(row, body, titled=False, with_tariff_caveat=False)
-    panel.from_facts(row, body, with_barrier=False, with_gap=False)
 
 
 def _markets_and_products(body: dict, rows: list[dict]) -> None:
@@ -72,11 +53,11 @@ def _markets_and_products(body: dict, rows: list[dict]) -> None:
         market = markets[at]
         st.caption(
             "A Market's total sums only its listed Blocked Opportunities. A Scenario adding a Trade Agreement with "
-            "the Market covers every pair, so its Scenario Effect on the Scenarios page differs."
+            "the Market covers every pair, so its Scenario Effect on the Scenario Builder differs."
         )
         st.page_link(
             SCENARIOS,
-            label=f"Scenario: a Trade Agreement with {market['market']}",
+            label=f"Scenario Builder: a Trade Agreement with {market['market']}",
             icon=":material/arrow_forward:",
             query_params={"add": market["iso3"]},
         )
@@ -87,19 +68,9 @@ def _markets_and_products(body: dict, rows: list[dict]) -> None:
             f"**{market['market']}**: {count:,} Blocked Opportunit{'y' if count == 1 else 'ies'}, total "
             f"{format_usd(market['blocked_opportunity_value_usd'])} ({illustrative()})."
         )
-        chosen = pick_row_if_chosen(
-            blocked_products_frame(products), [(row["hs6"], row["iso3"]) for row in products],
-            key=f"blocked_products_{market['iso3']}", remembered=PAIR, formats=BLOCKED_FORMATS,
-            column_config=blocked_products_columns(body),
+        panel.blocked_opportunities(
+            products, body, key=f"blocked_products_{market['iso3']}", remembered=PAIR, noun="Product"
         )
-        if chosen is None:
-            st.caption("Click a Product to see its before and after, and how much of the rise the model associates "
-                       "with the tariff.")
-            return
-        row = products[chosen]
-        # A new key for each pair makes the panel a new element, so it starts from its top on a new selection.
-        with st.container(border=True, key=f"blocked_panel_{row['hs6']}_{row['iso3']}"):
-            _explain(row)
 
 
 with page(
@@ -127,7 +98,6 @@ with page(
         st.error(f"The API is unavailable: {error}")
     else:
         summary, rows, year = body["summary"], body["opportunities"], body["baseline_year"]
-        thresholds = body["thresholds"]
         count, word = summary["blocked_opportunities"], illustrative()
         show_chips(filters, "blocked")
         st.markdown(
@@ -135,12 +105,7 @@ with page(
             f"value, {word}: {format_usd(summary['blocked_opportunity_value_usd'])}."
         )
         st.caption(
-            f"Amounts in {millions_unit()}. Every figure is for the Baseline year {year}. The Blocked Opportunity "
-            f"value is the rise in {year} Export Potential the model associates with adding a UK Trade Agreement to a "
-            "pair with no UK Trade Agreement in force. A pair is a Blocked Opportunity when that value is at least "
-            f"{thresholds['min_effect_share']:.0%} of its {year} Export Potential and at least "
-            f"{format_usd(thresholds['min_effect_usd'])}, and it has room to grow: its {year} Actual Exports are below "
-            "its Export Potential with a Trade Agreement. Try other thresholds on the Scenarios page. "
+            f"Amounts in {millions_unit()}. Every figure is for the Baseline year {year}. {labels()['blocked_rule']} "
             f"{labels()['totals_note']['text']} {filters.hidden_note}"
         )
         st.caption(labels()["trade_agreement_meaning"])
@@ -162,5 +127,4 @@ with page(
                 mime="text/csv",
                 key="csv",
             )
-        with st.expander(f"{labels()['illustrative']['badge']}: what the Blocked Opportunity value is read against"):
-            scenario_note(body["note"])
+        scenario_note(body["note"])

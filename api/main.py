@@ -45,6 +45,7 @@ from api.schemas import (
     Labels,
     LeaderboardQuery,
     LeaderboardSummary,
+    MarketListed,
     MarketOut,
     MarketReachOut,
     PairMarketReachOut,
@@ -138,6 +139,7 @@ def create_app(
     app.state.clock = clock
     app.state.last_attempt = None
     app.state.load_error = None
+    app.state.offered_presets = {}  # per artefact version: the presets that change something in its Baseline
     app.state.tiers = tiers  # a Baseline without one of their columns is refused (`artefacts.load`)
 
     @app.get("/health", response_model=Health, response_model_exclude_none=True)
@@ -176,6 +178,7 @@ def create_app(
                 text=totals_note(share, gap_period_label(artefacts.gap_years)),
             ),
             trade_agreement_meaning=TRADE_AGREEMENT_MEANING,
+            blocked_rule=scenarios.BLOCKED_RULE,
         )
 
     @app.get("/caveats", response_model=list[CaveatTierOut])
@@ -225,10 +228,14 @@ def create_app(
         """Each Sector that has Products in the artefact, by code (HS2 chapter) and name, in code order."""
         return [SectorOut(code=row["sector"], name=row["sector_name"]) for row in sectors_of(artefacts.products).iter_rows(named=True)]
 
-    @app.get("/markets", response_model=list[MarketOut])
+    @app.get("/markets", response_model=list[MarketListed])
     def markets(artefacts: store.Artefacts = Depends(loaded)):
-        """Every Market, by name."""
-        return [_pick(MarketOut, row) for row in artefacts.markets.sort("name").iter_rows(named=True)]
+        """Every Market, by name, each flagged `scenario` when a Scenario accepts it."""
+        accepted = scenarios.accepted_markets(artefacts.baseline_features)
+        return [
+            _pick(MarketListed, {**row, "scenario": row["iso3"] in accepted})
+            for row in artefacts.markets.sort("name").iter_rows(named=True)
+        ]
 
     @app.get("/opportunities/rank-by", response_model=list[RankOrderOut])
     def rank_orders():
@@ -261,7 +268,7 @@ def create_app(
         query: Annotated[models.BlockedQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
         artefacts: store.Artefacts = Depends(loaded),
     ):
-        """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the default thresholds, room to
+        """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the fixed thresholds, room to
         grow included), ranked by Blocked Opportunity value or by Tariff part, in Baseline-year figures with the value's
         Tariff part and Agreement part and the Barrier, with a summary and per-Market totals over every filtered one. An
         unknown Product answers 404, as does an Excluded Product, with its reason."""
@@ -387,14 +394,13 @@ def create_app(
         )
 
     @app.get("/scenarios/presets", response_model=list[PresetOut])
-    def presets():
-        """The Trading Bloc presets, in display order."""
-        return [PresetOut(**vars(preset)) for preset in scenarios.PRESETS.values()]
-
-    @app.get("/scenarios/thresholds", response_model=Thresholds)
-    def thresholds():
-        """The default Blocked Opportunity thresholds."""
-        return Thresholds()
+    def presets(request: Request, artefacts: store.Artefacts = Depends(loaded)):
+        """The Trading Bloc presets that change something in the Baseline year, in display order."""
+        cache = request.app.state.offered_presets
+        if artefacts.version not in cache:
+            offered = scenarios.offered_presets(artefacts.baseline_features, scenarios.tariff_range(artefacts.metadata))
+            cache[artefacts.version] = [PresetOut(**vars(preset)) for preset in offered]
+        return cache[artefacts.version]
 
     @app.post("/scenarios", response_model=models.ScenarioResponse)
     def run_scenario(request: ScenarioRequest, artefacts: store.Artefacts = Depends(loaded)):
@@ -537,12 +543,14 @@ def scenario_response(
     models: Tiered,
     tiers: tuple[CaveatTier, ...],
 ) -> ScenarioResponse:
-    """Totals, per-Market and per-Product effects, top pairs and Blocked Opportunities, in nominal USD; each pair
-    carries its Caveat Tier columns from the Baseline."""
+    """Totals, per-Market and per-Product effects, top pairs and, for a Scenario that adds a Trade Agreement, the
+    Blocked Opportunities of the Markets it adds one with, in nominal USD; each pair carries its Caveat Tier columns
+    from the Baseline."""
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
     caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
-    # The Blocked Opportunity rule, room to grow against the Scenario's Export Potential included (ADR 0011).
+    # The Blocked Opportunity rule at the fixed thresholds (ADR 0012), room to grow against the Scenario's Export
+    # Potential included (ADR 0011).
     pairs = (
         scenarios.with_blocked_opportunity_flag(
             result.pairs,
@@ -550,24 +558,34 @@ def scenario_response(
             artefacts.baseline_year,
             effect="effect_usd",
             baseline="baseline_potential_usd",
-            min_share=request.min_effect_share,
-            min_usd=request.min_effect_usd,
         )
         .join(markets, on="iso3", how="left", maintain_order="left")
         .join(products, on="hs6", how="left", maintain_order="left")
         .join(caveats, on=["hs6", "iso3"], how="left", maintain_order="left")
     )
-    blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
     total = result.total()
+    raised, lowered = result.tariff_directions() or (None, None)
+    # One source (ADR 0012): a Scenario adding a Trade Agreement where none is in force lists the Blocked
+    # Opportunities `/opportunities/blocked` serves in those Markets, the Caveat Tiers the app hides by default hidden.
+    blocked, blocked_count = None, None
+    if result.adds_agreement:
+        found = blocked_opportunities(
+            artefacts,
+            markets=result.added_agreements,
+            hide=[tier.column for tier in tiers if tier.hidden_by_default],
+            limit=request.limit,
+        )
+        blocked = [_pick(models.BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)]
+        blocked_count = found.summary["blocked_opportunities"]
 
     return models.ScenarioResponse(
         **_metadata(artefacts),
         scenario=ScenarioIn.model_validate(asdict(result.scenario)),
-        thresholds=_pick(Thresholds, request.model_dump()),
+        thresholds=Thresholds(),
         market=request.market,
         changes_nothing=result.changes_nothing,
-        summary=result.summary(blocked=blocked.height, year=artefacts.baseline_year),
+        summary=result.summary(year=artefacts.baseline_year),
         total=total,
         markets=result.by_market().join(markets, on="iso3", how="left", maintain_order="left").to_dicts(),
         products=result.by_product()
@@ -575,9 +593,18 @@ def scenario_response(
         .join(products, on="hs6", how="left", maintain_order="left")
         .to_dicts(),
         top_pairs=top.head(request.limit).to_dicts(),
-        blocked_opportunities=blocked.head(request.limit).to_dicts(),
-        blocked_count=blocked.height,
+        adds_agreement=result.adds_agreement,
+        blocked_opportunities=blocked,
+        blocked_count=blocked_count,
         clipped_pairs=result.clipped_pairs,
+        pairs_raised=raised,
+        pairs_lowered=lowered,
+        tariff_directions=result.tariff_directions_text(),
+        blocked_note=result.blocked_note(
+            hidden=[tier.plural for tier in tiers if tier.hidden_by_default],
+            shown=len(blocked or []),
+            count=blocked_count or 0,
+        ),
         note=scenario_note(artefacts),
     )
 

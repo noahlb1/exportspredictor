@@ -34,7 +34,7 @@ RESTRICTED = restricted_pair_tier((Prohibition(INDIA, "India", "whisky", (WHISKY
 TIERS = (FLAGGED_PRODUCT, REEXPORT_HUB, SANCTIONED, RESTRICTED)
 SANCTION_REASON = "the UK's Test sanctions regime, broad since 2020"
 RESTRICTION_REASON = "India prohibits imports of whisky"
-INDIA_SCENARIO = {"add_agreements": [INDIA], "min_effect_share": 0.0, "min_effect_usd": 0.0}
+INDIA_SCENARIO = {"add_agreements": [INDIA]}
 
 
 @pytest.fixture(scope="module")
@@ -205,8 +205,6 @@ def test_the_scenarios_page_shows_each_pair_s_caveats(monkeypatch, api_url):
     page = run_page("pages/scenarios.py")
     page.radio(key="kind").set_value("Custom Trade Agreements").run()
     page.multiselect(key="add").set_value([INDIA]).run()
-    page.number_input(key="min_share").set_value(0.0).run()
-    page.number_input(key="min_usd").set_value(0.0).run()
     page.button(key="run").click().run()
     assert not page.exception
 

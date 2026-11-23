@@ -8,11 +8,13 @@ The Leaderboard shows the whole panel with `show(row)`, in order:
 3. `from_facts(row, body)`: the rest, from the facts table on: the facts, the Market's Market Reach, the Barrier
    (only for a pair with no UK Trade Agreement), the factors and the year-by-year history.
 
-A page with another opening (Blocked Opportunities leads with its own box naming the pair and its Barrier, then
-`before_after`, the three-bar chart, and a sentence on the split) reads the explanation with `explanation(row)`, draws
-those and `opening(row, body, titled=False, with_tariff_caveat=False)` itself (the page states the carried-forward
-tariff once, above its tables), then `from_facts(row, body, with_barrier=False, with_gap=False)`: without the facts
-its box and chart already give, and without the Export Gap figures, which that page does not show.
+A Blocked Opportunity has its own panel, `blocked_opportunity(row)`, which the Blocked Opportunities page and the
+Scenario Builder both reach through `blocked_opportunities` (the Products table, then the chosen pair's panel), so a
+pair reads the same on both. It leads with a box naming the pair and its Barrier, then
+`before_after`, the three-bar chart, and a sentence on the split, then `opening(row, body, titled=False,
+with_tariff_caveat=False)` (the page states the carried-forward tariff once, above its tables), then
+`from_facts(row, body, with_barrier=False, with_gap=False)`: without the facts its box and chart already give, and
+without the Export Gap figures, which a Blocked Opportunity is not read by.
 
 A row is a ranking row (`/opportunities/top`, `/opportunities/blocked`): it carries the pair's names, caveats, Trade
 Agreement, Applied Tariff and Blocked Opportunity value. The explanation carries the Gap Period figures, the factors
@@ -24,8 +26,18 @@ import streamlit as st
 
 from app import client
 from app.format import format_usd, tariff_text
-from app.tables import MILLION, millions, millions_unit, money_column, scroll_hint
-from app.ui import fetch, labels, show_caveats, term
+from app.tables import (
+    BLOCKED_FORMATS,
+    MILLION,
+    blocked_products_columns,
+    blocked_products_frame,
+    millions,
+    millions_unit,
+    money_column,
+    pick_row_if_chosen,
+    scroll_hint,
+)
+from app.ui import fetch, illustrative, labels, show_caveats, term
 
 TOP_FACTORS = 8
 RAISED, LOWERED = "#2a78d6", "#e34948"  # the factor bars (spec #103, "Theme and logo")
@@ -55,6 +67,52 @@ def show(row: dict) -> None:
     opening(row, body)
     figures(body)
     from_facts(row, body)
+
+
+def blocked_opportunity(row: dict) -> None:
+    """One Blocked Opportunity's panel, for a row of `/opportunities/blocked`: a neutral box naming the pair and its
+    Barrier, the before and after, the split, the caveats, then the rest of the panel from its facts on, without the
+    Export Gap or the facts given above."""
+    body = explanation(row)
+    year, word = body["baseline_year"], illustrative()
+    st.info(f"**{row['description']} → {row['market']}**\n\n**Barrier:** {row['barrier']}.")
+    before_after(row, year)
+    st.caption(f"Each is for {year}; Export Potential with a Trade Agreement is {word}.")
+    st.markdown(f"{row['value_split']} {word.capitalize()}: a tendency the model has learned, not a forecast.")
+    if row["above_export_potential"]:
+        st.caption(
+            f"UK Actual Exports in {year} are already above Export Potential, though below the level the model "
+            "associates with an agreement: the model already rates current trade here as strong."
+        )
+    opening(row, body, titled=False, with_tariff_caveat=False)
+    from_facts(row, body, with_barrier=False, with_gap=False)
+
+
+def blocked_opportunities(
+    rows: list[dict], body: dict, *, key: str, remembered: str, noun: str, with_market: bool = False
+) -> None:
+    """Blocked Opportunities as the Blocked Opportunities page lists them, there and on the Scenario Builder: the
+    Products table (`app.tables.blocked_products_frame`, with a Market column `with_market`), where clicking any value
+    chooses a pair, remembered as (HS6, ISO3) under `remembered`, and under it the chosen pair's panel in a box, or,
+    until one is chosen, a line saying to click a `noun` ("Product" or "pair"). `body` is the response holding the
+    rows (it gives the Baseline year); `key` names the table."""
+    chosen = pick_row_if_chosen(
+        blocked_products_frame(rows, with_market=with_market),
+        [(row["hs6"], row["iso3"]) for row in rows],
+        key=key,
+        remembered=remembered,
+        formats=BLOCKED_FORMATS,
+        column_config=blocked_products_columns(body),
+    )
+    if chosen is None:
+        st.caption(
+            f"Click a {noun} to see its before and after, and how much of the rise the model associates with the tariff."
+        )
+        return
+    row = rows[chosen]
+    # A new key for each pair makes the panel a new element, so it starts from its top on a new selection.
+    with st.container(border=True, key=f"{key}_panel_{row['hs6']}_{row['iso3']}"):
+        blocked_opportunity(row)
 
 
 def opening(row: dict, body: dict, *, titled: bool = True, with_tariff_caveat: bool = True) -> None:

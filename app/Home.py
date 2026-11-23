@@ -14,7 +14,7 @@ chosen = st.navigation(
     [
         st.Page("pages/leaderboard.py", title="Leaderboard", default=True),
         st.Page("pages/blocked_opportunities.py", title="Blocked Opportunities", url_path="Blocked_Opportunities"),
-        st.Page("pages/scenarios.py", title="Scenarios", url_path="Scenarios"),
+        st.Page("pages/scenarios.py", title="Scenario Builder", url_path="Scenario_Builder"),
         st.Page("pages/model_evaluation.py", title="Model Evaluation", url_path="Model_Evaluation"),
     ]
 )

@@ -246,6 +246,37 @@ def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
     assert blocked["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
 
 
+def test_a_scenarios_blocked_opportunities_need_room_to_grow_against_its_export_potential(fixture_artefacts):
+    result = scenarios.run(
+        fixture_artefacts.baseline_features,
+        fixture_artefacts.baseline,
+        fixture_artefacts.fold_models,
+        scenarios.Scenario(add_agreements=("HKG",)),
+        form=fixture_artefacts.model_form,
+    )
+
+    # Thresholds at 0 (the fixture's Scenario Effects are under $1M), so only room to grow decides. Cars in Hong Kong:
+    # the UK already sells more than the Scenario's Export Potential (ADR 0011).
+    flagged = scenarios.with_blocked_opportunity_flag(
+        result.pairs,
+        fixture_artefacts.history,
+        fixture_artefacts.baseline_year,
+        effect="effect_usd",
+        baseline="baseline_potential_usd",
+        min_share=0.0,
+        min_usd=0.0,
+    )
+    [cars] = flagged.filter((pl.col("hs6") == "870323") & (pl.col("iso3") == "HKG")).iter_rows(named=True)
+    blocked = flagged.filter("blocked_opportunity")
+
+    assert cars["effect_usd"] >= 0 and cars["baseline_actual_exports_usd"] > cars["scenario_potential_usd"]
+    assert cars["blocked_opportunity"] is False
+    assert blocked.height > 0
+    assert (blocked["baseline_actual_exports_usd"] < blocked["scenario_potential_usd"]).all()
+    # At the fixed thresholds, none of these tiny effects clears $1M.
+    assert result.blocked_opportunities(fixture_artefacts.history, fixture_artefacts.baseline_year).is_empty()
+
+
 # --- The Tariff part (ADR 0011) -------------------------------------------------------------
 
 
@@ -445,20 +476,6 @@ def test_a_scenario_re_predicts_in_the_served_form_and_leaves_the_naive_baseline
     assert joined.height == changed.height > 0
     assert joined["scenario_potential_usd"].to_list() == pytest.approx(joined["expected"].to_list())
     assert (joined["effect_usd"] >= -1e-3).all()
-
-
-def test_the_summary_writes_counts_with_thousands_separators():
-    pairs = pl.DataFrame(
-        {
-            "iso3": ["DEU"],
-            "baseline_potential_usd": [1e9],
-            "scenario_potential_usd": [1.5e9],
-            "effect_usd": [5e8],
-        }
-    )
-    result = scenarios.ScenarioResult(scenario=scenarios.Scenario(add_agreements=("DEU",)), pairs=pairs)
-
-    assert "with 5,526 Blocked Opportunities." in result.summary(blocked=5526, year=2024)
 
 
 def _kinds(rates):

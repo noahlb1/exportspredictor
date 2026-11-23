@@ -10,12 +10,12 @@ from streamlit.testing.v1 import AppTest
 
 from exportspredictor import artefacts as store
 
-MENU = ["Leaderboard", "Blocked Opportunities", "Scenarios", "Model Evaluation"]
+MENU = ["Leaderboard", "Blocked Opportunities", "Scenario Builder", "Model Evaluation"]
 # Every page that shows figures, by the path the router declares it with (None: the default page).
 PAGES = {
     "Leaderboard": None,
     "Blocked Opportunities": "pages/blocked_opportunities.py",
-    "Scenarios": "pages/scenarios.py",
+    "Scenario Builder": "pages/scenarios.py",
     "Model Evaluation": "pages/model_evaluation.py",
 }
 
@@ -42,6 +42,7 @@ def test_the_menu_shows_the_four_pages_in_order_and_opens_on_the_leaderboard(ope
     assert [page.title for page in menu if page.visibility == "visible"] == MENU
     assert [page.title for page in menu] == MENU  # the removed pages (Why? among them) are not even hidden ones
     assert [page.title for page in menu if page.url_path == ""] == ["Leaderboard"]  # the default page
+    assert {page.title: page.url_path for page in menu}["Scenario Builder"] == "Scenario_Builder"  # #150
     assert [title.value for title in app.title] == ["UK Exports Predictor"]
     assert [heading.value for heading in app.header][:1] == ["Leaderboard"]
 
