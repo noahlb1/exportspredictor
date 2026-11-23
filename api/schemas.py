@@ -804,8 +804,14 @@ class ScenarioResponse(BaseModel):
     markets: list[MarketEffect]  # every changed Market, largest effect first
     products: list[ProductEffect]  # top Products by effect
     top_pairs: list[PairEffect]  # top Product–Market pairs by effect (of `market` only, if given)
-    blocked_opportunities: list[PairEffect]  # pairs clearing both thresholds, largest first
-    blocked_count: int  # all Blocked Opportunities, before `limit`
+    # The Scenario adds a Trade Agreement with a Market that has none in force in the Baseline year (ADR 0012). Only then
+    # does it have Blocked Opportunities: those of the Markets it adds one with, as `/opportunities/blocked` serves them
+    # (read from the precomputed Blocked Opportunity table, not from this Scenario's own Scenario Effects), with the
+    # Caveat Tiers the app hides by default hidden, by Blocked Opportunity value, largest first. Both fields are None
+    # (not empty and 0) when `adds_agreement` is false.
+    adds_agreement: bool
+    blocked_opportunities: list[BlockedOpportunity] | None
+    blocked_count: int | None  # all of them, before `limit`
     # Pairs whose Scenario tariff lay beyond the training range and was clipped to it, so
     # their Scenario Effect flattens there (ADR 0006).
     clipped_pairs: int
@@ -957,5 +963,5 @@ def tiered(tiers: tuple[CaveatTier, ...] = TIERS) -> Tiered:
         MarketOpportunities=_rebuilt(MarketOpportunities, opportunities=list[product]),
         Explanation=_rebuilt(Explanation, after="opportunity_type", added=columns, validators=texts),
         PairEffect=pair,
-        ScenarioResponse=_rebuilt(ScenarioResponse, top_pairs=list[pair], blocked_opportunities=list[pair]),
+        ScenarioResponse=_rebuilt(ScenarioResponse, top_pairs=list[pair], blocked_opportunities=list[blocked] | None),
     )

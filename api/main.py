@@ -542,8 +542,9 @@ def scenario_response(
     models: Tiered,
     tiers: tuple[CaveatTier, ...],
 ) -> ScenarioResponse:
-    """Totals, per-Market and per-Product effects, top pairs and Blocked Opportunities, in nominal USD; each pair
-    carries its Caveat Tier columns from the Baseline."""
+    """Totals, per-Market and per-Product effects, top pairs and, for a Scenario that adds a Trade Agreement, the
+    Blocked Opportunities of the Markets it adds one with, in nominal USD; each pair carries its Caveat Tier columns
+    from the Baseline."""
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
     caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
@@ -561,10 +562,21 @@ def scenario_response(
         .join(products, on="hs6", how="left", maintain_order="left")
         .join(caveats, on=["hs6", "iso3"], how="left", maintain_order="left")
     )
-    blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
     total = result.total()
     raised, lowered = result.tariff_directions() or (None, None)
+    # One source (ADR 0012): a Scenario adding a Trade Agreement where none is in force lists the Blocked
+    # Opportunities `/opportunities/blocked` serves in those Markets, the Caveat Tiers the app hides by default hidden.
+    blocked, blocked_count = None, None
+    if result.adds_agreement:
+        found = blocked_opportunities(
+            artefacts,
+            markets=result.added_agreements,
+            hide=[tier.column for tier in tiers if tier.hidden_by_default],
+            limit=request.limit,
+        )
+        blocked = [_pick(models.BlockedOpportunity, row) for row in found.rows.iter_rows(named=True)]
+        blocked_count = found.summary["blocked_opportunities"]
 
     return models.ScenarioResponse(
         **_metadata(artefacts),
@@ -572,7 +584,7 @@ def scenario_response(
         thresholds=Thresholds(),
         market=request.market,
         changes_nothing=result.changes_nothing,
-        summary=result.summary(blocked=blocked.height, year=artefacts.baseline_year),
+        summary=result.summary(blocked=blocked_count, year=artefacts.baseline_year),
         total=total,
         markets=result.by_market().join(markets, on="iso3", how="left", maintain_order="left").to_dicts(),
         products=result.by_product()
@@ -580,8 +592,9 @@ def scenario_response(
         .join(products, on="hs6", how="left", maintain_order="left")
         .to_dicts(),
         top_pairs=top.head(request.limit).to_dicts(),
-        blocked_opportunities=blocked.head(request.limit).to_dicts(),
-        blocked_count=blocked.height,
+        adds_agreement=result.adds_agreement,
+        blocked_opportunities=blocked,
+        blocked_count=blocked_count,
         clipped_pairs=result.clipped_pairs,
         pairs_raised=raised,
         pairs_lowered=lowered,
