@@ -108,10 +108,23 @@ def test_top_pairs_are_sorted_by_scenario_effect(client):
         "baseline_tariff_pct",
         "scenario_tariff_pct",
         "baseline_actual_exports_usd",
-        "blocked_opportunity",
         *(column for tier in TIERS for column in tier.columns),  # each Caveat Tier's, as on ranking rows
         "caveat_texts",  # the caveat text of each tier the pair is in, worded by the API
     }
+
+
+def test_scenario_pairs_carry_no_old_rule_blocked_opportunity_flag_in_the_openapi_schema(client):
+    # One source (ADR 0012): a Scenario's pairs are never flagged as Blocked Opportunities by their own Scenario
+    # Effects, so a generated client expects no such field; the one-source rows keep theirs.
+    components = client.get("/openapi.json").json()["components"]["schemas"]
+    response = components["ScenarioResponse"]["properties"]
+    pair = components[response["top_pairs"]["items"]["$ref"].rsplit("/", 1)[-1]]["properties"]
+    blocked = response["blocked_opportunities"]["anyOf"][0]["items"]["$ref"].rsplit("/", 1)[-1]
+
+    assert "baseline_actual_exports_usd" in pair
+    assert "caveat_texts" in pair
+    assert "blocked_opportunity" not in pair
+    assert "blocked_opportunity" in components[blocked]["properties"]
 
 
 def test_scenario_pairs_carry_baseline_year_actual_exports_from_the_yearly_history(client, fixture_artefacts):

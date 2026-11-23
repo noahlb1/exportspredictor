@@ -79,7 +79,7 @@ from exportspredictor.evaluation import (
 )
 from exportspredictor.exclusions import not_ranked_message, reason_counts
 from exportspredictor.explain import UnknownPair, explain_pair
-from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from exportspredictor.gap_period import OPPORTUNITY_TYPES, with_baseline_actual_exports
 from exportspredictor.gap_period import label as gap_period_label
 from exportspredictor.illustrative import ILLUSTRATIVE, ILLUSTRATIVE_TEXT, scenario_note
 from exportspredictor.lookups import search_products
@@ -558,16 +558,8 @@ def scenario_response(
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
     caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
-    # The Blocked Opportunity rule at the fixed thresholds (ADR 0012), room to grow against the Scenario's Export
-    # Potential included (ADR 0011).
     pairs = (
-        scenarios.with_blocked_opportunity_flag(
-            result.pairs,
-            artefacts.history,
-            artefacts.baseline_year,
-            effect="effect_usd",
-            baseline="baseline_potential_usd",
-        )
+        with_baseline_actual_exports(result.pairs, artefacts.history, artefacts.baseline_year)
         .join(markets, on="iso3", how="left", maintain_order="left")
         .join(products, on="hs6", how="left", maintain_order="left")
         .join(caveats, on=["hs6", "iso3"], how="left", maintain_order="left")
