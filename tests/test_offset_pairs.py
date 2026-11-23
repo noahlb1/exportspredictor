@@ -255,8 +255,6 @@ def test_the_scenarios_page_shows_the_badge_on_an_offset_pair(monkeypatch, offse
     page = run_page("pages/scenarios.py")
     page.radio(key="kind").set_value("Custom Trade Agreements").run()
     page.multiselect(key="add").set_value(["HKG"]).run()
-    page.number_input(key="min_share").set_value(0.0).run()
-    page.number_input(key="min_usd").set_value(0.0).run()
     page.button(key="run").click().run()
     assert not page.exception
 

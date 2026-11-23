@@ -20,7 +20,7 @@ from app import client
 SCENARIOS = "pages/scenarios.py"
 # The page's tables, in order once a Scenario has run.
 MARKETS, DRILL_DOWN, PRODUCTS, BLOCKED = range(4)
-INDIA = {"add_agreements": ["IND"], "min_effect_share": 0.0, "min_effect_usd": 0.0, "limit": 100}
+INDIA = {"add_agreements": ["IND"], "limit": 100}
 
 
 @pytest.fixture
@@ -41,13 +41,10 @@ def _run_cptpp(monkeypatch, api_url) -> AppTest:
     return page
 
 
-def _run_india(monkeypatch, api_url, *, thresholds_off: bool = False) -> AppTest:
+def _run_india(monkeypatch, api_url) -> AppTest:
     page = _scenarios_page(monkeypatch, api_url)
     page.radio(key="kind").set_value("Custom Trade Agreements").run()
     page.multiselect(key="add").set_value(["IND"]).run()
-    if thresholds_off:
-        page.number_input(key="min_share").set_value(0.0).run()
-        page.number_input(key="min_usd").set_value(0.0).run()
     page.button(key="run").click().run()
     assert not page.exception
     return page
@@ -122,8 +119,7 @@ def test_a_line_says_when_the_controls_differ_from_the_result_shown(monkeypatch,
     page.selectbox(key="preset").set_value("cptpp").run()
     assert not _stale(page)  # back to the controls of the result shown
 
-    page.number_input(key="min_share").set_value(0.0).run()
-    assert _stale(page)
+    page.selectbox(key="preset").set_value("eu_rejoin").run()
     page.button(key="run").click().run()
     assert not _stale(page)
 
@@ -159,7 +155,7 @@ def test_a_selected_market_drives_the_drill_down(monkeypatch, api_url):
 
 
 def test_drill_down_pairs_are_largest_effect_first(monkeypatch, api_url):
-    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    page = _run_india(monkeypatch, api_url)
 
     pairs = page.dataframe[DRILL_DOWN].value
     assert len(pairs) == 5
@@ -167,13 +163,12 @@ def test_drill_down_pairs_are_largest_effect_first(monkeypatch, api_url):
     assert effects == sorted(effects, reverse=True)
 
 
-@pytest.mark.parametrize("remembered", ["scenario_drill_pair", "scenario_blocked_pair"])
-def test_a_selected_pair_shows_its_box_with_a_link_to_the_leaderboard(monkeypatch, api_url, remembered):
-    pair = httpx.post(f"{api_url}/scenarios", json=INDIA).json()["blocked_opportunities"][1]
+def test_a_selected_pair_shows_its_box_with_a_link_to_the_leaderboard(monkeypatch, api_url):
+    pair = httpx.post(f"{api_url}/scenarios", json={**INDIA, "market": "IND", "limit": 50}).json()["top_pairs"][1]
 
-    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    page = _run_india(monkeypatch, api_url)
     assert not page.page_link  # no pair chosen yet
-    page.session_state[remembered] = {"hs6": pair["hs6"], "iso3": pair["iso3"]}
+    page.session_state["scenario_drill_pair"] = {"hs6": pair["hs6"], "iso3": pair["iso3"]}
     page.run()
 
     assert not page.exception
@@ -187,8 +182,8 @@ def test_a_selected_pair_shows_its_box_with_a_link_to_the_leaderboard(monkeypatc
 
 
 def test_a_remembered_pair_not_in_the_rows_shows_no_box(monkeypatch, api_url):
-    page = _run_india(monkeypatch, api_url, thresholds_off=True)
-    page.session_state["scenario_blocked_pair"] = {"hs6": "000000", "iso3": "IND"}
+    page = _run_india(monkeypatch, api_url)
+    page.session_state["scenario_drill_pair"] = {"hs6": "000000", "iso3": "IND"}
     page.run()
 
     assert not page.exception
@@ -196,18 +191,13 @@ def test_a_remembered_pair_not_in_the_rows_shows_no_box(monkeypatch, api_url):
 
 
 def test_money_columns_are_numeric_millions_with_the_unit_stated_once(monkeypatch, api_url):
-    result = httpx.post(f"{api_url}/scenarios", json=INDIA).json()
+    drilled = httpx.post(f"{api_url}/scenarios", json={**INDIA, "market": "IND", "limit": 50}).json()
 
-    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    page = _run_india(monkeypatch, api_url)
 
-    blocked = page.dataframe[BLOCKED].value
-    assert pd.api.types.is_float_dtype(blocked["Scenario Effect"])
-    assert list(blocked["Scenario Effect"]) == pytest.approx(
-        [row["effect_usd"] / 1e6 for row in result["blocked_opportunities"]]
-    )
-    assert list(blocked["Actual Exports"]) == pytest.approx(
-        [row["baseline_actual_exports_usd"] / 1e6 for row in result["blocked_opportunities"]]
-    )
+    pairs = page.dataframe[DRILL_DOWN].value
+    assert pd.api.types.is_float_dtype(pairs["Scenario Effect"])
+    assert list(pairs["Scenario Effect"]) == pytest.approx([row["effect_usd"] / 1e6 for row in drilled["top_pairs"]])
     for frame in page.dataframe:
         for column in ("Baseline", "Scenario"):
             assert pd.api.types.is_float_dtype(frame.value[column])
@@ -218,33 +208,31 @@ def test_money_columns_are_numeric_millions_with_the_unit_stated_once(monkeypatc
 def test_short_headings_carry_tooltips(monkeypatch, api_url):
     word = httpx.get(f"{api_url}/labels").json()["illustrative"]["badge"].lower()
 
-    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    page = _run_india(monkeypatch, api_url)
 
-    blocked = page.dataframe[BLOCKED]
-    assert list(blocked.value.columns)[:2] == ["Product", "Market"]
+    pairs = page.dataframe[DRILL_DOWN]
+    assert pairs.value.columns[0] == "Product"
     for heading in (
-        "Scenario Effect", "Effect, % of Baseline", "Baseline", "Scenario", "Actual Exports",
-        "Tariff, Baseline %", "Tariff, Scenario %",
+        "Scenario Effect", "Effect, % of Baseline", "Baseline", "Scenario", "Tariff, Baseline %", "Tariff, Scenario %",
     ):
-        assert heading in blocked.value.columns
-    config = json.loads(blocked.proto.columns)
+        assert heading in pairs.value.columns
+    config = json.loads(pairs.proto.columns)
     effect = next(value for key, value in config.items() if "Scenario Effect" in key)
     assert word in effect["help"].lower()
     assert "Pairs changed" in page.dataframe[MARKETS].value.columns
 
 
-def test_blocked_opportunities_are_the_apis_each_with_room_to_grow(monkeypatch, api_url):
-    # Spec #133 (rewritten from "leave no pair out for its Actual Exports"): a pair needs room to grow, Baseline-year
-    # Actual Exports below its Scenario Export Potential; pairs that export at all still qualify.
+def test_the_blocked_opportunity_count_is_the_apis_at_the_fixed_thresholds(monkeypatch, api_url):
+    # The fixture's Scenario Effects are all under $1M, so adding India opens no Blocked Opportunity at the fixed
+    # thresholds (ADR 0012); the rule's room to grow is tested in the package.
     result = httpx.post(f"{api_url}/scenarios", json=INDIA).json()
 
-    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    page = _run_india(monkeypatch, api_url)
 
-    assert len(page.dataframe[BLOCKED].value) == result["blocked_count"]
-    assert all(
-        row["baseline_actual_exports_usd"] < row["scenario_potential_usd"] for row in result["blocked_opportunities"]
-    )
-    assert any(row["baseline_actual_exports_usd"] > 0 for row in result["blocked_opportunities"])
+    [count] = [metric.value for metric in page.metric if metric.label == "Blocked Opportunities"]
+    assert count == f"{result['blocked_count']:,}" == "0"
+    assert len(page.dataframe) == BLOCKED  # no Blocked Opportunity table, only "No pairs to list"
+    assert "No pairs to list." in [element.value for element in page.info]
 
 
 def test_a_scenario_that_changes_nothing_says_so(monkeypatch, api_url):
@@ -290,12 +278,14 @@ def test_the_scenario_effect_figure_says_illustrative(monkeypatch, api_url):
     assert effects and all(word in label for label in effects)
 
 
-def test_threshold_inputs_default_to_the_apis_thresholds(monkeypatch, api_url):
+@pytest.mark.parametrize("kind", ["Trading Bloc preset", "Custom Trade Agreements", "Tariff change"])
+def test_the_builder_has_no_threshold_inputs(monkeypatch, api_url, kind):
+    # The thresholds are fixed (ADR 0012); the only number an Advisor types is a tariff rate.
     page = _scenarios_page(monkeypatch, api_url)
-    defaults = client.get("/scenarios/thresholds")
+    page.radio(key="kind").set_value(kind).run()
 
-    assert page.number_input(key="min_share").value == defaults["min_effect_share"] * 100
-    assert page.number_input(key="min_usd").value == defaults["min_effect_usd"] / 1e6
+    assert [box.key for box in page.number_input] == (["tariff_rate"] if kind == "Tariff change" else [])
+    assert "threshold" not in " ".join(element.value for element in page.markdown).lower()
 
 
 def test_tariff_sectors_are_offered_by_name(monkeypatch, api_url):
@@ -362,29 +352,30 @@ def test_rows_are_chosen_by_clicking_any_value_as_on_the_leaderboard(monkeypatch
     leaderboard = run_page()
     clicked_any_value = list(leaderboard.dataframe[0].proto.selection_mode)
 
-    page = _run_india(monkeypatch, api_url, thresholds_off=True)
+    page = _run_india(monkeypatch, api_url)
 
-    for table in (MARKETS, DRILL_DOWN, BLOCKED):
+    for table in (MARKETS, DRILL_DOWN):
         assert list(page.dataframe[table].proto.selection_mode) == clicked_any_value
     assert not list(page.dataframe[PRODUCTS].proto.selection_mode)  # Top Products gaining opens nothing
 
 
 def test_choosing_a_pair_keeps_the_market_and_the_other_table_unchanged(monkeypatch, api_url):
-    page = _run_india(monkeypatch, api_url, thresholds_off=True)
-    pair = httpx.post(f"{api_url}/scenarios", json=INDIA).json()["blocked_opportunities"][0]
+    page = _run_india(monkeypatch, api_url)
+    pair = httpx.post(f"{api_url}/scenarios", json={**INDIA, "market": "IND", "limit": 50}).json()["top_pairs"][0]
 
-    page.session_state["scenario_blocked_pair"] = {"hs6": pair["hs6"], "iso3": pair["iso3"]}
+    page.session_state["scenario_drill_pair"] = {"hs6": pair["hs6"], "iso3": pair["iso3"]}
     page.run()
 
     assert not page.exception
-    assert len(page.page_link) == 1  # only the Blocked Opportunities table opens a pair's box
+    assert len(page.page_link) == 1  # only the drill-down opens a pair's box
 
 
-def test_the_blocked_opportunities_line_states_the_threshold_in_the_adaptive_form(monkeypatch, api_url):
-    page = _run_india(monkeypatch, api_url)  # the default thresholds: 20% and $1M
+def test_the_blocked_opportunities_line_states_the_fixed_rule_in_the_adaptive_form(monkeypatch, api_url):
+    page = _run_india(monkeypatch, api_url)
 
     line = next(element.value for element in page.caption if "room to grow" in element.value)
-    assert "$1.0m" in line and "$1,000,000" not in line
+    assert "20%" in line and "$1.0m" in line and "$1,000,000" not in line
+    assert "fixed" in line  # the rule is stated, not offered for tuning (ADR 0012)
     assert "whatever their Actual Exports" not in line  # spec #133: Actual Exports must be below Scenario Export Potential
     assert "Actual Exports" in line and "Scenario Export Potential" in line
 

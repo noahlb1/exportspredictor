@@ -30,7 +30,8 @@ the chosen pairs. Every tariff a Scenario sets is clipped to the training range,
 Scenario Effect of a very large hike flattens; `ScenarioResult.clipped_pairs` counts them.
 
 **Blocked Opportunities** (`is_blocked`, ADR 0011): pairs whose Scenario Effect is at least
-`min_share` of their Baseline Export Potential and at least `min_usd`, with room to grow (Baseline-year
+`BLOCKED_MIN_SHARE` (20%) of their Baseline Export Potential and at least `BLOCKED_MIN_USD` ($1M), fixed thresholds
+(ADR 0012), with room to grow (Baseline-year
 Actual Exports below Export Potential with the effect added). `blocked_opportunity_values` precomputes,
 for every pair without a Trade Agreement, the Scenario Effect of adding one (the value the Blocked
 Opportunities page ranks by) and its Tariff part (`tariff_only`); `tariff_kind` sorts an Applied Tariff into above 0,
@@ -64,11 +65,14 @@ from exportspredictor.prediction import (
     export_potential,
 )
 
-DEFAULT_MIN_SHARE = 0.2
-DEFAULT_MIN_USD = 1_000_000.0
-# The default thresholds in words, for the prose that states them: "20%" and "$1M".
-DEFAULT_MIN_SHARE_TEXT = f"{DEFAULT_MIN_SHARE:.0%}"
-DEFAULT_MIN_USD_TEXT = f"${DEFAULT_MIN_USD / 1e6:g}M"
+# The Blocked Opportunity thresholds, fixed (ADR 0012): a Blocked Opportunity value (or Scenario Effect) of at least
+# 20% of Baseline Export Potential and at least $1M. Every page, the API and the artefact metadata use these, and no
+# API client can set others.
+BLOCKED_MIN_SHARE = 0.2
+BLOCKED_MIN_USD = 1_000_000.0
+# The thresholds in words, for the prose that states them: "20%" and "$1M".
+BLOCKED_MIN_SHARE_TEXT = f"{BLOCKED_MIN_SHARE:.0%}"
+BLOCKED_MIN_USD_TEXT = f"${BLOCKED_MIN_USD / 1e6:g}M"
 TARIFF = "log_applied_tariff"  # ln(1 + t): the policy feature a Scenario's tariffs are set in
 
 
@@ -271,8 +275,8 @@ class ScenarioResult:
         self,
         history: pl.DataFrame,
         baseline_year: int,
-        min_share: float = DEFAULT_MIN_SHARE,
-        min_usd: float = DEFAULT_MIN_USD,
+        min_share: float = BLOCKED_MIN_SHARE,
+        min_usd: float = BLOCKED_MIN_USD,
     ) -> pl.DataFrame:
         """The changed pairs that are Blocked Opportunities under this Scenario (`is_blocked`): the Scenario Effect
         clears both thresholds and the Baseline year's Actual Exports, read from the yearly `history` and added as
@@ -321,8 +325,8 @@ def is_blocked(
     effect: str,
     baseline: str,
     actual_exports: str,
-    min_share: float = DEFAULT_MIN_SHARE,
-    min_usd: float = DEFAULT_MIN_USD,
+    min_share: float = BLOCKED_MIN_SHARE,
+    min_usd: float = BLOCKED_MIN_USD,
 ) -> pl.Expr:
     """The Blocked Opportunity rule, the one every page uses (ADR 0011), over the named columns.
 
@@ -343,8 +347,8 @@ def with_blocked_opportunity_flag(
     *,
     effect: str,
     baseline: str,
-    min_share: float = DEFAULT_MIN_SHARE,
-    min_usd: float = DEFAULT_MIN_USD,
+    min_share: float = BLOCKED_MIN_SHARE,
+    min_usd: float = BLOCKED_MIN_USD,
 ) -> pl.DataFrame:
     """`pairs` plus the Baseline year's UK Actual Exports (`baseline_actual_exports_usd`, from the yearly `history`,
     0 where there is no Flow) and `blocked_opportunity`, `is_blocked` over the `effect` and `baseline` columns with

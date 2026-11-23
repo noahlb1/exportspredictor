@@ -22,7 +22,7 @@ from exportspredictor.rankings import (
     MAX_ROWS,
     RANK_BY,
 )
-from exportspredictor.scenarios import DEFAULT_MIN_SHARE, DEFAULT_MIN_USD, PRESETS
+from exportspredictor.scenarios import BLOCKED_MIN_SHARE, BLOCKED_MIN_USD, PRESETS
 
 
 class Health(BaseModel):
@@ -221,7 +221,7 @@ class _Values(BaseModel):
     opportunity_type: OpportunityType  # how far the UK already trades the pair over the Gap Period
     trade_agreement: bool  # a UK Trade Agreement with the Market is in force in the Baseline year
     blocked_opportunity_value_usd: float  # Scenario Effect of adding a Trade Agreement where none exists (0 if one does)
-    # that effect clears the default Blocked Opportunity thresholds and the pair has room to grow (`is_blocked`)
+    # that effect clears the fixed Blocked Opportunity thresholds and the pair has room to grow (`is_blocked`)
     blocked_opportunity: bool
     # `tiered` adds each Caveat Tier's column here (and its reason column, if any), e.g. reexport_hub (ADR 0005)
     # The Potential Range (ADR 0007): where Actual Exports fall 80% of the time for comparable pairs
@@ -304,7 +304,7 @@ class BlockedOpportunity(LeaderboardOpportunity):
 
 
 class BlockedOpportunities(_Ranking):
-    """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the default thresholds), by Blocked
+    """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the fixed thresholds), by Blocked
     Opportunity value or by Tariff part."""
 
     rank_by: BlockedRankBy
@@ -312,7 +312,7 @@ class BlockedOpportunities(_Ranking):
     summary: BlockedSummary
     markets: list[BlockedMarket]  # per-Market totals over every filtered Blocked Opportunity, largest total first
     opportunities: list[BlockedOpportunity]
-    thresholds: "Thresholds"  # the default thresholds every Blocked Opportunity here clears, defined below
+    thresholds: "Thresholds"  # the fixed thresholds every Blocked Opportunity here clears, defined below
     # Blocked Opportunity values are Illustrative: the same note as the Scenario response, defined below
     note: "ScenarioNote"
 
@@ -690,14 +690,16 @@ class ScenarioIn(BaseModel):
 
 
 class Thresholds(BaseModel):
-    """The Blocked Opportunity thresholds; the defaults are the package's."""
+    """The fixed Blocked Opportunity thresholds (ADR 0012), stated in every response that applies them so prose can
+    say "20% and $1M". No request carries them."""
 
-    min_effect_share: float = Field(DEFAULT_MIN_SHARE, ge=0, description="Blocked Opportunity: effect ≥ this share of Baseline")
-    min_effect_usd: float = Field(DEFAULT_MIN_USD, ge=0, description="Blocked Opportunity: effect ≥ this many USD")
+    min_effect_share: float = Field(BLOCKED_MIN_SHARE, description="Blocked Opportunity: effect ≥ this share of Baseline")
+    min_effect_usd: float = Field(BLOCKED_MIN_USD, description="Blocked Opportunity: effect ≥ this many USD")
 
 
-class ScenarioRequest(ScenarioIn, Thresholds):
-    """The Scenario, the Blocked Opportunity thresholds, and how many rows to return."""
+class ScenarioRequest(ScenarioIn):
+    """The Scenario and how many rows to return. Threshold fields are refused like any unknown field: the thresholds
+    are fixed (ADR 0012)."""
 
     model_config = ConfigDict(extra="forbid")
 

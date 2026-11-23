@@ -262,7 +262,7 @@ def create_app(
         query: Annotated[models.BlockedQuery, Query()],  # pyright: ignore[reportInvalidTypeForm]
         artefacts: store.Artefacts = Depends(loaded),
     ):
-        """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the default thresholds, room to
+        """The Blocked Opportunities page: only Blocked Opportunities (`is_blocked` at the fixed thresholds, room to
         grow included), ranked by Blocked Opportunity value or by Tariff part, in Baseline-year figures with the value's
         Tariff part and Agreement part and the Barrier, with a summary and per-Market totals over every filtered one. An
         unknown Product answers 404, as does an Excluded Product, with its reason."""
@@ -395,11 +395,6 @@ def create_app(
             offered = scenarios.offered_presets(artefacts.baseline_features, scenarios.tariff_range(artefacts.metadata))
             cache[artefacts.version] = [PresetOut(**vars(preset)) for preset in offered]
         return cache[artefacts.version]
-
-    @app.get("/scenarios/thresholds", response_model=Thresholds)
-    def thresholds():
-        """The default Blocked Opportunity thresholds."""
-        return Thresholds()
 
     @app.post("/scenarios", response_model=models.ScenarioResponse)
     def run_scenario(request: ScenarioRequest, artefacts: store.Artefacts = Depends(loaded)):
@@ -547,7 +542,8 @@ def scenario_response(
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
     caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
-    # The Blocked Opportunity rule, room to grow against the Scenario's Export Potential included (ADR 0011).
+    # The Blocked Opportunity rule at the fixed thresholds (ADR 0012), room to grow against the Scenario's Export
+    # Potential included (ADR 0011).
     pairs = (
         scenarios.with_blocked_opportunity_flag(
             result.pairs,
@@ -555,8 +551,6 @@ def scenario_response(
             artefacts.baseline_year,
             effect="effect_usd",
             baseline="baseline_potential_usd",
-            min_share=request.min_effect_share,
-            min_usd=request.min_effect_usd,
         )
         .join(markets, on="iso3", how="left", maintain_order="left")
         .join(products, on="hs6", how="left", maintain_order="left")
@@ -570,7 +564,7 @@ def scenario_response(
     return models.ScenarioResponse(
         **_metadata(artefacts),
         scenario=ScenarioIn.model_validate(asdict(result.scenario)),
-        thresholds=_pick(Thresholds, request.model_dump()),
+        thresholds=Thresholds(),
         market=request.market,
         changes_nothing=result.changes_nothing,
         summary=result.summary(blocked=blocked.height, year=artefacts.baseline_year),

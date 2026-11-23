@@ -246,6 +246,37 @@ def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
     assert blocked["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
 
 
+def test_a_scenarios_blocked_opportunities_need_room_to_grow_against_its_export_potential(fixture_artefacts):
+    result = scenarios.run(
+        fixture_artefacts.baseline_features,
+        fixture_artefacts.baseline,
+        fixture_artefacts.fold_models,
+        scenarios.Scenario(add_agreements=("HKG",)),
+        form=fixture_artefacts.model_form,
+    )
+
+    # Thresholds at 0 (the fixture's Scenario Effects are under $1M), so only room to grow decides. Cars in Hong Kong:
+    # the UK already sells more than the Scenario's Export Potential (ADR 0011).
+    flagged = scenarios.with_blocked_opportunity_flag(
+        result.pairs,
+        fixture_artefacts.history,
+        fixture_artefacts.baseline_year,
+        effect="effect_usd",
+        baseline="baseline_potential_usd",
+        min_share=0.0,
+        min_usd=0.0,
+    )
+    [cars] = flagged.filter((pl.col("hs6") == "870323") & (pl.col("iso3") == "HKG")).iter_rows(named=True)
+    blocked = flagged.filter("blocked_opportunity")
+
+    assert cars["effect_usd"] >= 0 and cars["baseline_actual_exports_usd"] > cars["scenario_potential_usd"]
+    assert cars["blocked_opportunity"] is False
+    assert blocked.height > 0
+    assert (blocked["baseline_actual_exports_usd"] < blocked["scenario_potential_usd"]).all()
+    # At the fixed thresholds, none of these tiny effects clears $1M.
+    assert result.blocked_opportunities(fixture_artefacts.history, fixture_artefacts.baseline_year).is_empty()
+
+
 # --- The Tariff part (ADR 0011) -------------------------------------------------------------
 
 

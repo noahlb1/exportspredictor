@@ -346,8 +346,10 @@ def blocked_filters() -> Filters:
             persist_state="session",
         )
         min_value_usd = st.number_input(
-            f"Minimum Blocked Opportunity value ({usd_unit()})", value=None, step=1_000_000.0,
+            f"Show only pairs worth at least… ({usd_unit()})", value=None, step=1_000_000.0,
             key=f"{BLOCKED_KEY_PREFIX}min_value_usd", persist_state="session",
+            help="Lists only the Blocked Opportunities whose Blocked Opportunity value is at least this amount. It "
+            "only narrows the list: which pairs are Blocked Opportunities is fixed, by the rule the caption states.",
         )
         hides = _hide(BLOCKED_KEY_PREFIX)
         orders = blocked_rank_orders()

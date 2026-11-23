@@ -16,8 +16,8 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.scenarios import (
-    DEFAULT_MIN_SHARE_TEXT,
-    DEFAULT_MIN_USD_TEXT,
+    BLOCKED_MIN_SHARE_TEXT,
+    BLOCKED_MIN_USD_TEXT,
     TARIFF_KINDS,
     barrier,
     tariff_kind,
@@ -75,8 +75,8 @@ BLOCKED = RankOrder(
     "blocked_opportunity_value_usd",
     "Rise with agreement",
     "The Blocked Opportunity value: the rise in Export Potential the model associates with adding a Trade Agreement "
-    f"where none is in force (0 where one is), largest first. Blocked Opportunities clear {DEFAULT_MIN_SHARE_TEXT} of "
-    f"Baseline Export Potential and {DEFAULT_MIN_USD_TEXT}, and their Actual Exports are below Export Potential with a "
+    f"where none is in force (0 where one is), largest first. Blocked Opportunities clear {BLOCKED_MIN_SHARE_TEXT} of "
+    f"Baseline Export Potential and {BLOCKED_MIN_USD_TEXT}, and their Actual Exports are below Export Potential with a "
     "Trade Agreement.",
 )
 # The Blocked Opportunities page's second order (ADR 0011): the tariff-led view, without changing the definition.
@@ -137,7 +137,7 @@ def rank_opportunities(
     Opportunity Type, the Baseline year's Export Potential and the Blocked Opportunity value
     in nominal USD with its Tariff part (`tariff_part_usd`), the Baseline year's UK Actual Exports
     (`baseline_actual_exports_usd`, 0 where there is no Flow), flags a Blocked Opportunity by `is_blocked` at the
-    default thresholds against the Baseline year, room to grow included (`blocked_opportunity`), gives the Baseline Applied Tariff in percent from the Baseline policy features
+    fixed thresholds against the Baseline year, room to grow included (`blocked_opportunity`), gives the Baseline Applied Tariff in percent from the Baseline policy features
     (`applied_tariff_pct`, null where unknown), and carries the Baseline's Caveat Tier columns
     (`caveats.TIERS`, ADR 0005) and its Potential Range with the `uncertain_opportunity`
     (Uncertain Opportunity) flag (ADR 0007).
@@ -237,7 +237,7 @@ def blocked_opportunities(
     rank_by: str = BLOCKED.name,
     limit: int | None = None,
 ) -> BlockedRanking:
-    """The Blocked Opportunities (`is_blocked` at the default thresholds, room to grow included), in Baseline-year
+    """The Blocked Opportunities (`is_blocked` at the fixed thresholds, room to grow included), in Baseline-year
     figures, ordered by Blocked Opportunity value (`rank_by="blocked"`) or by Tariff part (`"tariff_part"`).
 
     Each row is a `rank_opportunities` row (with `baseline_export_potential_usd`, `baseline_actual_exports_usd`,
