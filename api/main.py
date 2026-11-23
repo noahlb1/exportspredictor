@@ -48,10 +48,12 @@ from api.schemas import (
     MarketListed,
     MarketOut,
     MarketReachOut,
+    MarketTotal,
     PairMarketReachOut,
     PresetOut,
     ProductMatch,
     ProductOut,
+    ProductTotal,
     RankingQuery,
     RankOrderOut,
     ScenarioIn,
@@ -515,6 +517,8 @@ def _leaderboard(artefacts: store.Artefacts, query: LeaderboardQuery, models: Ti
     return {
         **_metadata(artefacts),
         "summary": LeaderboardSummary(**ranked.summary),
+        "markets": [MarketTotal(**row) for row in ranked.markets.iter_rows(named=True)],
+        "products": [ProductTotal(**row) for row in ranked.products.iter_rows(named=True)],
         "opportunities": [_pick(models.LeaderboardOpportunity, row) for row in ranked.rows.iter_rows(named=True)],
         "market_reach": reach,
     }

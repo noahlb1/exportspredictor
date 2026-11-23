@@ -1,6 +1,7 @@
 """The Leaderboard, the app's default page, run with AppTest through the router against a live local API on
 fixture artefacts: its sidebar filters (Product search and Market included), the filters in the URL, Reset filters,
-the active-filters line, the table and the CSV."""
+the active-filters line, the By Market view (Markets on the left, the chosen Market's Products on the right, the
+panel underneath), the Wide table and the CSV."""
 
 import io
 import json
@@ -51,7 +52,7 @@ def _search(monkeypatch, api_url: str, text: str) -> AppTest:
 
 
 def _table(page: AppTest) -> pd.DataFrame:
-    """The ranking table with every column: the Wide table view (the default view shows three)."""
+    """The ranking table with every column: the Wide table view (the default view groups the pairs By Market)."""
     _wide(page)
     return page.dataframe[0].value
 
@@ -92,6 +93,110 @@ def test_home_opens_on_the_leaderboard_of_every_uk_pair(monkeypatch, fixture_api
     assert "Re-export Hub" in set(table["Caveats"]) and "Flagged Product" in set(table["Caveats"])
     # The summary metrics row is gone: the only figures are the detail panel's three
     assert [metric.label for metric in page.metric] == ["Export Potential", "Actual Exports", "Export Gap"]
+
+
+# --- By Market: Markets on the left, the chosen Market's Products on the right, the panel underneath ------------
+
+RIGHT_COLUMNS = [
+    "Product",
+    "Export Gap",
+    "Export Potential",
+    "Actual Exports",
+    "Applied Tariff %",
+    "Relative Export Gap",
+    "UK Trade Agreement",
+    "Blocked Opportunity",
+    "Caveats",
+]
+
+
+def _left(page: AppTest) -> pd.DataFrame:
+    """The left table of the By Market view: each Market with its pairs and total."""
+    return page.dataframe[0].value
+
+
+def _right(page: AppTest) -> pd.DataFrame:
+    """The right table of the By Market view, in the columns it shows."""
+    right = page.dataframe[1]
+    return right.value[list(right.proto.column_order)]
+
+
+def _panel_heading(page: AppTest) -> str:
+    [heading] = [element.value for element in page.main.subheader if "→" in element.value]
+    return heading
+
+
+def _by_market(api_url: str, **params) -> dict:
+    return httpx.get(f"{api_url}/opportunities/top", params=params).json()
+
+
+def test_the_leaderboard_opens_by_market_with_the_top_markets_products_and_its_top_pair_explained(
+    monkeypatch, fixture_api_url
+):
+    page = _home(monkeypatch, fixture_api_url)
+
+    assert not page.exception
+    assert page.segmented_control[0].value == "By Market"
+    markets = _by_market(fixture_api_url)["markets"]
+    left = _left(page)
+    assert list(left.columns) == ["Market", "Pairs", "Total Export Gap"]
+    assert list(left["Market"]) == [market["market"] for market in markets]
+    assert list(left["Pairs"]) == [market["pairs"] for market in markets]
+    assert list(left["Total Export Gap"]) == pytest.approx([m["positive_export_gap_usd"] / 1e6 for m in markets])
+    top = markets[0]
+    products = _by_market(fixture_api_url, market=top["iso3"])["opportunities"]
+    right = _right(page)
+    assert list(right.columns) == RIGHT_COLUMNS
+    assert list(right["Product"]) == [row["description"] for row in products]
+    assert any(f"**{top['market']}**" in text and f"{len(products)} Products" in text for text in _texts(page))
+    assert _panel_heading(page) == f"{products[0]['description']} → {top['market']}"
+
+
+def _tinted(table) -> set[int]:
+    """The positions of a table's tinted (chosen) rows, read from its styles."""
+    css = table.proto.arrow_data.styler.styles
+    return {int(row) for row in re.findall(r"row(\d+)_col\d+[^{]*\{[^}]*rgba\(42, 120, 214", css)}
+
+
+def _click(page: AppTest, **chosen) -> AppTest:
+    """Choose a Market (`market=ISO3`) or a pair (`pair=(HS6, ISO3)`) as a click does: AppTest cannot click a table
+    row, so the choice is written where the page remembers it."""
+    if "market" in chosen:
+        page.session_state["leaderboard_group_iso3"] = chosen["market"]
+    if "pair" in chosen:
+        page.session_state["leaderboard_pair"] = chosen["pair"]
+    return page.run()
+
+
+def test_clicking_a_market_lists_its_products_and_explains_its_top_pair(monkeypatch, fixture_api_url):
+    page = _home(monkeypatch, fixture_api_url)
+    assert _tinted(page.dataframe[0]) == {0} and _tinted(page.dataframe[1]) == {0}
+
+    _click(page, market="IND")
+
+    india = _by_market(fixture_api_url, market="IND")["opportunities"]
+    assert list(_right(page)["Product"]) == [row["description"] for row in india]
+    assert _tinted(page.dataframe[0]) == {list(_left(page)["Market"]).index("India")}
+    assert _panel_heading(page) == f"{india[0]['description']} → India"
+
+
+def test_clicking_a_product_explains_that_pair_and_tints_it(monkeypatch, fixture_api_url):
+    page = _click(_home(monkeypatch, fixture_api_url), market="IND", pair=(WHISKY, "IND"))
+
+    india = [row["hs6"] for row in _by_market(fixture_api_url, market="IND")["opportunities"]]
+    assert _panel_heading(page).endswith("→ India") and WHISKY in " ".join(_texts(page))
+    assert _tinted(page.dataframe[1]) == {india.index(WHISKY)}
+
+
+def test_the_right_table_lists_every_pair_of_the_market_when_the_main_read_is_capped(monkeypatch, too_many_api):
+    page = _home(monkeypatch, too_many_api)
+
+    japan = _by_market(too_many_api, market="JPN", limit=6000)["summary"]["pairs"]
+    _click(page, market="JPN")
+
+    assert japan > 500  # more than the page shows of the capped main read
+    assert len(_right(page)) == japan
+    assert any(f"{japan:,} Products" in text for text in _texts(page))
 
 
 def test_the_filters_sit_in_the_sidebar_with_a_reset_button(monkeypatch, fixture_api_url):
@@ -224,14 +329,33 @@ def test_the_market_filter_ranks_that_markets_products(monkeypatch, fixture_api_
     assert gaps == sorted(gaps, reverse=True)
 
 
-def test_the_market_filter_shows_the_markets_reach_in_one_sentence(monkeypatch, fixture_api_url):
-    reach = httpx.get(f"{fixture_api_url}/opportunities/by-market/JPN").json()["market_reach"]
+def _reach(api_url: str, iso3: str) -> str:
+    return httpx.get(f"{api_url}/opportunities/by-market/{iso3}").json()["market_reach"]["text"]
+
+
+def _above_products(page: AppTest) -> str:
+    """The text right after the line that names the chosen Market above its Products."""
+    texts = [element.value for element in page.main.markdown]
+    at = next(i for i, text in enumerate(texts) if re.match(r"\*\*[^*]+\*\*: \d+ Products?\.", text))
+    return texts[at + 1]
+
+
+def test_the_chosen_markets_reach_sentence_sits_above_its_products(monkeypatch, fixture_api_url):
+    page = _click(_home(monkeypatch, fixture_api_url), market="IND")
+    assert _above_products(page) == f"**Market Reach.** {_reach(fixture_api_url, 'IND')}"
+
+    _click(page, market="JPN")
+
+    assert _above_products(page) == f"**Market Reach.** {_reach(fixture_api_url, 'JPN')}"
+
+
+def test_the_market_filter_leaves_one_market_on_the_left_with_its_reach(monkeypatch, fixture_api_url):
     page = _home(monkeypatch, fixture_api_url)
-    assert not any(reach["text"] in text for text in _texts(page))
 
     page.sidebar.selectbox(key="market").set_value("JPN").run()
 
-    assert any(reach["text"] in text for text in _texts(page))
+    assert list(_left(page)["Market"]) == ["Japan"]
+    assert _above_products(page) == f"**Market Reach.** {_reach(fixture_api_url, 'JPN')}"
 
 
 def test_the_region_filter_narrows_the_market_choice(monkeypatch, fixture_api_url):

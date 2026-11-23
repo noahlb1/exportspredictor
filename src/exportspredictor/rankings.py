@@ -2,7 +2,8 @@
 
 Every ranking view (the API's `/opportunities/top`, `/opportunities/by-product` and
 `/opportunities/by-market`) goes through `rank_opportunities`, which filters, sorts and limits
-once; `summarise` sizes the filtered rows for the Leaderboard's summary. The Blocked Opportunities
+once; `summarise` sizes the filtered rows for the Leaderboard's summary, and `summarise_by` per Market and per
+Product for its By Market and By Product views. The Blocked Opportunities
 page's read (`/opportunities/blocked`) is `blocked_opportunities`: only Blocked Opportunities, ordered by
 `BLOCKED` or `TARIFF_PART`, with per-Market totals and Baseline-year figures. A new ranking order is one entry in `RANK_BY`; a new row field is added in
 `rank_opportunities`.
@@ -199,18 +200,37 @@ def summarise(rows: pl.DataFrame) -> dict:
     }
 
 
+def summarise_by(rows: pl.DataFrame, code: str, name: str) -> pl.DataFrame:
+    """`summarise` per group of ranked rows (per Market: `iso3`, `market`; per Product: `hs6`, `description`): the
+    group's code and name, its pair count (`pairs`) and total positive Export Gap (`positive_export_gap_usd`), largest
+    total first, ties by name. The groups add up to `summarise` over the same rows."""
+    return (
+        rows.group_by(code, name)
+        .agg(pairs=pl.len(), positive_export_gap_usd=pl.col("export_gap_usd").clip(lower_bound=0).sum().cast(pl.Float64))
+        .sort(["positive_export_gap_usd", name, code], descending=[True, False, False])
+    )
+
+
 @dataclass(frozen=True)
 class Ranking:
-    """A ranking with its summary: the Leaderboard's answer."""
+    """A ranking with its summary and per-group totals: the Leaderboard's answer."""
 
     rows: pl.DataFrame  # the top `limit` rows, as `rank_opportunities` returns them
     summary: dict  # `summarise` over every filtered pair
+    markets: pl.DataFrame  # `summarise_by` Market over every filtered pair
+    products: pl.DataFrame  # `summarise_by` Product over every filtered pair
 
 
 def ranking(artefacts: Artefacts, *, limit: int | None = None, **filters) -> Ranking:
-    """`rank_opportunities` with `filters`, summarised over every filtered pair, then cut to the top `limit` rows."""
+    """`rank_opportunities` with `filters`, summarised over every filtered pair (in all and per Market and Product),
+    then cut to the top `limit` rows."""
     rows = rank_opportunities(artefacts, **filters)
-    return Ranking(rows=rows if limit is None else rows.head(limit), summary=summarise(rows))
+    return Ranking(
+        rows=rows if limit is None else rows.head(limit),
+        summary=summarise(rows),
+        markets=summarise_by(rows, "iso3", "market"),
+        products=summarise_by(rows, "hs6", "description"),
+    )
 
 
 @dataclass(frozen=True)

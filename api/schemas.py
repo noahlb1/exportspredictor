@@ -266,6 +266,24 @@ class LeaderboardSummary(BaseModel):
     positive_export_gap_usd: float  # the sum of their positive Export Gaps
 
 
+class MarketTotal(BaseModel):
+    """One Market's filtered pairs on the Leaderboard: their count and total positive Export Gap."""
+
+    iso3: str
+    market: str
+    pairs: int
+    positive_export_gap_usd: float
+
+
+class ProductTotal(BaseModel):
+    """One Product's filtered pairs on the Leaderboard: their count and total positive Export Gap."""
+
+    hs6: str
+    description: str
+    pairs: int
+    positive_export_gap_usd: float
+
+
 class _Ranking(BaseModel):
     artefact_version: str
     baseline_year: int
@@ -277,6 +295,10 @@ class _Ranking(BaseModel):
 class Leaderboard(_Ranking):
     summary: LeaderboardSummary
     market_reach: MarketReachOut | None = None  # the filtered Market's reach; None without a Market filter
+    # Per-Market and per-Product totals over every filtered pair (before `limit`), largest first, ties by name; they
+    # add up to the summary
+    markets: list[MarketTotal]
+    products: list[ProductTotal]
     opportunities: list[LeaderboardOpportunity]  # UK Product–Market pairs, sorted by `rank_by`, largest first
 
 

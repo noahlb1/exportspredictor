@@ -1,8 +1,8 @@
-"""The Leaderboard's split view and its detail panel (spec #103, "Leaderboard" and "Detail panel"), run with AppTest
-through the router against the session's live fixture API.
+"""The Leaderboard's detail panel under its tables (spec #103, "Leaderboard" and "Detail panel"; spec #151), run with
+AppTest through the router against the session's live fixture API.
 
-AppTest cannot click a table row, so a test chooses a pair as the page remembers it (`PAIR` in session state) or
-through the URL's Product and Market.
+AppTest cannot click a table row, so a test chooses a pair as the page remembers it after a click on its Market and
+then on its Product (`GROUP` and `PAIR` in session state), or through the URL's Product and Market.
 """
 
 import httpx
@@ -12,6 +12,7 @@ from conftest import run_page
 from streamlit.testing.v1 import AppTest
 
 PAIR = "leaderboard_pair"  # the remembered pair, (HS6, ISO3)
+GROUP = "leaderboard_group_iso3"  # the remembered Market of the By Market view
 WHISKY = "220830"
 JEWELLERY = "711319"  # the fixture's Flagged Product; Hong Kong is its Re-export Hub
 MEDICINES = "300490"  # India's Applied Tariff on it is carried forward from 2021
@@ -23,6 +24,7 @@ def _home(monkeypatch, api_url: str, **query: str) -> AppTest:
 
 
 def _choose(page: AppTest, hs6: str, iso3: str) -> AppTest:
+    page.session_state[GROUP] = iso3
     page.session_state[PAIR] = (hs6, iso3)
     return page.run()
 
@@ -38,17 +40,20 @@ def _texts(page: AppTest) -> str:
 
 
 def _top_row(api_url: str) -> dict:
-    return httpx.get(f"{api_url}/opportunities/top").json()["opportunities"][0]
+    """The top pair of the top Market, the pair the page explains on open."""
+    top = httpx.get(f"{api_url}/opportunities/top").json()["markets"][0]["iso3"]
+    return httpx.get(f"{api_url}/opportunities/top", params={"market": top}).json()["opportunities"][0]
 
 
-def test_the_top_rows_pair_is_explained_on_open(monkeypatch, fixture_api_url):
+def test_the_top_markets_top_pair_is_explained_on_open_under_the_tables(monkeypatch, fixture_api_url):
     page = _home(monkeypatch, fixture_api_url)
     top = _top_row(fixture_api_url)
 
     assert not page.exception
     assert _panel_heading(page) == f"{top['description']} → {top['market']}"
     assert [metric.label for metric in page.main.metric] == ["Export Potential", "Actual Exports", "Export Gap"]
-    assert list(page.dataframe[0].value.columns) == ["Product", "Market", "Export Gap"]
+    # The panel's own tables (the factors, the years) come after the Markets and Products tables
+    assert page.dataframe[0].value.columns[0] == "Market" and "Product" in page.dataframe[1].value.columns
 
 
 def test_the_three_figures_carry_the_apis_term_wording(monkeypatch, fixture_api_url):
@@ -222,9 +227,10 @@ def test_the_three_steps_close_and_come_back(monkeypatch, fixture_api_url):
     steps = _steps(page)
     assert [step.split("**")[1] for step in steps] == [
         "1 · Read the ranking.",
-        "2 · Open a row.",
+        "2 · Open a pair.",
         "3 · Narrow it down.",
     ]
+    assert "below the tables" in steps[1] and "on the right" not in steps[1]  # the panel is under the tables
     assert "What is this?" not in [button.label for button in page.main.button]
 
     page.button(key="steps_close").click().run()

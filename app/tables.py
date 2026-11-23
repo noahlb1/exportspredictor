@@ -167,7 +167,20 @@ LEADERBOARD_SHOWN = [
     "Caveats",
 ]
 LEADERBOARD_HIDDEN = ["Opportunity Type", "Potential Range", "HS6", "Sector", "Region"]
-LEADERBOARD_NARROW = ["Product", "Market", "Export Gap"]  # the table beside the detail panel
+# The right table of By Market and By Product (`app.views`): the figures that matter for a pair; the grouping's own
+# column (Market or Product) is left out.
+LEADERBOARD_RIGHT = [
+    "Product",
+    "Market",
+    "Export Gap",
+    "Export Potential",
+    "Actual Exports",
+    "Applied Tariff %",
+    "Relative Export Gap",
+    "UK Trade Agreement",
+    "Blocked Opportunity",
+    "Caveats",
+]
 # How each numeric column of `leaderboard_frame` reads in a `pick_row` table.
 LEADERBOARD_FORMATS: dict[str, str | Callable] = {
     "Export Gap": ONE_DECIMAL,
