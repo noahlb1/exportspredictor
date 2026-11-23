@@ -22,6 +22,7 @@ import streamlit
 from conftest import run_page
 from streamlit import dataframe_util
 from streamlit.testing.v1 import AppTest
+from streamlit.testing.v1.element_tree import Dataframe
 
 from exportspredictor import artefacts as store
 
@@ -29,6 +30,7 @@ PAGE = "pages/blocked_opportunities.py"
 WHISKY, JEWELLERY, CARS, CRUDE_OIL = "220830", "711319", "870323", "270900"
 JEWELLERY_NAME = "Articles of jewellery and parts thereof, of precious metal other than silver"
 BLOCKED_PAIRS = [(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG")]
+TOTAL = "Total value, illustrative"  # the left table's total heading: visibly Illustrative (story 19)
 PRODUCT_COLUMNS = [
     "Product",
     "Barrier",
@@ -77,19 +79,53 @@ def _row(api_url: str, hs6: str, iso3: str) -> dict:
     return next(row for row in _read(api_url)["opportunities"] if (row["hs6"], row["iso3"]) == (hs6, iso3))
 
 
-def _choose(page: AppTest, hs6: str, iso3: str) -> AppTest:
-    """Choose a Market and one of its Products, as clicking them would (AppTest cannot click a row)."""
-    page.session_state["blocked_market"] = iso3
-    page.session_state["blocked_pair"] = (hs6, iso3)
+def _click(page: AppTest, *, market: str | None = None, product: str | None = None, pair=None) -> AppTest:
+    """Choose a Market (By Market), a Product (By Product) or a pair, (HS6, ISO3), as a click does: AppTest cannot
+    click a table row, so the choice is written where the page remembers it."""
+    if market is not None:
+        page.session_state["blocked_group_iso3"] = market
+    if product is not None:
+        page.session_state["blocked_group_hs6"] = product
+    if pair is not None:
+        page.session_state["blocked_pair"] = pair
     return page.run()
 
 
+def _choose(page: AppTest, hs6: str, iso3: str) -> AppTest:
+    """Choose a Market and one of its Products, as clicking them would."""
+    return _click(page, market=iso3, pair=(hs6, iso3))
+
+
+def _view(page: AppTest, view: str) -> AppTest:
+    page.segmented_control[0].set_value(view).run()
+    return page
+
+
 def _markets(page: AppTest) -> pd.DataFrame:
+    """The left table: By Market, the Markets; By Product, the Products."""
     return page.dataframe[0].value
 
 
+def _shown(table) -> pd.DataFrame:
+    """A table in the columns it shows."""
+    return table.value[list(table.proto.column_order)] if table.proto.column_order else table.value
+
+
 def _products(page: AppTest) -> pd.DataFrame:
-    return page.dataframe[1].value
+    """The right table, in the columns it shows: By Market, the chosen Market's Products."""
+    return _shown(page.dataframe[1])
+
+
+def _layout_tables(page: AppTest) -> list[int]:
+    """Where the layout's own tables (left and right, or the Wide table) sit in the page's draw order; the panel's
+    tables are not among them."""
+    return [i for i, node in enumerate(page.main) if isinstance(node, Dataframe) and (node.key or "").startswith("blocked_")]
+
+
+def _panel_box(page: AppTest) -> str:
+    """The panel's neutral box naming the chosen pair, "Product → Market"."""
+    [box] = [box.value for box in page.info if "→" in box.value]
+    return box.split("\n")[0].strip("*")
 
 
 def _texts(page: AppTest) -> list[str]:
@@ -117,7 +153,7 @@ def _charts(page: AppTest) -> list[pd.DataFrame]:
     return [dataframe_util.convert_arrow_bytes_to_pandas_df(chart.proto.data.data) for chart in page.get(CHART)]
 
 
-# --- The overview: Markets, then the chosen Market's Products, no pair chosen until one is clicked ----------------
+# --- The shared layout (spec #151): By Market, By Product, Wide table, the panel underneath -----------------------
 
 
 def test_markets_are_listed_largest_total_first_with_the_top_markets_products_shown(monkeypatch, blocked_api_url):
@@ -125,28 +161,124 @@ def test_markets_are_listed_largest_total_first_with_the_top_markets_products_sh
 
     assert not page.exception
     assert page.header[0].value == "Blocked Opportunities"
+    assert page.segmented_control[0].value == "By Market"
     markets = _markets(page)
-    assert list(markets.columns) == ["Market", "Blocked Opportunities", "Total value"]
+    assert list(markets.columns) == ["Market", "Blocked Opportunities", TOTAL]
     assert list(markets["Market"]) == ["India", "Hong Kong"]
     assert list(markets["Blocked Opportunities"]) == [2, 1]
-    totals = {market["market"]: market["blocked_opportunity_value_usd"] for market in _read(blocked_api_url)["markets"]}
-    assert list(markets["Total value"]) == pytest.approx([totals["India"] / 1e6, totals["Hong Kong"] / 1e6])
-    # The top Market's Products are shown on open.
+    assert [round(value, 1) for value in markets[TOTAL]] == [25.6, 5.1]  # $18.5m + $7.1m; $5.1m
+    helps = {name.removeprefix("name:"): column.get("help", "") for name, column in
+             json.loads(page.dataframe[0].proto.columns).items()}
+    assert "llustrative" in helps[TOTAL] and "under the filters" in helps["Blocked Opportunities"]
+    # The top Market's Products are shown on open, under a line giving the Market's total as Illustrative.
     assert set(_products(page)["Product"]) == {"Whiskies", JEWELLERY_NAME}
+    assert any("Total value, illustrative: $25.6m." in element.value for element in page.markdown)
 
 
-def test_no_product_is_chosen_on_open(monkeypatch, blocked_api_url):
-    # Spec #133, story 11: the page opens on the overview; the panel waits for a click.
+def test_the_top_markets_top_pair_is_chosen_on_open_with_its_panel_under_the_tables(monkeypatch, blocked_api_url):
+    # Rewritten for spec #151, story 9: a pair is chosen on open (spec #133 waited for a click).
     page = _page(monkeypatch, blocked_api_url)
 
-    assert not [text for text in _panel_texts(page) if "No agreement, tariff" in text and "→" in text]
-    assert not page.get(CHART)
-    assert any("Click a Product" in element.value for element in page.caption)
+    assert _panel_box(page) == "Whiskies → India"
+    nodes = list(page.main)
+    tables = _layout_tables(page)
+    box = next(i for i, node in enumerate(nodes) if "Whiskies → India" in str(getattr(node, "value", "")))
+    assert len(tables) == 2 and max(tables) < box
+    assert any("figure" in chart.columns for chart in _charts(page))
+
+
+def test_by_product_lists_products_with_their_totals_and_the_chosen_products_markets(monkeypatch, blocked_api_url):
+    page = _view(_page(monkeypatch, blocked_api_url), "By Product")
+
+    assert not page.exception
+    products = _markets(page)
+    assert list(products.columns) == ["Product", "Blocked Opportunities", TOTAL]
+    assert list(products["Product"]) == ["Whiskies", JEWELLERY_NAME]
+    assert list(products["Blocked Opportunities"]) == [1, 2]
+    assert [round(value, 1) for value in products[TOTAL]] == [18.5, 12.2]  # jewellery: $7.1m + $5.1m
+    assert list(_shown(page.dataframe[1])["Market"]) == ["India"]
+
+    _click(page, product=JEWELLERY)
+
+    right = _shown(page.dataframe[1])
+    assert list(right.columns) == ["Market", *PRODUCT_COLUMNS[1:]]
+    assert list(right["Market"]) == ["India", "Hong Kong"]
+    assert any(f"**{JEWELLERY_NAME}**" in text and "2 Markets" in text for text in _texts(page))
+    assert _panel_box(page) == f"{JEWELLERY_NAME} → India"
+
+    _click(page, pair=(JEWELLERY, "HKG"))
+    assert _panel_box(page) == f"{JEWELLERY_NAME} → Hong Kong"
+
+
+def test_the_right_table_lists_every_pair_of_the_market_when_the_main_read_is_capped(monkeypatch, blocked_api_url):
+    # Story 17. The read limit lowered to 2 caps the main read at whisky and jewellery in India; Hong Kong's
+    # jewellery is left out of it, yet listed once Hong Kong is chosen, from the read with Hong Kong's filter.
+    monkeypatch.setattr("app.ui.read_limit", lambda: 2)
+    page = _page(monkeypatch, blocked_api_url)
+    assert any("top 2 of 3 Blocked Opportunities" in caption.value for caption in page.caption)
+    capped = _read(blocked_api_url, limit=2)
+    assert capped["summary"]["blocked_opportunities"] == 3
+    assert (JEWELLERY, "HKG") not in [(row["hs6"], row["iso3"]) for row in capped["opportunities"]]
+
+    _click(page, market="HKG")
+
+    assert list(_products(page)["Product"]) == [JEWELLERY_NAME]
+    assert list(_markets(page)["Market"]) == ["India", "Hong Kong"]  # the totals cover every pair, whatever the cap
+    assert _panel_box(page) == f"{JEWELLERY_NAME} → Hong Kong"
+
+
+def test_the_wide_table_lists_every_blocked_opportunity_with_its_product_and_market(monkeypatch, blocked_api_url):
+    page = _view(_page(monkeypatch, blocked_api_url), "Wide table")
+
+    assert len(_layout_tables(page)) == 1
+    wide = _shown(page.dataframe[0])
+    assert list(wide.columns) == ["Product", "Market", *PRODUCT_COLUMNS[1:]]
+    rows = _read(blocked_api_url)["opportunities"]
+    assert list(zip(wide["Product"], wide["Market"], strict=True)) == [(r["description"], r["market"]) for r in rows]
+    assert _panel_box(page) == "Whiskies → India"
+
+
+def test_the_chosen_pair_survives_a_view_switch_where_it_is_still_shown(monkeypatch, blocked_api_url):
+    page = _choose(_page(monkeypatch, blocked_api_url), JEWELLERY, "HKG")
+    assert _panel_box(page) == f"{JEWELLERY_NAME} → Hong Kong"
+
+    _view(page, "Wide table")
+    assert _panel_box(page) == f"{JEWELLERY_NAME} → Hong Kong"
+
+    _view(page, "By Product")  # the top Product, whisky, does not hold it: its top pair is shown
+    assert _panel_box(page) == "Whiskies → India"
+    _click(page, product=JEWELLERY)
+    assert _panel_box(page) == f"{JEWELLERY_NAME} → Hong Kong"
+
+
+def test_the_view_is_kept_in_the_url(monkeypatch, blocked_api_url):
+    page = _page(monkeypatch, blocked_api_url)
+    assert "view" not in page.query_params  # the default view is left out
+
+    _view(page, "By Product")
+    assert page.query_params["view"] == "product"
+    _view(page, "By Market")
+    assert "view" not in page.query_params
+
+    linked = _page(monkeypatch, blocked_api_url, view="wide")
+    assert linked.segmented_control[0].value == "Wide table"
+    assert len(_layout_tables(linked)) == 1
+
+
+def test_the_view_is_kept_apart_from_the_leaderboards(monkeypatch, blocked_api_url):
+    page = _view(_page(monkeypatch, blocked_api_url), "Wide table")
+
+    page.query_params.clear()  # a browser clears them on a page switch; AppTest keeps them
+    page.switch_page("pages/leaderboard.py").run()
+    assert page.segmented_control[0].value == "By Market"
+
+    page.switch_page(PAGE).run()
+    assert page.segmented_control[0].value == "Wide table"  # kept for the session
 
 
 def test_the_chosen_markets_products_have_the_stated_columns_in_baseline_year_figures(monkeypatch, blocked_api_url):
     page = _page(monkeypatch, blocked_api_url)
-    page.session_state["blocked_market"] = "IND"
+    page.session_state["blocked_group_iso3"] = "IND"
     page.run()
 
     products = _products(page)
@@ -168,7 +300,7 @@ def test_the_chosen_markets_products_have_the_stated_columns_in_baseline_year_fi
     assert whisky["Product"] == "Whiskies" and whisky["Barrier"] == "No agreement, tariff 150%"
     assert [round(whisky[c], 1) for c in PRODUCT_COLUMNS[2:6]] == [38.1, 61.6, 80.0, 18.5]
     assert whisky["Tariff part"] == pytest.approx(7.4, abs=0.05)
-    assert any("India" in element.value and "2 Blocked Opportunities" in element.value for element in page.markdown)
+    assert any("**India**" in element.value and "2 Products" in element.value for element in page.markdown)
 
 
 def test_product_headings_carry_tooltips_in_the_glossarys_terms(monkeypatch, blocked_api_url):
@@ -187,7 +319,7 @@ def test_product_headings_carry_tooltips_in_the_glossarys_terms(monkeypatch, blo
 
 def test_a_pair_with_actual_exports_above_export_potential_is_marked(monkeypatch, blocked_api_url):
     page = _page(monkeypatch, blocked_api_url)
-    page.session_state["blocked_market"] = "HKG"
+    page.session_state["blocked_group_iso3"] = "HKG"
     page.run()
 
     products = _products(page)
@@ -199,7 +331,7 @@ def test_a_pair_with_actual_exports_above_export_potential_is_marked(monkeypatch
 def test_a_pair_with_no_room_to_grow_is_not_listed(monkeypatch, blocked_api_url):
     # Hong Kong: jewellery is listed; cars ($9.8m exported, above $4.3m + $1.1m with a Trade Agreement) are not.
     page = _page(monkeypatch, blocked_api_url)
-    page.session_state["blocked_market"] = "HKG"
+    page.session_state["blocked_group_iso3"] = "HKG"
     page.run()
 
     products = _products(page)
@@ -277,10 +409,20 @@ def test_the_markets_table_explains_its_totals_and_links_the_market_to_a_scenari
     assert link.proto.label == "Scenario Builder: a Trade Agreement with India"  # #150: names the page it opens
     assert link.proto.query_string == "add=IND"  # the Scenario Builder prefills it (`?add=`)
 
-    page.session_state["blocked_market"] = "HKG"
+    # Under the Markets table: after it, before the chosen Market's Products.
+    nodes = list(page.main)
+    tables = _layout_tables(page)
+    at = next(i for i, node in enumerate(nodes) if node.type == "page_link" and node.proto.page == "Scenario_Builder")
+    assert tables[0] < at < tables[1]
+
+    page.session_state["blocked_group_iso3"] = "HKG"
     page.run()
     [link] = [link for link in page.get("page_link") if link.proto.page == "Scenario_Builder"]
     assert "Hong Kong" in link.proto.label and link.proto.query_string == "add=HKG"
+
+    _view(page, "By Product")  # a Product's Markets are no one Scenario: no note or link
+    assert not [link for link in page.get("page_link") if link.proto.page == "Scenario_Builder"]
+    assert not [element for element in page.caption if "Scenario Effect" in element.value]
 
 
 # --- The panel: a neutral box, the before-and-after chart, the split, then the caveats ----------------------------
@@ -386,6 +528,15 @@ def test_no_export_gap_appears_anywhere_on_the_page(monkeypatch, blocked_api_url
 
     assert not page.exception
     assert [text for text in _texts(page) if "Export Gap" in text] == []
+
+
+@pytest.mark.parametrize("view", ["By Product", "Wide table"])
+def test_no_export_gap_appears_in_the_other_views(monkeypatch, blocked_api_url, view):
+    page = _view(_page(monkeypatch, blocked_api_url), view)
+
+    assert not page.exception
+    assert [text for text in _texts(page) if "Export Gap" in text] == []
+    assert not [text for text in _texts(page) if CAUSAL.search(text)]
 
 
 # --- Filters ----------------------------------------------------------------------------------------------------
@@ -542,14 +693,15 @@ def test_with_no_benchmark_or_event_backtests_the_note_keeps_the_label_and_says_
         assert note[part]["run"] is False and note[part]["text"] in text
 
 
-def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatch, blocked_api_url):
+def test_the_page_makes_one_read_and_one_for_the_chosen_market_and_states_the_thresholds(monkeypatch, blocked_api_url):
+    # Rewritten for spec #151: the right table is a second read with the chosen Market's filter.
     from app import client
 
-    paths = []
+    reads = []
     original = client.get
 
     def record(path, **params):
-        paths.append(path)
+        reads.append((path, params.get("market")))
         return original(path, **params)
 
     monkeypatch.setattr(client, "get", record)
@@ -557,7 +709,7 @@ def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatc
     page = _page(monkeypatch, blocked_api_url)
 
     assert not page.exception
-    assert paths.count("/opportunities/blocked") == 1
+    assert sorted(market or "" for path, market in reads if path == "/opportunities/blocked") == ["", "IND"]
     caption = " ".join(element.value for element in page.caption)
     assert "20%" in caption and "$1M" in caption
 

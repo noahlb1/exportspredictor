@@ -244,7 +244,7 @@ def test_the_blocked_page_shows_the_badge_on_an_offset_pair(monkeypatch, offset_
     csv = pd.read_csv(io.StringIO(offered[-1]), dtype={"HS6": str}, keep_default_na=False)
     caveats = {(row["HS6"], row["Market"]): row["Caveats"] for _, row in csv.iterrows()}
     assert caveats[(CARS, "Hong Kong")] == "Re-export Hub, Offset Pair"
-    page.session_state["blocked_market"] = "HKG"
+    page.session_state["blocked_group_iso3"] = "HKG"  # By Market: Hong Kong chosen, as a click does
     page.session_state["blocked_pair"] = (CARS, "HKG")
     page.run()
     assert OFFSET_PAIR.caveat_text(HONG_KONG_REASON) in [element.value for element in page.warning]

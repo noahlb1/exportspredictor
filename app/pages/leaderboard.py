@@ -3,29 +3,39 @@ table, so Advisors see the top Opportunities without searching. Its filters sit 
 (`app.filters`); a Product search or a Market filter ranks one Product's Markets or one Market's Products.
 
 One cached read of up to `read_limit()` rows per filter set: the page shows the top `ROWS_SHOWN` of them (all of them
-with Show all), and the CSV holds them all, in full dollars.
+with Show all), and the CSV holds them all, in full dollars, one row per pair. The same read serves the per-Market and
+per-Product totals over every filtered pair.
 
-Clicking any value of a row chooses its pair, remembered as (HS6, ISO3) under `PAIR`, and the detail panel
-(`app.panel`) explains it in place: beside a three-column table (Table and detail) or under the wide table (Wide
-table). Until a pair is chosen, or when the chosen pair is not among the rows shown, the top row is explained.
+The pairs are laid out by the shared view component (`app.views`). The page opens By Market: Markets on the left,
+each with its number of pairs and total positive Export Gap, largest first; the chosen Market's Products on the right,
+from a second cached read with the Market's filter (so every pair of the Market is listed even when the main read is
+capped), under the Market's Market Reach sentence. Clicking any value of a row chooses its Market or its pair, and the
+detail panel (`app.panel`) under both tables, at full page width, explains the chosen pair. Until one is clicked, the
+top Market and its top pair are chosen.
+
+By Product swaps the two: Products on the left with the same counts and totals, the chosen Product's Markets on the
+right from a read with the Product's filter. The Wide table lists every shown pair across the page in
+`LEADERBOARD_SHOWN`, the other columns hidden but offered. The chosen pair is kept across the three views wherever it
+is still shown, and each grouping keeps its own chosen group. The view is in the URL (`view=product` or `view=wide`;
+By Market is left out) and kept for the session; Reset filters leaves it, as it is not a filter.
 """
 
 import streamlit as st
 
 from app import client, panel
-from app.filters import leaderboard_filters, show_all, show_chips
+from app.filters import Filters, leaderboard_filters, show_all, show_chips
 from app.format import format_usd
 from app.frame import page
 from app.panel import MARKET_REACH_HELP
 from app.tables import (
     LEADERBOARD_FORMATS,
-    LEADERBOARD_NARROW,
+    LEADERBOARD_RIGHT,
     LEADERBOARD_SHOWN,
     leaderboard_columns,
     leaderboard_csv,
     leaderboard_frame,
     leaderboard_unit,
-    pick_row,
+    millions_unit,
 )
 from app.ui import (
     ROWS_SHOWN,
@@ -35,16 +45,17 @@ from app.ui import (
     rank_orders,
     read_limit,
 )
+from app.views import BY_MARKET, Grouping, Layout, show
 
-PAIR = "leaderboard_pair"  # the chosen pair, (HS6, ISO3)
-VIEW = "leaderboard_view"
-SPLIT, WIDE = "Table and detail", "Wide table"
 STEPS = "leaderboard_steps"  # whether the three steps are shown; closed with Got it for the browser session
 STEP_TEXTS = [
-    ("1 · Read the ranking.", "Each row is one Product in one Market. The largest Export Gap is at the top."),
     (
-        "2 · Open a row.",
-        "Click any value. The panel on the right shows which factors raised or lowered its Export Potential.",
+        "1 · Read the ranking.",
+        "Markets are on the left, the largest total positive Export Gap first. Click one to list its Products on the right.",
+    ),
+    (
+        "2 · Open a pair.",
+        "Click any Product. The panel below the tables shows which factors raised or lowered its Export Potential.",
     ),
     ("3 · Narrow it down.", "Use the filters on the left to keep one Sector, Market or Product."),
 ]
@@ -71,35 +82,47 @@ def _three_steps() -> None:
     columns[3].button("Got it", on_click=_set_steps, args=(False,), key="steps_close")
 
 
-def _table_and_panel(body: dict, rows: list[dict]) -> None:
-    """The view switch, the table, and the chosen pair's detail panel beside or under it."""
-    switch, unit = st.columns([2, 5], vertical_alignment="center")
-    with switch:
-        view = st.segmented_control(
-            "View", [SPLIT, WIDE], key=VIEW, default=SPLIT, required=True, label_visibility="collapsed",
-            persist_state="session",
-        )
-    unit.caption(leaderboard_unit(body) + " Click any value in a row to explain that pair.")
-    table, ids = leaderboard_frame(rows), [(row["hs6"], row["iso3"]) for row in rows]
-    config = leaderboard_columns(body)
-    if view == WIDE:
-        at = pick_row(
-            table, ids, key="leaderboard_wide", remembered=PAIR, formats=LEADERBOARD_FORMATS,
-            column_order=LEADERBOARD_SHOWN, column_config=config, height=390,
-        )
-        with st.container(border=True):
-            panel.show(rows[at])
-        return
-    table_side, panel_side = st.columns([5, 4], gap="large")
-    with table_side:
-        at = pick_row(
-            table[LEADERBOARD_NARROW], ids, key="leaderboard_narrow", remembered=PAIR, formats=LEADERBOARD_FORMATS,
-            column_config={name: config[name] for name in LEADERBOARD_NARROW}, height=700,
-        )
-    # A new key for each pair makes the panel a new element, so it starts from its top on a new selection.
-    with panel_side, st.container(border=True, height=780, key=f"leaderboard_panel_{ids[at][0]}_{ids[at][1]}"):
-        st.caption("↕ Scroll this panel for the facts, the factors and the year-by-year history.")
-        panel.show(rows[at])
+def _left_helps(body: dict) -> tuple[str, str]:
+    """The tooltips of the left table's two headings."""
+    return (
+        "Its UK Product–Market pairs under the filters.",
+        (
+            f"The sum of their positive Export Gaps, {body['gap_period_label']}, in {millions_unit()}: every pair "
+            "under the filters, as in the line above."
+        ),
+    )
+
+
+def _market_reach(grouping: Grouping, body: dict) -> None:
+    """Above the chosen Market's Products: its Market Reach sentence (ADR 0010)."""
+    if grouping.view == BY_MARKET and body.get("market_reach"):
+        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
+
+
+def _layout(filters: Filters) -> Layout:
+    """The Leaderboard's parts of the shared layout."""
+
+    def read_group(grouping: Grouping, code: str) -> dict:
+        params = {**filters.params, grouping.param: code}
+        return fetch("/opportunities/top", client.api_url(), **params, limit=read_limit())
+
+    return Layout(
+        page="leaderboard",
+        count="pairs",
+        total="positive_export_gap_usd",
+        count_heading="Pairs",
+        total_heading="Total positive Export Gap",
+        left_helps=_left_helps,
+        frame=leaderboard_frame,
+        columns=leaderboard_columns,
+        formats=LEADERBOARD_FORMATS,
+        right_columns=LEADERBOARD_RIGHT,
+        wide_columns=LEADERBOARD_SHOWN,
+        panel=panel.show,
+        read_group=read_group,
+        above_right=_market_reach,
+        url_param="view",
+    )
 
 
 with page(
@@ -141,13 +164,11 @@ with page(
             f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']} "
             f"{filters.hidden_note}"
         )
-        if body.get("market_reach"):  # a Market filter: the Market's reach beside its Products' Export Gaps (ADR 0010)
-            st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
         st.caption(labels()["totals_note"]["text"])  # beside the summed Export Gap (spec #113)
         if not rows:
             st.info("No Opportunities match these filters.")
         else:
-            _table_and_panel(body, rows)
+            show(_layout(filters), body, rows, leaderboard_unit(body) + " Click any value in a row to choose it.")
             flagged = [tier["text"] for tier in caveat_tiers() if any(row[tier["column"]] for row in read)]
             if flagged:
                 st.caption(" ".join(flagged) + " Use the hide filters to leave them out.")

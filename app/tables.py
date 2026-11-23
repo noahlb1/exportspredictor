@@ -25,7 +25,7 @@ MILLION = 1_000_000
 TINT = {"background-color": "rgba(42, 120, 214, 0.28)", "font-weight": "600"}
 # Pixels: a long Product name otherwise widens its column until the columns after it scroll out of sight.
 PRODUCT_WIDTH = 200
-MARKET_WIDTH = 90  # px, in the narrow Markets table of Blocked Opportunities
+MARKET_WIDTH = 90  # px, the Market column of a narrow table (`market_column`)
 # Pixels: Streamlit's table row height, and the height it gives a table with no `height` (about ten rows).
 ROW_HEIGHT, DEFAULT_TABLE_HEIGHT = 35, 400
 ONE_DECIMAL = "{:.1f}"  # how a $ millions or percent column reads in a `pick_row` table, as `money_column` does
@@ -122,6 +122,11 @@ def product_column() -> "st.column_config.TextColumn":
     return st.column_config.TextColumn("Product", help="The Product (HS6, 2012 edition).", width=PRODUCT_WIDTH)
 
 
+def market_column(width: int | None = MARKET_WIDTH) -> "st.column_config.TextColumn":
+    """Every table's Market column: `MARKET_WIDTH` wide in a narrow table, or Streamlit's own width (`None`)."""
+    return st.column_config.TextColumn("Market", help="The Market the UK exports to.", width=width)
+
+
 def millions(values: Iterable[float | None]) -> pd.Series:
     """Dollar amounts as $ millions, still numeric (missing stays missing), for a `money_column`."""
     return pd.Series(list(values), dtype="float64") / MILLION
@@ -167,7 +172,20 @@ LEADERBOARD_SHOWN = [
     "Caveats",
 ]
 LEADERBOARD_HIDDEN = ["Opportunity Type", "Potential Range", "HS6", "Sector", "Region"]
-LEADERBOARD_NARROW = ["Product", "Market", "Export Gap"]  # the table beside the detail panel
+# The right table of By Market and By Product (`app.views`): the figures that matter for a pair; the grouping's own
+# column (Market or Product) is left out.
+LEADERBOARD_RIGHT = [
+    "Product",
+    "Market",
+    "Export Gap",
+    "Export Potential",
+    "Actual Exports",
+    "Applied Tariff %",
+    "Relative Export Gap",
+    "UK Trade Agreement",
+    "Blocked Opportunity",
+    "Caveats",
+]
 # How each numeric column of `leaderboard_frame` reads in a `pick_row` table.
 LEADERBOARD_FORMATS: dict[str, str | Callable] = {
     "Export Gap": ONE_DECIMAL,
@@ -226,7 +244,7 @@ def leaderboard_columns(body: dict) -> dict:
     year, averaged = body["baseline_year"], body["gap_period_label"]
     return {
         "Product": product_column(),
-        "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to."),
+        "Market": market_column(width=None),
         "Export Gap": money_column("Export Gap", term("export_gap")),
         "Export Potential": money_column("Export Potential", term("export_potential")),
         "Actual Exports": money_column("Actual Exports", term("actual_exports")),
@@ -290,11 +308,9 @@ def leaderboard_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
     return pd.concat([table[columns], pd.DataFrame(dollars), table[rest]], axis=1)
 
 
-# The Blocked Opportunities page (spec #103, "Blocked Opportunities"; spec #133, the before and after): a Markets table
-# and the chosen Market's Products table, every figure for the Baseline year. The Export Gap is not on this page.
+# The Blocked Opportunities page (spec #103, "Blocked Opportunities"; spec #133, the before and after; spec #151, the
+# shared layout of `app.views`): every figure for the Baseline year. The Export Gap is not on this page.
 BLOCKED_FORMATS: dict[str, str | Callable] = {
-    "Blocked Opportunities": "{:,}",
-    "Total value": ONE_DECIMAL,
     "Actual Exports": ONE_DECIMAL,
     "Export Potential": ONE_DECIMAL,
     "With a Trade Agreement": ONE_DECIMAL,
@@ -304,33 +320,20 @@ BLOCKED_FORMATS: dict[str, str | Callable] = {
 }
 
 
-def blocked_markets_frame(markets: list[dict]) -> pd.DataFrame:
-    """The per-Market totals (`/opportunities/blocked` `markets`): Market, count and total value in $ millions."""
-    raw = pd.DataFrame(markets)
-    return pd.DataFrame(
-        {
-            "Market": raw["market"],
-            "Blocked Opportunities": raw["blocked_opportunities"],
-            "Total value": millions(raw["blocked_opportunity_value_usd"]),
-        }
-    )
-
-
-def blocked_markets_columns(body: dict) -> dict:
-    """The column config of `blocked_markets_frame`, with a tooltip on every heading."""
-    return {
-        "Market": st.column_config.TextColumn(
-            "Market", help="The Market the UK exports to.", width=MARKET_WIDTH
-        ),
-        "Blocked Opportunities": st.column_config.NumberColumn(
-            "Blocked Opportunities", help="The Market's Blocked Opportunities under the filters.", width="small"
-        ),
-        "Total value": money_column(
-            "Total value",
-            f"The sum of their Blocked Opportunity values, {body['baseline_year']}: the listed pairs only. "
-            f"{illustrative().capitalize()}.",
-        ),
-    }
+# The columns of `blocked_products_frame(rows, with_market=True)` the page shows: the Wide table shows them all; the
+# right table of By Market or By Product leaves out the one it is grouped by.
+BLOCKED_SHOWN = [
+    "Product",
+    "Market",
+    "Barrier",
+    "Actual Exports",
+    "Export Potential",
+    "With a Trade Agreement",
+    "Rise with agreement",
+    "Rise %",
+    "Tariff part",
+    "Above Export Potential",
+]
 
 
 def blocked_products_frame(rows: list[dict], *, with_market: bool = False) -> pd.DataFrame:
@@ -360,7 +363,7 @@ def blocked_products_columns(body: dict) -> dict:
     year, word = body["baseline_year"], illustrative().capitalize()
     return {
         "Product": product_column(),
-        "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to.", width=MARKET_WIDTH),
+        "Market": market_column(),
         "Barrier": st.column_config.TextColumn(
             "Barrier",
             help=f"What holds this pair's Export Potential down: no UK Trade Agreement is in force, with its {year} "

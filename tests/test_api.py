@@ -738,6 +738,40 @@ def test_leaderboard_filters_combine_and_limit_keeps_the_top_but_not_the_summary
     assert top["summary"] == _gap_summary(everything)  # the summary sizes every filtered pair
 
 
+def _group_totals(rows: list[dict], code: str, name: str) -> list[dict]:
+    """Each group's pair count and positive Export Gap from the pair rows, largest first, ties by name."""
+    groups: dict[str, dict] = {}
+    for row in rows:
+        group = groups.setdefault(row[code], {code: row[code], name: row[name], "pairs": 0, "positive_export_gap_usd": 0.0})
+        group["pairs"] += 1
+        group["positive_export_gap_usd"] += max(row["export_gap_usd"], 0)
+    return sorted(groups.values(), key=lambda group: (-group["positive_export_gap_usd"], group[name]))
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{}, {"region": "South Asia"}, {"product": "220830"}, {"market": "JPN"}, {"hide_hubs": True, "min_gap_usd": 0}],
+    ids=["all", "region", "product", "market", "hubs-and-min-gap"],
+)
+def test_leaderboard_market_and_product_totals_cover_every_filtered_pair_not_only_the_limit(client, params):
+    everything = _top(client, **params)["opportunities"]
+    body = _top(client, **params, limit=2)
+
+    for field, code, name in [("markets", "iso3", "market"), ("products", "hs6", "description")]:
+        expected = _group_totals(everything, code, name)
+        served = body[field]
+        assert [group[code] for group in served] == [group[code] for group in expected], field
+        for group, want in zip(served, expected, strict=True):
+            assert group == {**want, "positive_export_gap_usd": pytest.approx(want["positive_export_gap_usd"])}
+        assert sum(group["pairs"] for group in served) == body["summary"]["pairs"]
+        assert sum(group["positive_export_gap_usd"] for group in served) == pytest.approx(
+            body["summary"]["positive_export_gap_usd"]
+        )
+        totals = [group["positive_export_gap_usd"] for group in served]
+        assert totals == sorted(totals, reverse=True)
+    assert len(body["opportunities"]) == min(2, len(everything))
+
+
 def test_leaderboard_unknown_market_or_opportunity_type_is_rejected(client):
     assert client.get("/opportunities/top", params={"market": "XYZ"}).status_code == 404
     assert client.get("/opportunities/top", params={"opportunity_type": "Exotic"}).status_code == 422

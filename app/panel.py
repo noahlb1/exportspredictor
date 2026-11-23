@@ -8,9 +8,9 @@ The Leaderboard shows the whole panel with `show(row)`, in order:
 3. `from_facts(row, body)`: the rest, from the facts table on: the facts, the Market's Market Reach, the Barrier
    (only for a pair with no UK Trade Agreement), the factors and the year-by-year history.
 
-A Blocked Opportunity has its own panel, `blocked_opportunity(row)`, which the Blocked Opportunities page and the
-Scenario Builder both reach through `blocked_opportunities` (the Products table, then the chosen pair's panel), so a
-pair reads the same on both. It leads with a box naming the pair and its Barrier, then
+A Blocked Opportunity has its own panel, `blocked_opportunity(row)`, shared by the Blocked Opportunities page, which
+draws it under its tables through `app.views`, and the Scenario Builder, which reaches it through
+`blocked_opportunities` (the Products table, then the chosen pair's panel), so a pair reads the same on both. It leads with a box naming the pair and its Barrier, then
 `before_after`, the three-bar chart, and a sentence on the split, then `opening(row, body, titled=False,
 with_tariff_caveat=False)` (the page states the carried-forward tariff once, above its tables), then
 `from_facts(row, body, with_barrier=False, with_gap=False)`: without the facts its box and chart already give, and
@@ -91,8 +91,7 @@ def blocked_opportunity(row: dict) -> None:
 def blocked_opportunities(
     rows: list[dict], body: dict, *, key: str, remembered: str, noun: str, with_market: bool = False
 ) -> None:
-    """Blocked Opportunities as the Blocked Opportunities page lists them, there and on the Scenario Builder: the
-    Products table (`app.tables.blocked_products_frame`, with a Market column `with_market`), where clicking any value
+    """Blocked Opportunities as the Scenario Builder lists them: the Products table (`app.tables.blocked_products_frame`, with a Market column `with_market`), where clicking any value
     chooses a pair, remembered as (HS6, ISO3) under `remembered`, and under it the chosen pair's panel in a box, or,
     until one is chosen, a line saying to click a `noun` ("Product" or "pair"). `body` is the response holding the
     rows (it gives the Baseline year); `key` names the table."""

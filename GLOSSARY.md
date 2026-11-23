@@ -101,7 +101,7 @@ Export Gap divided by Export Potential: the share of an Opportunity's Export Pot
 _Avoid_: percentage gap, headroom ratio
 
 **Leaderboard**:
-Every UK Product–Market pair ranked by Export Gap (or Relative Export Gap), with the Advisor's filters and a summary of the filtered pairs. It is the app's home page; Blocked Opportunities are listed, grouped by Market, on a page of their own.
+Every UK Product–Market pair ranked by Export Gap (or Relative Export Gap), with the Advisor's filters and a summary of the filtered pairs. It is the app's home page; Blocked Opportunities are listed on a page of their own, laid out the same way. Its pairs are shown By Market (the default), By Product, or in a Wide table, with the chosen pair's detail panel underneath.
 _Avoid_: top list, dashboard, league table
 
 **Opportunity Type**:
@@ -121,7 +121,7 @@ A UK Product–Market pair with no Trade Agreement in force whose Export Potenti
 _Avoid_: hidden opportunity, latent demand
 
 **Blocked Opportunity value**:
-The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). It is the sum of its Tariff part and its Agreement part. The Blocked Opportunities page lists the Blocked Opportunities grouped by Market, ranked by it, apart from the Leaderboard, in Baseline-year figures; there, Baseline Export Potential plus the value is shown as Export Potential with a Trade Agreement, also Illustrative.
+The Scenario Effect the model associates with adding a Trade Agreement to a UK Product–Market pair that has none (zero where one exists). It is the sum of its Tariff part and its Agreement part. The Blocked Opportunities page lists the Blocked Opportunities by Market, by Product or in a Wide table, ranked by it, apart from the Leaderboard, in Baseline-year figures; there, Baseline Export Potential plus the value is shown as Export Potential with a Trade Agreement, also Illustrative.
 _Avoid_: blocked gap, unlock value
 
 **Tariff part**:

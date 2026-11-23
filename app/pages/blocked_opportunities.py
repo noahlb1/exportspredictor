@@ -1,87 +1,119 @@
-"""Blocked Opportunities: only the Blocked Opportunities, grouped by Market, as a before and after in Baseline-year
-figures (spec #103, spec #133, ADR 0011).
+"""Blocked Opportunities: only the Blocked Opportunities, as a before and after in Baseline-year figures (spec #103,
+spec #133, ADR 0011), By Market, By Product or in a Wide table (spec #151).
 
 A page of its own, apart from the Leaderboard, because a Blocked Opportunity is measured apart from the Export Gap:
 the missing Trade Agreement already holds its Export Potential down. The Export Gap does not appear here; every
 figure is for the Baseline year.
 
 One cached read (`/opportunities/blocked`) gives every filtered Blocked Opportunity (up to `app.ui.read_limit()`), in
-the order chosen in the sidebar (by the rise with agreement, or by Tariff part), with the summary, the per-Market totals
-and the fixed thresholds (ADR 0012). Every figure, the Barrier, both parts of the value and the sentence splitting it come from
-the API; the page computes and words none of them. Left, the Markets table, largest total first; clicking any value
-chooses a Market, remembered under `MARKET` (the top Market until one is chosen), with a note on why its total differs
-from a Scenario and a link to that Scenario. Right, the chosen Market's Products, and under it, once one is clicked
-(remembered as (HS6, ISO3) under `PAIR`), its panel (the table and the panel are `app.panel.blocked_opportunities`,
-shared with the Scenario Builder): a neutral box naming the pair and its
-Barrier, the three-bar before and after, one sentence on the split, its caveats, then the rest of the shared panel from
-its facts on. The
-carried-forward tariff caveat is stated once, under the summary, not again in the panel. Filters are
-`app.filters.blocked_filters`, kept apart from the Leaderboard's.
+the order chosen in the sidebar (by the rise with agreement, or by Tariff part), with the summary, the per-Market and
+per-Product totals and the fixed thresholds (ADR 0012). Every figure, the Barrier, both parts of the value and the
+sentence splitting it come from the API; the page computes and words none of them.
+
+The Blocked Opportunities are laid out by the shared view component (`app.views`), with the page's own view, kept in
+the URL as `view` and for the session apart from the Leaderboard's. The page opens By Market: Markets on the left, each
+with its number of Blocked Opportunities and total value (Illustrative), largest first, and under them a note on why a
+Market's total differs from a Scenario and a link to that Scenario; on the right the chosen Market's Products, from a
+second cached read with the Market's filter. By Product swaps them: Products on the left, the chosen Product's Markets
+on the right. The Wide table lists every Blocked Opportunity with its Product and Market. Clicking any value of a row
+chooses its group or its pair; until one is clicked, the top group and its top pair are chosen.
+
+Under the tables, at full page width, is the chosen pair's panel (`app.panel.blocked_opportunity`, shared with the
+Scenario Builder): a neutral box naming the pair and its Barrier, the three-bar before and after, one sentence on the
+split, its caveats, then the rest of the shared panel from its facts on. The carried-forward tariff caveat is stated
+once, under the summary, not again in the panel. Filters are `app.filters.blocked_filters`, kept apart from the
+Leaderboard's.
 """
 
 import streamlit as st
 
 from app import client, panel
-from app.filters import blocked_filters, show_chips
+from app.filters import Filters, blocked_filters, show_chips
 from app.format import format_usd
 from app.frame import page
 from app.tables import (
     BLOCKED_FORMATS,
+    BLOCKED_SHOWN,
     blocked_csv,
-    blocked_markets_columns,
-    blocked_markets_frame,
+    blocked_products_columns,
+    blocked_products_frame,
     millions_unit,
-    pick_row,
 )
 from app.ui import caveat_tiers, fetch, illustrative, labels, read_limit, scenario_note
+from app.views import BY_MARKET, Grouping, Layout, show
 
-MARKET = "blocked_market"  # the chosen Market, ISO3
-PAIR = "blocked_pair"  # the chosen Blocked Opportunity, (HS6, ISO3)
 SCENARIOS = "pages/scenarios.py"
 
 
-def _markets_and_products(body: dict, rows: list[dict]) -> None:
-    """The Markets table with its note and Scenario link, and beside it the chosen Market's line, its Products table
-    and, once one is clicked, the chosen Product's panel."""
-    markets = body["markets"]
-    left, right = st.columns([1, 2], gap="large")
-    with left:
-        at = pick_row(
-            blocked_markets_frame(markets), [market["iso3"] for market in markets], key="blocked_markets",
-            remembered=MARKET, formats=BLOCKED_FORMATS, column_config=blocked_markets_columns(body),
-        )
-        market = markets[at]
-        st.caption(
-            "A Market's total sums only its listed Blocked Opportunities. A Scenario adding a Trade Agreement with "
-            "the Market covers every pair, so its Scenario Effect on the Scenario Builder differs."
-        )
-        st.page_link(
-            SCENARIOS,
-            label=f"Scenario Builder: a Trade Agreement with {market['market']}",
-            icon=":material/arrow_forward:",
-            query_params={"add": market["iso3"]},
-        )
-    products = [row for row in rows if row["iso3"] == market["iso3"]]
-    with right:
-        count = market["blocked_opportunities"]
-        st.markdown(
-            f"**{market['market']}**: {count:,} Blocked Opportunit{'y' if count == 1 else 'ies'}, total "
-            f"{format_usd(market['blocked_opportunity_value_usd'])} ({illustrative()})."
-        )
-        panel.blocked_opportunities(
-            products, body, key=f"blocked_products_{market['iso3']}", remembered=PAIR, noun="Product"
-        )
+def _left_helps(body: dict) -> tuple[str, str]:
+    """The tooltips of the left table's two headings."""
+    return (
+        "Its Blocked Opportunities under the filters.",
+        (
+            f"The sum of their Blocked Opportunity values, {body['baseline_year']}, in {millions_unit()}: only its "
+            f"Blocked Opportunities, every one under the filters. {illustrative().capitalize()}."
+        ),
+    )
+
+
+def _group_total(grouping: Grouping, body: dict) -> None:
+    """Above the chosen group's pairs: their total value, Illustrative, from the group read's summary."""
+    del grouping
+    st.markdown(f"Total value, {illustrative()}: {format_usd(body['summary']['blocked_opportunity_value_usd'])}.")
+
+
+def _scenario_link(grouping: Grouping, code: str, name: str) -> None:
+    """Under the Markets table: why a Market's total differs from a Scenario, and a link to that Scenario."""
+    if grouping.view != BY_MARKET:
+        return
+    st.caption(
+        "A Market's total sums only its listed Blocked Opportunities. A Scenario adding a Trade Agreement with "
+        "the Market covers every pair, so its Scenario Effect on the Scenario Builder differs."
+    )
+    st.page_link(
+        SCENARIOS,
+        label=f"Scenario Builder: a Trade Agreement with {name}",
+        icon=":material/arrow_forward:",
+        query_params={"add": code},
+    )
+
+
+def _layout(filters: Filters) -> Layout:
+    """The Blocked Opportunities page's parts of the shared layout."""
+
+    def read_group(grouping: Grouping, code: str) -> dict:
+        params = {**filters.params, grouping.param: code}
+        return fetch("/opportunities/blocked", client.api_url(), **params, limit=read_limit())
+
+    return Layout(
+        page="blocked",
+        count="blocked_opportunities",
+        total="blocked_opportunity_value_usd",
+        count_heading="Blocked Opportunities",
+        total_heading=f"Total value, {illustrative()}",
+        left_helps=_left_helps,
+        frame=lambda rows: blocked_products_frame(rows, with_market=True),
+        columns=blocked_products_columns,
+        formats=BLOCKED_FORMATS,
+        right_columns=BLOCKED_SHOWN,
+        wide_columns=BLOCKED_SHOWN,
+        panel=panel.blocked_opportunity,
+        read_group=read_group,
+        above_right=_group_total,
+        under_left=_scenario_link,
+        url_param="view",
+    )
 
 
 with page(
     "Blocked Opportunities",
     "UK Product–Market pairs with no UK Trade Agreement in force where the model associates adding one with a "
-    "material rise in Export Potential, grouped by Market.",
+    "material rise in Export Potential, by Market or by Product.",
 ):
     st.markdown(
         "A missing Trade Agreement is a Barrier the model has learned to associate with lower Export Potential. These "
-        "pairs point to trade-policy work rather than export promotion. Click a Market to list its Blocked "
-        "Opportunities, and a Product to see its before and after."
+        "pairs point to trade-policy work rather than export promotion. Click a Market or a Product to list its "
+        "Blocked Opportunities, and any one of them to see its before and after below."
     )
     try:
         filters = blocked_filters()
@@ -114,7 +146,7 @@ with page(
         if not rows:
             st.info("No Blocked Opportunities match these filters.")
         else:
-            _markets_and_products(body, rows)
+            show(_layout(filters), body, rows, "Click any value in a row to choose it.")
             flagged = [tier["text"] for tier in caveat_tiers() if any(row[tier["column"]] for row in rows)]
             if flagged:
                 st.caption(" ".join(flagged) + " Use the hide filters to leave them out.")
