@@ -246,7 +246,7 @@ def test_blocked_values_remove_the_tariff_with_the_agreement(fixture_artefacts):
     assert blocked["blocked_opportunity_value_usd"].to_list() == pytest.approx(blocked["effect_usd"].to_list())
 
 
-def test_a_scenarios_blocked_opportunities_need_room_to_grow_against_its_export_potential(fixture_artefacts):
+def test_with_blocked_opportunity_flag_needs_room_to_grow_against_scenario_export_potential(fixture_artefacts):
     result = scenarios.run(
         fixture_artefacts.baseline_features,
         fixture_artefacts.baseline,

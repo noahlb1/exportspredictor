@@ -413,11 +413,9 @@ def preset_scenarios(bundle: Artefacts, results: Mapping[str, scenarios.Scenario
     names = dict(bundle.markets.select("iso3", "name").iter_rows())
     rows = []
     for name, result in results.items():
-        blocked = (
-            rankings.blocked_opportunities(bundle, markets=result.added_agreements).summary
-            if result.adds_agreement
-            else {"blocked_opportunities": None, "blocked_opportunity_value_usd": None}
-        )
+        blocked = rankings.blocked_opportunities(bundle, markets=result.added_agreements).summary
+        if not result.adds_agreement:
+            blocked = dict.fromkeys(blocked)  # the one source's summary keys, null not 0 (ADR 0012)
         rows.append({
             "preset": scenarios.PRESETS[name].title,
             "pairs_changed": result.pairs.height,
