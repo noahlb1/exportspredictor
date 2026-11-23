@@ -202,7 +202,7 @@ def test_short_headings_carry_tooltips(monkeypatch, api_url):
     page = _run_india(monkeypatch, api_url)
 
     pairs = page.dataframe[DRILL_DOWN]
-    assert list(pairs.value.columns)[0] == "Product"
+    assert pairs.value.columns[0] == "Product"
     for heading in (
         "Scenario Effect", "Effect, % of Baseline", "Baseline", "Scenario", "Tariff, Baseline %", "Tariff, Scenario %",
     ):
