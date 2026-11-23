@@ -7,7 +7,7 @@ figure is for the Baseline year.
 
 One cached read (`/opportunities/blocked`) gives every filtered Blocked Opportunity (up to `app.ui.read_limit()`), in
 the order chosen in the sidebar (by the rise with agreement, or by Tariff part), with the summary, the per-Market totals
-and the default thresholds. Every figure, the Barrier, both parts of the value and the sentence splitting it come from
+and the fixed thresholds (ADR 0012). Every figure, the Barrier, both parts of the value and the sentence splitting it come from
 the API; the page computes and words none of them. Left, the Markets table, largest total first; clicking any value
 chooses a Market, remembered under `MARKET` (the top Market until one is chosen), with a note on why its total differs
 from a Scenario and a link to that Scenario. Right, the chosen Market's Products, and under it, once one is clicked
@@ -140,7 +140,7 @@ with page(
             "pair with no UK Trade Agreement in force. A pair is a Blocked Opportunity when that value is at least "
             f"{thresholds['min_effect_share']:.0%} of its {year} Export Potential and at least "
             f"{format_usd(thresholds['min_effect_usd'])}, and it has room to grow: its {year} Actual Exports are below "
-            "its Export Potential with a Trade Agreement. Try other thresholds on the Scenarios page. "
+            "its Export Potential with a Trade Agreement. "
             f"{labels()['totals_note']['text']} {filters.hidden_note}"
         )
         st.caption(labels()["trade_agreement_meaning"])

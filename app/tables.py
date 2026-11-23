@@ -247,7 +247,7 @@ def leaderboard_columns(body: dict) -> dict:
             f"{illustrative().capitalize()}.",
         ),
         "Blocked Opportunity": st.column_config.CheckboxColumn(
-            "Blocked Opportunity", help="The Blocked Opportunity value clears the default thresholds."
+            "Blocked Opportunity", help="The Blocked Opportunity value clears the fixed thresholds."
         ),
         "Caveats": caveats_column(),
         "Opportunity Type": st.column_config.TextColumn("Opportunity Type", help=term("opportunity_type")),

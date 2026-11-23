@@ -556,10 +556,27 @@ def test_the_page_makes_one_read_and_states_the_thresholds_it_carries(monkeypatc
     page = _page(monkeypatch, blocked_api_url)
 
     assert not page.exception
-    assert "/scenarios/thresholds" not in paths
     assert paths.count("/opportunities/blocked") == 1
     caption = " ".join(element.value for element in page.caption)
     assert "20%" in caption and "$1.0m" in caption
+
+
+def test_the_page_sends_no_one_to_try_other_thresholds(monkeypatch, blocked_api_url):
+    # The thresholds are fixed (ADR 0012): there are no other thresholds to try.
+    page = _page(monkeypatch, blocked_api_url)
+
+    assert not page.exception
+    assert "Try other thresholds" not in " ".join(_texts(page))
+
+
+def test_the_minimum_value_filter_reads_as_a_filter_on_the_list(monkeypatch, blocked_api_url):
+    # Worded so it isn't taken for the fixed thresholds: it only narrows the list shown.
+    page = _page(monkeypatch, blocked_api_url)
+
+    minimum = page.sidebar.number_input(key="blocked_min_value_usd")
+    assert minimum.label.startswith("Show only pairs worth at least")
+    assert "threshold" not in minimum.label.lower()
+    assert "only narrows the list" in minimum.help and "fixed" in minimum.help
 
 
 def test_the_tariff_carried_forward_caveat_is_shown_once_with_a_pair_chosen(monkeypatch, blocked_api_url):

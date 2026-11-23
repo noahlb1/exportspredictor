@@ -67,8 +67,9 @@ FORMATS = {
 }
 
 
-def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str, str], defaults: dict) -> dict:
-    """The Scenario controls; returns the request body they describe."""
+def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str, str]) -> dict:
+    """The Scenario controls; returns the request body they describe. There are no threshold controls: the Blocked
+    Opportunity thresholds are fixed (ADR 0012)."""
     preset_info = {preset["name"]: preset for preset in presets}
     kind = st.radio("Scenario", [PRESET, CUSTOM, TARIFF], key="kind", horizontal=True)
     if kind == PRESET:
@@ -105,24 +106,7 @@ def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str
             "Remove the Trade Agreement with", list(market_names), format_func=market_names.get, key="remove"
         )
         body = {"add_agreements": add, "remove_agreements": remove}
-
-    st.markdown("**Blocked Opportunity thresholds**: a pair counts when its Scenario Effect clears both.")
-    left, right = st.columns(2)
-    min_share = left.number_input(
-        "Minimum Scenario Effect, % of Baseline Export Potential",
-        min_value=0.0,
-        value=defaults["min_effect_share"] * 100,
-        step=5.0,
-        key="min_share",
-    )
-    min_usd = right.number_input(
-        "Minimum Scenario Effect, USD million",
-        min_value=0.0,
-        value=defaults["min_effect_usd"] / 1e6,
-        step=0.5,
-        key="min_usd",
-    )
-    return body | {"min_effect_share": min_share / 100, "min_effect_usd": min_usd * 1e6, "limit": ROWS}
+    return body | {"limit": ROWS}
 
 
 def prefill(market_names: dict[str, str]) -> None:
@@ -307,10 +291,11 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     st.dataframe(product_table, hide_index=True, column_config=config)
 
     st.subheader("Blocked Opportunities")
+    thresholds = result["thresholds"]
     st.caption(
-        f"{result['blocked_count']:,} pairs have a Scenario Effect of at least "
-        f"{result['thresholds']['min_effect_share']:.0%} of Baseline Export Potential and at least "
-        f"{format_usd(result['thresholds']['min_effect_usd'])}, and room to grow: {year} Actual Exports below their "
+        f"{result['blocked_count']:,} pairs are Blocked Opportunities under the fixed rule: a Scenario Effect of at "
+        f"least {thresholds['min_effect_share']:.0%} of Baseline Export Potential and at least "
+        f"{format_usd(thresholds['min_effect_usd'])}, and room to grow: {year} Actual Exports below their "
         f"Scenario Export Potential. The largest {ROWS} are listed."
     )
     blocked_key = f"blocked_{run_key}"
@@ -325,7 +310,6 @@ with page(
         presets = fetch("/scenarios/presets", client.api_url())
         markets = fetch("/markets", client.api_url())
         sectors = {sector["code"]: sector["name"] for sector in fetch("/sectors", client.api_url())}
-        defaults = fetch("/scenarios/thresholds", client.api_url())
     except client.ApiUnavailable as error:
         st.error(f"The API is unavailable: {error}")
         st.stop()
@@ -334,7 +318,7 @@ with page(
     st.caption(labels()["trade_agreement_meaning"])
 
     with st.container(border=True):
-        body_json = json.dumps(builder(presets, market_names, sectors, defaults), sort_keys=True)
+        body_json = json.dumps(builder(presets, market_names, sectors), sort_keys=True)
         st.button("Run Scenario", key="run", type="primary", on_click=run, args=(body_json,))
 
     shown = st.session_state.get("scenario_body")
