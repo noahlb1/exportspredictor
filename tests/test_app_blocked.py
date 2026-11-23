@@ -581,3 +581,29 @@ def test_the_order_choices_are_the_apis_blocked_orders(monkeypatch, blocked_api_
     order = page.sidebar.radio(key="blocked_rank_by")
     assert order.options == [entry["title"] for entry in orders]
     assert all(entry["description"] in order.proto.help for entry in orders)
+
+
+# --- The panel as the shared panel module's function (spec #142: the Scenario Builder calls it too) ---------------
+
+
+def _render_blocked_panel(hs6: str, iso3: str) -> None:
+    """A script for AppTest: one Blocked Opportunity's panel, drawn by the shared panel module alone."""
+    import httpx
+
+    from app import client, panel
+
+    rows = httpx.get(f"{client.api_url()}/opportunities/blocked").json()["opportunities"]
+    [row] = [row for row in rows if (row["hs6"], row["iso3"]) == (hs6, iso3)]
+    panel.blocked_opportunity(row)
+
+
+def test_the_shared_panel_module_draws_a_blocked_opportunitys_panel_on_its_own(monkeypatch, blocked_api_url):
+    monkeypatch.setenv("EXPORTSPREDICTOR_API_URL", blocked_api_url)
+    page = AppTest.from_function(_render_blocked_panel, args=(WHISKY, "IND"), default_timeout=30).run()
+
+    assert not page.exception
+    [box] = [box for box in page.info if "Whiskies → India" in box.value]
+    assert "No agreement, tariff 150%" in box.value
+    [before_after] = [chart for chart in _charts(page) if "figure" in chart.columns]
+    assert list(before_after["text"]) == ["$38.1m", "$61.6m", "$80.0m"]
+    assert any("$7.4m" in element.value and "Tariff part" in element.value for element in page.markdown)
