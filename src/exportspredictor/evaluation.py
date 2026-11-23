@@ -933,7 +933,7 @@ def relabelled(report: dict) -> dict:
         worded = headline({f"model_{HEADLINE_METRIC}": saved["model"], f"naive_{HEADLINE_METRIC}": saved["naive"]},
                           report["test_year"])
         report = {**report, "headline": {**saved, "text": worded["text"]}}
-    report = _with_nested_size_matched_lift(report)
+    report = _with_served_uk_pair_coverage(_with_nested_size_matched_lift(report))
     block = report.get("earlier_versions")
     if not block:
         return report
@@ -956,6 +956,21 @@ def _with_nested_size_matched_lift(report: dict) -> dict:
     nested = {"with": lift["with"], "without": lift["without"],
               "size_matched": {"with": lift["size_matched_with"], "without": lift["size_matched_without"]}}
     return {**report, "market_reach_effect": {**effect, "lift": nested}}
+
+
+def _with_served_uk_pair_coverage(report: dict) -> dict:
+    """`market_reach_effect` with the Potential Range's UK-pair coverage the report serves, worded again. `rereach`
+    rewrites the Potential Range's figure for the corrected Market Reach but not the block saved with the test-year
+    read, so a card would state both (#162). The test-year figures stay as saved."""
+    effect = report.get("market_reach_effect")
+    served = (report.get("potential_range") or {}).get("uk_pair_coverage")
+    if not effect or "uk_pair_coverage" not in effect or not served:
+        return report
+    coverage = {"with": served["with_market_reach"], "without": served["without_market_reach"]}
+    if coverage["without"] is None:
+        coverage["without"] = effect["uk_pair_coverage"]["without"]
+    block = {key: value for key, value in effect.items() if key != "text"} | {"uk_pair_coverage": coverage}
+    return {**report, "market_reach_effect": {**block, "text": market_reach_effect_text(block, report["test_year"])}}
 
 
 def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STABILITY_TOP_N) -> dict:

@@ -148,9 +148,10 @@ def large_markets_by_version(bundle: Artefacts) -> pl.DataFrame | NotRun:
 
 
 def market_reach_effect(bundle: Artefacts) -> str:
-    """What Market Reach changes on the test year (`evaluation.market_reach_effect`), as saved, or the line saying
-    it was not run for a version without Market Reach."""
-    effect = (bundle.evaluation or {}).get("market_reach_effect")
+    """What Market Reach changes on the test year (`evaluation.market_reach_effect`), as saved and read by
+    `evaluation.relabelled` (the served UK-pair coverage), or the line saying it was not run for a version without
+    Market Reach."""
+    effect = relabelled(bundle.evaluation or {}).get("market_reach_effect")
     return repr(NotRun("Market Reach")) if effect is None else effect["text"]
 
 
