@@ -238,7 +238,7 @@ def test_the_active_filters_line_states_the_count_and_the_illustrative_total(mon
     # 18.5 + 7.1 + 5.1 = $30.7m
     assert "3 Blocked Opportunities" in line and "illustrative" in line and "$30.7m" in line
     caption = " ".join(element.value for element in page.caption)
-    assert "$ millions" in caption and "2024" in caption and "Scenarios page" in caption
+    assert "$ millions" in caption and "2024" in caption and "Scenario Builder" in caption
     assert "20%" in caption and "$1.0m" in caption
     # Spec #113 "Totals understate": the note beside the summed values, with the share the artefact records.
     note = httpx.get(f"{blocked_api_url}/labels").json()["totals_note"]["text"]
@@ -272,13 +272,13 @@ def test_the_markets_table_explains_its_totals_and_links_the_market_to_a_scenari
 
     note = next(element.value for element in page.caption if "Scenario Effect" in element.value)
     assert "only" in note and "every pair" in note
-    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenarios"]
-    assert "Trade Agreement with India" in link.proto.label
-    assert link.proto.query_string == "add=IND"  # the Scenarios page prefills it (`?add=`)
+    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenario_Builder"]
+    assert link.proto.label == "Scenario Builder: a Trade Agreement with India"  # #150: names the page it opens
+    assert link.proto.query_string == "add=IND"  # the Scenario Builder prefills it (`?add=`)
 
     page.session_state["blocked_market"] = "HKG"
     page.run()
-    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenarios"]
+    [link] = [link for link in page.get("page_link") if link.proto.page == "Scenario_Builder"]
     assert "Hong Kong" in link.proto.label and link.proto.query_string == "add=HKG"
 
 

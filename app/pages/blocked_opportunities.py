@@ -55,11 +55,11 @@ def _markets_and_products(body: dict, rows: list[dict]) -> None:
         market = markets[at]
         st.caption(
             "A Market's total sums only its listed Blocked Opportunities. A Scenario adding a Trade Agreement with "
-            "the Market covers every pair, so its Scenario Effect on the Scenarios page differs."
+            "the Market covers every pair, so its Scenario Effect on the Scenario Builder differs."
         )
         st.page_link(
             SCENARIOS,
-            label=f"Scenario: a Trade Agreement with {market['market']}",
+            label=f"Scenario Builder: a Trade Agreement with {market['market']}",
             icon=":material/arrow_forward:",
             query_params={"add": market["iso3"]},
         )

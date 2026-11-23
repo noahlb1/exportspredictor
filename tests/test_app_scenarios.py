@@ -1,4 +1,4 @@
-"""The Streamlit Scenarios page, run with AppTest against a live API on fixture artefacts.
+"""The Streamlit Scenario Builder, run with AppTest against a live API on fixture artefacts.
 
 The fixture Baseline (2024) has UK Trade Agreements with Japan and Canada, none with India.
 
@@ -610,6 +610,14 @@ def test_the_page_says_what_a_trade_agreement_means_before_a_run(monkeypatch, ap
     page = _scenarios_page(monkeypatch, api_url)
 
     assert any(meaning in element.value for element in page.caption)
+
+
+def test_the_subtitle_starts_with_what_the_advisor_does(monkeypatch, api_url):
+    # #150 (F13): the Advisor builds their own Scenario rather than picking one from a list.
+    page = _scenarios_page(monkeypatch, api_url)
+
+    assert page.header[0].value == "Scenario Builder"
+    assert page.markdown[0].value.startswith("Build a Scenario (a Trading Bloc preset, ")
 
 
 def test_a_link_with_add_prefills_a_trade_agreement_with_that_market(open_page, api_url):

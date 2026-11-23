@@ -1,16 +1,16 @@
 # Blocked Opportunities have one source and fixed thresholds
 
-Decided in the review of the Scenarios page ([#139](https://github.com/noahlb1/exportspredictor/issues/139), finding F2) and built in spec [#142](https://github.com/noahlb1/exportspredictor/issues/142). It keeps [ADR 0011](0011-blocked-opportunities-need-room-to-grow-and-split-the-value.md) in force: room to grow and the split of the value into a Tariff part and an Agreement part are unchanged.
+Decided in the review of the page now called the Scenario Builder ([#139](https://github.com/noahlb1/exportspredictor/issues/139), finding F2) and built in spec [#142](https://github.com/noahlb1/exportspredictor/issues/142). It keeps [ADR 0011](0011-blocked-opportunities-need-room-to-grow-and-split-the-value.md) in force: room to grow and the split of the value into a Tariff part and an Agreement part are unchanged.
 
 ## Fixed thresholds
 
 A pair is a Blocked Opportunity when its Blocked Opportunity value is at least **20% of its Baseline Export Potential** and at least **$1M**, and it has room to grow (ADR 0011). The two thresholds are constants of `exportspredictor.scenarios` (`BLOCKED_MIN_SHARE`, `BLOCKED_MIN_USD`), the values the artefact metadata already records, and nobody can change them:
 
-- the Scenarios page has no threshold inputs;
+- the Scenario Builder has no threshold inputs;
 - `POST /scenarios` refuses `min_effect_share` and `min_effect_usd` (422), and `GET /scenarios/thresholds` is gone;
 - every response that applies the rule still states it in `thresholds`, so prose can say "20% and $1M".
 
-Until now an Advisor could change the thresholds on the Scenarios page, so the same pair could be a Blocked Opportunity on one page and not on the other. At 0% / $0, adding a Trade Agreement with the USA gave 4,381 Blocked Opportunities; the Blocked Opportunities page, at 20% / $1M, gave 1,340. One rule everywhere means a pair an Advisor finds on one page is a Blocked Opportunity on the other.
+Until now an Advisor could change the thresholds on the Scenario Builder, so the same pair could be a Blocked Opportunity on one page and not on the other. At 0% / $0, adding a Trade Agreement with the USA gave 4,381 Blocked Opportunities; the Blocked Opportunities page, at 20% / $1M, gave 1,340. One rule everywhere means a pair an Advisor finds on one page is a Blocked Opportunity on the other.
 
 ### Considered options
 
@@ -40,7 +40,7 @@ A Scenario **adds an agreement** for a Market when it turns the Trade Agreement 
 
 ### Why a Scenario lists figures that are not its own Scenario Effects
 
-Until now the Scenarios page applied `is_blocked` to whatever Scenario it ran, so it called pairs Blocked Opportunities that the glossary would not: 4,734 for EU re-join, though every EU Market already has a UK Trade Agreement; 2,223 for EU Customs Union only, which adds none; and 10 for a 10% tariff on the USA, pairs whose tariff that Scenario lowers. Restricting the rule to Scenarios that add an agreement, and reading the rows from the precomputed table, means a pair is a Blocked Opportunity on the Scenario Builder exactly when it is one on the Blocked Opportunities page, with the same value, Tariff part and Agreement part. A test at the API checks this for India.
+Until now the Scenario Builder applied `is_blocked` to whatever Scenario it ran, so it called pairs Blocked Opportunities that the glossary would not: 4,734 for EU re-join, though every EU Market already has a UK Trade Agreement; 2,223 for EU Customs Union only, which adds none; and 10 for a 10% tariff on the USA, pairs whose tariff that Scenario lowers. Restricting the rule to Scenarios that add an agreement, and reading the rows from the precomputed table, means a pair is a Blocked Opportunity on the Scenario Builder exactly when it is one on the Blocked Opportunities page, with the same value, Tariff part and Agreement part. A test at the API checks this for India.
 
 For a custom addition nothing changes in the figures: the review found the same count, and a $0 maximum difference over the top 100 pairs, for the USA, China, India, the UAE, Saudi Arabia and Indonesia. A custom addition sets exactly what the Blocked Opportunity value sets, the Trade Agreement flag and a known Applied Tariff to 0, so the two are the same re-prediction.
 

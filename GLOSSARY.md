@@ -208,6 +208,10 @@ _Avoid_: what-if, shock, simulation
 The change in Export Potential between the Baseline and a Scenario.
 _Avoid_: impact, uplift
 
+**Scenario Builder**:
+The app page where an Advisor builds a Scenario (a Trading Bloc preset, Trade Agreements added or removed, or a tariff change) and sees the Scenario Effect the model associates with it. Its name says the Advisor builds their own Scenario rather than picking one from a list.
+_Avoid_: what-if tool, scenario simulator
+
 **Illustrative**:
 How every Scenario Effect and Blocked Opportunity value is shown: an upper-end association the model has learned, beside its benchmarks (the PPML benchmark, the model's own Trade Agreement association and the Event Backtest result), never a forecast and never selected on (ADR 0008).
 _Avoid_: indicative, estimated, projected

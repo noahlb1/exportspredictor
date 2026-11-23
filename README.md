@@ -94,7 +94,7 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 Run this before a release, against `podman compose up` with real artefacts, in a browser window 1280 px wide or wider (the app is designed for 1280 px and wider; phones are unsupported). Each item names its page and what to click. Tick each item.
 
 **UK Exports Predictor (every page)**
-- [ ] The menu lists four pages, Leaderboard, Blocked Opportunities, Scenarios and Model Evaluation, with no group headings, and the app opens on the Leaderboard.
+- [ ] The menu lists four pages, Leaderboard, Blocked Opportunities, Scenario Builder and Model Evaluation, with no group headings, and the app opens on the Leaderboard.
 - [ ] The logo tile (a white container ship on a blue square) sits alone at the top of the sidebar, shows in a collapsed sidebar, and is the browser-tab icon.
 - [ ] The app follows the computer's light or dark mode: in light mode, near-black text on a light page with a sidebar that stands apart; in dark mode, light text on a warm near-black page. Check captions, charts and the info, warning and error boxes in both.
 - [ ] Click something slow (e.g. a filter on the real Leaderboard): after a short delay the logo's ship rides the waves in the middle of the page until the app is done.
@@ -142,7 +142,8 @@ Run this before a release, against `podman compose up` with real artefacts, in a
 - [ ] Every caption describes the value as what the model associates with adding a Trade Agreement, not as a cause or a forecast.
 - [ ] Export the CSV and open it: every filtered Blocked Opportunity, across all Markets, in full dollars.
 
-**Scenarios**
+**Scenario Builder**
+- [ ] The menu item reads "Scenario Builder" and opens the page at `/Scenario_Builder`; the subtitle starts with "Build a Scenario". On the Blocked Opportunities page, choose India and click "Scenario Builder: a Trade Agreement with India": the builder opens with Custom Trade Agreements adding India, not yet run.
 - [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds. The summary sentence frames the result as an association and states no figure; the metrics beside it state the Scenario Effect and its share of Baseline once each, then come the change per Market and the top Products gaining. No caption under the summary repeats the association caveat.
 - [ ] Run the CPTPP preset: it shows a non-zero Scenario Effect (the 2024 Baseline has no UK CPTPP membership).
 - [ ] Add a Trade Agreement with the USA: the Blocked Opportunities metric and section show the same count and figures as the Blocked Opportunities page for the USA, in that page's Products table with a Market column, under the fixed rule (20% and $1M) the caption states. The caption says Sanctioned Markets, Restricted Pairs and Offset Pairs are hidden, links to the Blocked Opportunities page with them shown, and explains why the Scenario Effect (+$18.2bn) differs from the Market's Blocked Opportunity total ($13.1bn). Clicking a pair opens the Blocked Opportunities page's before/after panel. The builder has no threshold inputs.
