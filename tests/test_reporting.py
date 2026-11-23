@@ -9,8 +9,10 @@ from html import escape
 
 import polars as pl
 import pytest
+from fastapi.testclient import TestClient
 
-from exportspredictor import reporting
+from api.main import create_app
+from exportspredictor import reporting, scenarios
 from exportspredictor.caveats import CaveatContext, with_caveat_columns
 from exportspredictor.exclusions import SECTOR_71_REASON
 from exportspredictor.volatility import ONE_OFF_REASON, VOLATILE_REASON
@@ -408,3 +410,63 @@ def test_an_artefact_without_blocked_opportunities_has_an_empty_split_and_variat
     assert everything["blocked_opportunities"] == 0 and everything["value_usd"] == 0
     assert reporting.agreement_part_variation(fixture_artefacts).is_empty()
     assert reporting.agreement_part_variation_chart(fixture_artefacts).data.is_empty()
+
+
+# --- The Trading Bloc presets: the Markets each adds a Trade Agreement with and their Blocked Opportunities (#157) --
+
+
+@pytest.fixture(scope="module")
+def india_in_cptpp(blocked_artefacts):
+    """The Blocked world with India a CPTPP member, so the CPTPP preset adds a Trade Agreement with India (Japan and
+    Canada, the other members, already have one). No Market is an EU member, so the EU presets change nothing."""
+    features = blocked_artefacts.baseline_features
+    cptpp = features.with_columns(
+        pl.when(pl.col("iso3") == "IND").then(1).otherwise(pl.col("cptpp_d")).cast(features.schema["cptpp_d"])
+        .alias("cptpp_d")
+    )
+    return replace(blocked_artefacts, baseline_features=cptpp)
+
+
+def _preset_results(bundle, names):
+    return {
+        name: scenarios.run(
+            bundle.baseline_features, bundle.baseline, bundle.fold_models, scenarios.Scenario(preset=name),
+            form=bundle.model_form,
+        )
+        for name in names
+    }
+
+
+def test_a_preset_adding_an_agreement_shows_the_precomputed_blocked_opportunities_of_that_market(
+    india_in_cptpp, blocked_artefacts_dir
+):
+    table = reporting.preset_scenarios(india_in_cptpp, _preset_results(india_in_cptpp, ["cptpp"]))
+    [cptpp] = table.iter_rows(named=True)
+    with TestClient(create_app(blocked_artefacts_dir)) as client:
+        served = client.get("/opportunities/blocked", params={"market": "IND"}).json()["summary"]
+
+    assert cptpp["preset"] == "CPTPP"
+    assert cptpp["pairs_changed"] > 0
+    assert cptpp["added_agreements"] == ["India"]
+    # Whisky ($18.5m) and jewellery ($7.1m) in India: one source with the Blocked Opportunities page (ADR 0012).
+    assert cptpp["blocked_opportunities"] == 2 == served["blocked_opportunities"]
+    assert cptpp["blocked_opportunity_value_usd"] == pytest.approx(25.6e6, rel=0.01)
+    assert cptpp["blocked_opportunity_value_usd"] == pytest.approx(served["blocked_opportunity_value_usd"])
+
+
+def test_a_preset_adding_no_agreement_shows_no_blocked_opportunities_not_zero(india_in_cptpp):
+    table = reporting.preset_scenarios(india_in_cptpp, _preset_results(india_in_cptpp, ["eu_customs_union"]))
+    [union] = table.iter_rows(named=True)
+
+    assert union["preset"] == "EU Customs Union only"
+    assert union["added_agreements"] == []
+    assert union["blocked_opportunities"] is None
+    assert union["blocked_opportunity_value_usd"] is None
+
+
+def test_preset_rows_come_in_the_order_given(india_in_cptpp):
+    names = ["leave", "cptpp", "eu_rejoin"]
+    table = reporting.preset_scenarios(india_in_cptpp, _preset_results(india_in_cptpp, names))
+
+    assert table["preset"].to_list() == ["Leave", "CPTPP", "EU re-join"]
+    assert table["blocked_opportunities"].to_list() == [None, 2, None]

@@ -13,6 +13,7 @@ text, so each chart is a few kilobytes in the committed notebook.
 import io
 import re
 import textwrap
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import matplotlib
 import polars as pl
 from matplotlib.figure import Figure
 
-from exportspredictor import model_choice, offsets, ppml, rankings
+from exportspredictor import model_choice, offsets, ppml, rankings, scenarios
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.currency import format_usd
@@ -397,6 +398,44 @@ def blocked_opportunity_split(bundle: Artefacts) -> pl.DataFrame:
     (`rankings.blocked_opportunity_split`): counts, Markets, dollar sums, the Tariff part's share and how many
     Agreement parts come out negative (it is the remainder)."""
     return rankings.blocked_opportunity_split(bundle)
+
+
+def preset_scenarios(bundle: Artefacts, results: Mapping[str, scenarios.ScenarioResult]) -> pl.DataFrame:
+    """One row per Trading Bloc preset, in the order of `results` (preset name to its `ScenarioResult`): its title,
+    the pairs it changes, its Baseline and Scenario Export Potential, Scenario Effect and effect share
+    (`ScenarioResult.total`), the Markets it adds a Trade Agreement with (`added_agreements`, by name) and the count
+    and total value of the precomputed Blocked Opportunities in those Markets (`rankings.blocked_opportunities`, the
+    one source, ADR 0012). Both are null where the preset adds no agreement, never 0.
+
+    No Caveat Tier is hidden, so the counts add up with every other Blocked Opportunity figure the write-up reads from
+    the same unfiltered ranking; the Scenario Builder hides the tiers the app hides by default, so its count for the
+    same Market can be lower."""
+    names = dict(bundle.markets.select("iso3", "name").iter_rows())
+    rows = []
+    for name, result in results.items():
+        blocked = (
+            rankings.blocked_opportunities(bundle, markets=result.added_agreements).summary
+            if result.adds_agreement
+            else {"blocked_opportunities": None, "blocked_opportunity_value_usd": None}
+        )
+        rows.append({
+            "preset": scenarios.PRESETS[name].title,
+            "pairs_changed": result.pairs.height,
+            **result.total(),
+            "added_agreements": [names.get(iso3, iso3) for iso3 in result.added_agreements],
+            **blocked,
+        })
+    return pl.DataFrame(rows, schema={
+        "preset": pl.String,
+        "pairs_changed": pl.Int64,
+        "baseline_potential_usd": pl.Float64,
+        "scenario_potential_usd": pl.Float64,
+        "effect_usd": pl.Float64,
+        "effect_share": pl.Float64,
+        "added_agreements": pl.List(pl.String),
+        "blocked_opportunities": pl.Int64,
+        "blocked_opportunity_value_usd": pl.Float64,
+    })
 
 
 VARIATION_MARKETS = 10  # the top Markets (by Blocked Opportunity total) the variation check reads
