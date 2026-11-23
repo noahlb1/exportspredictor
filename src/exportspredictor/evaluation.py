@@ -245,8 +245,40 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
         *size_coverage_limitations(report.get("potential_range")),
         *uk_pair_coverage_limitations(artefacts.metadata, report.get("potential_range")),
         *offset_pair_limitations(artefacts.metadata),
+        *read_configuration_limitations(artefacts.metadata, report),
         *LIMITATIONS,
     ]
+
+
+# A Model Form's fitted values, which a rebuild of the same configuration recomputes (ADR 0010): no change of form.
+_FITTED_FORM_KEYS = ("reference_year", "constant")
+
+
+def _form_settings(form: dict | None) -> dict:
+    form = dict(form or {})
+    reach = {k: v for k, v in (form.pop("market_reach", None) or {}).items() if k not in _FITTED_FORM_KEYS}
+    return {**form, **{f"Market Reach {k}": v for k, v in reach.items()}}
+
+
+def read_configuration_limitations(metadata: dict, report: dict) -> list[dict]:
+    """When the served Model Form differs from the one the report's test-year figures were read on, as after `rereach`
+    corrected Market Reach's form without a new read (ADR 0009, ADR 0010 Amendment). None for a version without a
+    report, or one whose report records no Model Form."""
+    served, read_on = _form_settings(metadata.get("model_form")), _form_settings(report.get("model_form"))
+    if not report.get("model_form") or served == read_on:
+        return []
+    changes = "; ".join(
+        f"{key} {read_on.get(key)!s} then, {served.get(key)!s} now"
+        for key in sorted(set(served) | set(read_on)) if served.get(key) != read_on.get(key)
+    )
+    year = report.get("test_year", "the test year")
+    return [{
+        "title": "The test-year figures were read on an earlier configuration",
+        "text": f"Every {year} figure shown (the headline, Lift and the comparison with earlier versions) was read on "
+        f"the Model Form served before a correction chosen on the validation year ({changes}). This "
+        f"version has not read {year} itself: its own figures come from the next frozen version's one read through "
+        "the Test-year Ledger (ADR 0009).",
+    }]
 
 
 def offset_pair_limitations(metadata: dict) -> list[dict]:

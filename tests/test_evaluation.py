@@ -671,3 +671,48 @@ def test_a_market_reach_effect_saved_with_flat_size_matched_lift_reads_nested(re
 
     assert evaluation.relabelled(saved)["market_reach_effect"]["lift"] == lift
     assert saved["market_reach_effect"]["lift"] == flat
+
+
+# --- Which configuration the test-year figures were read on (ADR 0009, #160) -------------
+
+READ_ON_EARLIER = "The test-year figures were read on an earlier configuration"
+
+
+def _served_after_a_correction(artefacts):
+    """The fixture version as `rereach` leaves it after a Market Reach correction: the served form changed, the report
+    kept the figures read on the form before (as served 20261122T223312Z, nested_share, over a read on share)."""
+    form = artefacts.metadata["model_form"]
+    corrected = {**form, "market_reach": {**form["market_reach"], "form": "nested_share"}}
+    read_on = {**form, "market_reach": {**form["market_reach"], "form": "share"}}
+    return replace(
+        artefacts,
+        metadata={**artefacts.metadata, "model_form": corrected,
+                  "market_reach": {**artefacts.metadata["market_reach"], "form": "nested_share"}},
+        evaluation={**artefacts.evaluation, "model_form": read_on},
+    )
+
+
+def test_a_version_serving_another_form_than_its_test_year_read_says_so_in_its_limitations_and_model_card(
+    fixture_artefacts,
+):
+    from exportspredictor import governance
+
+    artefacts = _served_after_a_correction(fixture_artefacts)
+
+    [limit] = [x for x in evaluation.known_limitations(artefacts) if x["title"] == READ_ON_EARLIER]
+    card = {x["title"]: x["text"] for x in governance.model_card(artefacts)["limitations"]}
+
+    assert "share" in limit["text"] and "nested_share" in limit["text"]
+    assert "has not read" in limit["text"]
+    assert card[READ_ON_EARLIER] == limit["text"]
+
+
+def test_a_version_serving_the_form_its_test_year_was_read_on_has_no_such_limitation(fixture_artefacts):
+    # A refit Market Reach constant or reference year is no change of configuration (ADR 0010).
+    form = fixture_artefacts.metadata["model_form"]
+    refit = {**form, "market_reach": {**form["market_reach"], "constant": 0.5, "reference_year": 1999}}
+    artefacts = replace(fixture_artefacts, evaluation={**fixture_artefacts.evaluation, "model_form": refit})
+
+    titles = [x["title"] for x in evaluation.known_limitations(artefacts)]
+
+    assert READ_ON_EARLIER not in titles
