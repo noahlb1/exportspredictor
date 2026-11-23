@@ -254,8 +254,9 @@ LIMITATIONS = [
 
 def known_limitations(artefacts: store.Artefacts) -> list[dict]:
     """Every known limitation of an artefact version that can be read from it: its results, its
-    Potential Range bands and the fixed `LIMITATIONS`. The API serves these; the model card adds
-    the gravity benchmark, which no artefact holds.
+    Potential Range bands and the fixed `LIMITATIONS`. The API serves these, and the model card states them all
+    (`governance.model_card`, the one source) before its own extra, the gravity benchmark. They read only figures that
+    `relabelled` leaves as saved, so the card's relabelled report would give the same list.
     """
     report = artefacts.evaluation or {}
     return [

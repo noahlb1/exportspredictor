@@ -21,17 +21,7 @@ from exportspredictor import comparison, evaluation, rankings
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
-from exportspredictor.evaluation import (
-    LIMITATIONS,
-    offset_pair_limitations,
-    parts_not_run,
-    range_below_potential_limitations,
-    range_limitations,
-    read_configuration_limitations,
-    result_limitations,
-    size_coverage_limitations,
-    uk_pair_coverage_limitations,
-)
+from exportspredictor.evaluation import parts_not_run
 from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
     model_form_summary,
@@ -212,14 +202,8 @@ def model_card(artefacts: Artefacts) -> dict:
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
         "potential_range": _potential_range(report.get("potential_range")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
-        "limitations": [
-            *result_limitations(metadata, report), *_benchmark_limitations(artefacts.ppml_benchmark),
-            *range_limitations(artefacts.potential_range_bands),
-            *range_below_potential_limitations(artefacts.potential_range_bands),
-            *size_coverage_limitations(report.get("potential_range")),
-            *uk_pair_coverage_limitations(metadata, report.get("potential_range")),
-            *offset_pair_limitations(metadata), *read_configuration_limitations(metadata, report), *LIMITATIONS,
-        ],
+        # Every limitation the API serves (one source), then the card's own: the gravity benchmark.
+        "limitations": [*evaluation.known_limitations(artefacts), *_benchmark_limitations(artefacts.ppml_benchmark)],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
         "decisions": [{"title": t, "text": x} for t, x in [_sampling_decision(metadata), *DECISIONS]],
