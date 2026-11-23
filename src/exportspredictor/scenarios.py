@@ -12,7 +12,8 @@ flags, and a bloc Scenario changes only the rows of the bloc's member Markets:
 
 - EU re-join: a Trade Agreement with every EU member, the Customs Union flag and the
   UK's EU membership flag (`eu_o`), as for any pair of EU members in training. Since 2021
-  the UK has a Trade Agreement with each, so its Scenario Effect comes from the other two.
+  the UK has a Trade Agreement with each, so its Scenario Effect is what the model associates
+  with the other two.
 - EU Customs Union only: the Customs Union flag alone.
 - CPTPP: a Trade Agreement with every member and the UK's CPTPP flag, with accession
   treated as complete. The 2024 Baseline has no UK CPTPP membership (the 1 July rule).
@@ -129,7 +130,7 @@ PRESETS = {
             "A Trade Agreement with every CPTPP member, with accession treated as complete. The UK joined on "
             "15 December 2024, too late for the 2024 policy data to count it, so this Scenario shows what the model "
             "associates with membership. Most members already have a UK Trade Agreement, and for them the Scenario "
-            "Effect comes from CPTPP membership alone.",
+            "Effect is what the model associates with the CPTPP membership flag alone.",
         ),
         Preset(
             "leave",

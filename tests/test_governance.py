@@ -567,3 +567,13 @@ def test_the_model_cards_blocked_opportunity_rule_includes_room_to_grow(card):
 
     assert "A Blocked Opportunity gains at least 20% and $1M." not in text
     assert "room to grow" in text.split("## Decisions behind the model", 1)[1]
+
+
+def test_the_card_states_every_served_limitation_in_order_then_its_own_extras(fixture_artefacts):
+    # One source (spec #140 review): the card builds on `known_limitations`, so the two lists cannot drift.
+    served = evaluation.known_limitations(fixture_artefacts)
+
+    card = governance.model_card(fixture_artefacts)["limitations"]
+
+    assert card[: len(served)] == served
+    assert [row["title"] for row in card[len(served):]] == ["Scenario Effects are far above a gravity benchmark"]

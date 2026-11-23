@@ -22,32 +22,33 @@ from exportspredictor.downloads import writing
 from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.sectors import with_sector_names
 
-TOP = 50  # the top Opportunities and Blocked Opportunities overall, and the largest Scenario Effects per preset
-GROUPS = 10  # the top Markets and Products (by total Export Gap among Opportunities) given their own top rows
+TOP_N = 50  # the top Opportunities and Blocked Opportunities overall, and the largest Scenario Effects per preset
+TOP_GROUPS = 10  # the top Markets and Products (by total Export Gap among Opportunities) given their own top rows
 GROUP_TOP = 10  # the top Opportunities in each of those Markets and Products
 SAMPLE_SIZE = 50  # the Product–Market pairs drawn at random from the whole Baseline
 SEED = 0  # the pair sample's seed for `python -m exportspredictor.review`
 
 # Each table, in the README's order, with what it holds in plain domain terms.
 TABLES = {
-    "top_opportunities": f"The {TOP} largest Opportunities, by Export Gap, as the Leaderboard ranks them.",
+    "top_opportunities": f"The {TOP_N} largest Opportunities, by Export Gap, as the Leaderboard ranks them.",
     "top_opportunities_by_market": (
-        f"The {GROUP_TOP} largest Opportunities in each of the {GROUPS} Markets with the largest total Export Gap "
+        f"The {GROUP_TOP} largest Opportunities in each of the {TOP_GROUPS} Markets with the largest total Export Gap "
         "among their Opportunities, Markets in that order."
     ),
     "top_opportunities_by_product": (
-        f"The {GROUP_TOP} largest Opportunities in each of the {GROUPS} Products with the largest total Export Gap "
+        f"The {GROUP_TOP} largest Opportunities in each of the {TOP_GROUPS} Products with the largest total Export Gap "
         "among their Opportunities, Products in that order."
     ),
     "top_blocked_opportunities": (
-        f"The {TOP} largest Blocked Opportunities, by Blocked Opportunity value, as the Blocked Opportunities page "
+        f"The {TOP_N} largest Blocked Opportunities, by Blocked Opportunity value, as the Blocked Opportunities page "
         f"ranks them, in Baseline-year figures. {scenarios.BLOCKED_RULE}"
     ),
     "blocked_opportunities_by_market": "Every Market's count and total value of Blocked Opportunities.",
     "blocked_opportunities_by_product": "Every Product's count and total value of Blocked Opportunities.",
     "largest_scenario_effects": (
-        f"For each Trading Bloc preset Scenario the Scenario Builder offers, the {TOP} pairs with the largest "
-        "Scenario Effect, in Baseline-year figures. A Scenario Effect is a learned association, not a forecast."
+        f"For each Trading Bloc preset Scenario the Scenario Builder offers, the {TOP_N} pairs with the largest "
+        "Scenario Effect by absolute size, rises and falls alike, so a fall under a preset that adds a Trade "
+        "Agreement is shown too, in Baseline-year figures. A Scenario Effect is a learned association, not a forecast."
     ),
     "pair_sample": (
         f"{SAMPLE_SIZE} Product–Market pairs drawn at random from every pair the model scores, whatever their Export "
@@ -171,7 +172,7 @@ def _with_caveats(columns: list[str], table: pl.DataFrame) -> list[str]:
 
 def _ranked(rows: pl.DataFrame) -> pl.DataFrame:
     """`rank_opportunities` rows as the pack shows them: its Opportunities only, ranked from 1, without model inputs."""
-    rows = rows.filter(pl.col("export_gap_usd") > 0).rename({"trade_agreement": "trade_agreement_in_force"})
+    rows = rows.filter(rankings.IS_OPPORTUNITY).rename({"trade_agreement": "trade_agreement_in_force"})
     return rows.select(_with_caveats(_OPPORTUNITY, rows)).with_row_index("rank", offset=1)
 
 
@@ -180,7 +181,7 @@ def _top_in_each(bundle: Artefacts, groups: pl.DataFrame, key: str) -> pl.DataFr
     on `key`), in the groups' order, each ranked from 1 within its group."""
     tables = [
         _ranked(rankings.ranking(bundle, **{key: code}, limit=GROUP_TOP).rows)
-        for code in groups.head(GROUPS)[key]
+        for code in groups.head(TOP_GROUPS)[key]
     ]
     return pl.concat(tables)
 
@@ -197,8 +198,9 @@ def _named(table: pl.DataFrame, bundle: Artefacts) -> pl.DataFrame:
 
 
 def _scenario_effects(bundle: Artefacts) -> pl.DataFrame:
-    """The `TOP` largest Scenario Effects of each preset the artefact offers (`scenarios.offered_presets`), each run
-    through `scenarios.run` on the served Model Form, as the Scenario Builder runs it."""
+    """The `TOP_N` largest Scenario Effects by absolute size (rises and falls alike) of each preset the artefact offers
+    (`scenarios.offered_presets`), each run through `scenarios.run` on the served Model Form, as the Scenario Builder
+    runs it."""
     tariff_range = scenarios.tariff_range(bundle.metadata)
     tables = []
     for preset in scenarios.offered_presets(bundle.baseline_features, tariff_range):
@@ -210,7 +212,8 @@ def _scenario_effects(bundle: Artefacts) -> pl.DataFrame:
             tariff_range=tariff_range,
             form=bundle.model_form,
         )
-        top = result.pairs.head(TOP).with_row_index("rank", offset=1)
+        largest = result.pairs.sort(pl.col("effect_usd").abs(), "hs6", "iso3", descending=[True, False, False])
+        top = largest.head(TOP_N).with_row_index("rank", offset=1)
         tables.append(top.with_columns(scenario=pl.lit(preset.title)))
     effects = _named(pl.concat(tables), bundle)
     return effects.select(
@@ -251,12 +254,12 @@ def build(
     `seed`.
     """
     leaderboard = rankings.ranking(bundle)
-    blocked = rankings.blocked_opportunities(bundle, limit=TOP)
+    blocked = rankings.blocked_opportunities(bundle, limit=TOP_N)
     sample = bundle.baseline.sample(n=min(sample_size, bundle.baseline.height), seed=seed, shuffle=True)
     sample = _named(sample, bundle)
     imports = _named(market_imports.select("iso3", "total_imports_usd"), bundle)
     return {
-        "top_opportunities": _ranked(leaderboard.rows).head(TOP),
+        "top_opportunities": _ranked(leaderboard.rows).head(TOP_N),
         "top_opportunities_by_market": _top_in_each(bundle, leaderboard.markets, "iso3"),
         "top_opportunities_by_product": _top_in_each(bundle, leaderboard.products, "hs6"),
         "top_blocked_opportunities": blocked.rows.select(_with_caveats(_BLOCKED, blocked.rows)).with_row_index(
