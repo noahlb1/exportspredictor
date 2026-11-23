@@ -560,6 +560,7 @@ def scenario_response(
     blocked = pairs.filter("blocked_opportunity")
     top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
     total = result.total()
+    raised, lowered = result.tariff_directions() or (None, None)
 
     return models.ScenarioResponse(
         **_metadata(artefacts),
@@ -578,6 +579,8 @@ def scenario_response(
         blocked_opportunities=blocked.head(request.limit).to_dicts(),
         blocked_count=blocked.height,
         clipped_pairs=result.clipped_pairs,
+        pairs_raised=raised,
+        pairs_lowered=lowered,
         note=scenario_note(artefacts),
     )
 
