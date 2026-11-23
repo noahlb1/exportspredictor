@@ -327,6 +327,24 @@ def test_a_tariff_within_the_training_range_shows_no_clip_message(monkeypatch, a
     assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan"}
 
 
+def test_a_tariff_result_says_how_many_pairs_it_raises_and_lowers(monkeypatch, api_url):
+    # India's Baseline tariffs: 150%, 10%, 20%, 60% and one unknown.
+    page = _scenarios_page(monkeypatch, api_url)
+
+    page.radio(key="kind").set_value("Tariff change").run()
+    page.multiselect(key="tariff_markets").set_value(["IND"]).run()
+    page.number_input(key="tariff_rate").set_value(30.0).run()
+    page.button(key="run").click().run()
+
+    assert not page.exception
+    assert "This sets 5 pairs to 30%: it raises 2 and lowers 2." in [element.value for element in page.markdown]
+
+
+def test_a_scenario_that_is_no_tariff_change_has_no_raised_and_lowered_line(monkeypatch, api_url):
+    for page in (_run_cptpp(monkeypatch, api_url), _run_india(monkeypatch, api_url)):
+        assert "it raises" not in _page_text(page)
+
+
 # --- Final review of #103: click-to-select as on the other pages, adaptive money in sentences ----------------------
 
 

@@ -248,6 +248,23 @@ def pair_box(row: dict) -> None:
         )
 
 
+def _pairs(count: int) -> str:
+    return f"{count:,} pair" if count == 1 else f"{count:,} pairs"
+
+
+def tariff_directions(result: dict) -> str | None:
+    """For a tariff Scenario, one line on how many pairs it sets to the rate and how many of those it raises and
+    lowers (a pair with an unknown Baseline tariff counts in neither); None for any other Scenario."""
+    tariff = result["scenario"].get("tariff")
+    if tariff is None or result.get("pairs_raised") is None:
+        return None
+    changed = sum(market["pairs"] for market in result["markets"])
+    return (
+        f"This sets {_pairs(changed)} to {tariff['rate_pct']:g}%: it raises {result['pairs_raised']:,} "
+        f"and lowers {result['pairs_lowered']:,}."
+    )
+
+
 def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     """A Scenario's result, in order: summary, figures and note, Change per Market, the selected Market's pairs, Top
     Products gaining, Blocked Opportunities. Table keys carry the run, so a new run starts with fresh selections."""
@@ -261,6 +278,9 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
             "tariffs the model has seen. It is held at the edge of that range, so the Scenario Effect "
             "flattens beyond it: the model associates no further change with a higher tariff."
         )
+    directions = tariff_directions(result)
+    if directions is not None:
+        st.markdown(directions)
     st.caption(
         "Scenario Effects are associations the model has learned from past trade, not causal "
         "forecasts: the model associates these policy conditions with this change in Export "

@@ -236,6 +236,18 @@ class ScenarioResult:
         baseline = sums["baseline_potential_usd"]
         return {**sums, "effect_share": sums["effect_usd"] / baseline if baseline else 0.0}
 
+    def tariff_directions(self) -> tuple[int, int] | None:
+        """For a tariff change, how many changed pairs it raises and how many it lowers: those whose known Baseline
+        Applied Tariff was below, or above, the rate set (as clipped to the training range). A pair whose tariff is
+        unknown counts in neither. None for any other kind of Scenario."""
+        if self.scenario.tariff is None:
+            return None
+        baseline, scenario = pl.col("baseline_tariff_pct"), pl.col("scenario_tariff_pct")
+        raised, lowered = self.pairs.select(
+            raised=(baseline < scenario).sum(), lowered=(baseline > scenario).sum()
+        ).row(0)
+        return int(raised), int(lowered)
+
     def blocked_opportunities(
         self,
         history: pl.DataFrame,
