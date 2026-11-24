@@ -37,6 +37,16 @@ def test_a_family_arm_returns_the_same_result_row_as_an_xgboost_arm_and_is_decid
     assert section["kept"] == (top["arm"] if wins else None)
 
 
+@pytest.mark.parametrize("arm", [XGBOOST_ARM, *FAMILY_ARMS], ids=lambda arm: arm.name)
+def test_every_family_trains_until_patience_rounds_pass_without_a_better_measure(data, arm):
+    # With a patience the fixture's round cap allows, training ends `patience` rounds after the best one.
+    plan = replace(loop.FIXTURE_LOOP, start=replace(loop.FIXTURE_LOOP.start, max_rounds=500, patience=5))
+    row = loop.Loop(data, plan).run_arm(arm, plan.start)
+
+    assert not row["hit_round_cap"]
+    assert row["trained_rounds"] == row["rounds"] + 5
+
+
 @pytest.mark.parametrize("arm", FAMILY_ARMS, ids=lambda arm: arm.name)
 def test_a_family_arm_trains_on_its_own_parameters_not_the_xgboost_best_so_fars(data, arm):
     row = loop.Loop(data, loop.FIXTURE_LOOP).run_arm(arm, loop.FIXTURE_LOOP.start)

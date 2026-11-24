@@ -273,6 +273,7 @@ class LightGBMTrainer:
         model = lgb.train(
             params, train, num_boost_round=job.max_rounds, valid_sets=[grid], valid_names=["grid"], feval=metric,
             callbacks=[lgb.early_stopping(job.patience, first_metric_only=True, verbose=False)],
+            keep_training_booster=True,  # every trained round, as XGBoost keeps them (else only the best are kept)
         )
         rounds = model.best_iteration or model.current_iteration()
         return model, {
@@ -316,6 +317,17 @@ class _CatBoostMeasure:
         return error
 
 
+def _column_major(features: np.ndarray, folder: Path, block: int = 4_000_000) -> np.ndarray:
+    """The row-major matrix copied, block by block, to a column-major one on disk. CatBoost reads a column-major
+    float32 matrix in place, but copies a row-major one into memory whole before quantizing it."""
+    columns = np.lib.format.open_memmap(folder / "columns.npy", mode="w+", dtype=np.float32, shape=features.shape,
+                                        fortran_order=True)
+    for start in range(0, features.shape[0], block):
+        columns[start : start + block] = features[start : start + block]
+    columns.flush()
+    return np.load(folder / "columns.npy", mmap_mode="r")
+
+
 class CatBoostTrainer:
     """CatBoost on the CPU: symmetric trees with the Tweedie loss and log link.
 
@@ -349,8 +361,8 @@ class CatBoostTrainer:
             training_rows = len(disk.label)
             bias = float(np.log(np.average(disk.label, weights=disk.weight)))
             train = cb.Pool(
-                disk.features, label=disk.label, weight=disk.weight, baseline=np.full(training_rows, bias),
-                feature_names=list(job.rows.features),
+                _column_major(disk.features, Path(folder)), label=disk.label, weight=disk.weight,
+                baseline=np.full(training_rows, bias), feature_names=list(job.rows.features),
             )
             train.quantize(border_count=params["border_count"])
             del disk
