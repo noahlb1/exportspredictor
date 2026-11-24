@@ -152,7 +152,7 @@ Gains are on folds 3–4, with the adjustment's weight chosen on folds 0–2 by 
 | 6 | Non-tariff market access (SPS, trade remedies) as a policy feature | feature, **hypothesis** | not testable here | unknown | new data; a full fold set retrained on the GPU (about 1 hour) | a new policy feature: monotone constraint, Scenarios (ADR 0006, 0008) |
 | 7 | Report the measure on the Markets Advisors use | measurement | 0 | – | none | ADR 0008 (reported, never selected on) |
 | 8 | Gravity for the 20 Markets without it; group the UK Overseas Territories | data, partly **hypothesis** | untested; these Markets are small | – | one lookup table; features rebuilt (CPU) and fold models retrained | none |
-| 9 | UK-free demand proxy | feature, **hypothesis** | +0.0067 as a blend term (below); untested as a feature | worse as a blend term | features rebuilt and fold models retrained | none |
+| 9 | UK-free demand proxy | feature, **hypothesis** | +0.0067 as a blend term (below); as a feature (#164), +0.0003 on fold 0 with Market Reach: **dropped** | worse as a blend term | features rebuilt and fold models retrained | none |
 
 ### 1. A UK Market reach offset
 
@@ -241,6 +241,8 @@ On the largest Markets the model alone ranks better than the Blend, and the Naiv
 Twenty Markets have no GDP or distance (section 2), so every split on those features sends them down the default branch. Gibraltar and the Falklands receive $5–15 for every $1 of Export Potential. Filling GDP and distance from another source is cheap but needs features rebuilt and models retrained, for small Markets: a hypothesis with a small expected gain. A cheaper Advisor-facing step is to group the UK Overseas Territories (Gibraltar, the Falklands, Montserrat, Saint Helena, Anguilla, the British Virgin Islands, the British Indian Ocean Territory, Pitcairn, Bermuda, the Cayman Islands, Turks and Caicos) so they can be filtered like the Re-export Hubs.
 
 ### 9. A UK-free demand proxy (hypothesis)
+
+*Tested by #164 ([final-round-2022.md](final-round-2022.md#3-sibling-demand-a-uk-free-demand-proxy-as-a-feature-164)): HS4 sibling demand as a model feature ("Sibling Demand"), +0.0003 against the base retrained on the same files, with Market Reach; dropped.*
 
 Section 3's UK-dominated pairs look small because leave-one-out demand removes the UK. As blend terms, HS4 sibling demand and GDP gain +0.0067 and +0.0056, below the threshold and nothing on top of idea 1. As model features, interacting with the Product, they might do better. Untested.
 

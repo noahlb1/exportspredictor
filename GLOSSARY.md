@@ -74,6 +74,10 @@ _Avoid_: density, product space, proximity
 How many other Exporters have a non-zero Flow of a Product into a Market in a year, leaving out the row's own Exporter (and the UK from every UK row). A candidate feature: tried as an Arm on 2022 and dropped, because it did not beat the Win Threshold.
 _Avoid_: supplier count, competitor count
 
+**Sibling Demand**:
+A Market's imports in a year of the other Products in a Product's HS4 heading, from every Exporter except the UK and the row's own. It is a demand proxy built from no UK Flow, so a Market the UK dominates does not look small. A candidate feature: tried as an Arm on 2022 and dropped, because it did not beat the Win Threshold.
+_Avoid_: UK-free demand (as a name), HS4 demand, sibling imports
+
 ### Prediction
 
 **Export Potential**:

@@ -11,6 +11,7 @@ One row per idea, in the order run. Later tickets add their rows here and their 
 | # | Idea (ticket) | Arms | Base | Best Arm | Gain | Win Threshold | GPU time | Decision |
 |---|---|---|---|---|---|---|---|---|
 | 1 | [Cap on Market Reach's upside](#1-a-cap-on-market-reachs-upside-163) (#163) | 1 (4 caps) | 0.6210 | cap 16×, 0.6204 | −0.0006 | 0.008869 | none (scored from cache, 5.5 min) | **Dropped** |
+| 2 | [Sibling Demand, a UK-free demand proxy, as a feature](#3-sibling-demand-a-uk-free-demand-proxy-as-a-feature-164) (#164) | 1 | 0.6210 (retrained on `sibling_demand`) | w = 0.3, 0.6213 | +0.0003 | 0.008869 | 76.6 min (2 models; see the section) | **Dropped** |
 
 Not an idea, so not a row: [section 2](#2-wider-exporter-scope-feature-files-168) records the build of the `all_exporters` feature files (#168), which the wider Exporter scope experiment (#169) trains on.
 
@@ -116,3 +117,32 @@ These are build records only. Nothing here was trained or scored, and 2023 was n
 - **Arm** (`+ log_sibling_demand_loo`): the base with Sibling Demand as a 26th feature, with no monotone constraint. It re-chooses its blend weight from 0.1 to 0.9 on the measure with Market Reach, as every Arm with a new model has since #71.
 - **Gate:** keep it only if it beats the base by more than `current_win_threshold` (0.008869). If it is dropped, the served files stay `exporter_count`: the experiment records `files_kept_if_dropped: false`, so `kept_feature_set` ignores it unless an Arm is kept.
 - **Command:** `$env:EXPORTSPREDICTOR_FEATURE_SET='sibling_demand'; scripts/wt.ps1 python -m exportspredictor.loop sibling-demand` (two models). It writes `experiments["sibling demand"]` to the loop's `results.json`.
+
+**Decision: drop Sibling Demand.** The Arm scores **0.6213** against **0.6210** for the base retrained on the same files. That is a gain of **+0.0003**, against a Win Threshold of 0.008869. Without Market Reach it is −0.0003 (0.5754 against 0.5756). The best so far is unchanged (`results["best"]` is still the Blend without Market Reach). The served files stay `exporter_count`: `kept_feature_set` ignores this experiment because it was dropped. The round's next idea starts from `served_base_arm` on `exporter_count`, as this one did.
+
+**Results.** Fold 0 of 2022, every figure under the tie-proof measure. Deviance is the Tweedie deviance on the validation rows. "Model alone" is the stopping measure: the model's own Selection Measure, without a blend or Market Reach.
+
+| Arm | Features | w | **Selection Measure** | Change | Without Reach | Non-zero | Zero vs non-zero | Value-weighted | Top-10 share | Deviance | Model alone | Rounds |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Best so far as served, retrained (base) | 25 | 0.3 | **0.6210** | | 0.5756 | 0.507 | 0.589 | 0.816 | 0.945 | 463.2 | 0.5300 | 790 |
+| + Sibling Demand (the Arm) | 26 | 0.3 (chosen) | **0.6213** | **+0.0003** | 0.5754 | 0.507 | 0.589 | 0.816 | 0.943 | 454.5 | 0.5261 | 787 |
+
+The Arm's blend grid with Market Reach, from w = 0.1 to 0.9, reads 0.6191, 0.6206, **0.6213**, 0.6211, 0.6203, 0.6189, 0.6171, 0.6151 and 0.6128. It chose the base's own weight.
+
+**Reading it.**
+- **Nothing the ranking can use.** Every ranking measure moves by 0.002 or less, in both directions. The model alone is slightly worse (0.5261 against 0.5300), and the Blend with Market Reach recovers the difference.
+- **The deviance falls** (454.5 against 463.2). So the feature helps the model fit dollar levels across all rows. But the Selection Measure ranks Markets within a Product, and that ordering does not improve.
+- **Market Reach already holds the signal.** The open review found the blend-term form added +0.0005 on top of Market Reach. As a feature it adds +0.0003. Market Reach reads the UK's presence in a Market across Products, which is the "this Market buys from the UK" information that leave-one-out demand misses. Sibling Demand reaches the same information another way.
+- **The base reproduces #163's base**: 0.6210 on the `sibling_demand` files against 0.6210 scored from #127's model on `exporter_count`. Every other column of the two sets is identical, so this is a fresh GPU draw of the same model, inside the noise floor.
+- As always, this is an association on one fold and one year. It does not say whether demand for related goods causes UK exports.
+
+**Build.** `scripts/wt.ps1 python -m exportspredictor.features --set sibling_demand --parts 8`, for 2012–2024 like `exporter_count`, so that the 2022 UK grid is the same Gap Period union and the set could be served if kept. It took **34.0 min** on the CPU, with a peak of **15.7 GB** of RAM (the build process's peak working set). The files take 6.2 GB, against 5.5 GB for `exporter_count`. In 2021 and 2022, the training rows and UK grids have the same keys and row counts as `exporter_count`'s (14,246,975 training rows and 1,156,050 grid pairs in 2022), and every other column is exactly equal. Sibling Demand has no missing values. It is zero for 15.5% of the 2022 UK grid, where the Market imports no other Product of the heading from anyone but the UK.
+
+**Run.** `$env:EXPORTSPREDICTOR_FEATURE_SET='sibling_demand'; scripts/wt.ps1 python -m exportspredictor.loop sibling-demand`, on 2026-11-24 from 10:58 to 12:15, one GPU run at a time. Both models trained on 84,062,589 rows, and nothing was taken from a cache: the base's key (`8ee3acf73e913a68`) is not the key of #127's model on `exporter_count` (`e5943f03616c0cf7`).
+
+| Model | Matrices | Training (matrices included) | Rounds kept / trained |
+|---|---|---|---|
+| Base retrained (`8ee3acf73e913a68`) | 84 s | 4,011 s | 790 / 890 |
+| + Sibling Demand (`a8a94c0aa05727a1`) | 94 s | 587 s | 787 / 887 |
+
+The base took about seven times as long as the Arm for the same number of rounds. Before the run, other programs held 1.8 GB of the 10 GB of VRAM, and no other training run was active. Halfway through the base, 9.7 GB was in use, this run included, at 100% utilisation. The cause of the slowdown was not traced. Memory pressure near the VRAM limit is a guess. The Arm's 587 s matches #127's 452–680 s. 2023 was not read.

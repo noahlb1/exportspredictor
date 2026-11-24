@@ -130,8 +130,10 @@ outside the loop (#124), so `results["best"]` carries it only once an Arm of the
 experiment of the round therefore passes `base_arm=served_base_arm(best)` (Market Reach at `CHOSEN_BETA` added
 where the best so far has none) and runs on the files `served_configuration` serves (`kept_feature_set`).
 Its first, #163, caps the upward Market Reach multiplier (the scoring field `market_reach_cap`, None: no
-cap); a kept Arm becomes `results["best"]` with Market Reach and any cap in its settings. The round's note
-is `docs/research/final-round-2022.md`.
+cap); a kept Arm becomes `results["best"]` with Market Reach and any cap in its settings. An idea on its own
+rebuilt files (#164's `sibling_demand`: Sibling Demand stored beside the served columns) passes
+`files_kept_if_dropped=False` to `Loop.run_experiment`, so a dropped Arm leaves `kept_feature_set` on the served
+files. The round's note is `docs/research/final-round-2022.md`.
 
 **Pitfalls.**
 
