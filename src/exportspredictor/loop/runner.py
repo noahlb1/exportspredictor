@@ -25,6 +25,7 @@ from exportspredictor.loop.arms import (
     ANY_FLOW,
     ANY_FLOW_PARAMS,
     EXPORTER_COUNT_EXPERIMENT,
+    MARKET_REACH_CAP_EXPERIMENT,
     MAX_TRAINED_MODELS,
     NOISE_FLOOR,
     SIZE,
@@ -33,9 +34,11 @@ from exportspredictor.loop.arms import (
     LoopPlan,
     Settings,
     exporter_count_arms,
+    market_reach_cap_arm,
     models_trained_by,
     product_detail_arm,
     product_detail_experiment,
+    served_base_arm,
     training_key,
 )
 from exportspredictor.loop.data import (
@@ -102,6 +105,17 @@ def run_exporter_count(lp: "Loop") -> dict:
     best = Settings.from_dict(lp.results["best"]["settings"])
     base, arms = exporter_count_arms(best)
     return lp.run_experiment(EXPORTER_COUNT_EXPERIMENT, arms, base_arm=base)
+
+
+def run_market_reach_cap(lp: "Loop") -> dict:
+    """#163: the upward Market Reach multiplier capped, against the best so far as served (`served_base_arm`).
+
+    Both are scored from the best so far's cached model on this loop's files, so nothing is trained once that
+    model exists. A kept cap becomes the best so far, with Market Reach and the cap in its settings.
+    """
+    lp.noise_floor()
+    best = Settings.from_dict(lp.results["best"]["settings"])
+    return lp.run_experiment(MARKET_REACH_CAP_EXPERIMENT, [market_reach_cap_arm()], base_arm=served_base_arm(best))
 
 
 class Loop:
@@ -543,11 +557,11 @@ class Loop:
         at w = 0, then Market Reach where the settings' beta is not 0."""
         potential = blend(predicted.to_numpy(), table["naive_usd"].to_numpy(), settings.naive_weight)
         if settings.market_reach_beta:
-            potential = self._with_market_reach(potential, table, settings.market_reach_beta)
+            potential = self._with_market_reach(potential, table, settings.market_reach_beta, settings.market_reach_cap)
         return pl.Series("export_potential_usd", potential, dtype=pl.Float64)
 
-    def _with_market_reach(self, potential, table: pl.DataFrame, beta: float):
-        """`potential` × exp(beta · offset) of each held-out UK row's Market, rescaled to keep the rows' sum.
+    def _with_market_reach(self, potential, table: pl.DataFrame, beta: float, cap: float | None = None):
+        """`potential` × exp(beta · offset) of each held-out UK row's Market (at most `cap` where set), rescaled to keep the rows' sum.
 
         The offsets are this fold's (`market_reach.reach_table`), learned from the year before the
         validation year on the UK pairs outside this fold. Other Exporters' rows get no offset.
@@ -564,8 +578,8 @@ class Loop:
             self._reach = market_reach.reach_table(rows, self.data.validation_year, n_folds=self.plan.n_folds)
         # Every row is held out by this fold; other Exporters' rows take no offset, only c (as #124 measured).
         rows = market_reach.uk_keys(table, fold=pl.lit(self.plan.fold, pl.Int8), uk=self.plan.uk).drop("uk")
-        constant = market_reach.rescale_constant(potential, rows, self._reach, beta=beta)
-        return market_reach.apply(potential, rows, self._reach, beta=beta, constant=constant)
+        constant = market_reach.rescale_constant(potential, rows, self._reach, beta=beta, cap=cap)
+        return market_reach.apply(potential, rows, self._reach, beta=beta, constant=constant, cap=cap)
 
     def _save(self) -> None:
         if self.folder is not None:

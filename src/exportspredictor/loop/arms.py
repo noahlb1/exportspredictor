@@ -48,12 +48,17 @@ class Settings:
     # otherwise each held-out UK pair's Export Potential is multiplied by exp(beta · offset) of its fold
     # and Market, learned from the year before, and rescaled to keep the scored rows' summed Export Potential.
     market_reach_beta: float = 0.0
+    # Scoring only (spec #155, ticket #163): the highest Market Reach multiplier exp(beta · offset) any Market
+    # takes, before the rescale; None caps nothing.
+    market_reach_cap: float | None = None
 
     def to_dict(self) -> dict:
         data = {**asdict(self), "params": dict(self.params), "features": list(self.features)}
-        # Left out at its default, so settings saved before it existed compare equal (the confirmation's).
+        # Left out at their defaults, so settings saved before they existed compare equal (the confirmation's).
         if not self.market_reach_beta:
             del data["market_reach_beta"]
+        if self.market_reach_cap is None:
+            del data["market_reach_cap"]
         return data
 
     @classmethod
@@ -61,7 +66,7 @@ class Settings:
         return cls(**{**data, "params": dict(data["params"]), "features": tuple(data["features"])})
 
 
-SCORING_FIELDS = ("naive_weight", "market_reach_beta")
+SCORING_FIELDS = ("naive_weight", "market_reach_beta", "market_reach_cap")
 TRAINING_FIELDS = tuple(f.name for f in fields(Settings) if f.name not in SCORING_FIELDS)
 # The training fields of the first loop (#67), always part of a model's cache key. A training
 # field added later is keyed only when it leaves its default, so adding one keeps every
@@ -244,6 +249,31 @@ def exporter_count_arms(best: Settings, beta: float = market_reach.CHOSEN_BETA) 
     (feature,) = EXPORTER_COUNT_FEATURES
     base = Arm(REBUILT_BASE, {"market_reach_beta": beta})
     return base, [Arm(f"+ {feature}", {"features": (*best.features, feature)}, BLEND_GRID)]
+
+
+# Spec #155, the final round. Market Reach was adopted outside the loop (#124's five-fold gate), so the
+# loop's recorded best so far carries no Market Reach until an Arm of this round is kept. Every experiment of
+# the round runs against `served_base_arm` of the best so far (`Loop.run_experiment`'s `base_arm`): the best so
+# far as the pipeline serves it, on this loop's files.
+SERVED_BASE = "best so far as served"
+
+
+def served_base_arm(best: Settings, beta: float = market_reach.CHOSEN_BETA) -> Arm:
+    """The best so far as served: with Market Reach at `beta` where its settings carry none, else unchanged
+    (a kept Arm of this round already carries Reach and any cap)."""
+    return Arm(SERVED_BASE, {} if best.market_reach_beta else {"market_reach_beta": beta})
+
+
+# #163: the cap on Market Reach's upside. The grid of multipliers was fixed before any 2022 result was read
+# (docs/research/final-round-2022.md); at beta 4 it caps offsets above log(cap) / 4, from 0.17 (2×) to 0.69 (16×).
+MARKET_REACH_CAP_EXPERIMENT = "market reach cap"
+MARKET_REACH_CAP = "cap Market Reach"
+MARKET_REACH_CAP_GRID = (2.0, 4.0, 8.0, 16.0)
+
+
+def market_reach_cap_arm(caps: Sequence[float] = MARKET_REACH_CAP_GRID) -> Arm:
+    """The best so far as served with the upward Market Reach multiplier capped, the cap chosen on 2022 from `caps`."""
+    return Arm(MARKET_REACH_CAP, grid={"market_reach_cap": tuple(caps)})
 
 
 # The research note numbers the seven experiments (docs/research/opportunity-ranking-experiments.md).
