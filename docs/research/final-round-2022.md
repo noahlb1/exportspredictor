@@ -13,6 +13,7 @@ One row per idea, in the order run. Later tickets add their rows here and their 
 | 1 | [Cap on Market Reach's upside](#1-a-cap-on-market-reachs-upside-163) (#163) | 1 (4 caps) | 0.6210 | cap 16×, 0.6204 | −0.0006 | 0.008869 | none (scored from cache, 5.5 min) | **Dropped** |
 | 2 | [Sibling Demand, a UK-free demand proxy, as a feature](#3-sibling-demand-a-uk-free-demand-proxy-as-a-feature-164) (#164) | 1 | 0.6210 (retrained on `sibling_demand`) | w = 0.3, 0.6213 | +0.0003 | 0.008869 | 76.6 min (2 models; see the section) | **Dropped** |
 | 3 | [A fresh hyperparameter search](#4-a-fresh-hyperparameter-search-166) (#166) | 14 in 5 stages | 0.6210 | `colsample_bytree` 0.6, 0.6215 | +0.0005 | 0.008869 | 134.6 min (14 models) | **Dropped** (every stage) |
+| 4 | [Other model families: LightGBM and CatBoost](#5-other-model-families-lightgbm-and-catboost-167) (#167) | 2 (one experiment per family) | 0.6210 | LightGBM ⚑, 0.6205 (CatBoost 0.6191) | −0.0005 | 0.008869 | none: CPU only, 28.7 min (2 models) | **Dropped** (both) |
 
 Not an idea, so not a row: [section 2](#2-wider-exporter-scope-feature-files-168) records the build of the `all_exporters` feature files (#168), which the wider Exporter scope experiment (#169) trains on.
 
@@ -216,3 +217,76 @@ Each stage's decision: depth (best `max_depth` 14, +0.0004), learning rate (`eta
 | **Total** | **143.1 min** | **14** | **8,077 s = 134.6 min of GPU time** |
 
 Each stage also re-scored the cached base (about 65 s on the CPU: XGBoost warns of mismatched devices for a loaded model, as #163 noted). The first model of each stage built the training matrices (83–85 s), and the stage's later models reused them. **#164's slowdown did not recur**: every depth-12 model trained at 0.55–0.70 s a round, against #164's 0.66 s for its Arm and 4.5 s for its slow base. `max_depth` 14 took 1.40 s a round, about twice depth 12, as expected for trees with up to four times the leaves. The pre-registered grids were run in full; no stage needed cutting. 2023 was not read.
+
+## 5. Other model families: LightGBM and CatBoost (#167)
+
+**The idea.** Every model so far is XGBoost ([ADR 0002](../adr/0002-single-xgboost-model-for-scenarios.md), superseded by ADR 0008 but still the served family). Gradient-boosted trees come in other implementations that grow trees differently: LightGBM grows leaf-wise (it always splits the leaf with the largest gain, so trees are unbalanced), and CatBoost grows symmetric ("oblivious") trees, where every node at one depth uses the same split. This idea asks whether either one ranks held-out UK Markets better, on exactly the same problem. In course terms, it is the model-selection step applied to the learner itself, holding the data, the loss and the validation design fixed.
+
+**Fair comparison.** Each family is one Arm of its own experiment (`loop model-family <family>`, `loop.MODEL_FAMILY_ARMS`), against the best so far as served (`served_base_arm`, whose XGBoost model is cached). The Arm trains through the trainer seam (#165) on the same rows as the base: the same `exporter_count` files, fold 0 held out, the non-UK hash sample at 0.6157 weighted 1/rate, Zero Cells at 0.05, the same 25 features and FeatureTransform, and the same stopping rule (the model alone's Selection Measure on the held-out UK grid every round, patience 100, cap 5,000 rounds). The Arm re-chooses its blend weight from 0.1 to 0.9 and keeps Market Reach at β = 4, as every Arm with a new model has. The Selection Measure, the Win Threshold (0.008869) and the win rule are unchanged.
+
+**The monotone constraints.** ADR 0008 keeps the +1 constraints on the agreement and bloc flags and −1 on the Applied Tariff. Both families enforce them, checked on this machine before any 2022 result was read (with lightgbm 4.7.0 and catboost 1.2.10, on synthetic data, 0 violations of 20,000 for each):
+
+- **LightGBM**: `monotone_constraints` with `monotone_constraints_method="basic"`, its strict method, which bounds each split's children at their midpoint as XGBoost does. The pip wheel has **no GPU learner** (`device_type="gpu"` and `"cuda"` both fail: "GPU Tree Learner was not enabled in this build"), so it trains on the CPU (16 threads).
+- **CatBoost**: `monotone_constraints` works **only on the CPU** (the GPU refuses it: "change of option monotone_constraints is unimplemented for task type GPU"; the [docs](https://catboost.ai/docs/en/references/training-parameters/common) list "Supported processing units: CPU") and **only for symmetric trees** (Depthwise and Lossguide raise "Monotone constraints are unsupported for non-symmetric trees yet"). So it trains on the CPU with `grow_policy="SymmetricTree"`; the trainer refuses any other grow policy with the constraints on.
+
+So neither family is skipped for the constraints. Both run on the CPU, which the spec allows if they fit in RAM and time. They never hold the raw rows in memory: the trainer writes the prepared rows once to a float32 file (about 8.4 GB for 84 M rows × 25 features) and builds the binned dataset from it. On a 10 M-row test, LightGBM's binned Dataset took about 0.5 GB per 10 M rows. CatBoost copied the rows into its own Pool (about 1 GB per 10 M rows) before quantizing them to about 0.4 GB, so its peak is about 8.4 GB above the loop's own tables.
+
+**Where each family's settings differ from XGBoost's** (each the closest the library allows):
+
+| | XGBoost (base) | LightGBM | CatBoost |
+|---|---|---|---|
+| Loss | `reg:tweedie`, p = 1.2655, log link | `tweedie`, p = 1.2655, log link | `Tweedie:variance_power=1.2655`, log link |
+| Starting point | intercept estimated from the label | `boost_from_average` (log of the mean label) | none for Tweedie (`boost_from_average` refuses the loss): the trainer sets a constant baseline, log of the weighted mean label, and writes it into the model as its bias |
+| Trees | depth-wise, `max_depth` 12 | leaf-wise, `max_depth` 12, `num_leaves` 1,023 | symmetric, `depth` 8 (256 leaves) |
+| Histogram | 256 bins | `max_bin` 255 | `border_count` 254 |
+| Device | GPU | CPU (no GPU learner in the wheel) | CPU (constraints are CPU-only) |
+| Stopping metric | Selection Measure (custom metric) | the same, `feval` | the same, a custom `eval_metric`; CatBoost also computes it on the training rows, where the trainer returns 0, and never uses it |
+
+**Pre-registered** (committed before either Arm was run). Each family's parameters are translated from the best so far's XGBoost parameters where the family has an equivalent; nothing was tuned.
+
+| Family | Parameters | Why |
+|---|---|---|
+| LightGBM | `learning_rate` 0.1; `max_depth` 12; `num_leaves` 1,023; `min_sum_hessian_in_leaf` 3.047 (XGBoost's `min_child_weight`); `min_data_in_leaf` 1 (XGBoost has no row floor); `bagging_fraction` 0.9158 with `bagging_freq` 1 (`subsample`); `feature_fraction` 0.8795 (`colsample_bytree`); `lambda_l2` 4.954 (`reg_lambda`); `tweedie_variance_power` 1.2655 | The same depth and regularisation. Leaf-wise growth needs a leaf cap: 1,023 is a quarter of what a full depth-12 tree could hold, so the trees stay about as large as XGBoost's while the leaf-wise order chooses where. |
+| CatBoost | `learning_rate` 0.1; `depth` 8; `l2_leaf_reg` 4.954 (`reg_lambda`); `bootstrap_type` Bernoulli with `subsample` 0.9158; `rsm` 0.8795 (`colsample_bytree`, chosen per split level on the CPU); `tweedie_variance_power` 1.2655; other settings at CatBoost's defaults (`random_strength` 1) | A symmetric tree of depth 12 has 4,096 leaves that all share each level's split, and would take hours per hundred rounds on the CPU. Depth 8 is inside CatBoost's usual range of 6 to 10 and gives 256 leaves. |
+
+- **Gate:** each family is kept only if its Arm beats the best so far as served by more than the Win Threshold (0.008869). Order: LightGBM first, then CatBoost. A kept LightGBM would become the best so far, and CatBoost would then run against it.
+- **The stopping rule:** an Arm whose best round is below 50 is flagged as decided by the stopping rule.
+- **Not done:** two-part models and a starting point (neither trainer supports them; neither is in the best so far), and the GPU for either family.
+- **Commands:** `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python -m exportspredictor.loop model-family lightgbm`, then `catboost`. Each writes `experiments["model family: <family>"]` to the loop's `results.json`. 2023 is not read.
+
+**Decision: drop both families; XGBoost stays the model.** Neither family beats the best so far as served. LightGBM scores **0.6205** (−0.0005) and CatBoost **0.6191** (−0.0019), against **0.6210** for the base and a Win Threshold of **0.008869**. `results["best"]` is unchanged (the Blend w = 0.3 without Market Reach, 0.5771), and the served files stay `exporter_count`. [ADR 0002](../adr/0002-single-xgboost-model-for-scenarios.md) still describes the served family, so it is not amended. #169 starts from `served_base_arm` of that best so far, as this idea did.
+
+**Results.** Fold 0 of 2022, under the tie-proof measure, with Market Reach at β = 4. "Without Reach" is the same Arm's Blend without Market Reach. "Model alone" is the family's own model, unblended and without Reach, which is what training stopped on. Deviance is the Tweedie deviance on the validation rows. Both Arms re-chose w = 0.3, the base's weight.
+
+| Arm | **Selection Measure** | Change | Without Reach | Non-zero | Zero vs non-zero | Value-weighted | Top-10 share | Deviance | Model alone | Rounds kept / trained | Training (CPU) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Best so far as served (XGBoost, base, cached) | **0.6210** | | 0.5762 | 0.507 | 0.589 | 0.816 | 0.943 | 464.1 | (0.5300 retrained in #164) | 824 / 924 | cached |
+| LightGBM ⚑ | 0.6205 | −0.0005 | 0.5456 | 0.483 | 0.591 | 0.808 | 0.935 | 1,242.0 | 0.5092 | **3** / 103 | 487 s |
+| CatBoost | 0.6191 | −0.0019 | 0.5728 | 0.491 | 0.588 | 0.812 | 0.941 | 565.2 | **0.5515** | 208 / 308 | 1,546 s |
+
+**⚑ LightGBM was decided by the stopping rule.** Its model alone ranked best after **3** rounds (0.5092). It then scored lower every round for 100 rounds, so patience ended training at round 103. Its deviance (1,242.0, almost three times the base's) shows a model that had barely started to fit. So its −0.0005 reflects the stopping rule, not the family. It is the same pattern as #166's `subsample` 0.7 with `colsample_bytree` 0.6 (best round 6) and #71's depth 6: a model whose earliest trees rank about as well as it will for a while, which patience 100 cannot see past. A plausible cause is leaf-wise growth at `min_data_in_leaf` 1. Each early tree spends its 1,023 leaves on the largest gains first, which can be a few tiny, heavy groups. That is not tested here. A LightGBM with a larger leaf floor or fewer leaves might train its full course, but that would be a new pre-registered Arm, not a rescue of this one. The served Selection Measure would also have to rise by about 0.009 to win, and no Arm of this round's search moved it by a tenth of that. (The results file records LightGBM's trained rounds as 3: the trainer then kept only the best rounds, a bug fixed before CatBoost ran (`keep_training_booster=True`). The 103 follows from the stopping rule: best round 3 plus patience 100. The score is unaffected, because prediction used 3 rounds either way.)
+
+**Reading it.**
+- **CatBoost's own model ranks best of any model in the loop, but the gain does not survive the Blend.** Its model alone scores **0.5515**, against 0.5268–0.5378 for every XGBoost model of #166's search and 0.5300 for #164's retrained base. That is about +0.02, the largest model-alone gap this round. Blended with the Naive Baseline and scaled by Market Reach, it ranks **0.0019 below** XGBoost. This repeats #166's finding: once blended, the model barely matters for the served ranking. The Naive Baseline and Market Reach carry what CatBoost's symmetric trees add, and a little more. One reading, an association rather than a tested cause: CatBoost's model already holds more of the market-share signal that the Naive Baseline adds, so the Blend gains less from combining them.
+- **Deviance and ranking disagree again.** CatBoost's deviance (565.2) is higher than XGBoost's (464.1), yet its model alone ranks better.
+- **The constraints hold on the real grid** for both families' trained models (see the check below), not only on the fixture, where no family's prediction moves with a Trade Agreement at all.
+- As always, these are associations on one fold and one year.
+
+**Run.** On 2026-11-24, one family at a time, from the main checkout in the background: `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python -m exportspredictor.loop model-family <family>`. **No GPU time**: both trained on the CPU (Ryzen 7 5800X, 16 threads). The cached XGBoost base was re-scored each time (about 108 s, including the usual warning that a model loaded on the CPU scores data on the GPU). The GPU held 6.0–6.3 GB for other programs throughout, and no other loop, pipeline or feature build was running.
+
+| Family | Wall clock | Rows on disk and binned | Training | Per round | Peak memory |
+|---|---|---|---|---|---|
+| LightGBM | 15:51–16:01 (10.5 min) | 138 s | 349 s for 103 rounds | 3.4 s | 12.6 GB working set (the mapped rows included); free RAM fell to 2.2 GB |
+| CatBoost | 16:04–16:32 (28.1 min) | 170 s | 1,376 s for 308 rounds | 4.5 s | 20.0 GB working set, 25.2 GB committed; free RAM fell to 2.0 GB, but nothing failed |
+| **Total** | **38.6 min** | | **28.7 min of CPU training** | | |
+
+Each family trained on 84,062,589 rows, the same count as #164's XGBoost models, so the sample and weights matched. LightGBM's run used the trainer as first committed. Before CatBoost ran, its trainer was changed to hand CatBoost a column-major copy of the rows on disk, which CatBoost reads in place: a row-major matrix it copies whole, which would have added about 8.4 GB. Most of CatBoost's 25 GB is its own training state, not the rows. Even so, 32 GB of RAM fits a depth-8 symmetric model on 84 M rows with about 8 GB held by other programs. 2023 was not read.
+
+**The constraints on the real grid.** After the runs, each family's cached model scored all 231,217 held-out UK pairs of 2022 twice: with `trade_agreement` set to 0 and to 1, and with the Applied Tariff as it is and raised by one unit. This trains nothing and reads no 2023 data. The served form with and without the Blend gave the same counts.
+
+| Family | A Trade Agreement lowers | … raises | A higher tariff raises | … lowers |
+|---|---|---|---|---|
+| LightGBM (3 rounds) | **0** | 8,430 | **0** | 9,001 |
+| CatBoost | **0** | 231,217 | **0** | 170,423 |
+
+Neither family ever moves the wrong way. CatBoost's symmetric trees split on the Trade Agreement in some tree at every pair, so the flag raises every pair's Export Potential. LightGBM's three trees use it for a few thousand pairs only.

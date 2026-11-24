@@ -25,6 +25,7 @@ from exportspredictor.loop.arms import (
     HYPERPARAMETER_STAGES,
     MARKET_REACH_CAP_EXPERIMENT,
     MAX_TRAINED_MODELS,
+    MODEL_FAMILY_ARMS,
     NOISE_FLOOR,
     SIBLING_DEMAND_EXPERIMENT,
     SIZE,
@@ -34,6 +35,7 @@ from exportspredictor.loop.arms import (
     exporter_count_arms,
     hyperparameter_experiment,
     market_reach_cap_arm,
+    model_family_experiment,
     models_trained_by,
     product_detail_arm,
     product_detail_experiment,
@@ -155,6 +157,18 @@ def run_hyperparameter_stage(
     lp.noise_floor()
     best = Settings.from_dict(lp.results["best"]["settings"])
     return lp.run_experiment(hyperparameter_experiment(stage), stages[stage], base_arm=served_base_arm(best))
+
+
+def run_model_family(lp: "Loop", family: str, arms: Mapping[str, Arm] = MODEL_FAMILY_ARMS) -> dict:
+    """#167: another model family's Arm against the best so far as served (`served_base_arm`), on this loop's files.
+
+    A kept family becomes the best so far, with Market Reach in its settings, so a later idea runs against it.
+    """
+    if family not in arms:
+        raise ValueError(f"{family!r} has no pre-registered Arm; families: {list(arms)}")
+    lp.noise_floor()
+    best = Settings.from_dict(lp.results["best"]["settings"])
+    return lp.run_experiment(model_family_experiment(family), [arms[family]], base_arm=served_base_arm(best))
 
 
 class Loop:

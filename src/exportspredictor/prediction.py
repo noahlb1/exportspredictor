@@ -36,18 +36,25 @@ every row.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, Union
 
 import numpy as np
 import polars as pl
 import xgboost as xgb
+
+if TYPE_CHECKING:  # imported where a model of their family predicts: most callers never need them
+    import catboost
+    import lightgbm
 
 from exportspredictor.baci import UK
 from exportspredictor.features import FEATURES
 
 PREDICT_ROWS = 2_000_000  # rows predicted at a time, so a large table fits on the device
 
-Models = xgb.Booster | Sequence[xgb.Booster]
+# A trained model: an XGBoost Booster (the served family, ADR 0002), or a LightGBM or CatBoost model
+# from the loop's other families (#167). Each predicts Export Potential in dollars through `_predict`.
+Model = Union[xgb.Booster, "lightgbm.Booster", "catboost.CatBoost"]
+Models = Model | Sequence[Model]
 NAIVE_COLUMN = "naive_usd"  # the naive baseline (USD) of each row, which a blend needs
 # The floor of a prediction in dollars, on every log scale: each side of a blend (a Zero Cell's naive baseline
 # is $0), a base margin, and the deviance (a zero naive prediction of a non-zero Flow is penalised heavily
@@ -233,7 +240,7 @@ def reach_multiplier(rows: pl.DataFrame, form: ModelForm, by: str = "fold") -> n
 def _model_potential(rows, models, features, by, rounds, device, base_margin) -> pl.Series:
     """The models' own Export Potential (the model alone)."""
     margin = None if base_margin is None else np.asarray(base_margin, dtype=np.float32)
-    if isinstance(models, xgb.Booster):
+    if not isinstance(models, Sequence):  # one model scores every row
         models, by = [models], "mean"
     if by == "mean":
         potential = np.mean([_predict(model, rows, features, rounds, device, margin) for model in models], axis=0)
@@ -339,24 +346,27 @@ def _fold_masks(rows: pl.DataFrame, models: Sequence[xgb.Booster]):
     if rows.height and (fold.min() < 0 or fold.max() >= len(models)):
         raise ValueError(f"A row's fold has no fold model: folds run from 0 to {len(models) - 1}")
     for k, model in enumerate(models):
-        if model.attr("held_out_fold") not in (None, str(k)):
-            raise ValueError(f"Model {k} held out fold {model.attr('held_out_fold')}, not {k}")
+        held_out = model.attr("held_out_fold") if isinstance(model, xgb.Booster) else None
+        if held_out not in (None, str(k)):
+            raise ValueError(f"Model {k} held out fold {held_out}, not {k}")
         mask = fold == k
         if mask.any():
             yield k, mask
 
 
 def _predict(
-    model: xgb.Booster,
+    model: Model,
     rows: pl.DataFrame,
     features: Sequence[str],
     rounds: int | None,
     device: str,
     margin: np.ndarray | None = None,
 ) -> np.ndarray:
-    """One model's predictions (float32), `PREDICT_ROWS` rows at a time."""
+    """One model's predictions in dollars, `PREDICT_ROWS` rows at a time."""
     if rows.is_empty():
         return np.zeros(0, dtype=np.float32)
+    if not isinstance(model, xgb.Booster):
+        return _predict_other_family(model, rows, features, rounds, margin)
     extra = {} if rounds is None else {"iteration_range": (0, rounds)}
     parts = []
     for start in range(0, rows.height, PREDICT_ROWS):
@@ -370,4 +380,23 @@ def _predict(
             cupy.get_default_memory_pool().free_all_blocks()
         else:
             parts.append(model.inplace_predict(data, **extra, **offset))
+    return np.concatenate(parts)
+
+
+def _predict_other_family(
+    model: Model, rows: pl.DataFrame, features: Sequence[str], rounds: int | None, margin: np.ndarray | None
+) -> np.ndarray:
+    """A LightGBM or CatBoost model's predictions in dollars (the exponential of its log-scale output), on the CPU."""
+    if margin is not None:
+        raise ValueError("Only an XGBoost model predicts from a starting point (base_margin)")
+    family = type(model).__module__.split(".")[0]
+    if family not in ("lightgbm", "catboost"):
+        raise TypeError(f"No prediction for a model of type {type(model).__name__}")
+    parts = []
+    for start in range(0, rows.height, PREDICT_ROWS):
+        data = np.ascontiguousarray(rows.slice(start, PREDICT_ROWS).select(features).to_numpy(), dtype=np.float32)
+        if family == "lightgbm":
+            parts.append(np.asarray(model.predict(data, num_iteration=rounds)))
+        else:
+            parts.append(np.asarray(model.predict(data, prediction_type="Exponent", ntree_end=rounds or 0)))
     return np.concatenate(parts)

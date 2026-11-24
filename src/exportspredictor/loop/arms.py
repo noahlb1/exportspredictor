@@ -13,7 +13,7 @@ from exportspredictor.features import (
 )
 from exportspredictor.folds import N_FOLDS
 from exportspredictor.loop.selection import MIN_WIN_THRESHOLD
-from exportspredictor.loop.trainers import XGBOOST
+from exportspredictor.loop.trainers import CATBOOST, LIGHTGBM, XGBOOST
 
 MAX_TRAINED_MODELS = 6  # the budget of one experiment (spec #65); a cached model is free
 NOISE_SEEDS = (0, 1, 2)
@@ -28,7 +28,9 @@ NOISE_FLOOR = "noise_floor"
 class Settings:
     """Everything that decides one arm's model (`TRAINING_FIELDS`) and how it is scored (`SCORING_FIELDS`)."""
 
-    params: Mapping  # XGBoost parameters over `training.DEFAULT_PARAMS` (eta included)
+    # The family's parameters: XGBoost's over `training.DEFAULT_PARAMS` (eta included); another family's over
+    # its trainer's defaults (`trainers.LIGHTGBM_DEFAULT_PARAMS`, `trainers.CATBOOST_DEFAULT_PARAMS`).
+    params: Mapping
     features: tuple[str, ...] = tuple(FEATURES)
     non_uk_rate: float | None = None  # None: the largest rate the VRAM budget allows
     zero_rate: float | None = None  # other Exporters' Zero Cells kept; None: the rate the rows were built at
@@ -89,7 +91,7 @@ class Arm:
 
     `changes` maps `Settings` fields to new values; `params` is merged into the best arm's
     parameters (so a full configuration should name every parameter it sets), every other
-    field is replaced.
+    field is replaced. An Arm naming another `family` replaces the parameters with its own.
 
     `grid` names one scoring setting (`SCORING_FIELDS`) and a fixed list of values for it:
     the arm scores its model with each value on the validation year and keeps the value
@@ -107,7 +109,9 @@ class Arm:
         if len(self.grid) > 1 or set(self.grid) - set(SCORING_FIELDS):
             raise ValueError(f"Arm {self.name!r}: a grid names one scoring setting of {SCORING_FIELDS}")
         changes = dict(self.changes)
-        if "params" in changes:
+        if changes.get("family", base.family) != base.family:
+            changes["params"] = dict(changes.get("params", {}))  # another family's own, never merged into these
+        elif "params" in changes:
             changes["params"] = {**base.params, **changes["params"]}
         if "features" in changes:
             changes["features"] = tuple(changes["features"])
@@ -324,6 +328,34 @@ HYPERPARAMETER_STAGES: dict[str, list[Arm]] = {
 
 def hyperparameter_experiment(stage: str) -> str:
     return f"hyperparameters: {stage}"
+
+
+# #167: other model families, one experiment each against the best so far as served, on the same rows,
+# weights, features, fold and stopping rule, with the monotone constraints on the policy features. Each Arm's
+# parameters are its family's own, translated from the best so far's XGBoost parameters where the family has
+# an equivalent, and fixed before any 2022 result was read (docs/research/final-round-2022.md). Each Arm
+# re-chooses its blend weight and keeps Market Reach (from the served base). The best so far's parameters:
+_BEST = {
+    "tweedie_variance_power": 1.2655329893555092, "min_child_weight": 3.0468601316016213,
+    "subsample": 0.9158324106709628, "colsample_bytree": 0.8794644314402613, "reg_lambda": 4.953922320798769,
+}
+MODEL_FAMILY_ARMS: dict[str, Arm] = {
+    LIGHTGBM: Arm("LightGBM", {"family": LIGHTGBM, "params": {
+        "tweedie_variance_power": _BEST["tweedie_variance_power"], "learning_rate": 0.1,
+        "max_depth": 12, "num_leaves": 1023, "min_sum_hessian_in_leaf": _BEST["min_child_weight"],
+        "min_data_in_leaf": 1, "bagging_fraction": _BEST["subsample"], "bagging_freq": 1,
+        "feature_fraction": _BEST["colsample_bytree"], "lambda_l2": _BEST["reg_lambda"],
+    }}, BLEND_GRID),
+    CATBOOST: Arm("CatBoost", {"family": CATBOOST, "params": {
+        "tweedie_variance_power": _BEST["tweedie_variance_power"], "learning_rate": 0.1,
+        "depth": 8, "l2_leaf_reg": _BEST["reg_lambda"], "bootstrap_type": "Bernoulli",
+        "subsample": _BEST["subsample"], "rsm": _BEST["colsample_bytree"],
+    }}, BLEND_GRID),
+}
+
+
+def model_family_experiment(family: str) -> str:
+    return f"model family: {family}"
 
 
 def decided_by_stopping_rule(rows: Sequence[Mapping]) -> list[str]:
