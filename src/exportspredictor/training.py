@@ -223,11 +223,12 @@ class _ChunkIter(xgb.DataIter):
     """
 
     def __init__(
-        self, chunks: Sequence[Chunk], prepare: Prepare, device: str = "cpu", features: Sequence[str] = FEATURES
+        self, chunks: Sequence[Chunk], prepare: Prepare, device: str = "cpu", features: Sequence[str] = FEATURES,
+        cache_prefix: str | None = None,
     ):
         self._chunks, self._prepare, self._i, self._features = list(chunks), prepare, 0, list(features)
         self.device = _Device(device)
-        super().__init__()
+        super().__init__(cache_prefix=cache_prefix)
 
     def reset(self) -> None:
         self._i = 0
@@ -280,10 +281,20 @@ def training_matrix(
     ref: xgb.QuantileDMatrix | None = None,
     device: str = "cpu",
     features: Sequence[str] = FEATURES,
+    cache: Path | None = None,
 ) -> xgb.QuantileDMatrix:
-    """A QuantileDMatrix of `features`, built chunk by chunk on `device`; `prepare` filters or transforms each chunk first."""
-    chunk_iter = _ChunkIter(chunks, prepare or (lambda t: t), device, features)
-    matrix = xgb.QuantileDMatrix(chunk_iter, ref=ref)
+    """A QuantileDMatrix of `features`, built chunk by chunk on `device`; `prepare` filters or transforms each chunk first.
+
+    With a `cache` folder, an `ExtMemQuantileDMatrix` instead (XGBoost external memory, ticket #170): each chunk
+    is one batch, and the compressed pages are kept off the device (in host memory on a CUDA device, in files
+    under `cache` on the CPU) and streamed to it as training reads them, so the rows need not fit in VRAM.
+    """
+    prefix = None if cache is None else str(cache / "pages")
+    chunk_iter = _ChunkIter(chunks, prepare or (lambda t: t), device, features, cache_prefix=prefix)
+    if cache is None:
+        matrix = xgb.QuantileDMatrix(chunk_iter, ref=ref)
+    else:
+        matrix = xgb.ExtMemQuantileDMatrix(chunk_iter, ref=ref)
     chunk_iter.device.release()
     return matrix
 

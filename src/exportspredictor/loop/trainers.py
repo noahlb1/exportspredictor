@@ -9,6 +9,7 @@ only for symmetric trees. Both read the rows from a float32 matrix on disk, so t
 never held in memory beside the binned ones.
 """
 
+import gc
 import tempfile
 import time
 from collections.abc import Callable, Hashable, Mapping, Sequence
@@ -76,6 +77,14 @@ class TrainingJob:
     device: str
     threads: int | None = None
     binary: bool = False
+    # `Settings.external_memory` (#170): XGBoost only; another family refuses a job with it.
+    external_memory: bool = False
+
+
+def _refuse_external_memory(job: TrainingJob, family: str) -> None:
+    """Only the XGBoost trainer trains through external memory."""
+    if job.external_memory:
+        raise ValueError(f"The {family} trainer has no external memory; only XGBoost's does")
 
 
 class Trainer(Protocol):
@@ -106,17 +115,23 @@ ANY_FLOW_PARAMS = {"objective": "binary:logistic"}
 
 class XGBoostTrainer:
     """XGBoost on `QuantileDMatrix`es built chunk by chunk on the device; the matrices are reused
-    while the rows' key stays the same."""
+    while the rows' key stays the same.
+
+    With `TrainingJob.external_memory` (#170), the training rows are an `ExtMemQuantileDMatrix` instead: one
+    page per chunk, cached in host memory (on the CPU, in files in a temporary folder) and streamed to the
+    device each round, so they need not fit in VRAM. The held-out grid stays in-core, binned by its cuts.
+    """
 
     suffix = ".ubj"
 
     def __init__(self) -> None:
         self._key: Hashable = None
         self._matrices: tuple[xgb.QuantileDMatrix, xgb.QuantileDMatrix] | None = None
+        self._cache: tempfile.TemporaryDirectory | None = None
 
     def train(self, job: TrainingJob) -> tuple[Model, dict]:
         started = time.perf_counter()
-        train, grid = self._built(job.rows, job.device)
+        train, grid = self._built(job.rows, job.device, job.external_memory)
         matrix_seconds = round(time.perf_counter() - started, 1)  # 0 when the matrices were reused
         params = model_params(
             dict(job.params), device=job.device, seed=job.seed, features=job.rows.features, monotone=job.monotone
@@ -148,12 +163,19 @@ class XGBoostTrainer:
             "train_seconds": round(time.perf_counter() - started, 1),  # matrices included
         }
 
-    def _built(self, rows: TrainingRows, device: str) -> tuple[xgb.QuantileDMatrix, xgb.QuantileDMatrix]:
-        if rows.key != self._key or self._matrices is None:
+    def _built(
+        self, rows: TrainingRows, device: str, external_memory: bool
+    ) -> tuple[xgb.QuantileDMatrix, xgb.QuantileDMatrix]:
+        key = (rows.key, external_memory)
+        if key != self._key or self._matrices is None:
             self.release()  # free the device memory before building the next
-            train = training_matrix(rows.chunks, rows.prepare, device=device, features=rows.features)
+            cache = None
+            if external_memory:
+                self._cache = tempfile.TemporaryDirectory(prefix="extmem-", ignore_cleanup_errors=True)
+                cache = Path(self._cache.name)
+            train = training_matrix(rows.chunks, rows.prepare, device=device, features=rows.features, cache=cache)
             grid = training_matrix([rows.grid], ref=train, device=device, features=rows.features)
-            self._key, self._matrices = rows.key, (train, grid)
+            self._key, self._matrices = key, (train, grid)
         return self._matrices
 
     def save(self, model: Model, path: Path) -> None:
@@ -164,6 +186,10 @@ class XGBoostTrainer:
 
     def release(self) -> None:
         self._key, self._matrices = None, None
+        if self._cache is not None:
+            gc.collect()  # the external-memory matrix holds its page files open until it is freed
+            self._cache.cleanup()
+            self._cache = None
 
 
 # --- Other families (#167) ---------------------------------------------------------------------
@@ -250,6 +276,7 @@ class LightGBMTrainer:
         import lightgbm as lgb
 
         _refuse_binary(job, LIGHTGBM)
+        _refuse_external_memory(job, LIGHTGBM)
         started = time.perf_counter()
         params = {**LIGHTGBM_DEFAULT_PARAMS, **job.params, "seed": job.seed}
         params |= {"num_threads": job.threads} if job.threads else {}
@@ -342,6 +369,7 @@ class CatBoostTrainer:
         import catboost as cb
 
         _refuse_binary(job, CATBOOST)
+        _refuse_external_memory(job, CATBOOST)
         params = {**CATBOOST_DEFAULT_PARAMS, **job.params}
         if job.monotone and params["grow_policy"] != "SymmetricTree":
             raise ValueError("CatBoost enforces monotone constraints only for symmetric trees (grow_policy)")

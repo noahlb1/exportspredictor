@@ -337,3 +337,19 @@ The Arm's blend grid with Market Reach, from w = 0.1 to 0.9, reads 0.6191, 0.620
 | **Total** | | **1,239 s = 20.6 min of GPU time** | | |
 
 The new row-budget check passed for both models at 0.5079. On these files it refuses the served 0.6157, which would put about 115.9 M rows on the GPU. 2023 was not read.
+
+## 7. More training rows through GPU external memory (#170)
+
+**The idea.** [ADR 0004](../adr/0004-training-scope-and-sampling.md) samples other Exporters' rows at whatever rate fits the GPU's memory, in-core: 0.6157 on the served `exporter_count` files, about 84 M training rows. It kept one "last resort": once the model is tuned and the features are final, train on every row through XGBoost's GPU external memory. #53's learning curve had not levelled off at the in-core budget, but its UK Spearman was already flat. In course terms, this is the far end of the learning curve: does the model rank held-out UK Markets better with about 57% more training rows? Only a small gain is expected. Section 6 also points that way: lowering the rate from 0.6157 to 0.5079 cost nothing measurable.
+
+**How the rows fit.** A new training field, `Settings.external_memory` (XGBoost only; False by default and then left out of `to_dict`, so every cached model keeps its key), builds the training rows as an `ExtMemQuantileDMatrix` instead of a `QuantileDMatrix`. Each training year is one batch. XGBoost keeps the compressed pages in host memory and streams them to the GPU as each round reads them, so the rows need not fit in VRAM. The held-out UK grid, which the Selection Measure is read on every round, stays in-core and is binned by the same cuts. An arm with the field on is exempt from the loop's row-budget check (#169), and the check still refuses an in-core arm at the same rate. Another family refuses the field before anything trains. With XGBoost 3.4.1 on this Windows machine, neither RMM nor the CUDA async pool is available (the pool is not supported on Windows), so XGBoost warns that iterating through external memory may be slow. A smoke test on 3 M real 2021 rows gave predictions identical to the in-core matrix's, at the same speed per round (0.32 s against 0.31 s).
+
+**Not run: the wider scope unsampled.** The ticket's second Arm, every Exporter's rows unsampled, was conditional on the wider scope being kept. #169 dropped it (section 6), so that Arm is not run.
+
+**Pre-registered** (committed before any 2022 result of this Arm was read):
+- **Base** (`best so far as served`): the best so far (Blend w = 0.3, the served XGBoost parameters, 25 features) with Market Reach at β = 4 (`served_base_arm`), at the served non-UK rate 0.6157 on the `exporter_count` files: the cached model (`e5943f03616c0cf7`), 0.6210.
+- **Arm** (`non-UK rate 1.0, external memory`): the same, with every other Exporter's row (non-UK rate 1.0, about 132 M training rows on fold 0) and `external_memory` on. It re-chooses its blend weight from 0.1 to 0.9 on the measure with Market Reach, as every Arm with a new model has since #71.
+- **Gate:** keep it only if it beats the base by more than `current_win_threshold` (0.008869).
+- **If fold 0 wins:** the Arm becomes the best so far. It is then confirmed on all five folds (about 12 h) through the loop's confirmation step before it is adopted, and a new ADR superseding ADR 0004's sampling rule records it. If it does not win, no confirmation is run.
+- **The stopping rule:** an Arm whose best round is below 50 is flagged as decided by the stopping rule.
+- **Command:** `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python -m exportspredictor.loop external-memory` (one model, on the GPU, alone). It writes `experiments["external memory"]` to the loop's `results.json`. 2023 is not read.
