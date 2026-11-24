@@ -54,6 +54,7 @@ The package, one module per concern; everything public is importable from `expor
 - `arms`: `Settings`, `Arm`, `LoopPlan`, the cache key and the seven experiments' arms.
 - `data`: the fixture and real data, and the results file.
 - `runner`: `Loop`, which runs and caches arms on one fold.
+- `trainers`: the trainer seam, one `Trainer` per model family (`Settings.family`, XGBoost by default).
 - `confirmation`: the five-fold confirmation.
 - `served`: what the pipeline serves of the loop's choice.
 - `recheck`: the noise floor, Win Threshold and best so far re-scored under the tie-proof measure (#116).
@@ -72,8 +73,26 @@ re-chooses the blend weight carries `grid=BLEND_GRID` (scoring only, seconds). E
 experiment gets a command in `cli`, so it can be launched in the background, and trains at
 most `MAX_TRAINED_MODELS`; a two-part arm counts as two.
 
+**Adding a trainer** (another model family, #165). Training goes through `trainers.Trainer`: the
+`Loop` builds the rows (`TrainingRows`: the training chunks, the per-chunk `prepare`, the held-out
+UK grid, the features and a key that is the same whenever the rows are) and a `TrainingJob` (the
+family's `params`, the seed, `monotone`, the round cap, `patience`, the Selection Measure of grid
+predictions to stop on, the device and threads, and `binary` for a two-part model's "any Flow"
+part). A trainer returns the model at its best round and its metadata (`rounds`, `hit_round_cap`,
+`trained_rounds`, `stopping_measure`, `training_rows`, `matrix_seconds`, `train_seconds`), saves
+and loads models under its own file `suffix`, and `release`s what it kept from the last rows. To
+add one: write the class in `trainers`, name it in `TRAINERS`, and widen `trainers.Model` where
+`prediction.export_potential` learns to predict with its models (Scenarios go through that
+function). It must enforce the monotone policy constraints (`features.MONOTONE_CONSTRAINTS`) when
+`monotone` is set, or refuse the job: a family that cannot is not run. An arm names it with
+`{"family": ...}`, and its `params` are that family's own. `family` at its default (`XGBOOST`) is
+left out of `Settings.to_dict` and so of `training_key`, so every model cached before it existed
+is still found. A setting only one family reads (an XGBoost external-memory switch, say) is a
+training field passed on in `TrainingJob`, keyed like any later field.
+
 **Cache and results** live in `loop_dir()` (`data/derived/loop_V202601/`), shared by every
-worktree through `scripts/wt.ps1`. Models are `models/<training_key>.ubj` with a `.json` of
+worktree through `scripts/wt.ps1`. Models are `models/<training_key>.ubj` (the XGBoost trainer's
+suffix) with a `.json` of
 their rounds; `results.json` holds the naive baseline, the noise floor, every experiment's
 rows and decision, `best` and `confirmation` (all measured with the old measure), and `recheck`
 (#116: the same decisions under the tie-proof measure, the recomputed noise floor and Win
@@ -123,7 +142,6 @@ fold; a five-fold figure should re-pool the folds' plain scores with one constan
 from exportspredictor.experiments import TestYearRead
 from exportspredictor.loop.arms import (
     ANY_FLOW,
-    ANY_FLOW_PARAMS,
     BLEND,
     BLEND_GRID,
     BLEND_WEIGHTS,
@@ -146,7 +164,6 @@ from exportspredictor.loop.arms import (
     SIZE,
     STARTING_POINT,
     TRAINING_FIELDS,
-    TWEEDIE_ONLY,
     TWO_PART,
     TWO_PART_EXPERIMENT,
     UK_ZEROS_EXPERIMENT,
@@ -220,6 +237,18 @@ from exportspredictor.loop.served import (
     served_configuration,
     v2_plan,
 )
+from exportspredictor.loop.trainers import (
+    ANY_FLOW_PARAMS,
+    TRAINERS,
+    TWEEDIE_ONLY,
+    XGBOOST,
+    Model,
+    Trainer,
+    TrainingJob,
+    TrainingRows,
+    XGBoostTrainer,
+    trainer_for,
+)
 
 __all__ = [
     "ANY_FLOW",
@@ -258,6 +287,7 @@ __all__ = [
     "SIZE",
     "STARTING_POINT",
     "TOP_MARKETS",
+    "TRAINERS",
     "TRAINING_FIELDS",
     "TWEEDIE_ONLY",
     "TWO_PART",
@@ -266,15 +296,21 @@ __all__ = [
     "UK_ZEROS_SAMPLED",
     "V2",
     "WINNER",
+    "XGBOOST",
     "ZERO_RATE_EXPERIMENT",
     "Arm",
     "Loop",
     "LoopData",
     "LoopPlan",
+    "Model",
     "ServedConfiguration",
     "Settings",
     "TestYearRead",
+    "Trainer",
+    "TrainingJob",
+    "TrainingRows",
     "TwoPart",
+    "XGBoostTrainer",
     "blend_arm",
     "chosen_form",
     "confirm",
@@ -310,6 +346,7 @@ __all__ = [
     "served_configuration",
     "starting_point_arm",
     "time_one_arm",
+    "trainer_for",
     "training_key",
     "two_part_arm",
     "v2_plan",
