@@ -9,7 +9,7 @@ from pathlib import Path
 
 import polars as pl
 
-from exportspredictor import experiments, market_reach, search
+from exportspredictor import experiments, market_reach, scope, search
 from exportspredictor.evaluation import naive_potential
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import (
@@ -29,6 +29,8 @@ from exportspredictor.loop.arms import (
     NOISE_FLOOR,
     SIBLING_DEMAND_EXPERIMENT,
     SIZE,
+    WIDER_SCOPE_EXPERIMENT,
+    WIDER_SCOPE_NON_UK_RATE,
     Arm,
     LoopPlan,
     Settings,
@@ -42,6 +44,7 @@ from exportspredictor.loop.arms import (
     served_base_arm,
     sibling_demand_arm,
     training_key,
+    wider_scope_arms,
 )
 from exportspredictor.loop.data import (
     MODELS_DIR,
@@ -76,8 +79,12 @@ from exportspredictor.prediction import (
 from exportspredictor.selection_measure import selection_measure, with_tie_key
 from exportspredictor.training import (
     BASE_MARGIN,
+    RowCounts,
+    check_row_budget,
+    count_rows,
     preparer,
     read_chunk,
+    row_budget,
     scan_chunks,
 )
 
@@ -171,6 +178,20 @@ def run_model_family(lp: "Loop", family: str, arms: Mapping[str, Arm] = MODEL_FA
     return lp.run_experiment(model_family_experiment(family), [arms[family]], base_arm=served_base_arm(best))
 
 
+def run_wider_scope(
+    lp: "Loop", *, top: int = scope.TOP_EXPORTERS, non_uk_rate: float = WIDER_SCOPE_NON_UK_RATE
+) -> dict:
+    """#169: every Exporter's rows against the best so far as served on the top `top` Exporters of the same files.
+
+    Both train at `non_uk_rate`, so the pair differs only by the training scope. A dropped Arm leaves the served
+    files unchanged; a kept one becomes the best so far (every Exporter, this rate) and serves these files.
+    """
+    lp.noise_floor()
+    best = Settings.from_dict(lp.results["best"]["settings"])
+    base, arm = wider_scope_arms(best, top=top, non_uk_rate=non_uk_rate)
+    return lp.run_experiment(WIDER_SCOPE_EXPERIMENT, [arm], base_arm=base, files_kept_if_dropped=False)
+
+
 class Loop:
     """The experiment loop on one fold: the noise floor, then experiments, each against the best so far.
 
@@ -192,6 +213,7 @@ class Loop:
         self._rows: TrainingRows | None = None
         self._detail: pl.DataFrame | None = None
         self._reach: pl.DataFrame | None = None  # this loop's Market Reach table, built on first use
+        self._row_counts: RowCounts | None = None  # the files' rows, counted on the first budget check
         self.results = read_results(folder) or {}
         rows = data.data
         years = sorted(rows.training)
@@ -310,11 +332,26 @@ class Loop:
             key = training_key(settings, self._fingerprint())
             if key not in self._models and not self._model_file(key, settings.family).exists():
                 models.setdefault(key, models_trained_by(settings.to_dict()))
+                self._check_rows(settings)
         if sum(models.values()) > MAX_TRAINED_MODELS:
             raise ValueError(
                 f"Experiment {name!r} would train {sum(models.values())} models; the budget is at most "
                 f"{MAX_TRAINED_MODELS} trained models per experiment (spec #65)"
             )
+
+    def _check_rows(self, settings: Settings) -> None:
+        """Raise `RowBudgetExceeded` if `settings`' non-UK rate might put more rows on the device than the budget.
+
+        Counted as `search.final_non_uk_rate` counts them: every training row of the files (a narrower
+        `exporter_scope` only trains on fewer) and the whole validation year, never sampled.
+        """
+        if self._row_counts is None:
+            training = count_rows(self.chunks, uk=self.plan.uk)
+            validation = search.read_chunk_rows(self.data.data.validation)
+            self._row_counts = RowCounts(uk=training.uk + validation, non_uk=training.non_uk)
+        budget = self.plan.row_budget if self.plan.row_budget is not None else row_budget(len(settings.features))
+        assert settings.non_uk_rate is not None  # resolved
+        check_row_budget(self._row_counts, settings.non_uk_rate, budget)
 
     def _run_arms(self, section: dict, arms: Sequence[Arm], base: Settings) -> list[dict]:
         done = {row["arm"] for row in section["arms"]}
@@ -520,7 +557,7 @@ class Loop:
         """
         key = (
             settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin,
-            settings.uk_zeros_sampled, part,
+            settings.uk_zeros_sampled, settings.exporter_scope, part,
         )
         if self._rows is not None and self._rows.key == key:
             return self._rows
@@ -529,8 +566,11 @@ class Loop:
         zero_seed = self.data.zero_seed
         world = self._world_products() if settings.base_margin else None
         grid_rows = self._with_product_detail(self.grid, settings)
+        in_scope = self._exporter_scope(settings.exporter_scope)
 
         def keep(table: pl.DataFrame) -> pl.DataFrame:
+            if in_scope is not None:
+                table = table.filter(pl.col("exporter").cast(pl.String).is_in(in_scope))
             rows = subsample_zeros(
                 table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk,
                 uk_zeros_sampled=settings.uk_zeros_sampled,
@@ -558,6 +598,14 @@ class Loop:
             chunks=self.chunks, prepare=prepare, grid=grid_rows, features=settings.features, key=key
         )
         return self._rows
+
+    def _exporter_scope(self, top: int | None) -> list[str] | None:
+        """The Exporters whose rows train an arm with `Settings.exporter_scope` `top` (None: every Exporter)."""
+        if top is None:
+            return None
+        if self.data.country_year is None:
+            raise ValueError("This loop's data has no country-year table, so no arm can set an Exporter scope")
+        return scope.exporter_scope(self.data.country_year(), uk=self.plan.uk, n=top)
 
     def _model_potential(self, model: Model | TwoPart, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
         """The model's Export Potential in dollars at its chosen round count."""

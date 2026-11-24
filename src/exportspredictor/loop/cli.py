@@ -22,6 +22,9 @@ from exportspredictor.loop.arms import (
     SIBLING_DEMAND_EXPERIMENT,
     SIBLING_DEMAND_SET,
     TWO_PART_EXPERIMENT,
+    WIDER_SCOPE_BASE_SET,
+    WIDER_SCOPE_EXPERIMENT,
+    WIDER_SCOPE_SET,
     Arm,
     Settings,
     blend_arm,
@@ -45,6 +48,7 @@ from exportspredictor.loop.runner import (
     run_model_family,
     run_product_detail,
     run_sibling_demand,
+    run_wider_scope,
 )
 from exportspredictor.loop.selection import SELECTION_MEASURE
 from exportspredictor.loop.served import kept_feature_set, v2_plan
@@ -145,6 +149,19 @@ def main(argv: Sequence[str]) -> None:
             "decided_by_stopping_rule": decided_by_stopping_rule(rows),
             **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "seconds")} for r in rows},
         }), flush=True)
+    elif command == "wider-scope":
+        data, served = real_data(), kept_feature_set(load())
+        if data.feature_set != WIDER_SCOPE_SET:
+            raise SystemExit(f"Run on the wider scope's files: set {FEATURE_SET_ENV}={WIDER_SCOPE_SET}")
+        if served != WIDER_SCOPE_BASE_SET:
+            raise SystemExit(f"The served files are {served!r}, not the {WIDER_SCOPE_BASE_SET!r} files this set widens")
+        section = run_wider_scope(Loop(data, v2_plan(), loop_dir()))["experiments"][WIDER_SCOPE_EXPERIMENT]
+        rows = [section["base_arm"], *section["arms"]]
+        print(json.dumps({
+            "kept": section["kept"], "win_threshold": section["win_threshold"],
+            "decided_by_stopping_rule": decided_by_stopping_rule(rows),
+            **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "training_rows", "seconds")} for r in rows},
+        }), flush=True)
     elif command == "confirm":
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
@@ -155,7 +172,7 @@ def main(argv: Sequence[str]) -> None:
         raise SystemExit(
             "usage: python -m exportspredictor.loop "
             "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|sibling-demand|"
-            "hyperparameters <stage>|model-family <family>|confirm|time"
+            "hyperparameters <stage>|model-family <family>|wider-scope|confirm|time"
         )
 
 
