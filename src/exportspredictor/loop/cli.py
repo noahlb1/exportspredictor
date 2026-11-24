@@ -13,6 +13,7 @@ from exportspredictor.loop.arms import (
     EXPORTER_COUNT_EXPERIMENT,
     HYPERPARAMETER_STAGES,
     MARKET_REACH_CAP_EXPERIMENT,
+    MODEL_FAMILY_ARMS,
     NAIVE_EXPERIMENT,
     NOISE_FLOOR,
     SCOPE_EXPERIMENTS,
@@ -27,6 +28,7 @@ from exportspredictor.loop.arms import (
     constraint_arms,
     decided_by_stopping_rule,
     hyperparameter_experiment,
+    model_family_experiment,
     product_detail_experiment,
     select_arms,
     starting_point_arm,
@@ -40,6 +42,7 @@ from exportspredictor.loop.runner import (
     run_exporter_count,
     run_hyperparameter_stage,
     run_market_reach_cap,
+    run_model_family,
     run_product_detail,
     run_sibling_demand,
 )
@@ -128,6 +131,20 @@ def main(argv: Sequence[str]) -> None:
             "decided_by_stopping_rule": decided_by_stopping_rule(rows),
             **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "seconds")} for r in rows},
         }), flush=True)
+    elif command == "model-family":
+        family = " ".join(argv[1:])
+        if family not in MODEL_FAMILY_ARMS:
+            raise SystemExit(f"usage: python -m exportspredictor.loop model-family {'|'.join(MODEL_FAMILY_ARMS)}")
+        data, served = real_data(), kept_feature_set(load())
+        if data.feature_set != served:
+            raise SystemExit(f"Run on the served feature files: set {FEATURE_SET_ENV}={served}")
+        section = run_model_family(Loop(data, v2_plan(), loop_dir()), family)["experiments"][model_family_experiment(family)]
+        rows = [section["base_arm"], *section["arms"]]
+        print(json.dumps({
+            "kept": section["kept"], "win_threshold": section["win_threshold"],
+            "decided_by_stopping_rule": decided_by_stopping_rule(rows),
+            **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "seconds")} for r in rows},
+        }), flush=True)
     elif command == "confirm":
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
@@ -138,7 +155,7 @@ def main(argv: Sequence[str]) -> None:
         raise SystemExit(
             "usage: python -m exportspredictor.loop "
             "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|sibling-demand|"
-            "hyperparameters <stage>|confirm|time"
+            "hyperparameters <stage>|model-family <family>|confirm|time"
         )
 
 

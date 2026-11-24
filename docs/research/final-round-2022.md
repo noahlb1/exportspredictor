@@ -216,3 +216,39 @@ Each stage's decision: depth (best `max_depth` 14, +0.0004), learning rate (`eta
 | **Total** | **143.1 min** | **14** | **8,077 s = 134.6 min of GPU time** |
 
 Each stage also re-scored the cached base (about 65 s on the CPU: XGBoost warns of mismatched devices for a loaded model, as #163 noted). The first model of each stage built the training matrices (83–85 s), and the stage's later models reused them. **#164's slowdown did not recur**: every depth-12 model trained at 0.55–0.70 s a round, against #164's 0.66 s for its Arm and 4.5 s for its slow base. `max_depth` 14 took 1.40 s a round, about twice depth 12, as expected for trees with up to four times the leaves. The pre-registered grids were run in full; no stage needed cutting. 2023 was not read.
+
+## 5. Other model families: LightGBM and CatBoost (#167)
+
+**The idea.** Every model so far is XGBoost ([ADR 0002](../adr/0002-single-xgboost-model-for-scenarios.md), superseded by ADR 0008 but still the served family). Gradient-boosted trees come in other implementations that grow trees differently: LightGBM grows leaf-wise (it always splits the leaf with the largest gain, so trees are unbalanced), and CatBoost grows symmetric ("oblivious") trees, where every node at one depth uses the same split. This idea asks whether either one ranks held-out UK Markets better, on exactly the same problem. In course terms, it is the model-selection step applied to the learner itself, holding the data, the loss and the validation design fixed.
+
+**Fair comparison.** Each family is one Arm of its own experiment (`loop model-family <family>`, `loop.MODEL_FAMILY_ARMS`), against the best so far as served (`served_base_arm`, whose XGBoost model is cached). The Arm trains through the trainer seam (#165) on the same rows as the base: the same `exporter_count` files, fold 0 held out, the non-UK hash sample at 0.6157 weighted 1/rate, Zero Cells at 0.05, the same 25 features and FeatureTransform, and the same stopping rule (the model alone's Selection Measure on the held-out UK grid every round, patience 100, cap 5,000 rounds). The Arm re-chooses its blend weight from 0.1 to 0.9 and keeps Market Reach at β = 4, as every Arm with a new model has. The Selection Measure, the Win Threshold (0.008869) and the win rule are unchanged.
+
+**The monotone constraints.** ADR 0008 keeps the +1 constraints on the agreement and bloc flags and −1 on the Applied Tariff. Both families enforce them, checked on this machine before any 2022 result was read (with lightgbm 4.7.0 and catboost 1.2.10, on synthetic data, 0 violations of 20,000 for each):
+
+- **LightGBM**: `monotone_constraints` with `monotone_constraints_method="basic"`, its strict method, which bounds each split's children at their midpoint as XGBoost does. The pip wheel has **no GPU learner** (`device_type="gpu"` and `"cuda"` both fail: "GPU Tree Learner was not enabled in this build"), so it trains on the CPU (16 threads).
+- **CatBoost**: `monotone_constraints` works **only on the CPU** (the GPU refuses it: "change of option monotone_constraints is unimplemented for task type GPU"; the [docs](https://catboost.ai/docs/en/references/training-parameters/common) list "Supported processing units: CPU") and **only for symmetric trees** (Depthwise and Lossguide raise "Monotone constraints are unsupported for non-symmetric trees yet"). So it trains on the CPU with `grow_policy="SymmetricTree"`; the trainer refuses any other grow policy with the constraints on.
+
+So neither family is skipped for the constraints. Both run on the CPU, which the spec allows if they fit in RAM and time. They never hold the raw rows in memory: the trainer writes the prepared rows once to a float32 file (about 8.4 GB for 84 M rows × 25 features) and builds the binned dataset from it. On a 10 M-row test, LightGBM's binned Dataset took about 0.5 GB per 10 M rows. CatBoost copied the rows into its own Pool (about 1 GB per 10 M rows) before quantizing them to about 0.4 GB, so its peak is about 8.4 GB above the loop's own tables.
+
+**Where each family's settings differ from XGBoost's** (each the closest the library allows):
+
+| | XGBoost (base) | LightGBM | CatBoost |
+|---|---|---|---|
+| Loss | `reg:tweedie`, p = 1.2655, log link | `tweedie`, p = 1.2655, log link | `Tweedie:variance_power=1.2655`, log link |
+| Starting point | intercept estimated from the label | `boost_from_average` (log of the mean label) | none for Tweedie (`boost_from_average` refuses the loss): the trainer sets a constant baseline, log of the weighted mean label, and writes it into the model as its bias |
+| Trees | depth-wise, `max_depth` 12 | leaf-wise, `max_depth` 12, `num_leaves` 1,023 | symmetric, `depth` 8 (256 leaves) |
+| Histogram | 256 bins | `max_bin` 255 | `border_count` 254 |
+| Device | GPU | CPU (no GPU learner in the wheel) | CPU (constraints are CPU-only) |
+| Stopping metric | Selection Measure (custom metric) | the same, `feval` | the same, a custom `eval_metric`; CatBoost also computes it on the training rows, where the trainer returns 0, and never uses it |
+
+**Pre-registered** (committed before either Arm was run). Each family's parameters are translated from the best so far's XGBoost parameters where the family has an equivalent; nothing was tuned.
+
+| Family | Parameters | Why |
+|---|---|---|
+| LightGBM | `learning_rate` 0.1; `max_depth` 12; `num_leaves` 1,023; `min_sum_hessian_in_leaf` 3.047 (XGBoost's `min_child_weight`); `min_data_in_leaf` 1 (XGBoost has no row floor); `bagging_fraction` 0.9158 with `bagging_freq` 1 (`subsample`); `feature_fraction` 0.8795 (`colsample_bytree`); `lambda_l2` 4.954 (`reg_lambda`); `tweedie_variance_power` 1.2655 | The same depth and regularisation. Leaf-wise growth needs a leaf cap: 1,023 is a quarter of what a full depth-12 tree could hold, so the trees stay about as large as XGBoost's while the leaf-wise order chooses where. |
+| CatBoost | `learning_rate` 0.1; `depth` 8; `l2_leaf_reg` 4.954 (`reg_lambda`); `bootstrap_type` Bernoulli with `subsample` 0.9158; `rsm` 0.8795 (`colsample_bytree`, chosen per split level on the CPU); `tweedie_variance_power` 1.2655; other settings at CatBoost's defaults (`random_strength` 1) | A symmetric tree of depth 12 has 4,096 leaves that all share each level's split, and would take hours per hundred rounds on the CPU. Depth 8 is inside CatBoost's usual range of 6 to 10 and gives 256 leaves. |
+
+- **Gate:** each family is kept only if its Arm beats the best so far as served by more than the Win Threshold (0.008869). Order: LightGBM first, then CatBoost. A kept LightGBM would become the best so far, and CatBoost would then run against it.
+- **The stopping rule:** an Arm whose best round is below 50 is flagged as decided by the stopping rule.
+- **Not done:** two-part models and a starting point (neither trainer supports them; neither is in the best so far), and the GPU for either family.
+- **Commands:** `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python -m exportspredictor.loop model-family lightgbm`, then `catboost`. Each writes `experiments["model family: <family>"]` to the loop's `results.json`. 2023 is not read.

@@ -57,6 +57,10 @@ refuses it, and `real_data` refuses it before opening a file.
     uv run python -m exportspredictor.loop hyperparameters min-child-weight
     uv run python -m exportspredictor.loop hyperparameters subsampling
     uv run python -m exportspredictor.loop hyperparameters regularisation
+    # #167, with EXPORTSPREDICTOR_FEATURE_SET set to the served files: another model family against the best so
+    # far as served, one model each, trained on the CPU (one at a time; each refuses other feature files)
+    uv run python -m exportspredictor.loop model-family lightgbm
+    uv run python -m exportspredictor.loop model-family catboost
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -94,18 +98,25 @@ predictions to stop on, the device and threads, and `binary` for a two-part mode
 part). A trainer returns the model at its best round and its metadata (`rounds`, `hit_round_cap`,
 `trained_rounds`, `stopping_measure`, `training_rows`, `matrix_seconds`, `train_seconds`), saves
 and loads models under its own file `suffix`, and `release`s what it kept from the last rows. To
-add one: write the class in `trainers`, name it in `TRAINERS`, and widen `trainers.Model` where
+add one: write the class in `trainers`, name it in `TRAINERS`, and widen `prediction.Model` where
 `prediction.export_potential` learns to predict with its models (Scenarios go through that
 function). It must enforce the monotone policy constraints (`features.MONOTONE_CONSTRAINTS`) when
 `monotone` is set, or refuse the job: a family that cannot is not run. An arm names it with
 `{"family": ...}`, and its `params` are that family's own. `family` at its default (`XGBOOST`) is
 left out of `Settings.to_dict` and so of `training_key`, so every model cached before it existed
 is still found. A setting only one family reads (an XGBoost external-memory switch, say) is a
-training field passed on in `TrainingJob`, keyed like any later field.
+training field passed on in `TrainingJob`, keyed like any later field. An Arm that names another
+family than its base's replaces the parameters with its own instead of merging them.
+
+`LIGHTGBM` and `CATBOOST` (#167) train on the CPU from the same rows, written once to a float32 file
+in a temporary folder so the raw rows are never all in memory: the LightGBM wheel has no GPU learner,
+and CatBoost enforces monotone constraints only on the CPU and only for symmetric trees (it refuses
+others). Neither trains a two-part model or from a starting point. Their pre-registered Arms are
+`MODEL_FAMILY_ARMS`, each run by `run_model_family` against the best so far as served.
 
 **Cache and results** live in `loop_dir()` (`data/derived/loop_V202601/`), shared by every
 worktree through `scripts/wt.ps1`. Models are `models/<training_key>.ubj` (the XGBoost trainer's
-suffix) with a `.json` of
+suffix; `.lgbm` and `.cbm` for LightGBM and CatBoost) with a `.json` of
 their rounds; `results.json` holds the naive baseline, the noise floor, every experiment's
 rows and decision, `best` and `confirmation` (all measured with the old measure), and `recheck`
 (#116: the same decisions under the tie-proof measure, the recomputed noise floor and Win
@@ -182,6 +193,7 @@ from exportspredictor.loop.arms import (
     MARKET_REACH_CAP_GRID,
     MAX_ROUNDS,
     MAX_TRAINED_MODELS,
+    MODEL_FAMILY_ARMS,
     NAIVE_EXPERIMENT,
     NOISE_FLOOR,
     NOISE_SEEDS,
@@ -215,6 +227,7 @@ from exportspredictor.loop.arms import (
     exporter_count_arms,
     hyperparameter_experiment,
     market_reach_cap_arm,
+    model_family_experiment,
     models_trained_by,
     product_detail_arm,
     product_detail_experiment,
@@ -255,6 +268,7 @@ from exportspredictor.loop.runner import (
     run_exporter_count,
     run_hyperparameter_stage,
     run_market_reach_cap,
+    run_model_family,
     run_product_detail,
     run_sibling_demand,
 )
@@ -282,9 +296,15 @@ from exportspredictor.loop.served import (
 )
 from exportspredictor.loop.trainers import (
     ANY_FLOW_PARAMS,
+    CATBOOST,
+    CATBOOST_DEFAULT_PARAMS,
+    LIGHTGBM,
+    LIGHTGBM_DEFAULT_PARAMS,
     TRAINERS,
     TWEEDIE_ONLY,
     XGBOOST,
+    CatBoostTrainer,
+    LightGBMTrainer,
     Model,
     Trainer,
     TrainingJob,
@@ -299,6 +319,8 @@ __all__ = [
     "BLEND",
     "BLEND_GRID",
     "BLEND_WEIGHTS",
+    "CATBOOST",
+    "CATBOOST_DEFAULT_PARAMS",
     "CONFIRMATION",
     "CONFIRMED_NAIVE_WEIGHT",
     "CONSTRAINTS_EXPERIMENT",
@@ -307,6 +329,8 @@ __all__ = [
     "FIXTURE_LOOP",
     "HYPERPARAMETER_STAGES",
     "KEYED_FIELDS",
+    "LIGHTGBM",
+    "LIGHTGBM_DEFAULT_PARAMS",
     "LOWER_ZERO_RATE",
     "MARKET_REACH_CAP",
     "MARKET_REACH_CAP_EXPERIMENT",
@@ -315,6 +339,7 @@ __all__ = [
     "MAX_TRAINED_MODELS",
     "MIN_WIN_THRESHOLD",
     "MODELS_DIR",
+    "MODEL_FAMILY_ARMS",
     "NAIVE_EXPERIMENT",
     "NOISE_FLOOR",
     "NOISE_SEEDS",
@@ -351,6 +376,8 @@ __all__ = [
     "XGBOOST",
     "ZERO_RATE_EXPERIMENT",
     "Arm",
+    "CatBoostTrainer",
+    "LightGBMTrainer",
     "Loop",
     "LoopData",
     "LoopPlan",
@@ -383,6 +410,7 @@ __all__ = [
     "main",
     "market_reach_cap_arm",
     "measures",
+    "model_family_experiment",
     "models_trained_by",
     "naive_from_features",
     "naive_margin",
@@ -396,6 +424,7 @@ __all__ = [
     "run_exporter_count",
     "run_hyperparameter_stage",
     "run_market_reach_cap",
+    "run_model_family",
     "run_product_detail",
     "run_sibling_demand",
     "save_recheck",
