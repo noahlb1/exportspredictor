@@ -51,6 +51,9 @@ class Settings:
     monotone: bool = True
     # The model family, which picks the trainer (`trainers.TRAINERS`, #165). `params` are that family's.
     family: str = XGBOOST
+    # The training scope (spec #155, ticket #169): only the rows of the top `exporter_scope` Exporters by mean GDP
+    # (`scope.exporter_scope`, the UK always in) train the model; None: every Exporter the feature files hold.
+    exporter_scope: int | None = None
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
     # Scoring only: Market Reach's beta (`market_reach`, spec #113, ticket #127). 0 scores without it;
@@ -70,6 +73,8 @@ class Settings:
             del data["market_reach_cap"]
         if self.family == XGBOOST:
             del data["family"]
+        if self.exporter_scope is None:
+            del data["exporter_scope"]
         return data
 
     @classmethod
@@ -130,6 +135,10 @@ class LoopPlan:
     device: str = "cuda"
     threads: int | None = None  # XGBoost threads; None: every core
     uk: str = baci.UK
+    # The most rows a model may train on (with the whole validation year, as `search.final_non_uk_rate` counts
+    # them); None: the VRAM budget for the arm's features (`training.row_budget`). An experiment whose arm would
+    # need more is refused before anything trains (#169: the loop did not check an explicit `non_uk_rate`).
+    row_budget: int | None = None
 
 
 # The fixture world has a few hundred rows and a UK grid of a few dozen pairs, too few to
@@ -358,6 +367,27 @@ def model_family_experiment(family: str) -> str:
     return f"model family: {family}"
 
 
+# #169: the wider Exporter scope (#168's `all_exporters` files: every Exporter's rows) against the best so far as
+# served retrained on the same files with ADR 0004's top 100 only (`Settings.exporter_scope`), both at one non-UK
+# rate, so the pair differs only by the scope. The rate is the largest that fits the VRAM budget on these files
+# (`search.final_non_uk_rate`); the served 0.6157 would not fit. A dropped Arm leaves the served files unchanged.
+WIDER_SCOPE_EXPERIMENT = "wider exporter scope"
+WIDER_SCOPE_SET = "all_exporters"
+WIDER_SCOPE_BASE_SET = "exporter_count"  # the served files whose top 100's rows `all_exporters` repeats
+WIDER_SCOPE_NON_UK_RATE = 0.5079
+WIDER_SCOPE = "every Exporter"
+
+
+def wider_scope_arms(best: Settings, *, top: int, non_uk_rate: float) -> tuple[Arm, Arm]:
+    """The paired base (the best so far as served, on the top `top` Exporters) and the Arm (every Exporter)."""
+    served = served_base_arm(best)
+    base = Arm(
+        f"{SERVED_BASE}, top {top} Exporters",
+        {**served.changes, "exporter_scope": top, "non_uk_rate": non_uk_rate},
+    )
+    return base, Arm(WIDER_SCOPE, {"exporter_scope": None, "non_uk_rate": non_uk_rate}, BLEND_GRID)
+
+
 def decided_by_stopping_rule(rows: Sequence[Mapping]) -> list[str]:
     """The Arms whose best round (or a two-part model's either part's) is below `STOPPING_RULE_ROUNDS`."""
 
@@ -380,6 +410,7 @@ EXPERIMENT_DISPLAY_NAMES = {
     NAIVE_EXPERIMENT: "Naive Baseline",
     EXPORTER_COUNT_EXPERIMENT: "Exporter count",
     SIBLING_DEMAND_EXPERIMENT: "Sibling Demand",
+    WIDER_SCOPE_EXPERIMENT: "Wider Exporter scope",
 }
 
 

@@ -61,6 +61,9 @@ refuses it, and `real_data` refuses it before opening a file.
     # far as served, one model each, trained on the CPU (one at a time; each refuses other feature files)
     uv run python -m exportspredictor.loop model-family lightgbm
     uv run python -m exportspredictor.loop model-family catboost
+    # #169, with EXPORTSPREDICTOR_FEATURE_SET=all_exporters (every Exporter's rows): the best so far as served
+    # retrained on the top 100 Exporters of those files, then on every Exporter, both at one non-UK rate (two models)
+    uv run python -m exportspredictor.loop wider-scope
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -153,7 +156,11 @@ rebuilt files (#164's `sibling_demand`: Sibling Demand stored beside the served 
 `files_kept_if_dropped=False` to `Loop.run_experiment`, so a dropped Arm leaves `kept_feature_set` on the served
 files. The hyperparameter search (#166, `run_hyperparameter_stage`) is a sequence of experiments, one per stage
 of `HYPERPARAMETER_STAGES`, each against `served_base_arm` of the best so far after the stages before it; Arms
-whose best round is below `STOPPING_RULE_ROUNDS` are listed by `decided_by_stopping_rule`. The round's note is
+whose best round is below `STOPPING_RULE_ROUNDS` are listed by `decided_by_stopping_rule`. The wider Exporter scope (#169,
+`run_wider_scope`) trains on `all_exporters` with the training field `exporter_scope` (the top n Exporters by mean GDP,
+`scope.exporter_scope`; None: every Exporter the files hold): its base keeps ADR 0004's top 100 of the same files, its Arm
+every Exporter, both at `WIDER_SCOPE_NON_UK_RATE`. Every experiment now refuses, before training, an arm whose non-UK rate
+might not fit the VRAM row budget (`LoopPlan.row_budget`, by default `training.row_budget`). The round's note is
 `docs/research/final-round-2022.md`.
 
 **Pitfalls.**
@@ -215,6 +222,11 @@ from exportspredictor.loop.arms import (
     TWO_PART_EXPERIMENT,
     UK_ZEROS_EXPERIMENT,
     UK_ZEROS_SAMPLED,
+    WIDER_SCOPE,
+    WIDER_SCOPE_BASE_SET,
+    WIDER_SCOPE_EXPERIMENT,
+    WIDER_SCOPE_NON_UK_RATE,
+    WIDER_SCOPE_SET,
     ZERO_RATE_EXPERIMENT,
     Arm,
     LoopPlan,
@@ -237,6 +249,7 @@ from exportspredictor.loop.arms import (
     starting_point_arm,
     training_key,
     two_part_arm,
+    wider_scope_arms,
 )
 from exportspredictor.loop.cli import confirm_best, main, time_one_arm
 from exportspredictor.loop.confirmation import CONFIRMATION, V2, WINNER, confirm
@@ -271,6 +284,7 @@ from exportspredictor.loop.runner import (
     run_model_family,
     run_product_detail,
     run_sibling_demand,
+    run_wider_scope,
 )
 from exportspredictor.loop.selection import (
     DIAGNOSTICS,
@@ -372,6 +386,11 @@ __all__ = [
     "UK_ZEROS_EXPERIMENT",
     "UK_ZEROS_SAMPLED",
     "V2",
+    "WIDER_SCOPE",
+    "WIDER_SCOPE_BASE_SET",
+    "WIDER_SCOPE_EXPERIMENT",
+    "WIDER_SCOPE_NON_UK_RATE",
+    "WIDER_SCOPE_SET",
     "WINNER",
     "XGBOOST",
     "ZERO_RATE_EXPERIMENT",
@@ -427,6 +446,7 @@ __all__ = [
     "run_model_family",
     "run_product_detail",
     "run_sibling_demand",
+    "run_wider_scope",
     "save_recheck",
     "save_results",
     "select_arms",
@@ -439,6 +459,7 @@ __all__ = [
     "training_key",
     "two_part_arm",
     "v2_plan",
+    "wider_scope_arms",
     "win_threshold",
     "world_products",
 ]

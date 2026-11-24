@@ -290,3 +290,21 @@ Each family trained on 84,062,589 rows, the same count as #164's XGBoost models,
 | CatBoost | **0** | 231,217 | **0** | 170,423 |
 
 Neither family ever moves the wrong way. CatBoost's symmetric trees split on the Trade Agreement in some tree at every pair, so the flag raises every pair's Export Potential. LightGBM's three trees use it for a few thousand pairs only.
+
+## 6. A wider Exporter scope (#169)
+
+**The idea.** [ADR 0004](../adr/0004-training-scope-and-sampling.md) trains on the rows of the top 100 Exporters by mean GDP. v1 trained on the whole world, and v2 ranked held-out UK Markets 0.020 worse. #73 ruled out the sampling parts of that change. That leaves the scope (or the Excluded Products) as the likely cause. This idea trains on every Exporter's rows, using #168's `all_exporters` files (section 2). It asks whether the 127 smaller Exporters' Flows and Zero Cells, as training rows, help the model rank UK Markets. In course terms, it tests whether more, and more varied, training data beats a cleaner sample: a point on the learning curve along a different axis from the row count.
+
+**A paired comparison on one set of files.** In `all_exporters`, the top 100's rows are the same rows as in `exporter_count`, with the same features (section 2). So the base is the best so far as served, retrained on these files with only the top 100 Exporters' rows. A new training field, `Settings.exporter_scope`, does this: it keeps only the rows of the top *n* Exporters by mean GDP (`scope.exporter_scope`, the UK always in), ranked from the same country-year table the files were built from. On the real files it gives exactly `exporter_count`'s 100 Exporters. The two models share the validation rows, the held-out UK grid, the Naive Baseline, Market Reach's table and the feature transform (fitted on every training row of these files). So the pair differs only in which Exporters' rows train the model.
+
+**One non-UK rate for both.** At the served rate (0.6157), every Exporter's rows would put about 115.9 M rows on the GPU, over the 100.0 M budget. The largest rate that fits these files is **0.5079** (`search.final_non_uk_rate`, section 2). Both models train at 0.5079, so the comparison isolates the scope. The base therefore trains on fewer rows than the served model (about 72 M against 84 M). If the base had kept 0.6157, the pair would differ in both scope and rate. The base is then not quite the served model. Its score shows what the lower rate costs on its own, against the served 0.6210. A kept Arm would serve at 0.5079.
+
+**A new check.** The loop now refuses, before anything trains, an experiment whose explicit non-UK rate might not fit the VRAM row budget (`training.check_row_budget`, counted as `search.final_non_uk_rate` counts: every training row and the whole validation year). Until now only the pipeline checked it, and an Arm could have asked for 0.6157 on these files.
+
+**Pre-registered** (committed before any 2022 result was read):
+- **Base** (`best so far as served, top 100 Exporters`): the best so far (Blend w = 0.3, the served XGBoost parameters, 25 features), with Market Reach at β = 4 (`served_base_arm`), `exporter_scope` 100 and non-UK rate 0.5079, retrained on fold 0 of the `all_exporters` files.
+- **Arm** (`every Exporter`): the same, with every Exporter's rows (`exporter_scope` None) at 0.5079. It re-chooses its blend weight from 0.1 to 0.9 on the measure with Market Reach, as every Arm with a new model has since #71.
+- **Gate:** keep it only if it beats the base by more than `current_win_threshold` (0.008869). If it is dropped, the served files stay `exporter_count` (`files_kept_if_dropped: false`).
+- **If fold 0 wins:** the Arm becomes the best so far. It is then confirmed on all five folds through the loop's existing confirmation step (`python -m exportspredictor.loop confirm`) before it is adopted, and ADR 0004 is amended. If it does not win, no confirmation is run.
+- **The stopping rule:** an Arm whose best round is below 50 is flagged as decided by the stopping rule.
+- **Command:** `$env:EXPORTSPREDICTOR_FEATURE_SET='all_exporters'; scripts/wt.ps1 python -m exportspredictor.loop wider-scope` (two models, on the GPU, one at a time). It writes `experiments["wider exporter scope"]` to the loop's `results.json`. 2023 is not read.
