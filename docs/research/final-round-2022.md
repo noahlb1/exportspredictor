@@ -12,6 +12,7 @@ One row per idea, in the order run. Later tickets add their rows here and their 
 |---|---|---|---|---|---|---|---|---|
 | 1 | [Cap on Market Reach's upside](#1-a-cap-on-market-reachs-upside-163) (#163) | 1 (4 caps) | 0.6210 | cap 16×, 0.6204 | −0.0006 | 0.008869 | none (scored from cache, 5.5 min) | **Dropped** |
 | 2 | [Sibling Demand, a UK-free demand proxy, as a feature](#3-sibling-demand-a-uk-free-demand-proxy-as-a-feature-164) (#164) | 1 | 0.6210 (retrained on `sibling_demand`) | w = 0.3, 0.6213 | +0.0003 | 0.008869 | 76.6 min (2 models; see the section) | **Dropped** |
+| 3 | [A fresh hyperparameter search](#4-a-fresh-hyperparameter-search-166) (#166) | 14 in 5 stages | 0.6210 | `colsample_bytree` 0.6, 0.6215 | +0.0005 | 0.008869 | 134.6 min (14 models) | **Dropped** (every stage) |
 
 Not an idea, so not a row: [section 2](#2-wider-exporter-scope-feature-files-168) records the build of the `all_exporters` feature files (#168), which the wider Exporter scope experiment (#169) trains on.
 
@@ -146,3 +147,72 @@ The Arm's blend grid with Market Reach, from w = 0.1 to 0.9, reads 0.6191, 0.620
 | + Sibling Demand (`a8a94c0aa05727a1`) | 94 s | 587 s | 787 / 887 |
 
 The base took about seven times as long as the Arm for the same number of rounds. Before the run, other programs held 1.8 GB of the 10 GB of VRAM, and no other training run was active. Halfway through the base, 9.7 GB was in use, this run included, at 100% utilisation. The cause of the slowdown was not traced. Memory pressure near the VRAM limit is a guess. The Arm's 587 s matches #127's 452–680 s. 2023 was not read.
+
+## 4. A fresh hyperparameter search (#166)
+
+**The idea.** The served XGBoost parameters come from #54's search: Optuna TPE on the Sector subset, selected on 2022 Tweedie deviance, with no Market Reach and before the Selection Measure was tie-proof. #71 then compared #54's three confirmed configurations, v1's and depth 6 on the Selection Measure and found them within the noise. This search asks whether parameters chosen *on the Selection Measure*, for the model as served (the Blend with Market Reach), rank held-out UK Markets better.
+
+**The design.** Five stages, run in the spec's order, each one experiment of the loop (`loop.HYPERPARAMETER_STAGES`, `python -m exportspredictor.loop hyperparameters <stage>`). Each stage runs against the best so far as served (`served_base_arm`), whose model is cached, so each Arm trains one model and every stage stays well within `MAX_TRAINED_MODELS` (6); a stage over the budget is refused before training. An Arm changes only the parameters it names; the others are the best so far's. Every Arm re-chooses its blend weight from 0.1 to 0.9, as every Arm with a new model has since #71, and keeps Market Reach at β = 4. Rounds still stop on the model alone's Selection Measure (patience 100). **Winners stack**: a kept stage becomes `results["best"]` (with Market Reach in its settings, so `served_base_arm` adds nothing after it), and the next stage changes its parameters. A stage is refused until the stages before it are decided.
+
+The best so far at the start: `max_depth` 12, `eta` 0.1, `min_child_weight` 3.05, `subsample` 0.916, `colsample_bytree` 0.879, `reg_lambda` 4.95, `tweedie_variance_power` 1.266; Blend w = 0.3; Market Reach β = 4; `exporter_count` files; non-UK rate 0.6157.
+
+**Pre-registered** (committed before any stage was run):
+
+| Stage | Arms (the parameter each changes) | Why these values |
+|---|---|---|
+| Depth | `max_depth` 8, 10, 14 | Either side of 12. Depth 6 is left out: #71 found it stopped at round 12, decided by the stopping rule. |
+| Learning rate | `eta` 0.05, 0.2 | Half and double. 0.05 roughly doubles the rounds and the GPU time. |
+| Min child weight | `min_child_weight` 1, 10, 30 | From #54's lowest (1.4) up to well past its highest (6.8): larger leaves may suit a ranking within Products. |
+| Subsampling | `subsample` 0.7; `colsample_bytree` 0.6; both | Each alone, then together. |
+| Regularisation | `reg_lambda` 1, 20, 50 | #54's confirmed configurations had 0.96 and 23.8; 50 tests more. |
+
+- **Gate:** within each stage, the Arm with the highest Selection Measure is kept only if it beats that stage's base by more than `current_win_threshold` (0.008869).
+- **The stopping rule:** any Arm whose best round is below 50 (`STOPPING_RULE_ROUNDS`) is flagged here as decided by the stopping rule, not by its configuration.
+- **Not searched:** `tweedie_variance_power` (not among the spec's parameters; it changes the loss, not the trees), `gamma` and `reg_alpha` (their scale depends on the Tweedie gradients, so no grid could be fixed without a pilot).
+- **Budget:** 14 models in all. At #164's ~10 minutes a model that is about 2.5 hours of GPU time; at its slow base's 67 minutes it would be about 16 hours. If a stage's first model runs that slowly, the later stages' grids are cut before they run, and the cut is recorded here.
+- **Commands:** `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python -m exportspredictor.loop hyperparameters depth`, then `learning-rate`, `min-child-weight`, `subsampling` and `regularisation`. Each writes `experiments["hyperparameters: <stage>"]` to the loop's `results.json`. 2023 is not read.
+
+**Decision: drop every stage; the served parameters stay.** No Arm of any stage comes near the Win Threshold. The best Arm of the whole search, `colsample_bytree` 0.6, scores **0.6215** against **0.6210** for the base, a gain of **+0.0005** against a threshold of 0.008869. Since no stage was kept, every stage ran against the same base, the best so far as served, scored from #127's cached model (`e5943f03616c0cf7`), and `results["best"]` is unchanged (the Blend w = 0.3 without Market Reach, 0.5771). The served files stay `exporter_count`. #167 starts from `served_base_arm` of that best so far, as this search did.
+
+**Results.** Fold 0 of 2022, every figure under the tie-proof measure, with Market Reach at β = 4. "Without Reach" is the same Arm's Blend without Market Reach; "Model alone" is its stopping measure (no blend, no Reach); the base was scored from the cache, so its model-alone figure is not re-recorded (#164's retrained base: 0.5300). Deviance is the Tweedie deviance on the validation rows. Every Arm re-chose w = 0.3, the base's weight.
+
+| Stage | Arm | **Selection Measure** | Change | Without Reach | Non-zero | Zero vs non-zero | Value-weighted | Top-10 share | Deviance | Model alone | Rounds kept / trained | Training |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| (every stage) | Best so far as served (base, cached) | **0.6210** | | 0.5762 | 0.507 | 0.589 | 0.816 | 0.943 | 464.1 | | 824 / 924 | cached |
+| Depth | `max_depth` 8 | 0.6208 | −0.0002 | 0.5757 | 0.504 | 0.589 | 0.815 | 0.944 | 472.8 | 0.5338 | 1,106 / 1,206 | 329 s |
+| | `max_depth` 10 | 0.6210 | −0.0000 | 0.5776 | 0.505 | 0.589 | 0.815 | 0.944 | 462.2 | 0.5378 | 1,441 / 1,541 | 451 s |
+| | `max_depth` 14 | 0.6213 | +0.0004 | 0.5770 | 0.508 | 0.590 | 0.816 | 0.945 | 469.6 | 0.5315 | 857 / 957 | 1,340 s |
+| Learning rate | `eta` 0.05 | 0.6209 | −0.0001 | 0.5750 | 0.507 | 0.589 | 0.815 | 0.942 | 462.1 | 0.5276 | 1,090 / 1,190 | 774 s |
+| | `eta` 0.2 | 0.6213 | +0.0003 | 0.5763 | 0.506 | 0.589 | 0.816 | 0.944 | 471.9 | 0.5320 | 843 / 943 | 545 s |
+| Min child weight | `min_child_weight` 1 | 0.6207 | −0.0003 | 0.5745 | 0.506 | 0.589 | 0.815 | 0.945 | 465.4 | 0.5268 | 527 / 627 | 430 s |
+| | `min_child_weight` 10 | 0.6212 | +0.0002 | 0.5761 | 0.507 | 0.589 | 0.816 | 0.945 | 463.3 | 0.5305 | 986 / 1,086 | 596 s |
+| | `min_child_weight` 30 | 0.6214 | +0.0004 | 0.5782 | 0.506 | 0.590 | 0.816 | 0.943 | 461.8 | 0.5360 | 1,052 / 1,152 | 637 s |
+| Subsampling | `subsample` 0.7 | 0.6211 | +0.0001 | 0.5774 | 0.506 | 0.589 | 0.816 | 0.946 | 460.9 | 0.5365 | 867 / 967 | 624 s |
+| | **`colsample_bytree` 0.6** | **0.6215** | **+0.0005** | 0.5772 | 0.507 | 0.590 | 0.816 | 0.943 | 464.9 | 0.5346 | 698 / 798 | 452 s |
+| | `subsample` 0.7 + `colsample_bytree` 0.6 ⚑ | 0.6205 | −0.0005 | 0.5489 | 0.487 | 0.591 | 0.810 | 0.936 | 1,043.7 | 0.5107 | **6** / 106 | 66 s |
+| Regularisation | `reg_lambda` 1 | 0.6211 | +0.0001 | 0.5765 | 0.506 | 0.589 | 0.815 | 0.944 | 463.6 | 0.5317 | 1,085 / 1,185 | 734 s |
+| | `reg_lambda` 20 | 0.6210 | −0.0000 | 0.5757 | 0.507 | 0.589 | 0.816 | 0.944 | 461.8 | 0.5296 | 758 / 858 | 479 s |
+| | `reg_lambda` 50 | 0.6211 | +0.0001 | 0.5764 | 0.507 | 0.589 | 0.815 | 0.943 | 463.0 | 0.5323 | 1,013 / 1,113 | 621 s |
+
+Each stage's decision: depth (best `max_depth` 14, +0.0004), learning rate (`eta` 0.2, +0.0003), min child weight (30, +0.0004), subsampling (`colsample_bytree` 0.6, +0.0005) and regularisation (`reg_lambda` 50, +0.0001): all **dropped** against 0.008869.
+
+**⚑ Decided by the stopping rule.** One Arm's best round is below 50: `subsample` 0.7 with `colsample_bytree` 0.6 peaked at round **6** and stopped at 106. Its model alone ranked best on the first few trees, dipped, and patience 100 ended training before it recovered, if it would have. Its deviance (1,043.7, more than double every other Arm's) shows a model that had barely started to fit. So its −0.0005 reflects the stopping rule, not the configuration. Each half of it, trained alone, ran its full course (867 and 698 rounds) and stayed inside the noise, which makes it unlikely, though not proven, that the pair would have cleared the threshold. This is the same caveat as #71's depth 6 and #70's starting point ([opportunity-ranking-experiments.md](opportunity-ranking-experiments.md#arms-decided-by-the-stopping-rule-not-by-their-configuration)).
+
+**Reading it.**
+- **The parameters do not matter for the ranking once the model is blended and Market Reach is applied.** The 13 fully trained Arms span 0.6207 to 0.6215, a range of 0.0008, under a tenth of the Win Threshold and well inside the noise floor's seed-to-seed spread (SD 0.0044). Every one re-chose the base's blend weight, and every blend grid has the same shape (peak at w = 0.3, 0.612–0.613 at w = 0.9).
+- **The model alone moves more than the served form.** Model-alone measures span 0.5268 to 0.5378 (depth 10 highest), about ten times the served spread. The naive baseline in the Blend and Market Reach absorb most of what the parameters change. This repeats #71's finding ("configuration barely matters once blended") under the tie-proof measure and with Market Reach.
+- **Deviance and ranking disagree again**: `subsample` 0.7 has the lowest deviance (460.9) and a gain of +0.0001; depth 8 the highest of the full runs (472.8) and −0.0002. #54 chose on deviance; this search confirms that choice costs the ranking nothing measurable.
+- As always, these are associations on one fold and one year. A parameter that "wins" here ranks held-out UK Markets better in 2022 and says nothing about why.
+
+**Run.** On 2026-11-24, one stage at a time, each started in the background after `nvidia-smi` showed the GPU idle (1.1–1.5 GB of the 10 GB held by other programs): `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python -m exportspredictor.loop hyperparameters <stage>`.
+
+| Stage | Wall clock | Models | Training (matrices included) |
+|---|---|---|---|
+| Depth | 12:38–13:15 (37.1 min) | 3 | 2,119 s |
+| Learning rate | 13:15–13:39 (23.6 min) | 2 | 1,319 s |
+| Min child weight | 13:39–14:09 (29.4 min) | 3 | 1,663 s |
+| Subsampling | 14:09–14:30 (20.7 min) | 3 | 1,143 s |
+| Regularisation | 14:30–15:02 (32.3 min) | 3 | 1,834 s |
+| **Total** | **143.1 min** | **14** | **8,077 s = 134.6 min of GPU time** |
+
+Each stage also re-scored the cached base (about 65 s on the CPU: XGBoost warns of mismatched devices for a loaded model, as #163 noted). The first model of each stage built the training matrices (83–85 s), and the stage's later models reused them. **#164's slowdown did not recur**: every depth-12 model trained at 0.55–0.70 s a round, against #164's 0.66 s for its Arm and 4.5 s for its slow base. `max_depth` 14 took 1.40 s a round, about twice depth 12, as expected for trees with up to four times the leaves. The pre-registered grids were run in full; no stage needed cutting. 2023 was not read.

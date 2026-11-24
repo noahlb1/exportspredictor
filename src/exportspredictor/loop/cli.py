@@ -11,6 +11,7 @@ from exportspredictor.features import FEATURE_SET_ENV, PRODUCT_DETAIL_FEATURES
 from exportspredictor.loop.arms import (
     CONSTRAINTS_EXPERIMENT,
     EXPORTER_COUNT_EXPERIMENT,
+    HYPERPARAMETER_STAGES,
     MARKET_REACH_CAP_EXPERIMENT,
     NAIVE_EXPERIMENT,
     NOISE_FLOOR,
@@ -24,6 +25,8 @@ from exportspredictor.loop.arms import (
     Settings,
     blend_arm,
     constraint_arms,
+    decided_by_stopping_rule,
+    hyperparameter_experiment,
     product_detail_experiment,
     select_arms,
     starting_point_arm,
@@ -35,6 +38,7 @@ from exportspredictor.loop.recheck import current_win_threshold
 from exportspredictor.loop.runner import (
     Loop,
     run_exporter_count,
+    run_hyperparameter_stage,
     run_market_reach_cap,
     run_product_detail,
     run_sibling_demand,
@@ -108,6 +112,22 @@ def main(argv: Sequence[str]) -> None:
             "kept": section["kept"], "win_threshold": section["win_threshold"], "naive_weight": arm["settings"]["naive_weight"],
             **{r["arm"]: r[SELECTION_MEASURE] for r in (section["base_arm"], arm)},
         }), flush=True)
+    elif command == "hyperparameters":
+        stage = " ".join(argv[1:]).replace("-", " ")
+        if stage not in HYPERPARAMETER_STAGES:
+            stages = "|".join(s.replace(" ", "-") for s in HYPERPARAMETER_STAGES)
+            raise SystemExit(f"usage: python -m exportspredictor.loop hyperparameters {stages}")
+        data, served = real_data(), kept_feature_set(load())
+        if data.feature_set != served:
+            raise SystemExit(f"Run on the served feature files: set {FEATURE_SET_ENV}={served}")
+        results = run_hyperparameter_stage(Loop(data, v2_plan(), loop_dir()), stage)
+        section = results["experiments"][hyperparameter_experiment(stage)]
+        rows = [section["base_arm"], *section["arms"]]
+        print(json.dumps({
+            "kept": section["kept"], "win_threshold": section["win_threshold"],
+            "decided_by_stopping_rule": decided_by_stopping_rule(rows),
+            **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "seconds")} for r in rows},
+        }), flush=True)
     elif command == "confirm":
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
@@ -117,7 +137,8 @@ def main(argv: Sequence[str]) -> None:
     else:
         raise SystemExit(
             "usage: python -m exportspredictor.loop "
-            "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|sibling-demand|confirm|time"
+            "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|sibling-demand|"
+            "hyperparameters <stage>|confirm|time"
         )
 
 

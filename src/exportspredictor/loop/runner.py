@@ -22,6 +22,7 @@ from exportspredictor.folds import outside_fold, with_folds
 from exportspredictor.loop.arms import (
     ANY_FLOW,
     EXPORTER_COUNT_EXPERIMENT,
+    HYPERPARAMETER_STAGES,
     MARKET_REACH_CAP_EXPERIMENT,
     MAX_TRAINED_MODELS,
     NOISE_FLOOR,
@@ -31,6 +32,7 @@ from exportspredictor.loop.arms import (
     LoopPlan,
     Settings,
     exporter_count_arms,
+    hyperparameter_experiment,
     market_reach_cap_arm,
     models_trained_by,
     product_detail_arm,
@@ -133,6 +135,26 @@ def run_sibling_demand(lp: "Loop") -> dict:
         SIBLING_DEMAND_EXPERIMENT, [sibling_demand_arm(best)], base_arm=served_base_arm(best),
         files_kept_if_dropped=False,
     )
+
+
+def run_hyperparameter_stage(
+    lp: "Loop", stage: str, stages: Mapping[str, Sequence[Arm]] = HYPERPARAMETER_STAGES
+) -> dict:
+    """#166: one stage of the hyperparameter search, against the best so far as served (`served_base_arm`).
+
+    Stages run in `stages`' order, so that winners stack: a stage is refused until every stage before it is
+    decided, and its Arms change the parameters of the best so far after them. It is refused before training
+    anything if it would train more than MAX_TRAINED_MODELS models.
+    """
+    if stage not in stages:
+        raise ValueError(f"{stage!r} is an unknown stage of the hyperparameter search; stages: {list(stages)}")
+    for earlier in list(stages)[: list(stages).index(stage)]:
+        section = lp.results.get("experiments", {}).get(hyperparameter_experiment(earlier), {})
+        if not section.get("decided"):
+            raise ValueError(f"Run the stage {earlier!r} before {stage!r}: winners stack in order")
+    lp.noise_floor()
+    best = Settings.from_dict(lp.results["best"]["settings"])
+    return lp.run_experiment(hyperparameter_experiment(stage), stages[stage], base_arm=served_base_arm(best))
 
 
 class Loop:
