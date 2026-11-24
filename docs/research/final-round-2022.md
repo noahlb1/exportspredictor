@@ -97,3 +97,22 @@ Most of the extra rows are Zero Cells, as ADR 0004 predicted: small Exporters ad
 - The comparison is then at a lower non-UK rate (0.51 against 0.62) as well as a wider scope. Keeping the rate fixed would need GPU external memory, which is the spec's idea 6.
 
 These are build records only. Nothing here was trained or scored, and 2023 was not read.
+
+## 3. Sibling Demand: a UK-free demand proxy as a feature (#164)
+
+**The idea.** Idea 9 of the [open review](open-review-2022.md#9-a-uk-free-demand-proxy-hypothesis). Leave-one-out demand (`log_demand_loo`) removes the row's own Exporter, so where the UK supplies most of a Market's imports of a Product, the Market looks small to a UK row. UK milk and cream to Ireland is the open review's example. A demand proxy built without UK Flows can still see that the Market buys related goods. As a blend term, the Market's imports of the Product's HS4 siblings gained +0.0067 on folds 3–4. That is below the threshold, and it added nothing on top of Market Reach (+0.0005). As a model feature, the trees can let it interact with the Product and the other features. That form was untested.
+
+**The feature, Sibling Demand** (`log_sibling_demand_loo`): ln(1 + the Market's imports that year of the other Products of the Product's HS4 heading, from every Exporter except the UK and the row's own).
+- **No UK Flow** is read, for any row. So a UK row never sees its own pair or the UK's trade with the Market in other Products, and the definition is the same in training and serving.
+- **The row's own Exporter is left out too**, so no row reads its pair's trade in other Products (the features' "no pair trade in other Products" rule).
+- **The Product itself is left out.** Its other-Exporter demand is already `log_demand_loo`.
+- GDP, the open review's other proxy, is already a feature (`log_gdp_d`), so only Sibling Demand is tried.
+- Fixture tests show that a UK pair's Sibling Demand does not move when its own Flows change, or when every UK Flow is removed.
+
+**The files.** The `sibling_demand` feature set is `exporter_count` (the served files) with Sibling Demand stored as a second candidate feature (`features.FEATURE_SET_CANDIDATES`). Every other column is built by the same code from the same Flows. So the base retrained on these files differs from the Arm only by the feature. A model cached on `exporter_count` is not reused: the feature set is part of the cache key.
+
+**Pre-registered** (committed before any 2022 result was read):
+- **Base:** the best so far as served (`served_base_arm`: Blend w = 0.3, Market Reach β = 4), retrained on fold 0 of the `sibling_demand` files.
+- **Arm** (`+ log_sibling_demand_loo`): the base with Sibling Demand as a 26th feature, with no monotone constraint. It re-chooses its blend weight from 0.1 to 0.9 on the measure with Market Reach, as every Arm with a new model has since #71.
+- **Gate:** keep it only if it beats the base by more than `current_win_threshold` (0.008869). If it is dropped, the served files stay `exporter_count`: the experiment records `files_kept_if_dropped: false`, so `kept_feature_set` ignores it unless an Arm is kept.
+- **Command:** `$env:EXPORTSPREDICTOR_FEATURE_SET='sibling_demand'; scripts/wt.ps1 python -m exportspredictor.loop sibling-demand` (two models). It writes `experiments["sibling demand"]` to the loop's `results.json`.
