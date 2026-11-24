@@ -96,9 +96,17 @@ MARKET_TREND_FEATURES = ["market_import_growth", "reexport_ratio"]
 # Exporter's Flows (ADR 0004). A UK row never counts the UK. How open a Market is to a Product;
 # not a policy feature, so it has no monotone constraint.
 EXPORTER_COUNT_FEATURES = ["log_exporters_loo"]
-# Features `build_features` computes and stores that are not yet model inputs: the experiment
-# loop tries each as an Arm (spec #113 Phase 2) and a win moves it into ALL_FEATURES.
-CANDIDATE_FEATURES = [*EXPORTER_COUNT_FEATURES]
+# Sibling Demand (spec #155, #164; idea 9 of docs/research/open-review-2022.md), the UK-free demand
+# proxy: ln(1 + the Market's imports that year of the Product's HS4 siblings, the other Products of
+# its heading, from every Exporter except the UK and the row's own). It reads no UK Flow at all, so a
+# UK-dominated Market does not look small, and a UK row never sees its own pair or the UK's other
+# trade with the Market; leaving out the row's own Exporter keeps every row free of the pair's trade
+# in other Products. Not a policy feature, so it has no monotone constraint.
+SIBLING_DEMAND_FEATURES = ["log_sibling_demand_loo"]
+# Features `build_features` computes that are not yet model inputs: the experiment loop tries each
+# as an Arm (spec #113 Phase 2) and a win moves it into ALL_FEATURES. A feature set stores those
+# its entry in `FEATURE_SET_CANDIDATES` names.
+CANDIDATE_FEATURES = [*EXPORTER_COUNT_FEATURES, *SIBLING_DEMAND_FEATURES]
 # The Applied Tariff as ln(1 + t), with t the rate as a fraction (ADR 0006).
 TARIFF_FEATURES = ["log_applied_tariff"]
 POLICY_FEATURES = [*policy.POLICY_FEATURES, *TARIFF_FEATURES]
@@ -131,6 +139,7 @@ CLIPPED_FEATURES = [f for f in [
     *SUPPLY_FEATURES,
     *DEMAND_FEATURES,
     *EXPORTER_COUNT_FEATURES,
+    *SIBLING_DEMAND_FEATURES,
     *RELATEDNESS_FEATURES,
     *MARKET_TREND_FEATURES,
     *TARIFF_FEATURES,
@@ -144,7 +153,9 @@ TARIFF_METADATA = ["tariff_imputed", "mfn_tariff"]
 # non-UK rate of 0.65, 5% gave the lowest deviance (412.1 against 413.6 at 2% and 413.8 at
 # 10%) with UK Spearman within 0.003 of 2%, and leaves a higher non-UK rate than 10% does.
 ZERO_SAMPLING_RATE = 0.05
-_FLOAT_FEATURES = [*GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES, *EXPORTER_COUNT_FEATURES]
+_FLOAT_FEATURES = [
+    *GRAVITY_FEATURES, *SUPPLY_FEATURES, *DEMAND_FEATURES, *EXPORTER_COUNT_FEATURES, *SIBLING_DEMAND_FEATURES,
+]
 # Market import growth compares the year with this many years earlier.
 GROWTH_YEARS = 3
 # The re-export ratio is ln(1 + min(exports / imports, cap)): beyond 10x its imports a
@@ -309,7 +320,7 @@ def grid_pairs(grids: Iterable[pl.DataFrame | pl.LazyFrame]) -> pl.DataFrame:
     )
 
 
-def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) -> pl.DataFrame:
+def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources, *, uk: str = baci.UK) -> pl.DataFrame:
     """Return KEYS, ALL_FEATURES (FEATURES and the ablated ones), CANDIDATE_FEATURES, `value_usd` and `weight` for each row.
 
     `rows` are keyed by KEYS with the row's own Flow `value_usd` (0 for a zero cell);
@@ -317,7 +328,8 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
     aggregates are computed. Each row's own Flow is subtracted from them (leave-one-out).
     `flows` keeps Excluded Products, so every total counts them (ADR 0005). Market import
     growth also reads the Flows of GROWTH_YEARS earlier: it is missing when `flows` holds
-    none for that year. Relatedness needs `sources.proximity`.
+    none for that year. Relatedness needs `sources.proximity`. Sibling Demand reads no Flow
+    of `uk`.
     """
     if "weight" not in rows.columns:
         rows = rows.with_columns(weight=pl.lit(1.0))
@@ -396,7 +408,8 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources) ->
         )
     )
     return (
-        table.pipe(_attach_gravity, sources)
+        table.pipe(_attach_sibling_demand, active, uk)
+        .pipe(_attach_gravity, sources)
         .pipe(_attach_policy, sources)
         .pipe(_attach_relatedness, active, sources.proximity)
         .pipe(_attach_tariffs, sources)
@@ -502,6 +515,36 @@ class FeatureTransform:
     @classmethod
     def from_dict(cls, data: dict) -> "FeatureTransform":
         return cls(bounds={f: tuple(b) for f, b in data["bounds"].items()}, sectors=tuple(data["sectors"]))
+
+
+def _attach_sibling_demand(table: pl.DataFrame, active: pl.DataFrame, uk: str) -> pl.DataFrame:
+    """Add `log_sibling_demand_loo` (SIBLING_DEMAND_FEATURES) from the non-zero Flows `active`.
+
+    The Market's imports of the row's HS4 heading from Exporters other than the UK, less those of the
+    Product itself, less the row's own Exporter's imports of the heading's other Products. No UK Flow
+    is read, so the UK's own row and its trade with the Market in other Products never reach it.
+    """
+    hs4 = pl.col("hs6").cast(pl.String).str.slice(0, 4).alias("_hs4")
+    value = pl.col("value_usd")
+    non_uk = active.filter(pl.col("exporter").cast(pl.String) != uk).with_columns(hs4)
+    heading = non_uk.group_by("importer", "_hs4", "year").agg(_heading=value.sum())
+    product = non_uk.group_by("importer", "hs6", "year").agg(_product=value.sum())
+    own = non_uk.group_by("exporter", "importer", "_hs4", "year").agg(_own_heading=value.sum())
+    own_product = non_uk.group_by("exporter", "importer", "hs6", "year").agg(_own_product=value.sum())
+    siblings = (
+        pl.col("_heading") - pl.col("_product") - (pl.col("_own_heading") - pl.col("_own_product"))
+    ).clip(lower_bound=0.0)
+    temporary = ["_hs4", "_heading", "_product", "_own_heading", "_own_product"]
+    return (
+        table.with_columns(hs4)
+        .join(heading, on=["importer", "_hs4", "year"], how="left")
+        .join(product, on=["importer", "hs6", "year"], how="left")
+        .join(own, on=["exporter", "importer", "_hs4", "year"], how="left")
+        .join(own_product, on=["exporter", "importer", "hs6", "year"], how="left")
+        .with_columns(pl.col(*temporary[1:]).fill_null(0.0))
+        .with_columns(log_sibling_demand_loo=siblings.log1p())
+        .drop(temporary)
+    )
 
 
 def _attach_gravity(table: pl.DataFrame, sources: Sources) -> pl.DataFrame:
@@ -715,14 +758,19 @@ SETTINGS_FILE = "features.json"
 #   Exporter's rows, not only ADR 0004's top 100 (`FEATURE_SET_SCOPES`). The top 100's rows are
 #   the same as in `exporter_count`, so the two sets differ only by the other Exporters' rows. Its
 #   rows are not sampled at build time: the loop samples other Exporters' rows at a non-UK rate that
-#   fits the VRAM budget, and GPU external memory can train on all of them.
+#   fits the VRAM budget, and GPU external memory can train on all of them;
+# - "sibling_demand" (`features_<BACI version>_sibling_demand`, #164): `exporter_count` with Sibling
+#   Demand stored as a second candidate feature (`FEATURE_SET_CANDIDATES`); every other column is the same.
 FEATURE_SETS = {
     "": "country_year.parquet",
     "exporter_count": gravity.COUNTRY_YEAR_FILLED,
     "all_exporters": gravity.COUNTRY_YEAR_FILLED,
+    "sibling_demand": gravity.COUNTRY_YEAR_FILLED,
 }
 # The training scope of each set (`scope.exporter_scope`'s `n`); a set not listed has ADR 0004's.
 FEATURE_SET_SCOPES = {"all_exporters": scope.ALL_EXPORTERS}
+# The candidate features each set stores; a set not listed stores the Exporter count only, as it was built.
+FEATURE_SET_CANDIDATES = {"sibling_demand": [*EXPORTER_COUNT_FEATURES, *SIBLING_DEMAND_FEATURES]}
 # The feature set every reader (the loop, the pipeline, evaluation) opens; unset means "".
 FEATURE_SET_ENV = "EXPORTSPREDICTOR_FEATURE_SET"
 
@@ -844,7 +892,8 @@ def build(
         proximity = fit_proximity(_scan_years(root, fitted_on), fitted_on)
         write_parquet(proximity, out / "proximity.parquet", compression="zstd")
     sources = replace(sources, proximity=proximity)
-    gap = [y for y in gap_years(baseline_year) if y in years]
+    unstored = [f for f in CANDIDATE_FEATURES if f not in FEATURE_SET_CANDIDATES.get(name, EXPORTER_COUNT_FEATURES)]
+    gap =[y for y in gap_years(baseline_year) if y in years]
     pairs = grid_pairs(uk_grid(load_year_flows(y, to_iso3, root), uk) for y in gap) if gap else None
     for year in years:
         written = [out / f"{kind}_{year}.parquet" for kind in ("training", "uk_grid")]
@@ -853,10 +902,15 @@ def build(
         flows = load_year_flows(year, to_iso3, root)
         with_earlier = pl.concat([flows, load_year_flows(year - GROWTH_YEARS, to_iso3, root)])
         rows = training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters)
-        write_parquet(_features_in_parts(rows, with_earlier, sources, parts), written[0], compression="zstd")
+        write_parquet(
+            _features_in_parts(rows, with_earlier, sources, parts, uk=uk).drop(unstored), written[0], compression="zstd"
+        )
         del rows
         grid = uk_grid(flows, uk, pairs=pairs if year in gap else None)
-        write_parquet(build_features(grid, with_earlier, sources), out / f"uk_grid_{year}.parquet", compression="zstd")
+        write_parquet(
+            build_features(grid, with_earlier, sources, uk=uk).drop(unstored), out / f"uk_grid_{year}.parquet",
+            compression="zstd",
+        )
         del flows, with_earlier, grid
     if exporters is None:  # every Exporter: record those the training rows hold
         exporters = sorted(
@@ -874,7 +928,7 @@ def build(
         "zero_sampling_seed": seed,
         "feature_set": name,
         "features": FEATURES,
-        "candidate_features": CANDIDATE_FEATURES,
+        "candidate_features": [f for f in CANDIDATE_FEATURES if f not in unstored],
         "monotone_constraints": MONOTONE_CONSTRAINTS,
         "gravity": {"country_year": FEATURE_SETS[name], **gravity.fill_record(sources.country_year)},
         "excluded_products": [exclusion.codes for exclusion in EXCLUSIONS],
@@ -885,16 +939,18 @@ def build(
     return out
 
 
-def _features_in_parts(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources, parts: int) -> pl.DataFrame:
+def _features_in_parts(
+    rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources, parts: int, *, uk: str = baci.UK
+) -> pl.DataFrame:
     """`build_features` on `rows` split into `parts` groups of Markets, concatenated.
 
     By Market, because Relatedness is computed one Market at a time: each Market's work is done once.
     """
     if parts <= 1:
-        return build_features(rows, flows, sources)
+        return build_features(rows, flows, sources, uk=uk)
     group = pl.col("importer").cast(pl.String).hash() % parts
     groups = [rows.filter(group == part) for part in range(parts)]
-    return pl.concat([build_features(g, flows, sources) for g in groups if not g.is_empty()])
+    return pl.concat([build_features(g, flows, sources, uk=uk) for g in groups if not g.is_empty()])
 
 
 def main(argv: list[str] | None = None) -> None:

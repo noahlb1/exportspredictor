@@ -256,3 +256,26 @@ def test_the_all_exporters_rows_sampled_at_a_non_uk_rate_keep_every_uk_row_and_u
     assert sum(cells) / len(cells) == pytest.approx(others.height, rel=0.03)
     assert sum(value) / len(value) == pytest.approx(others["value_usd"].sum(), rel=0.05)
     assert min(cells) < others.height < max(cells)  # each sample is a fresh draw, not the full rows
+
+
+# --- Sibling Demand, the UK-free demand proxy (#164) -------------------------------------------
+
+
+def test_the_sibling_demand_set_is_the_exporter_count_set_with_sibling_demand_stored(derived_data_root):
+    """Its rows are `exporter_count`'s plus one column, so an Arm on it differs from its base by one feature."""
+    _filled_gravity(derived_data_root, "JPN", 1e6)
+    base = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="exporter_count")
+
+    out = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="sibling_demand")
+
+    assert out.name.endswith("_sibling_demand")
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["candidate_features"] == ["log_exporters_loo", "log_sibling_demand_loo"]
+    assert "log_sibling_demand_loo" not in settings["monotone_constraints"]
+    assert settings["gravity"]["country_year"] == "country_year_filled.parquet"
+    for kind in ("training", "uk_grid"):
+        rows = pl.read_parquet(out / f"{kind}_2023.parquet").sort(features.KEYS)
+        before = pl.read_parquet(base / f"{kind}_2023.parquet").sort(features.KEYS)
+        assert "log_sibling_demand_loo" not in before.columns  # the set built before it is unchanged
+        assert rows.drop("log_sibling_demand_loo").equals(before)
+        assert rows["log_sibling_demand_loo"].null_count() == 0

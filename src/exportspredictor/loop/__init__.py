@@ -47,6 +47,9 @@ refuses it, and `real_data` refuses it before opening a file.
     # #163, with EXPORTSPREDICTOR_FEATURE_SET set to the served files (`kept_feature_set`): the best so far as
     # served against it with Market Reach's upward multiplier capped (no training)
     uv run python -m exportspredictor.loop market-reach-cap
+    # #164, with EXPORTSPREDICTOR_FEATURE_SET=sibling_demand (the served `exporter_count` files with Sibling
+    # Demand stored): the best so far as served retrained on them, then Sibling Demand added (two models)
+    uv run python -m exportspredictor.loop sibling-demand
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -127,8 +130,10 @@ outside the loop (#124), so `results["best"]` carries it only once an Arm of the
 experiment of the round therefore passes `base_arm=served_base_arm(best)` (Market Reach at `CHOSEN_BETA` added
 where the best so far has none) and runs on the files `served_configuration` serves (`kept_feature_set`).
 Its first, #163, caps the upward Market Reach multiplier (the scoring field `market_reach_cap`, None: no
-cap); a kept Arm becomes `results["best"]` with Market Reach and any cap in its settings. The round's note
-is `docs/research/final-round-2022.md`.
+cap); a kept Arm becomes `results["best"]` with Market Reach and any cap in its settings. An idea on its own
+rebuilt files (#164's `sibling_demand`: Sibling Demand stored beside the served columns) passes
+`files_kept_if_dropped=False` to `Loop.run_experiment`, so a dropped Arm leaves `kept_feature_set` on the served
+files. The round's note is `docs/research/final-round-2022.md`.
 
 **Pitfalls.**
 
@@ -176,6 +181,9 @@ from exportspredictor.loop.arms import (
     SELECT_EXPERIMENT,
     SERVED_BASE,
     SHALLOW_DEPTH,
+    SIBLING_DEMAND_BASE_SET,
+    SIBLING_DEMAND_EXPERIMENT,
+    SIBLING_DEMAND_SET,
     SIZE,
     STARTING_POINT,
     TRAINING_FIELDS,
@@ -198,6 +206,7 @@ from exportspredictor.loop.arms import (
     product_detail_experiment,
     select_arms,
     served_base_arm,
+    sibling_demand_arm,
     starting_point_arm,
     training_key,
     two_part_arm,
@@ -232,6 +241,7 @@ from exportspredictor.loop.runner import (
     run_exporter_count,
     run_market_reach_cap,
     run_product_detail,
+    run_sibling_demand,
 )
 from exportspredictor.loop.selection import (
     DIAGNOSTICS,
@@ -306,6 +316,9 @@ __all__ = [
     "SELECT_EXPERIMENT",
     "SERVED_BASE",
     "SHALLOW_DEPTH",
+    "SIBLING_DEMAND_BASE_SET",
+    "SIBLING_DEMAND_EXPERIMENT",
+    "SIBLING_DEMAND_SET",
     "SIZE",
     "STARTING_POINT",
     "TOP_MARKETS",
@@ -364,11 +377,13 @@ __all__ = [
     "run_exporter_count",
     "run_market_reach_cap",
     "run_product_detail",
+    "run_sibling_demand",
     "save_recheck",
     "save_results",
     "select_arms",
     "served_base_arm",
     "served_configuration",
+    "sibling_demand_arm",
     "starting_point_arm",
     "time_one_arm",
     "trainer_for",
