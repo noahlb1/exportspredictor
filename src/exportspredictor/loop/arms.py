@@ -6,7 +6,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 
 from exportspredictor import baci, market_reach, search
-from exportspredictor.features import EXPORTER_COUNT_FEATURES, FEATURES
+from exportspredictor.features import (
+    EXPORTER_COUNT_FEATURES,
+    FEATURES,
+    SIBLING_DEMAND_FEATURES,
+)
 from exportspredictor.folds import N_FOLDS
 from exportspredictor.loop.selection import MIN_WIN_THRESHOLD
 from exportspredictor.loop.trainers import XGBOOST
@@ -278,6 +282,21 @@ def market_reach_cap_arm(caps: Sequence[float] = MARKET_REACH_CAP_GRID) -> Arm:
     return Arm(MARKET_REACH_CAP, grid={"market_reach_cap": tuple(caps)})
 
 
+# #164: Sibling Demand, the UK-free demand proxy (idea 9 of the open review), as a model feature. It runs on the
+# `sibling_demand` files, the served `exporter_count` files with the feature stored, against the best so far as
+# served retrained on them. A dropped Arm leaves the served files as they were (`Loop.run_experiment`'s
+# `files_kept_if_dropped`). The Arm re-chooses its blend weight, as every Arm with a new model has (#71).
+SIBLING_DEMAND_EXPERIMENT = "sibling demand"
+SIBLING_DEMAND_SET = "sibling_demand"
+SIBLING_DEMAND_BASE_SET = "exporter_count"  # the served files `sibling_demand` extends by one column
+
+
+def sibling_demand_arm(best: Settings) -> Arm:
+    """The best so far as served with Sibling Demand added to its features."""
+    (feature,) = SIBLING_DEMAND_FEATURES
+    return Arm(f"+ {feature}", {"features": (*best.features, feature)}, BLEND_GRID)
+
+
 # The research note numbers the seven experiments (docs/research/opportunity-ranking-experiments.md).
 # The loop records nine decisions of the rule: experiments 1 and 2 share one, and experiments 5 and 6
 # decide each Arm on its own. These map a recorded decision and its Arms back to the numbers.
@@ -287,7 +306,11 @@ EXPERIMENT_NUMBERS = {
 }
 NAIVE_ARM_NUMBERS = {BLEND: 1, STARTING_POINT: 2}
 # What a decision is called where it is shown, where its recorded name is not the Glossary's.
-EXPERIMENT_DISPLAY_NAMES = {NAIVE_EXPERIMENT: "Naive Baseline", EXPORTER_COUNT_EXPERIMENT: "Exporter count"}
+EXPERIMENT_DISPLAY_NAMES = {
+    NAIVE_EXPERIMENT: "Naive Baseline",
+    EXPORTER_COUNT_EXPERIMENT: "Exporter count",
+    SIBLING_DEMAND_EXPERIMENT: "Sibling Demand",
+}
 
 
 def experiment_numbers(name: str, arms: Sequence[str]) -> tuple[int, ...]:

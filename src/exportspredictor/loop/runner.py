@@ -25,6 +25,7 @@ from exportspredictor.loop.arms import (
     MARKET_REACH_CAP_EXPERIMENT,
     MAX_TRAINED_MODELS,
     NOISE_FLOOR,
+    SIBLING_DEMAND_EXPERIMENT,
     SIZE,
     Arm,
     LoopPlan,
@@ -35,6 +36,7 @@ from exportspredictor.loop.arms import (
     product_detail_arm,
     product_detail_experiment,
     served_base_arm,
+    sibling_demand_arm,
     training_key,
 )
 from exportspredictor.loop.data import (
@@ -119,6 +121,20 @@ def run_market_reach_cap(lp: "Loop") -> dict:
     return lp.run_experiment(MARKET_REACH_CAP_EXPERIMENT, [market_reach_cap_arm()], base_arm=served_base_arm(best))
 
 
+def run_sibling_demand(lp: "Loop") -> dict:
+    """#164: Sibling Demand as a feature, against the best so far as served retrained on this loop's files.
+
+    The files (`sibling_demand`) are the served ones with the feature stored, so the pair differs by one feature.
+    A dropped Arm leaves the served files unchanged; a kept one serves these files.
+    """
+    lp.noise_floor()
+    best = Settings.from_dict(lp.results["best"]["settings"])
+    return lp.run_experiment(
+        SIBLING_DEMAND_EXPERIMENT, [sibling_demand_arm(best)], base_arm=served_base_arm(best),
+        files_kept_if_dropped=False,
+    )
+
+
 class Loop:
     """The experiment loop on one fold: the noise floor, then experiments, each against the best so far.
 
@@ -176,14 +192,18 @@ class Loop:
 
     # --- Running arms --------------------------------------------------------------------------
 
-    def run_experiment(self, name: str, arms: Sequence[Arm], *, base_arm: Arm | None = None) -> dict:
+    def run_experiment(
+        self, name: str, arms: Sequence[Arm], *, base_arm: Arm | None = None, files_kept_if_dropped: bool = True
+    ) -> dict:
         """Run each arm against the best so far, decide by the win rule, and return the results.
 
         With `base_arm`, the arms are compared with that Arm of the best so far, run first on this
         loop's data, instead of with the best so far's recorded measure: a paired comparison when the
         data changed (rebuilt feature files, #127) or every Arm is scored differently (Market Reach).
         The section records it (`base_arm`), the best so far it replaced as base (`previous_best`) and
-        the feature set. If no arm wins, the best so far is unchanged.
+        the feature set. If no arm wins, the best so far is unchanged. The feature set is served
+        (`kept_feature_set`) whatever the decision, as #127's gravity fill was, unless
+        `files_kept_if_dropped` is False: then only if an Arm is kept (#164's files exist to hold one feature).
         """
         if name == NOISE_FLOOR:
             raise ValueError(f"{NOISE_FLOOR!r} is the noise floor's name")
@@ -202,6 +222,8 @@ class Loop:
                     "previous_best": previous, "base_arm": row, "base": _best(name, row),
                     "feature_set": self.data.feature_set,
                 }
+                if not files_kept_if_dropped:
+                    section["files_kept_if_dropped"] = False
                 self._save()
                 log_progress(f"{base_arm.name}: {json.dumps({k: row[k] for k in (SELECTION_MEASURE, 'rounds', 'seconds')})}")
         base = Settings.from_dict(section["base"]["settings"])

@@ -16,6 +16,9 @@ from exportspredictor.loop.arms import (
     NOISE_FLOOR,
     SCOPE_EXPERIMENTS,
     SELECT_EXPERIMENT,
+    SIBLING_DEMAND_BASE_SET,
+    SIBLING_DEMAND_EXPERIMENT,
+    SIBLING_DEMAND_SET,
     TWO_PART_EXPERIMENT,
     Arm,
     Settings,
@@ -34,6 +37,7 @@ from exportspredictor.loop.runner import (
     run_exporter_count,
     run_market_reach_cap,
     run_product_detail,
+    run_sibling_demand,
 )
 from exportspredictor.loop.selection import SELECTION_MEASURE
 from exportspredictor.loop.served import kept_feature_set, v2_plan
@@ -92,6 +96,18 @@ def main(argv: Sequence[str]) -> None:
             "kept": section["kept"], "cap": arm["settings"]["market_reach_cap"], "win_threshold": section["win_threshold"],
             **{r["arm"]: r[SELECTION_MEASURE] for r in (section["base_arm"], arm)},
         }), flush=True)
+    elif command == "sibling-demand":
+        data, served = real_data(), kept_feature_set(load())
+        if data.feature_set != SIBLING_DEMAND_SET:
+            raise SystemExit(f"Run on the Sibling Demand files: set {FEATURE_SET_ENV}={SIBLING_DEMAND_SET}")
+        if served not in (SIBLING_DEMAND_BASE_SET, SIBLING_DEMAND_SET):
+            raise SystemExit(f"The served files are {served!r}, not the {SIBLING_DEMAND_BASE_SET!r} files this set extends")
+        section = run_sibling_demand(Loop(data, v2_plan(), loop_dir()))["experiments"][SIBLING_DEMAND_EXPERIMENT]
+        (arm,) = section["arms"]
+        print(json.dumps({
+            "kept": section["kept"], "win_threshold": section["win_threshold"], "naive_weight": arm["settings"]["naive_weight"],
+            **{r["arm"]: r[SELECTION_MEASURE] for r in (section["base_arm"], arm)},
+        }), flush=True)
     elif command == "confirm":
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
@@ -101,7 +117,7 @@ def main(argv: Sequence[str]) -> None:
     else:
         raise SystemExit(
             "usage: python -m exportspredictor.loop "
-            "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|confirm|time"
+            "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|sibling-demand|confirm|time"
         )
 
 
