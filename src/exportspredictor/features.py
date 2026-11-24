@@ -710,8 +710,19 @@ SETTINGS_FILE = "features.json"
 # - "" (`features_<BACI version>`): the original build, on the primary sources only;
 # - "exporter_count" (`features_<BACI version>_exporter_count`, #126): with the Exporter count
 #   stored and
-#   GDP and population filled from secondary sources for the Markets the primary ones miss.
-FEATURE_SETS = {"": "country_year.parquet", "exporter_count": gravity.COUNTRY_YEAR_FILLED}
+#   GDP and population filled from secondary sources for the Markets the primary ones miss;
+# - "all_exporters" (`features_<BACI version>_all_exporters`, #168): `exporter_count` with every
+#   Exporter's rows, not only ADR 0004's top 100 (`FEATURE_SET_SCOPES`). The top 100's rows are
+#   the same as in `exporter_count`, so the two sets differ only by the other Exporters' rows. Its
+#   rows are not sampled at build time: the loop samples other Exporters' rows at a non-UK rate that
+#   fits the VRAM budget, and GPU external memory can train on all of them.
+FEATURE_SETS = {
+    "": "country_year.parquet",
+    "exporter_count": gravity.COUNTRY_YEAR_FILLED,
+    "all_exporters": gravity.COUNTRY_YEAR_FILLED,
+}
+# The training scope of each set (`scope.exporter_scope`'s `n`); a set not listed has ADR 0004's.
+FEATURE_SET_SCOPES = {"all_exporters": scope.ALL_EXPORTERS}
 # The feature set every reader (the loop, the pipeline, evaluation) opens; unset means "".
 FEATURE_SET_ENV = "EXPORTSPREDICTOR_FEATURE_SET"
 
@@ -787,7 +798,7 @@ def build(
     rate: float = ZERO_SAMPLING_RATE,
     seed: int = 0,
     uk: str = baci.UK,
-    scope_size: int = scope.TOP_EXPORTERS,
+    scope_size: int | None = None,
     proximity_years: list[int] = PROXIMITY_YEARS,
     baseline_year: int = YEARS[-1],
     feature_set: str | None = None,
@@ -807,6 +818,8 @@ def build(
 
     The files go to the folder of `feature_set` (`features_dir`; by default the one
     `FEATURE_SET_ENV` names). A folder already built is never overwritten unless `overwrite`.
+    `scope_size` is the number of top Exporters whose rows train the model, `scope.ALL_EXPORTERS`
+    for every Exporter; by default the set's own (`FEATURE_SET_SCOPES`, else ADR 0004's top 100).
     `resume` keeps the years and the proximity of an unfinished build already on disk. `parts` builds each year's
     training rows' features in that many groups of Markets, to keep peak memory down; every
     feature reads the whole year's Flows, so the rows are the same.
@@ -816,7 +829,11 @@ def build(
     if (out / SETTINGS_FILE).exists() and not (overwrite or resume):
         raise FileExistsError(f"{out} is already built; pass overwrite=True or build another feature set")
     sources, to_iso3 = load_sources(root, feature_set_name=name)
-    exporters = scope.exporter_scope(sources.country_year, uk=uk, n=scope_size)
+    if scope_size is None:
+        scope_size = FEATURE_SET_SCOPES.get(name, scope.TOP_EXPORTERS)
+    exporters = None if scope_size == scope.ALL_EXPORTERS else scope.exporter_scope(
+        sources.country_year, uk=uk, n=scope_size
+    )
     out.mkdir(parents=True, exist_ok=True)
     fitted_on = [y for y in proximity_years if (baci.flows_dir(root) / f"flows_{y}.parquet").exists()]
     if not fitted_on:
@@ -841,10 +858,17 @@ def build(
         grid = uk_grid(flows, uk, pairs=pairs if year in gap else None)
         write_parquet(build_features(grid, with_earlier, sources), out / f"uk_grid_{year}.parquet", compression="zstd")
         del flows, with_earlier, grid
+    if exporters is None:  # every Exporter: record those the training rows hold
+        exporters = sorted(
+            pl.concat([pl.scan_parquet(out / f"training_{year}.parquet").select(
+                pl.col("exporter").cast(pl.String).unique()
+            ) for year in years]).unique().collect()["exporter"]
+        )
     settings = {
         "baci_version": baci.BACI_VERSION,
         "years": list(years),
         "exporter_scope": exporters,
+        "exporter_scope_size": "all" if scope_size == scope.ALL_EXPORTERS else scope_size,
         "zero_sampling_rate": rate,
         "uk_zero_sampling_rate": 1.0,
         "zero_sampling_seed": seed,
