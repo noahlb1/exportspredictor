@@ -517,6 +517,58 @@ def test_log_scale_bands_have_no_fixed_width_limitation():
     assert evaluation.range_limitations(bands) == []
 
 
+def test_bands_whose_upper_offset_is_negative_say_the_range_lies_below_export_potential_up_to_their_top_edge():
+    # Bands 0 and 2 have a negative upper offset, band 1 and band 3 a positive one: the limitation runs up to the
+    # edge above the last negative band ($8,000), whatever happens in between (#161, review flag M4).
+    bands = pl.DataFrame({
+        "band": [0, 1, 2, 3], "min_export_potential_usd": [0.0, 400.0, 900.0, 8_000.0], "rows": [10] * 4,
+        "low_offset_log": [-1.5, -6.7, -7.4, -9.3], "high_offset_log": [-0.7, 0.2, -1.8, 0.2],
+    })
+
+    (limit,) = evaluation.range_below_potential_limitations(bands)
+
+    assert "$8.0k" in limit["text"]
+    assert "below" in limit["title"].lower()
+    assert "trade nothing" in limit["text"]
+
+
+def test_bands_whose_upper_offsets_are_all_positive_have_no_range_below_potential_limitation():
+    bands = pl.DataFrame({
+        "band": [0, 1], "min_export_potential_usd": [0.0, 2_000_000.0], "rows": [10, 10],
+        "low_offset_log": [-1.2, -2.5], "high_offset_log": [0.3, 1.1],
+    })
+
+    assert evaluation.range_below_potential_limitations(bands) == []
+
+
+def test_the_range_below_potential_limitation_is_served_and_in_the_model_card(fixture_artefacts):
+    from exportspredictor import governance
+
+    bands = pl.DataFrame({
+        "band": [0, 1], "min_export_potential_usd": [0.0, 5_000.0], "rows": [10, 10],
+        "low_offset_log": [-6.0, -2.5], "high_offset_log": [-2.0, 1.1],
+    })
+    artefacts = replace(fixture_artefacts, potential_range_bands=bands)
+    (limit,) = evaluation.range_below_potential_limitations(bands)
+
+    served = {x["title"]: x["text"] for x in evaluation.known_limitations(artefacts)}
+    card = {x["title"]: x["text"] for x in governance.model_card(artefacts)["limitations"]}
+
+    assert served[limit["title"]] == limit["text"]
+    assert card[limit["title"]] == limit["text"]
+
+
+def test_the_fixed_limitations_say_a_tariff_part_is_a_step_not_a_priced_tariff_cut_and_name_missing_preferences():
+    # Review flags H1 and H3 (#161).
+    titles = {item["title"]: item["text"] for item in evaluation.LIMITATIONS}
+
+    step = titles["A Tariff part is not a tariff elasticity"]
+    assert "step" in step and "Illustrative" in step
+    missing = titles["Some Trade Agreements carry most-favoured-nation tariffs"]
+    for market in ("Canada", "Türkiye"):
+        assert market in missing
+
+
 def test_the_markets_no_source_gives_a_gdp_are_a_known_limitation():
     from exportspredictor import gravity
 
@@ -671,3 +723,66 @@ def test_a_market_reach_effect_saved_with_flat_size_matched_lift_reads_nested(re
 
     assert evaluation.relabelled(saved)["market_reach_effect"]["lift"] == lift
     assert saved["market_reach_effect"]["lift"] == flat
+
+
+def test_a_version_upgraded_by_rereach_states_one_uk_pair_coverage_in_its_market_reach_effect(report):
+    # `rereach` rewrote the Potential Range's UK-pair coverage (73.5%) but not the saved Market Reach block (73.5% under
+    # the first form, printed 74%), so one card said both (#162). The block reads the served figure.
+    effect = report["market_reach_effect"]
+    saved = {
+        **report,
+        "market_reach_effect": {**effect, "uk_pair_coverage": {"with": 0.7351, "without": 0.8072}},
+        "potential_range": {**report["potential_range"],
+                            "uk_pair_coverage": {"with_market_reach": 0.7346, "without_market_reach": 0.8068}},
+    }
+
+    read = evaluation.relabelled(saved)["market_reach_effect"]
+
+    assert read["uk_pair_coverage"] == {"with": 0.7346, "without": 0.8068}
+    assert "holds 73% with it against 81% without" in read["text"]
+    assert read["selection_measure"] == effect["selection_measure"]
+
+
+# --- Which configuration the test-year figures were read on (ADR 0009, #160) -------------
+
+READ_ON_EARLIER = "The test-year figures were read on an earlier configuration"
+
+
+def _served_after_a_correction(artefacts):
+    """The fixture version as `rereach` leaves it after a Market Reach correction: the served form changed, the report
+    kept the figures read on the form before (as served 20261122T223312Z, nested_share, over a read on share)."""
+    form = artefacts.metadata["model_form"]
+    corrected = {**form, "market_reach": {**form["market_reach"], "form": "nested_share"}}
+    read_on = {**form, "market_reach": {**form["market_reach"], "form": "share"}}
+    return replace(
+        artefacts,
+        metadata={**artefacts.metadata, "model_form": corrected,
+                  "market_reach": {**artefacts.metadata["market_reach"], "form": "nested_share"}},
+        evaluation={**artefacts.evaluation, "model_form": read_on},
+    )
+
+
+def test_a_version_serving_another_form_than_its_test_year_read_says_so_in_its_limitations_and_model_card(
+    fixture_artefacts,
+):
+    from exportspredictor import governance
+
+    artefacts = _served_after_a_correction(fixture_artefacts)
+
+    [limit] = [x for x in evaluation.known_limitations(artefacts) if x["title"] == READ_ON_EARLIER]
+    card = {x["title"]: x["text"] for x in governance.model_card(artefacts)["limitations"]}
+
+    assert "share" in limit["text"] and "nested_share" in limit["text"]
+    assert "has not read" in limit["text"]
+    assert card[READ_ON_EARLIER] == limit["text"]
+
+
+def test_a_version_serving_the_form_its_test_year_was_read_on_has_no_such_limitation(fixture_artefacts):
+    # A refit Market Reach constant or reference year is no change of configuration (ADR 0010).
+    form = fixture_artefacts.metadata["model_form"]
+    refit = {**form, "market_reach": {**form["market_reach"], "constant": 0.5, "reference_year": 1999}}
+    artefacts = replace(fixture_artefacts, evaluation={**fixture_artefacts.evaluation, "model_form": refit})
+
+    titles = [x["title"] for x in evaluation.known_limitations(artefacts)]
+
+    assert READ_ON_EARLIER not in titles

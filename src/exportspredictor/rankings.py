@@ -28,6 +28,10 @@ from exportspredictor.scenarios import (
 )
 from exportspredictor.sectors import with_sector_names
 
+# An Opportunity: a UK pair with a positive Export Gap (GLOSSARY.md). Every ranking and table of Opportunities filters
+# on this one expression.
+IS_OPPORTUNITY = pl.col("export_gap_usd") > 0
+
 # The most rows a ranking read returns: enough for one Market's or one Product's full ranking, never the full grid.
 MAX_ROWS = 6000
 
@@ -103,7 +107,7 @@ def _sorted(rows: pl.DataFrame, order: RankOrder) -> pl.DataFrame:
 def ranked_opportunities(baseline: pl.DataFrame) -> pl.DataFrame:
     """The Baseline's Opportunities (positive Export Gap) in the Leaderboard's default order (`DEFAULT_RANK_BY`), each
     with its `rank`, from 1."""
-    opportunities = baseline.filter(pl.col("export_gap_usd") > 0)
+    opportunities = baseline.filter(IS_OPPORTUNITY)
     return _sorted(opportunities, RANK_BY[DEFAULT_RANK_BY]).with_row_index("rank", offset=1)
 
 

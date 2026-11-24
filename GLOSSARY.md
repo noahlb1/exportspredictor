@@ -145,7 +145,7 @@ What holds a Blocked Opportunity's Export Potential down: the absence of a Trade
 _Avoid_: blocker, obstacle, friction
 
 **Lift**:
-How many times more likely Product–Market pairs with large Export Gaps are than random pairs to grow or appear in later years. It describes a tendency, not a forecast.
+How many times more likely Product–Market pairs with large Export Gaps are than random pairs to grow or appear in later years. **Size-matched Lift** compares them instead with pairs of similar Export Potential, so it says whether a large Export Gap points at growth beyond what a pair's size already does. It describes a tendency, not a forecast.
 _Avoid_: hit rate, conversion
 
 **Event Backtest**:
@@ -193,6 +193,10 @@ _Avoid_: version hash, model ID
 **Test-year Ledger**:
 The record of every read of the test year: date, version, Configuration Fingerprint, what was read, the command, its kind (an evaluation, or a re-score of earlier versions' saved scores under a new measure) and its status (started, then completed once its figures are saved). A fingerprint already completed in it is refused a second read unless overridden, and the override is recorded too (ADR 0009).
 _Avoid_: audit log, read log
+
+**Review Pack**:
+The served outputs, plus each Market's total imports, handed to a fresh reviewer who has not seen the code: the top Opportunities overall and in the top Markets and Products, the top Blocked Opportunities with their totals by Market and by Product, each preset Scenario's largest Scenario Effects and a random sample of Product–Market pairs. Each Product and Market is named beside its code, every amount is in US dollars, and no Caveat Tier is hidden.
+_Avoid_: review bundle, audit pack
 
 ### Scenarios
 

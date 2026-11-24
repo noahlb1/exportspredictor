@@ -230,23 +230,100 @@ LIMITATIONS = [
         + ", ".join(sorted(GDP_GAPS.values()))
         + ", so the model reads their size from their trade alone, and their Export Potential is less reliable.",
     },
+    {
+        # Review flag H1 (#161).
+        "title": "A Tariff part is not a tariff elasticity",
+        "text": "The model's response to an Applied Tariff is more a step than a slope: it separates duty-free pairs "
+        "from dutiable ones, which differ in more than their tariff. So removing a tariff of 1% or less can be "
+        "associated with a rise of tens of percent in Export Potential (on the 2024 Baseline, turbo-jets to China "
+        "at 1%: +37%), far more per tariff point than trade elasticities suggest. A Tariff part is Illustrative: the "
+        "part of the agreement association the model ties to the tariff, not the priced effect of a tariff cut.",
+    },
+    {
+        # Review flag H3 (#161).
+        "title": "Some Trade Agreements carry most-favoured-nation tariffs",
+        "text": "TRAINS records no preferential rates in some Markets' schedules where a Trade Agreement is in force, "
+        "so every Exporter with an agreement there carries the Market's MFN rate. Among UK Markets these are Canada, "
+        "Israel, Serbia, Vietnam, Ghana, Côte d'Ivoire, Cameroon and Kenya. The UK left the EU customs union, and "
+        "with it its customs union with Türkiye, at the end of 2020. TRAINS holds no rates under the UK–Türkiye "
+        "agreement that followed, so in the data Türkiye charges UK goods its MFN rates from then on (the tariff data "
+        f"end in {LAST_TRAINS_YEAR}, and later years carry those rates forward). These pairs have a Trade Agreement, so they have no Blocked Opportunity "
+        "value or Tariff part, but their Export Potential reads them as dutiable.",
+    },
 ]
 
 
 def known_limitations(artefacts: store.Artefacts) -> list[dict]:
     """Every known limitation of an artefact version that can be read from it: its results, its
-    Potential Range bands and the fixed `LIMITATIONS`. The API serves these; the model card adds
-    the gravity benchmark, which no artefact holds.
+    Potential Range bands and the fixed `LIMITATIONS`. The API serves these, and the model card states them all
+    (`governance.model_card`, the one source) before its own extra, the gravity benchmark. They read only figures that
+    `relabelled` leaves as saved, so the card's relabelled report would give the same list.
     """
     report = artefacts.evaluation or {}
     return [
         *result_limitations(artefacts.metadata, report),
         *range_limitations(artefacts.potential_range_bands),
+        *range_below_potential_limitations(artefacts.potential_range_bands),
         *size_coverage_limitations(report.get("potential_range")),
         *uk_pair_coverage_limitations(artefacts.metadata, report.get("potential_range")),
         *offset_pair_limitations(artefacts.metadata),
+        *read_configuration_limitations(artefacts.metadata, report),
         *LIMITATIONS,
     ]
+
+
+def range_below_potential_limitations(bands: pl.DataFrame) -> list[dict]:
+    """When a log-scale band's upper offset is negative, its pairs' whole Potential Range lies below their Export
+    Potential (review flag M4, #161). Stated up to the lower edge of the band above the last such band; none for
+    dollar-offset versions or when every upper offset is positive."""
+    if bands.is_empty() or "high_offset_log" not in bands.columns:
+        return []
+    ordered = bands.sort("min_export_potential_usd")
+    negative = [i for i, offset in enumerate(ordered["high_offset_log"]) if offset < 0]
+    if not negative:
+        return []
+    above = negative[-1] + 1
+    size = (
+        f"under {format_usd(ordered['min_export_potential_usd'][above])}" if above < ordered.height else "of every size"
+    )
+    return [{
+        "title": "The Potential Range lies below Export Potential for small pairs",
+        "text": f"For many pairs with Export Potential {size}, the whole Potential Range lies below Export Potential. "
+        "Most comparable pairs of that size trade nothing, and Export Potential is an average that the few which do "
+        "trade pull up, so at least 90% of comparable pairs trade less than it. A range such as $0 to $200 beside an "
+        "Export Potential of $1.3k is that pattern, not an error.",
+    }]
+
+
+# A Model Form's fitted values, which a rebuild of the same configuration recomputes (ADR 0010): no change of form.
+_FITTED_FORM_KEYS = ("reference_year", "constant")
+
+
+def _form_settings(form: dict | None) -> dict:
+    form = dict(form or {})
+    reach = {k: v for k, v in (form.pop("market_reach", None) or {}).items() if k not in _FITTED_FORM_KEYS}
+    return {**form, **{f"Market Reach {k}": v for k, v in reach.items()}}
+
+
+def read_configuration_limitations(metadata: dict, report: dict) -> list[dict]:
+    """When the served Model Form differs from the one the report's test-year figures were read on, as after `rereach`
+    corrected Market Reach's form without a new read (ADR 0009, ADR 0010 Amendment). None for a version without a
+    report, or one whose report records no Model Form."""
+    served, read_on = _form_settings(metadata.get("model_form")), _form_settings(report.get("model_form"))
+    if not report.get("model_form") or served == read_on:
+        return []
+    changes = "; ".join(
+        f"{key} {read_on.get(key)!s} then, {served.get(key)!s} now"
+        for key in sorted(set(served) | set(read_on)) if served.get(key) != read_on.get(key)
+    )
+    year = report.get("test_year", "the test year")
+    return [{
+        "title": "The test-year figures were read on an earlier configuration",
+        "text": f"Every {year} figure shown (the headline, Lift and the comparison with earlier versions) was read on "
+        f"the Model Form served before a correction chosen on the validation year ({changes}). This "
+        f"version has not read {year} itself: its own figures come from the next frozen version's one read through "
+        "the Test-year Ledger (ADR 0009).",
+    }]
 
 
 def offset_pair_limitations(metadata: dict) -> list[dict]:
@@ -858,7 +935,7 @@ def relabelled(report: dict) -> dict:
         worded = headline({f"model_{HEADLINE_METRIC}": saved["model"], f"naive_{HEADLINE_METRIC}": saved["naive"]},
                           report["test_year"])
         report = {**report, "headline": {**saved, "text": worded["text"]}}
-    report = _with_nested_size_matched_lift(report)
+    report = _with_served_uk_pair_coverage(_with_nested_size_matched_lift(report))
     block = report.get("earlier_versions")
     if not block:
         return report
@@ -881,6 +958,21 @@ def _with_nested_size_matched_lift(report: dict) -> dict:
     nested = {"with": lift["with"], "without": lift["without"],
               "size_matched": {"with": lift["size_matched_with"], "without": lift["size_matched_without"]}}
     return {**report, "market_reach_effect": {**effect, "lift": nested}}
+
+
+def _with_served_uk_pair_coverage(report: dict) -> dict:
+    """`market_reach_effect` with the Potential Range's UK-pair coverage the report serves, worded again. `rereach`
+    rewrites the Potential Range's figure for the corrected Market Reach but not the block saved with the test-year
+    read, so a card would state both (#162). The test-year figures stay as saved."""
+    effect = report.get("market_reach_effect")
+    served = (report.get("potential_range") or {}).get("uk_pair_coverage")
+    if not effect or "uk_pair_coverage" not in effect or not served:
+        return report
+    coverage = {"with": served["with_market_reach"], "without": served["without_market_reach"]}
+    if coverage["without"] is None:
+        coverage["without"] = effect["uk_pair_coverage"]["without"]
+    block = {key: value for key, value in effect.items() if key != "text"} | {"uk_pair_coverage": coverage}
+    return {**report, "market_reach_effect": {**block, "text": market_reach_effect_text(block, report["test_year"])}}
 
 
 def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STABILITY_TOP_N) -> dict:
