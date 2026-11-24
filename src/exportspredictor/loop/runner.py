@@ -8,8 +8,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import polars as pl
-import xgboost as xgb
-from xgboost.callback import EarlyStopping
 
 from exportspredictor import experiments, market_reach, search
 from exportspredictor.evaluation import naive_potential
@@ -23,13 +21,11 @@ from exportspredictor.features import (
 from exportspredictor.folds import outside_fold, with_folds
 from exportspredictor.loop.arms import (
     ANY_FLOW,
-    ANY_FLOW_PARAMS,
     EXPORTER_COUNT_EXPERIMENT,
     MARKET_REACH_CAP_EXPERIMENT,
     MAX_TRAINED_MODELS,
     NOISE_FLOOR,
     SIZE,
-    TWEEDIE_ONLY,
     Arm,
     LoopPlan,
     Settings,
@@ -57,6 +53,13 @@ from exportspredictor.loop.selection import (
     rank_average_measures,
     win_threshold,
 )
+from exportspredictor.loop.trainers import (
+    Model,
+    Trainer,
+    TrainingJob,
+    TrainingRows,
+    trainer_for,
+)
 from exportspredictor.prediction import (
     MIN_PREDICTION_USD,
     blend,
@@ -67,11 +70,9 @@ from exportspredictor.prediction import (
 from exportspredictor.selection_measure import selection_measure, with_tie_key
 from exportspredictor.training import (
     BASE_MARGIN,
-    model_params,
     preparer,
     read_chunk,
     scan_chunks,
-    training_matrix,
 )
 
 NO_MEASURE = -1.0  # what a round scores when no Product can be ranked (a tiny fixture fold)
@@ -86,8 +87,8 @@ def naive_margin(naive_usd: pl.Series) -> pl.Series:
 class TwoPart:
     """A two-part model's Boosters."""
 
-    any_flow: xgb.Booster
-    size: xgb.Booster
+    any_flow: Model
+    size: Model
 
 
 def run_product_detail(lp: "Loop") -> dict:
@@ -134,8 +135,9 @@ class Loop:
         started = time.perf_counter()
         self.data, self.plan, self.folder = data, plan, folder
         self.models_dir = models_dir if models_dir is not None else (folder / MODELS_DIR if folder else None)
-        self._models: dict[str, tuple[xgb.Booster | TwoPart, dict]] = {}
-        self._matrix_key, self._matrices = None, None
+        self._models: dict[str, tuple[Model | TwoPart, dict]] = {}
+        self._trainers: dict[str, Trainer] = {}  # one per family, each keeping its last matrices
+        self._rows: TrainingRows | None = None
         self._detail: pl.DataFrame | None = None
         self._reach: pl.DataFrame | None = None  # this loop's Market Reach table, built on first use
         self.results = read_results(folder) or {}
@@ -248,7 +250,7 @@ class Loop:
                 continue
             settings = self._resolved(arm.apply(base))
             key = training_key(settings, self._fingerprint())
-            if key not in self._models and not self._model_file(key).exists():
+            if key not in self._models and not self._model_file(key, settings.family).exists():
                 models.setdefault(key, models_trained_by(settings.to_dict()))
         if sum(models.values()) > MAX_TRAINED_MODELS:
             raise ValueError(
@@ -330,18 +332,19 @@ class Loop:
         model, meta = self._model(settings, training_key(settings, self._fingerprint()))
         return self._score(self._model_potential(model, meta, settings, table), settings, table)
 
-    def cached_model(self, settings: Settings) -> tuple[str, bool, xgb.Booster | TwoPart, dict]:
+    def cached_model(self, settings: Settings) -> tuple[str, bool, Model | TwoPart, dict]:
         """The model of `settings` from the cache, or trained and cached now.
 
         Returns its training key, whether this call trained it, the model and its metadata.
         """
         settings = self._resolved(settings)
         key = training_key(settings, self._fingerprint())
-        trained = key not in self._models and not self._model_file(key).exists()
+        trained = key not in self._models and not self._model_file(key, settings.family).exists()
         model, meta = self._model(settings, key)
         return key, trained, model, meta
 
     def _resolved(self, settings: Settings) -> Settings:
+        trainer_for(settings.family)  # refuses a family with no trainer before anything trains
         zero_rate = settings.zero_rate if settings.zero_rate is not None else self.data.data.built_zero_rate
         non_uk_rate = settings.non_uk_rate
         if non_uk_rate is None:
@@ -363,27 +366,28 @@ class Loop:
             "device": self.plan.device,
         }
 
-    def _model_file(self, key: str) -> Path:
-        return Path(self.models_dir or ".nowhere") / f"{key}.ubj"
+    def _model_file(self, key: str, family: str) -> Path:
+        return Path(self.models_dir or ".nowhere") / f"{key}{trainer_for(family).suffix}"
 
-    def _model(self, settings: Settings, key: str) -> tuple[xgb.Booster | TwoPart, dict]:
+    def _model(self, settings: Settings, key: str) -> tuple[Model | TwoPart, dict]:
         if key in self._models:
             return self._models[key]
-        path = self._model_file(key)
+        trainer = self._trainer(settings.family)
+        path = self._model_file(key, settings.family)
         # A two-part model's binary part sits beside its size part, which is saved last.
-        any_flow_path = path.with_name(f"{key}.{ANY_FLOW}.ubj")
+        any_flow_path = path.with_name(f"{key}.{ANY_FLOW}{path.suffix}")
         if self.models_dir is not None and path.exists():
-            model = xgb.Booster(model_file=str(path))
+            model = trainer.load(path)
             if settings.two_part:
-                model = TwoPart(any_flow=xgb.Booster(model_file=str(any_flow_path)), size=model)
+                model = TwoPart(any_flow=trainer.load(any_flow_path), size=model)
             meta = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
         else:
             model, meta = self._train_two_part(settings) if settings.two_part else self._train(settings)
             if self.models_dir is not None:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if isinstance(model, TwoPart):
-                    model.any_flow.save_model(str(any_flow_path))
-                (model.size if isinstance(model, TwoPart) else model).save_model(str(path))
+                    trainer.save(model.any_flow, any_flow_path)
+                trainer.save(model.size if isinstance(model, TwoPart) else model, path)
                 path.with_suffix(".json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         self._models[key] = (model, meta)
         return model, meta
@@ -404,9 +408,10 @@ class Loop:
             self.grid, any_flow, features=list(settings.features), rounds=any_flow_meta["rounds"],
             device=self.plan.device,
         ).to_numpy()
-        self._matrix_key, self._matrices = None, None  # free the binary part's matrices first
+        trainer = self._trainer(settings.family)
+        trainer.release()  # free the binary part's matrices first
         size, size_meta = self._train(settings, part=SIZE, grid_probability=probability)
-        self._matrix_key, self._matrices = None, None
+        trainer.release()
         return TwoPart(any_flow=any_flow, size=size), {
             "rounds": size_meta["rounds"],  # the size part's, chosen on the two-part Export Potential
             "hit_round_cap": any_flow_meta["hit_round_cap"] or size_meta["hit_round_cap"],
@@ -417,60 +422,40 @@ class Loop:
             "parts": {ANY_FLOW: any_flow_meta, SIZE: size_meta},
         }
 
-    def _train(
-        self, settings: Settings, *, part: str | None = None, grid_probability=None
-    ) -> tuple[xgb.Booster, dict]:
-        """Train with the selection measure on the held-out UK grid each round, stopping after `patience` flat rounds.
+    def _train(self, settings: Settings, *, part: str | None = None, grid_probability=None) -> tuple[Model, dict]:
+        """Train through the family's trainer, stopping on the selection measure of the held-out UK grid.
 
         `part` trains one part of a two-part model; the size part's measure each round is
         that of `grid_probability` × size.
         """
-        started = time.perf_counter()
-        train, grid = self._training_matrices(settings, part)
-        matrix_seconds = round(time.perf_counter() - started, 1)  # 0 when the matrices were reused
-        params = model_params(
-            dict(settings.params), device=self.plan.device, seed=settings.seed, features=settings.features,
-            monotone=settings.monotone,
-        )
-        if part == ANY_FLOW:
-            params = {k: v for k, v in params.items() if k not in TWEEDIE_ONLY} | ANY_FLOW_PARAMS
-        params |= {"disable_default_eval_metric": 1} | ({"nthread": self.plan.threads} if self.plan.threads else {})
-        metric = self._round_measure
+        measure = self._round_measure
         if grid_probability is not None:
 
-            def metric(predictions, matrix):
-                return self._round_measure(grid_probability * predictions, matrix)
+            def measure(predictions) -> float:
+                return self._round_measure(grid_probability * predictions)
 
-        model = xgb.train(
-            params,
-            train,
-            num_boost_round=settings.max_rounds,
-            evals=[(grid, "grid")],
-            custom_metric=metric,
-            callbacks=[
-                EarlyStopping(
-                    rounds=settings.patience, metric_name=SELECTION_MEASURE, data_name="grid", maximize=True
-                )
-            ],
-            verbose_eval=False,
+        job = TrainingJob(
+            rows=self._training_rows(settings, part), params=settings.params, seed=settings.seed,
+            monotone=settings.monotone, max_rounds=settings.max_rounds, patience=settings.patience,
+            measure=measure, device=self.plan.device, threads=self.plan.threads, binary=part == ANY_FLOW,
         )
-        rounds = model.best_iteration + 1
-        return model, {
-            "rounds": rounds,
-            "hit_round_cap": rounds >= settings.max_rounds,
-            "trained_rounds": model.num_boosted_rounds(),
-            "stopping_measure": float(model.best_score),  # the selection measure at `rounds`, as training saw it
-            "training_rows": train.num_row(),
-            "matrix_seconds": matrix_seconds,
-            "train_seconds": round(time.perf_counter() - started, 1),  # matrices included
-        }
+        return self._trainer(settings.family).train(job)
 
-    def _round_measure(self, predictions, _matrix) -> tuple[str, float]:
+    def _round_measure(self, predictions) -> float:
         value = selection_measure(self._grid_keys.with_columns(prediction=pl.Series(predictions)), "prediction")
-        return SELECTION_MEASURE, NO_MEASURE if value is None else value
+        return NO_MEASURE if value is None else value
 
-    def _training_matrices(self, settings: Settings, part: str | None = None):
-        """The training matrix and the held-out grid's, reused while the rows' settings stay the same.
+    def _trainer(self, family: str) -> Trainer:
+        """This loop's trainer of `family`; the other families' kept matrices are freed first."""
+        if family not in self._trainers:
+            self._trainers[family] = trainer_for(family)
+        for other, trainer in self._trainers.items():
+            if other != family:
+                trainer.release()
+        return self._trainers[family]
+
+    def _training_rows(self, settings: Settings, part: str | None = None) -> TrainingRows:
+        """The training rows and the held-out grid's, the same object while the rows' settings stay the same.
 
         For a two-part model's binary part (`ANY_FLOW`) the label is "any Flow" (0 or 1) and
         every row keeps its weight; its size part (`SIZE`) trains on non-zero Flows only.
@@ -479,44 +464,44 @@ class Loop:
             settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin,
             settings.uk_zeros_sampled, part,
         )
-        if key != self._matrix_key:
-            self._matrices = None  # free the device memory before building the next
-            plan, built = self.plan, self.data.data.built_zero_rate
-            held_out = outside_fold(plan.uk, plan.n_folds, plan.fold)
-            zero_seed = self.data.zero_seed
-            world = self._world_products() if settings.base_margin else None
-            grid_rows = self._with_product_detail(self.grid, settings)
+        if self._rows is not None and self._rows.key == key:
+            return self._rows
+        plan, built = self.plan, self.data.data.built_zero_rate
+        held_out = outside_fold(plan.uk, plan.n_folds, plan.fold)
+        zero_seed = self.data.zero_seed
+        world = self._world_products() if settings.base_margin else None
+        grid_rows = self._with_product_detail(self.grid, settings)
 
-            def keep(table: pl.DataFrame) -> pl.DataFrame:
-                rows = subsample_zeros(
-                    table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk,
-                    uk_zeros_sampled=settings.uk_zeros_sampled,
-                )
-                rows = held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
-                rows = self._with_product_detail(rows, settings)
-                if part == ANY_FLOW:
-                    rows = rows.with_columns(_any_flow(pl.col("value_usd")))
-                elif part == SIZE:
-                    rows = rows.filter(pl.col("value_usd") > 0)
-                if world is None:
-                    return rows
-                # Before the transform clips the supply and demand features: the naive baseline as built.
-                return rows.with_columns(naive_margin(naive_from_features(rows, world)).alias(BASE_MARGIN))
-
-            if settings.base_margin:
-                grid_rows = grid_rows.with_columns(naive_margin(self.grid["naive_usd"]).alias(BASE_MARGIN))
-            if part == ANY_FLOW:  # a binary label on the grid too; the measure each round reads value_usd itself
-                grid_rows = grid_rows.with_columns(_any_flow(pl.col("value_usd")))
-
-            prepare = preparer(
-                uk=plan.uk, transform=self.transform, non_uk_rate=settings.non_uk_rate, seed=settings.seed, keep=keep
+        def keep(table: pl.DataFrame) -> pl.DataFrame:
+            rows = subsample_zeros(
+                table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk,
+                uk_zeros_sampled=settings.uk_zeros_sampled,
             )
-            train = training_matrix(self.chunks, prepare, device=plan.device, features=settings.features)
-            grid = training_matrix([grid_rows], ref=train, device=plan.device, features=settings.features)
-            self._matrix_key, self._matrices = key, (train, grid)
-        return self._matrices
+            rows = held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
+            rows = self._with_product_detail(rows, settings)
+            if part == ANY_FLOW:
+                rows = rows.with_columns(_any_flow(pl.col("value_usd")))
+            elif part == SIZE:
+                rows = rows.filter(pl.col("value_usd") > 0)
+            if world is None:
+                return rows
+            # Before the transform clips the supply and demand features: the naive baseline as built.
+            return rows.with_columns(naive_margin(naive_from_features(rows, world)).alias(BASE_MARGIN))
 
-    def _model_potential(self, model: xgb.Booster | TwoPart, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
+        if settings.base_margin:
+            grid_rows = grid_rows.with_columns(naive_margin(self.grid["naive_usd"]).alias(BASE_MARGIN))
+        if part == ANY_FLOW:  # a binary label on the grid too; the measure each round reads value_usd itself
+            grid_rows = grid_rows.with_columns(_any_flow(pl.col("value_usd")))
+
+        prepare = preparer(
+            uk=plan.uk, transform=self.transform, non_uk_rate=settings.non_uk_rate, seed=settings.seed, keep=keep
+        )
+        self._rows = TrainingRows(
+            chunks=self.chunks, prepare=prepare, grid=grid_rows, features=settings.features, key=key
+        )
+        return self._rows
+
+    def _model_potential(self, model: Model | TwoPart, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
         """The model's Export Potential in dollars at its chosen round count."""
         table = self._with_product_detail(table, settings)
         if isinstance(model, TwoPart):

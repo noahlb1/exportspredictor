@@ -365,7 +365,7 @@ def test_no_uk_pair_is_scored_by_a_part_that_trained_on_it(data, monkeypatch):
     # Two folds: fold 0's UK pairs are scored, so neither part may see them; fold 1's train both.
     plan = replace(loop.FIXTURE_LOOP, n_folds=2)
     trained_on = []
-    original = loop.runner.training_matrix
+    original = loop.trainers.training_matrix
 
     def spy(chunks, prepare=None, **kwargs):
         if prepare is not None:
@@ -375,7 +375,7 @@ def test_no_uk_pair_is_scored_by_a_part_that_trained_on_it(data, monkeypatch):
     def features_of(chunk):
         return chunk if isinstance(chunk, pl.DataFrame) else pl.read_parquet(chunk)
 
-    monkeypatch.setattr(loop.runner, "training_matrix", spy)
+    monkeypatch.setattr(loop.trainers, "training_matrix", spy)
     lp = loop.Loop(data, plan)
     lp.run_arm(loop.two_part_arm(), plan.start)  # one arm, no noise floor: two folds are too few to rank
 
@@ -438,14 +438,14 @@ def test_the_scope_arms_subsample_the_built_rows_and_weight_them_by_the_inverse_
     plan = replace(loop.FIXTURE_LOOP, n_folds=2, start=replace(loop.FIXTURE_LOOP.start, zero_rate=0.5))
     data = _with_more_uk_zero_cells(data, plan.uk)
     trained_on = []
-    original = loop.runner.training_matrix
+    original = loop.trainers.training_matrix
 
     def spy(chunks, prepare=None, **kwargs):
         if prepare is not None:
             trained_on.append(pl.concat([prepare(c if isinstance(c, pl.DataFrame) else pl.read_parquet(c)) for c in chunks]))
         return original(chunks, prepare, **kwargs)
 
-    monkeypatch.setattr(loop.runner, "training_matrix", spy)
+    monkeypatch.setattr(loop.trainers, "training_matrix", spy)
     lp = loop.Loop(data, plan)
     for arm in (loop.Arm("as built"), loop.Arm("UK sampled", {"uk_zeros_sampled": True}), loop.Arm("lower", {"zero_rate": 0.25})):
         lp.run_arm(arm, plan.start)
@@ -486,14 +486,14 @@ def test_the_two_scope_experiments_run_in_order_each_from_the_best_so_far(data):
 
 def test_an_arm_adding_a_product_detail_feature_trains_and_scores_with_it(data, monkeypatch):
     trained_on = []
-    original = loop.runner.training_matrix
+    original = loop.trainers.training_matrix
 
     def spy(chunks, prepare=None, **kwargs):
         if prepare is not None:
             trained_on.append(pl.concat([prepare(c if isinstance(c, pl.DataFrame) else pl.read_parquet(c)) for c in chunks]))
         return original(chunks, prepare, **kwargs)
 
-    monkeypatch.setattr(loop.runner, "training_matrix", spy)
+    monkeypatch.setattr(loop.trainers, "training_matrix", spy)
     lp = loop.Loop(data, loop.FIXTURE_LOOP)
     start = lp.plan.start
     row = lp.run_arm(loop.Arm("+ hs4", {"features": (*start.features, "hs4")}), start)

@@ -9,6 +9,7 @@ from exportspredictor import baci, market_reach, search
 from exportspredictor.features import EXPORTER_COUNT_FEATURES, FEATURES
 from exportspredictor.folds import N_FOLDS
 from exportspredictor.loop.selection import MIN_WIN_THRESHOLD
+from exportspredictor.loop.trainers import XGBOOST
 
 MAX_TRAINED_MODELS = 6  # the budget of one experiment (spec #65); a cached model is free
 NOISE_SEEDS = (0, 1, 2)
@@ -42,6 +43,8 @@ class Settings:
     # True: the monotone constraints on policy features (ADR 0002, kept by ADR 0008 until
     # tested); False: none (#75).
     monotone: bool = True
+    # The model family, which picks the trainer (`trainers.TRAINERS`, #165). `params` are that family's.
+    family: str = XGBOOST
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
     # Scoring only: Market Reach's beta (`market_reach`, spec #113, ticket #127). 0 scores without it;
@@ -59,6 +62,8 @@ class Settings:
             del data["market_reach_beta"]
         if self.market_reach_cap is None:
             del data["market_reach_cap"]
+        if self.family == XGBOOST:
+            del data["family"]
         return data
 
     @classmethod
@@ -178,9 +183,6 @@ def select_arms(saved_search: Mapping, weights: Sequence[float] = BLEND_WEIGHTS)
 TWO_PART_EXPERIMENT = "two-part model"  # experiment 4
 TWO_PART = "two-part"
 ANY_FLOW, SIZE = "any_flow", "size"  # the two parts, trained in this order
-# The binary part keeps the best so far's tree parameters; only the objective changes.
-ANY_FLOW_PARAMS = {"objective": "binary:logistic"}
-TWEEDIE_ONLY = ("tweedie_variance_power",)
 
 
 def two_part_arm(weights: Sequence[float] = BLEND_WEIGHTS) -> Arm:
@@ -325,7 +327,8 @@ def training_key(settings: Settings, fingerprint: Mapping) -> str:
     training = {
         name: value
         for name, value in settings.to_dict().items()
-        if name in KEYED_FIELDS or (name in TRAINING_FIELDS and value != defaults[name])
+        # A field `to_dict` leaves out at its default (`family`) is missing from `defaults` and keyed when present.
+        if name in KEYED_FIELDS or (name in TRAINING_FIELDS and (name not in defaults or value != defaults[name]))
     }
     text = json.dumps({"settings": training, "rows": dict(fingerprint)}, sort_keys=True)
     return hashlib.sha256(text.encode()).hexdigest()[:16]
