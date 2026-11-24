@@ -146,3 +146,27 @@ The Arm's blend grid with Market Reach, from w = 0.1 to 0.9, reads 0.6191, 0.620
 | + Sibling Demand (`a8a94c0aa05727a1`) | 94 s | 587 s | 787 / 887 |
 
 The base took about seven times as long as the Arm for the same number of rounds. Before the run, other programs held 1.8 GB of the 10 GB of VRAM, and no other training run was active. Halfway through the base, 9.7 GB was in use, this run included, at 100% utilisation. The cause of the slowdown was not traced. Memory pressure near the VRAM limit is a guess. The Arm's 587 s matches #127's 452–680 s. 2023 was not read.
+
+## 4. A fresh hyperparameter search (#166)
+
+**The idea.** The served XGBoost parameters come from #54's search: Optuna TPE on the Sector subset, selected on 2022 Tweedie deviance, with no Market Reach and before the Selection Measure was tie-proof. #71 then compared #54's three confirmed configurations, v1's and depth 6 on the Selection Measure and found them within the noise. This search asks whether parameters chosen *on the Selection Measure*, for the model as served (the Blend with Market Reach), rank held-out UK Markets better.
+
+**The design.** Five stages, run in the spec's order, each one experiment of the loop (`loop.HYPERPARAMETER_STAGES`, `python -m exportspredictor.loop hyperparameters <stage>`). Each stage runs against the best so far as served (`served_base_arm`), whose model is cached, so each Arm trains one model and every stage stays well within `MAX_TRAINED_MODELS` (6); a stage over the budget is refused before training. An Arm changes only the parameters it names; the others are the best so far's. Every Arm re-chooses its blend weight from 0.1 to 0.9, as every Arm with a new model has since #71, and keeps Market Reach at β = 4. Rounds still stop on the model alone's Selection Measure (patience 100). **Winners stack**: a kept stage becomes `results["best"]` (with Market Reach in its settings, so `served_base_arm` adds nothing after it), and the next stage changes its parameters. A stage is refused until the stages before it are decided.
+
+The best so far at the start: `max_depth` 12, `eta` 0.1, `min_child_weight` 3.05, `subsample` 0.916, `colsample_bytree` 0.879, `reg_lambda` 4.95, `tweedie_variance_power` 1.266; Blend w = 0.3; Market Reach β = 4; `exporter_count` files; non-UK rate 0.6157.
+
+**Pre-registered** (committed before any stage was run):
+
+| Stage | Arms (the parameter each changes) | Why these values |
+|---|---|---|
+| Depth | `max_depth` 8, 10, 14 | Either side of 12. Depth 6 is left out: #71 found it stopped at round 12, decided by the stopping rule. |
+| Learning rate | `eta` 0.05, 0.2 | Half and double. 0.05 roughly doubles the rounds and the GPU time. |
+| Min child weight | `min_child_weight` 1, 10, 30 | From #54's lowest (1.4) up to well past its highest (6.8): larger leaves may suit a ranking within Products. |
+| Subsampling | `subsample` 0.7; `colsample_bytree` 0.6; both | Each alone, then together. |
+| Regularisation | `reg_lambda` 1, 20, 50 | #54's confirmed configurations had 0.96 and 23.8; 50 tests more. |
+
+- **Gate:** within each stage, the Arm with the highest Selection Measure is kept only if it beats that stage's base by more than `current_win_threshold` (0.008869).
+- **The stopping rule:** any Arm whose best round is below 50 (`STOPPING_RULE_ROUNDS`) is flagged here as decided by the stopping rule, not by its configuration.
+- **Not searched:** `tweedie_variance_power` (not among the spec's parameters; it changes the loss, not the trees), `gamma` and `reg_alpha` (their scale depends on the Tweedie gradients, so no grid could be fixed without a pilot).
+- **Budget:** 14 models in all. At #164's ~10 minutes a model that is about 2.5 hours of GPU time; at its slow base's 67 minutes it would be about 16 hours. If a stage's first model runs that slowly, the later stages' grids are cut before they run, and the cut is recorded here.
+- **Commands:** `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python -m exportspredictor.loop hyperparameters depth`, then `learning-rate`, `min-child-weight`, `subsampling` and `regularisation`. Each writes `experiments["hyperparameters: <stage>"]` to the loop's `results.json`. 2023 is not read.
