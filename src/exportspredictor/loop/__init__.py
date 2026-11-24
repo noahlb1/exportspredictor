@@ -50,6 +50,13 @@ refuses it, and `real_data` refuses it before opening a file.
     # #164, with EXPORTSPREDICTOR_FEATURE_SET=sibling_demand (the served `exporter_count` files with Sibling
     # Demand stored): the best so far as served retrained on them, then Sibling Demand added (two models)
     uv run python -m exportspredictor.loop sibling-demand
+    # #166, with EXPORTSPREDICTOR_FEATURE_SET set to the served files: the hyperparameter search, one stage per
+    # command, in this order (each refuses to run before the ones above it are decided); one model per Arm
+    uv run python -m exportspredictor.loop hyperparameters depth
+    uv run python -m exportspredictor.loop hyperparameters learning-rate
+    uv run python -m exportspredictor.loop hyperparameters min-child-weight
+    uv run python -m exportspredictor.loop hyperparameters subsampling
+    uv run python -m exportspredictor.loop hyperparameters regularisation
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -133,7 +140,10 @@ Its first, #163, caps the upward Market Reach multiplier (the scoring field `mar
 cap); a kept Arm becomes `results["best"]` with Market Reach and any cap in its settings. An idea on its own
 rebuilt files (#164's `sibling_demand`: Sibling Demand stored beside the served columns) passes
 `files_kept_if_dropped=False` to `Loop.run_experiment`, so a dropped Arm leaves `kept_feature_set` on the served
-files. The round's note is `docs/research/final-round-2022.md`.
+files. The hyperparameter search (#166, `run_hyperparameter_stage`) is a sequence of experiments, one per stage
+of `HYPERPARAMETER_STAGES`, each against `served_base_arm` of the best so far after the stages before it; Arms
+whose best round is below `STOPPING_RULE_ROUNDS` are listed by `decided_by_stopping_rule`. The round's note is
+`docs/research/final-round-2022.md`.
 
 **Pitfalls.**
 
@@ -164,6 +174,7 @@ from exportspredictor.loop.arms import (
     CONSTRAINTS_EXPERIMENT,
     EXPORTER_COUNT_EXPERIMENT,
     FIXTURE_LOOP,
+    HYPERPARAMETER_STAGES,
     KEYED_FIELDS,
     LOWER_ZERO_RATE,
     MARKET_REACH_CAP,
@@ -186,6 +197,7 @@ from exportspredictor.loop.arms import (
     SIBLING_DEMAND_SET,
     SIZE,
     STARTING_POINT,
+    STOPPING_RULE_ROUNDS,
     TRAINING_FIELDS,
     TWO_PART,
     TWO_PART_EXPERIMENT,
@@ -198,8 +210,10 @@ from exportspredictor.loop.arms import (
     blend_arm,
     constraint_arms,
     count_experiments,
+    decided_by_stopping_rule,
     experiment_label,
     exporter_count_arms,
+    hyperparameter_experiment,
     market_reach_cap_arm,
     models_trained_by,
     product_detail_arm,
@@ -239,6 +253,7 @@ from exportspredictor.loop.runner import (
     log_progress,
     naive_margin,
     run_exporter_count,
+    run_hyperparameter_stage,
     run_market_reach_cap,
     run_product_detail,
     run_sibling_demand,
@@ -290,6 +305,7 @@ __all__ = [
     "DIAGNOSTICS",
     "EXPORTER_COUNT_EXPERIMENT",
     "FIXTURE_LOOP",
+    "HYPERPARAMETER_STAGES",
     "KEYED_FIELDS",
     "LOWER_ZERO_RATE",
     "MARKET_REACH_CAP",
@@ -321,6 +337,7 @@ __all__ = [
     "SIBLING_DEMAND_SET",
     "SIZE",
     "STARTING_POINT",
+    "STOPPING_RULE_ROUNDS",
     "TOP_MARKETS",
     "TRAINERS",
     "TRAINING_FIELDS",
@@ -354,10 +371,12 @@ __all__ = [
     "count_experiments",
     "current_win_threshold",
     "decide",
+    "decided_by_stopping_rule",
     "experiment_label",
     "exporter_count_arms",
     "fixture_data",
     "fixture_ranking",
+    "hyperparameter_experiment",
     "load",
     "log_progress",
     "loop_dir",
@@ -375,6 +394,7 @@ __all__ = [
     "real_data",
     "recheck_results",
     "run_exporter_count",
+    "run_hyperparameter_stage",
     "run_market_reach_cap",
     "run_product_detail",
     "run_sibling_demand",

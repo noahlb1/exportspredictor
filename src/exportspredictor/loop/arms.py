@@ -297,6 +297,44 @@ def sibling_demand_arm(best: Settings) -> Arm:
     return Arm(f"+ {feature}", {"features": (*best.features, feature)}, BLEND_GRID)
 
 
+# #166: a fresh hyperparameter search, in stages run in this order, each one experiment of at most
+# MAX_TRAINED_MODELS models against the best so far as served (its model cached, so each Arm is one model).
+# Winners stack: a kept stage becomes the best so far, and the next stage's Arms change its parameters. Each
+# Arm names only the parameters it changes (merged into the best so far's) and re-chooses its blend weight.
+# The grids were fixed before any 2022 result of the stage was read (docs/research/final-round-2022.md).
+STOPPING_RULE_ROUNDS = 50  # a best round below this: the stopping rule, not the configuration, decided the Arm
+
+
+def _param_arm(**params: float) -> Arm:
+    return Arm(" ".join(f"{k} {v:g}" for k, v in params.items()), {"params": params}, BLEND_GRID)
+
+
+HYPERPARAMETER_STAGES: dict[str, list[Arm]] = {
+    "depth": [_param_arm(max_depth=d) for d in (8, 10, 14)],
+    "learning rate": [_param_arm(eta=eta) for eta in (0.05, 0.2)],
+    "min child weight": [_param_arm(min_child_weight=w) for w in (1.0, 10.0, 30.0)],
+    "subsampling": [
+        _param_arm(subsample=0.7),
+        _param_arm(colsample_bytree=0.6),
+        _param_arm(subsample=0.7, colsample_bytree=0.6),
+    ],
+    "regularisation": [_param_arm(reg_lambda=lam) for lam in (1.0, 20.0, 50.0)],
+}
+
+
+def hyperparameter_experiment(stage: str) -> str:
+    return f"hyperparameters: {stage}"
+
+
+def decided_by_stopping_rule(rows: Sequence[Mapping]) -> list[str]:
+    """The Arms whose best round (or a two-part model's either part's) is below `STOPPING_RULE_ROUNDS`."""
+
+    def best_rounds(row: Mapping) -> list[int]:
+        return [part["rounds"] for part in row["parts"].values()] if row.get("parts") else [row["rounds"]]
+
+    return [row["arm"] for row in rows if min(best_rounds(row)) < STOPPING_RULE_ROUNDS]
+
+
 # The research note numbers the seven experiments (docs/research/opportunity-ranking-experiments.md).
 # The loop records nine decisions of the rule: experiments 1 and 2 share one, and experiments 5 and 6
 # decide each Arm on its own. These map a recorded decision and its Arms back to the numbers.
