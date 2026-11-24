@@ -14,8 +14,9 @@ One row per idea, in the order run. Later tickets add their rows here and their 
 | 2 | [Sibling Demand, a UK-free demand proxy, as a feature](#3-sibling-demand-a-uk-free-demand-proxy-as-a-feature-164) (#164) | 1 | 0.6210 (retrained on `sibling_demand`) | w = 0.3, 0.6213 | +0.0003 | 0.008869 | 76.6 min (2 models; see the section) | **Dropped** |
 | 3 | [A fresh hyperparameter search](#4-a-fresh-hyperparameter-search-166) (#166) | 14 in 5 stages | 0.6210 | `colsample_bytree` 0.6, 0.6215 | +0.0005 | 0.008869 | 134.6 min (14 models) | **Dropped** (every stage) |
 | 4 | [Other model families: LightGBM and CatBoost](#5-other-model-families-lightgbm-and-catboost-167) (#167) | 2 (one experiment per family) | 0.6210 | LightGBM ⚑, 0.6205 (CatBoost 0.6191) | −0.0005 | 0.008869 | none: CPU only, 28.7 min (2 models) | **Dropped** (both) |
+| 5 | [A wider Exporter scope](#6-a-wider-exporter-scope-169) (#169) | 1 (paired, one non-UK rate) | 0.6212 (retrained on `all_exporters`, top 100 Exporters) | every Exporter, 0.6212 | +0.0000 | 0.008869 | 20.6 min (2 models) | **Dropped** |
 
-Not an idea, so not a row: [section 2](#2-wider-exporter-scope-feature-files-168) records the build of the `all_exporters` feature files (#168), which the wider Exporter scope experiment (#169) trains on.
+Not an idea, so not a row: [section 2](#2-wider-exporter-scope-feature-files-168) records the build of the `all_exporters` feature files (#168), which the wider Exporter scope experiment (#169, section 6) trains on.
 
 ## The base every idea starts from
 
@@ -308,3 +309,31 @@ Neither family ever moves the wrong way. CatBoost's symmetric trees split on the
 - **If fold 0 wins:** the Arm becomes the best so far. It is then confirmed on all five folds through the loop's existing confirmation step (`python -m exportspredictor.loop confirm`) before it is adopted, and ADR 0004 is amended. If it does not win, no confirmation is run.
 - **The stopping rule:** an Arm whose best round is below 50 is flagged as decided by the stopping rule.
 - **Command:** `$env:EXPORTSPREDICTOR_FEATURE_SET='all_exporters'; scripts/wt.ps1 python -m exportspredictor.loop wider-scope` (two models, on the GPU, one at a time). It writes `experiments["wider exporter scope"]` to the loop's `results.json`. 2023 is not read.
+
+**Decision: drop the wider scope; ADR 0004's top 100 stays.** Every Exporter's rows score **0.6212** (0.62119) against **0.6212** (0.62117) for the top 100 of the same files at the same rate. That is a gain of **+0.00002**, against a Win Threshold of 0.008869. Without Market Reach it is +0.00001 (0.5764 against 0.5764). The best so far is unchanged (`results["best"]` is still the Blend without Market Reach), and the served files stay `exporter_count`: `kept_feature_set` ignores this experiment because it was dropped. ADR 0004 is not amended, and no five-fold confirmation was run.
+
+**Results.** Fold 0 of 2022, 231,217 held-out UK pairs, 4,858 ranked Products, under the tie-proof measure with Market Reach at β = 4. Deviance is the Tweedie deviance on the validation rows of these files (every Exporter's 2022 rows), so it is lower than on `exporter_count` and comparable only within this table. "Model alone" is the stopping measure.
+
+| Arm | Exporters | w | **Selection Measure** | Change | Without Reach | Non-zero | Zero vs non-zero | Value-weighted | Top-10 share | Deviance | Model alone | Rounds kept / trained | Training rows |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Best so far as served, top 100 Exporters (base) | 100 | 0.3 | **0.6212** | | 0.5764 | 0.509 | 0.589 | 0.815 | 0.943 | 384.2 | 0.5324 | 810 / 910 | 70,521,571 |
+| Every Exporter (the Arm) | 227 | 0.3 (chosen) | **0.6212** | **+0.0000** | 0.5764 | 0.505 | 0.589 | 0.816 | 0.944 | 351.1 | 0.5330 | 1,032 / 1,132 | 81,543,474 |
+
+The Arm's blend grid with Market Reach, from w = 0.1 to 0.9, reads 0.6191, 0.6207, **0.6212**, 0.6210, 0.6201, 0.6187, 0.6170, 0.6151 and 0.6127. It chose the base's own weight.
+
+**Reading it.**
+- **The scope does not change how held-out UK Markets are ranked.** The two models agree to the fourth decimal on the Selection Measure, with and without Market Reach, and on the model alone (0.5330 against 0.5324). The secondary measures move by under 0.004, in both directions: "non-zero" falls slightly (0.505 against 0.509) and value-weighted rises slightly (0.816 against 0.815).
+- **The extra rows help the model fit, not rank.** The deviance falls by 9% (351.1 against 384.2), mostly on the smaller Exporters' own 2022 rows, which the base never trained on. That is the same pattern as Sibling Demand's (section 3): a better fit to dollar levels across all rows, with no change in how UK Markets are ordered within a Product.
+- **So the scope is not the cause of v2's −0.020 against v1.** #73 had ruled out the sampling parts of the v1-to-v2 change. This experiment rules out the scope, under today's features, Blend and Market Reach. Of the causes #73 left open, that leaves the Excluded Products, or the change being specific to v1's form. Neither is tested here.
+- **The lower rate costs nothing measurable.** The base at 0.5079 scores 0.6212, against 0.6210 for the served model at 0.6157 on `exporter_count` (sections 1, 4 and 5). Fewer sampled rows of other Exporters, 70.5 M against 84.1 M, leave the ranking where it was.
+- As always, this is an association on one fold and one year. Training on every Exporter does not rank held-out UK Markets better in 2022, and that says nothing about why.
+
+**Run.** `$env:EXPORTSPREDICTOR_FEATURE_SET='all_exporters'; scripts/wt.ps1 python -m exportspredictor.loop wider-scope`, on 2026-11-24 from 16:58 to 17:19 (21.3 min wall), started in the background from the main checkout. Before the run, `nvidia-smi` showed 1.3 GB of the 10 GB in use by other programs, with the GPU idle and no other loop, pipeline or feature build running. While the Arm trained, 4.1 GB was in use, this run included. Neither model was taken from a cache.
+
+| Model | Matrices | Training (matrices included) | Rounds kept / trained | Per round |
+|---|---|---|---|---|
+| Base, top 100 (`e4506bb6b0b778b9`) | 86 s | 545 s | 810 / 910 | 0.50 s |
+| Every Exporter (`4144fbfc2a9b61de`) | 84 s | 694 s | 1,032 / 1,132 | 0.54 s |
+| **Total** | | **1,239 s = 20.6 min of GPU time** | | |
+
+The new row-budget check passed for both models at 0.5079. On these files it refuses the served 0.6157, which would put about 115.9 M rows on the GPU. 2023 was not read.
