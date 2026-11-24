@@ -10,6 +10,8 @@ Exporters' Flows still feed every Importer-side and demand feature
 import polars as pl
 
 TOP_EXPORTERS = 100
+# A scope size meaning no cut: every Exporter's rows train the model (the wider scope of spec #155, #168).
+ALL_EXPORTERS = 0
 GDP_YEARS = (2012, 2023)  # inclusive: the years whose mean GDP ranks the Exporters
 
 

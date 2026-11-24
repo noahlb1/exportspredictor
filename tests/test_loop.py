@@ -213,8 +213,13 @@ def test_the_loop_refuses_the_test_year_on_the_fixture(fixture_world):
         loop.fixture_data(fixture_world, validation_year=2023)
 
 
-def test_the_real_path_refuses_the_test_year_and_never_reads_its_files(derived_data_root, monkeypatch):
-    features.build(derived_data_root, years=[2021, 2022, 2023], rate=1.0)
+@pytest.mark.parametrize("feature_set", ["", "all_exporters"])  # #168: the wider Exporter scope's files too
+def test_the_real_path_refuses_the_test_year_and_never_reads_its_files(derived_data_root, monkeypatch, feature_set):
+    derived = derived_data_root / "derived"
+    (derived / "country_year_filled.parquet").write_bytes((derived / "country_year.parquet").read_bytes())
+    monkeypatch.setenv(features.FEATURE_SET_ENV, feature_set)
+    built = features.build(derived_data_root, years=[2021, 2022, 2023], rate=1.0)
+    assert built.name.endswith(feature_set)
     with pytest.raises(loop.TestYearRead):
         loop.real_data(derived_data_root, validation_year=2023)
     read = []
@@ -234,6 +239,7 @@ def test_the_real_path_refuses_the_test_year_and_never_reads_its_files(derived_d
     assert loop.load(derived_data_root)["noise_floor"] == results
     assert read and not [path for path in read if "2023" in Path(path).name or "2024" in Path(path).name]
     assert any("flows_2022" in path for path in read)
+    assert any(Path(path).parent == built for path in read)
 
 
 # --- #70: the naive baseline as a blend and as the starting point -------------------------------

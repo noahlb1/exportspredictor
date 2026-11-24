@@ -107,7 +107,9 @@ name, so to re-run an arm, give it a new name; the file is written only by the l
 `exporter_count` (#126: the Exporter count stored as a candidate feature, and GDP filled for small
 Markets), shares this folder and results file, but its models are cached under their own keys:
 the set is part of the cache key, so a base arm on rebuilt files trains afresh instead of reusing
-the original's model. The Exporter count is not in `features.FEATURES`; an arm tries it by naming
+the original's model. `all_exporters` (#168) is `exporter_count` with every Exporter's rows, not
+only ADR 0004's top 100; its rows are unsampled, so an arm on it needs a non-UK rate that fits the
+VRAM budget (`non_uk_rate=None` derives the largest, `search.final_non_uk_rate`). The Exporter count is not in `features.FEATURES`; an arm tries it by naming
 it in `features`. An experiment on rebuilt files passes `base_arm` to `Loop.run_experiment`: the best
 so far is retrained on those files and the arms are decided against it (a paired comparison), and the
 section records the feature set, which `served_configuration` hands the pipeline (it refuses to build
