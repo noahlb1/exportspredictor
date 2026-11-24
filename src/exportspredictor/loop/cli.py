@@ -11,6 +11,7 @@ from exportspredictor.features import FEATURE_SET_ENV, PRODUCT_DETAIL_FEATURES
 from exportspredictor.loop.arms import (
     CONSTRAINTS_EXPERIMENT,
     EXPORTER_COUNT_EXPERIMENT,
+    MARKET_REACH_CAP_EXPERIMENT,
     NAIVE_EXPERIMENT,
     NOISE_FLOOR,
     SCOPE_EXPERIMENTS,
@@ -28,9 +29,14 @@ from exportspredictor.loop.arms import (
 from exportspredictor.loop.confirmation import V2, WINNER, confirm
 from exportspredictor.loop.data import RESULTS_FILE, load, loop_dir, real_data
 from exportspredictor.loop.recheck import current_win_threshold
-from exportspredictor.loop.runner import Loop, run_exporter_count, run_product_detail
+from exportspredictor.loop.runner import (
+    Loop,
+    run_exporter_count,
+    run_market_reach_cap,
+    run_product_detail,
+)
 from exportspredictor.loop.selection import SELECTION_MEASURE
-from exportspredictor.loop.served import v2_plan
+from exportspredictor.loop.served import kept_feature_set, v2_plan
 
 EXPORTER_COUNT_SET = "exporter_count"  # the rebuilt feature files the Exporter count is tried on (#126)
 
@@ -76,6 +82,16 @@ def main(argv: Sequence[str]) -> None:
         section = run_exporter_count(Loop(data, v2_plan(), loop_dir()))["experiments"][EXPORTER_COUNT_EXPERIMENT]
         rows = [section["base_arm"], *section["arms"]]
         print(json.dumps({"kept": section["kept"], **{r["arm"]: r[SELECTION_MEASURE] for r in rows}}), flush=True)
+    elif command == "market-reach-cap":
+        data, served = real_data(), kept_feature_set(load())
+        if data.feature_set != served:
+            raise SystemExit(f"Run on the served feature files: set {FEATURE_SET_ENV}={served}")
+        section = run_market_reach_cap(Loop(data, v2_plan(), loop_dir()))["experiments"][MARKET_REACH_CAP_EXPERIMENT]
+        (arm,) = section["arms"]
+        print(json.dumps({
+            "kept": section["kept"], "cap": arm["settings"]["market_reach_cap"], "win_threshold": section["win_threshold"],
+            **{r["arm"]: r[SELECTION_MEASURE] for r in (section["base_arm"], arm)},
+        }), flush=True)
     elif command == "confirm":
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
@@ -85,7 +101,7 @@ def main(argv: Sequence[str]) -> None:
     else:
         raise SystemExit(
             "usage: python -m exportspredictor.loop "
-            "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|confirm|time"
+            "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|confirm|time"
         )
 
 

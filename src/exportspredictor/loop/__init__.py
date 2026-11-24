@@ -44,6 +44,9 @@ refuses it, and `real_data` refuses it before opening a file.
     # #127, with EXPORTSPREDICTOR_FEATURE_SET=exporter_count: the best so far retrained on the rebuilt
     # files, then the Exporter count against it, both with Market Reach (two models)
     uv run python -m exportspredictor.loop exporter-count
+    # #163, with EXPORTSPREDICTOR_FEATURE_SET set to the served files (`kept_feature_set`): the best so far as
+    # served against it with Market Reach's upward multiplier capped (no training)
+    uv run python -m exportspredictor.loop market-reach-cap
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -117,6 +120,14 @@ its measures without Reach under `without_market_reach`. The rescaling constant 
 scored table, so pooling several folds' Reach scores ranks with a slightly different constant per
 fold; a five-fold figure should re-pool the folds' plain scores with one constant, as #124 did.
 
+**The final round** (spec #155) stacks its ideas on the best so far *as served*. Market Reach was adopted
+outside the loop (#124), so `results["best"]` carries it only once an Arm of the round is kept. Each
+experiment of the round therefore passes `base_arm=served_base_arm(best)` (Market Reach at `CHOSEN_BETA` added
+where the best so far has none) and runs on the files `served_configuration` serves (`kept_feature_set`).
+Its first, #163, caps the upward Market Reach multiplier (the scoring field `market_reach_cap`, None: no
+cap); a kept Arm becomes `results["best"]` with Market Reach and any cap in its settings. The round's note
+is `docs/research/final-round-2022.md`.
+
 **Pitfalls.**
 
 - Rounds stop on the selection measure of the *model alone*, while an arm that blends is
@@ -148,6 +159,9 @@ from exportspredictor.loop.arms import (
     FIXTURE_LOOP,
     KEYED_FIELDS,
     LOWER_ZERO_RATE,
+    MARKET_REACH_CAP,
+    MARKET_REACH_CAP_EXPERIMENT,
+    MARKET_REACH_CAP_GRID,
     MAX_ROUNDS,
     MAX_TRAINED_MODELS,
     NAIVE_EXPERIMENT,
@@ -158,6 +172,7 @@ from exportspredictor.loop.arms import (
     SCOPE_EXPERIMENTS,
     SCORING_FIELDS,
     SELECT_EXPERIMENT,
+    SERVED_BASE,
     SHALLOW_DEPTH,
     SIZE,
     STARTING_POINT,
@@ -175,10 +190,12 @@ from exportspredictor.loop.arms import (
     count_experiments,
     experiment_label,
     exporter_count_arms,
+    market_reach_cap_arm,
     models_trained_by,
     product_detail_arm,
     product_detail_experiment,
     select_arms,
+    served_base_arm,
     starting_point_arm,
     training_key,
     two_part_arm,
@@ -211,6 +228,7 @@ from exportspredictor.loop.runner import (
     log_progress,
     naive_margin,
     run_exporter_count,
+    run_market_reach_cap,
     run_product_detail,
 )
 from exportspredictor.loop.selection import (
@@ -262,6 +280,9 @@ __all__ = [
     "FIXTURE_LOOP",
     "KEYED_FIELDS",
     "LOWER_ZERO_RATE",
+    "MARKET_REACH_CAP",
+    "MARKET_REACH_CAP_EXPERIMENT",
+    "MARKET_REACH_CAP_GRID",
     "MAX_ROUNDS",
     "MAX_TRAINED_MODELS",
     "MIN_WIN_THRESHOLD",
@@ -281,6 +302,7 @@ __all__ = [
     "SELECTION_MEASURE",
     "SELECTION_MEASURE_TEXT",
     "SELECT_EXPERIMENT",
+    "SERVED_BASE",
     "SHALLOW_DEPTH",
     "SIZE",
     "STARTING_POINT",
@@ -325,6 +347,7 @@ __all__ = [
     "log_progress",
     "loop_dir",
     "main",
+    "market_reach_cap_arm",
     "measures",
     "models_trained_by",
     "naive_from_features",
@@ -337,10 +360,12 @@ __all__ = [
     "real_data",
     "recheck_results",
     "run_exporter_count",
+    "run_market_reach_cap",
     "run_product_detail",
     "save_recheck",
     "save_results",
     "select_arms",
+    "served_base_arm",
     "served_configuration",
     "starting_point_arm",
     "time_one_arm",
