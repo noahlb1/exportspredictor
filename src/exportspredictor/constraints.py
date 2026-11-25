@@ -17,17 +17,14 @@ Both models follow ADR 0001: for each fold `k` in the plan, they train on every 
 and the UK pairs outside fold `k`, and score only fold `k`'s UK pairs. To keep the real-data
 cost small, `REAL_PLAN` trains on a few Sectors and one fold (a few minutes on the GPU); the
 fixture plan uses every Sector and fold. The comparison is stored in the evaluation report
-as `monotone_constraints` (`pipeline` computes it; `add_to_latest` adds it to a saved
-artefact without retraining the fold models).
+as `monotone_constraints`, which `pipeline` computes in every build.
 
 The effects are associations the model has learned, not causal estimates.
 """
 
-import json
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -208,53 +205,3 @@ def _text(report: dict) -> str:
         + (f"; the two models' Baselines rank the pairs alike (Spearman {spearman:.3f})." if spearman is not None else ".")
     )
 
-
-def add_to_latest(
-    root: Path | None = None,
-    artefacts_root: Path | None = None,
-    *,
-    plan: Plan = REAL_PLAN,
-    device: str = "cuda",
-    version: str | None = None,
-) -> Path:
-    """Run the comparison for the newest evaluated artefact and save it again, with it, as a new version.
-
-    The two models use the artefact's tuned parameters, round count, feature transform,
-    non-UK sample and seed. The fold models and every file are copied as they are.
-    """
-    from exportspredictor import artefacts as store
-    from exportspredictor import baci
-    from exportspredictor.features import features_dir
-    from exportspredictor.paths import artefacts_dir, data_dir
-
-    root = Path(root or data_dir())
-    artefacts_root = Path(artefacts_root or artefacts_dir())
-    source = store.latest_folder(artefacts_root)
-    bundle = store.load(source)
-    if bundle.evaluation is None:
-        raise ValueError(f"Artefact {bundle.version} has no evaluation; run `python -m exportspredictor.evaluation` first")
-    metadata = bundle.metadata
-    folder = features_dir(root)
-    years = [y for y in json.loads((folder / "features.json").read_text(encoding="utf-8"))["years"]
-             if y in metadata["training_years"]]
-    result = compare(
-        {y: folder / f"training_{y}.parquet" for y in years},
-        bundle.baseline_features,
-        plan=plan,
-        uk=baci.UK,
-        params=metadata["params"],
-        rounds=metadata["rounds"],
-        transform=FeatureTransform.from_dict(metadata["feature_transform"]),
-        n_folds=metadata["n_folds"],
-        non_uk_rate=metadata["non_uk_sampling_rate"],
-        device=device,
-        seed=metadata["model_params"].get("seed", 0),
-    )
-    print(result["text"], flush=True)
-    report = {**bundle.evaluation, "monotone_constraints": result}
-    new = {**metadata, "version": version or store.new_version(), "copied_from": bundle.version}
-    return store.copy_version(source, artefacts_root, metadata=new, evaluation=report)
-
-
-if __name__ == "__main__":
-    print(add_to_latest(), flush=True)
