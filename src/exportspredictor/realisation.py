@@ -291,6 +291,46 @@ def direct_comparison_text(report: dict) -> str:
     return "Direct comparison with the EPM's UK figures: " + ("run." if part["run"] else f"{part['reason']}.")
 
 
+CAVEAT = (
+    "A rough benchmark, not a like-for-like test: ITC pools every exporter over 2006–2018 at 76 sub-sectors, while "
+    "this covers the UK only, with no exporter fixed effect, at the levels shown. ITC's indicator projects about "
+    "five years ahead; ours scores the base year itself, from a different model. The coefficients describe a "
+    "tendency across many pairs, not a forecast for any one."
+)
+
+
+def text(report: dict) -> str:
+    """The plain-language summary the API serves beside the figures: agreement in sign and broad size, never a
+    validation."""
+    rows = [row for row in report["rows"] if row["test"] == INTENSIVE_MARGIN and row["predictor"] == "model"]
+    published = next(row for row in report["published"] if row["test"] == INTENSIVE_MARGIN)
+    years = years_text(report["base_years"])
+    if not rows or rows[0]["coefficient"] is None:
+        return f"ITC's realisation test could not be fitted on the UK pairs of {years}."
+    row = rows[0]
+    coefficient = row["coefficient"]
+    direction = (
+        "grew faster" if coefficient > 0 else "grew more slowly" if coefficient < 0 else "grew no differently"
+    )
+    agrees = "agrees with ITC's in sign" if (coefficient > 0) == (published["coefficient"] > 0) else (
+        "differs from ITC's in sign"
+    )
+    return (
+        f"ITC tests its Export Potential Map by asking whether pairs with more unrealised potential grow faster "
+        f"over the next three years. Run on UK pairs in {years}, the model's Unrealised Share is associated with "
+        f"later growth: pairs with a larger share {direction} over the next three years, other things equal "
+        f"(coefficient {number_text(coefficient, '.2f')} at {row['level']}, against "
+        f"{number_text(published['coefficient'], '.2f')} published by ITC for its own indicator). The model "
+        f"{agrees}. This is a rough benchmark of agreement, not a validation of either tool."
+    )
+
+
+def served(report: dict) -> dict:
+    """The report as the API serves it: with its `text`, `caveat` and coefficient `table` (`coefficient_rows`, by
+    column label as tables show them) made now, not when saved."""
+    return {**report, "text": text(report), "caveat": CAVEAT, "table": coefficient_rows(report)}
+
+
 def with_itc_comparison(bundle: "Artefacts", report: dict) -> "Artefacts":
     """`bundle` with `report` in its evaluation (`REPORT_KEY`); every other block is kept."""
     return replace(bundle, evaluation={**(bundle.evaluation or {}), REPORT_KEY: report})

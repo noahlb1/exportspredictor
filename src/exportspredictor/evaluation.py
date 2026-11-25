@@ -123,6 +123,10 @@ def served_report(report: dict) -> dict:
     served = {key: value for key, value in relabelled(report).items() if key not in NOT_SERVED}
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
+    if served.get("itc_comparison"):
+        from exportspredictor import realisation  # it imports `experiments`, which imports this module
+
+        served["itc_comparison"] = realisation.served(served["itc_comparison"])
     return served
 
 # The opt-in parts of a pipeline run (`pipeline.Parts`, spec #65 story 23): title, the report
@@ -138,6 +142,11 @@ OPTIONAL_PARTS = (
     ("PPML benchmark", "ppml_benchmark", "--ppml-benchmark",
      ("It compares the model's Trade Agreement association with a 3-way fixed-effects PPML gravity model and with "
      "published estimates.")),
+)
+# Parts added to a saved version by their own command, not by a pipeline switch: title, report block, command, why.
+ADDED_PARTS = (
+    ("ITC comparison", "itc_comparison", "python -m exportspredictor.realisation",
+     "It runs ITC's realisation test, the one behind its Export Potential Map, on the model's Export Potential."),
 )
 
 
@@ -155,6 +164,10 @@ def parts_not_run(report: dict, ppml_benchmark: dict | None) -> list[dict]:
         {"title": title, "text": f"{title}: {NOT_RUN}. {why} It runs when the pipeline is asked for it "
          f"(`python -m exportspredictor.pipeline {switch}`)."}
         for title, block, switch, why in OPTIONAL_PARTS
+        if block not in blocks
+    ] + [
+        {"title": title, "text": f"{title}: {NOT_RUN}. {why} It is added to a saved version with `{command}`."}
+        for title, block, command, why in ADDED_PARTS
         if block not in blocks
     ]
 

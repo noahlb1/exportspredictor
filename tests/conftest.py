@@ -68,9 +68,14 @@ def fixture_world():
 
 @pytest.fixture(scope="session")
 def fixture_artefacts(fixture_world):
-    return build_artefacts(
+    """A run with every part, and the ITC comparison added on a synthetic base-year panel (the fixture world's four
+    years are too few for it), as `realisation.add_to_latest` adds it to a real version."""
+    from exportspredictor import realisation
+
+    bundle = build_artefacts(
         fixture_world, version=FIXTURE_VERSION, parts=Parts.every(), rescore=fixture_rescore(fixture_world)
     )
+    return realisation.with_itc_comparison(bundle, realisation.realisation_report(realisation.fixture_panel()))
 
 
 @pytest.fixture(scope="session")
