@@ -69,6 +69,17 @@ def test_missing_artefacts_raise(tmp_path):
         store.load_latest(tmp_path / "nothing-here")
 
 
+def test_a_versions_copy_lineage_runs_back_through_each_version_it_was_copied_from(tmp_path):
+    for version, copied_from in [("A", None), ("B", "A"), ("C", "B"), ("D", "gone")]:
+        (tmp_path / version).mkdir()
+        metadata = {"version": version, **({"copied_from": copied_from} if copied_from else {})}
+        (tmp_path / version / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    assert store.copy_lineage(tmp_path, "C") == ["C", "B", "A"]
+    assert store.copy_lineage(tmp_path, "A") == ["A"]
+    assert store.copy_lineage(tmp_path, "D") == ["D", "gone"]  # a source no longer on disk ends the walk
+
+
 def test_data_and_artefact_roots_come_from_env_vars(monkeypatch, tmp_path):
     monkeypatch.setenv("EXPORTSPREDICTOR_DATA_DIR", str(tmp_path / "d"))
     monkeypatch.setenv("EXPORTSPREDICTOR_ARTEFACTS_DIR", str(tmp_path / "a"))
