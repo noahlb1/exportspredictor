@@ -54,6 +54,10 @@ class Settings:
     # The training scope (spec #155, ticket #169): only the rows of the top `exporter_scope` Exporters by mean GDP
     # (`scope.exporter_scope`, the UK always in) train the model; None: every Exporter the feature files hold.
     exporter_scope: int | None = None
+    # XGBoost only (spec #155, ticket #170): True builds the training rows as an `ExtMemQuantileDMatrix`, its pages
+    # cached in host memory and streamed to the GPU each round, so more rows train than fit in VRAM (ADR 0004's
+    # "last resort"); such an arm is exempt from the VRAM row budget. False: in-core, as before.
+    external_memory: bool = False
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
     # Scoring only: Market Reach's beta (`market_reach`, spec #113, ticket #127). 0 scores without it;
@@ -75,6 +79,8 @@ class Settings:
             del data["family"]
         if self.exporter_scope is None:
             del data["exporter_scope"]
+        if not self.external_memory:
+            del data["external_memory"]
         return data
 
     @classmethod
@@ -388,6 +394,18 @@ def wider_scope_arms(best: Settings, *, top: int, non_uk_rate: float) -> tuple[A
     return base, Arm(WIDER_SCOPE, {"exporter_scope": None, "non_uk_rate": non_uk_rate}, BLEND_GRID)
 
 
+# #170: more training rows through XGBoost external memory (`Settings.external_memory`, ADR 0004's "last resort"):
+# the best so far as served with every other Exporter's row (non-UK rate 1.0) on the served files, against the best
+# so far as served (its cached model). In-core, rate 1.0 would not fit the VRAM row budget.
+EXTERNAL_MEMORY_EXPERIMENT = "external memory"
+EXTERNAL_MEMORY = "non-UK rate 1.0, external memory"
+
+
+def external_memory_arm() -> Arm:
+    """Every other Exporter's row, through external memory; it re-chooses its blend weight."""
+    return Arm(EXTERNAL_MEMORY, {"external_memory": True, "non_uk_rate": 1.0}, BLEND_GRID)
+
+
 def decided_by_stopping_rule(rows: Sequence[Mapping]) -> list[str]:
     """The Arms whose best round (or a two-part model's either part's) is below `STOPPING_RULE_ROUNDS`."""
 
@@ -411,6 +429,7 @@ EXPERIMENT_DISPLAY_NAMES = {
     EXPORTER_COUNT_EXPERIMENT: "Exporter count",
     SIBLING_DEMAND_EXPERIMENT: "Sibling Demand",
     WIDER_SCOPE_EXPERIMENT: "Wider Exporter scope",
+    EXTERNAL_MEMORY_EXPERIMENT: "More rows through external memory",
 }
 
 

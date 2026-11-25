@@ -11,6 +11,7 @@ from exportspredictor.features import FEATURE_SET_ENV, PRODUCT_DETAIL_FEATURES
 from exportspredictor.loop.arms import (
     CONSTRAINTS_EXPERIMENT,
     EXPORTER_COUNT_EXPERIMENT,
+    EXTERNAL_MEMORY_EXPERIMENT,
     HYPERPARAMETER_STAGES,
     MARKET_REACH_CAP_EXPERIMENT,
     MODEL_FAMILY_ARMS,
@@ -43,6 +44,7 @@ from exportspredictor.loop.recheck import current_win_threshold
 from exportspredictor.loop.runner import (
     Loop,
     run_exporter_count,
+    run_external_memory,
     run_hyperparameter_stage,
     run_market_reach_cap,
     run_model_family,
@@ -162,6 +164,17 @@ def main(argv: Sequence[str]) -> None:
             "decided_by_stopping_rule": decided_by_stopping_rule(rows),
             **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "training_rows", "seconds")} for r in rows},
         }), flush=True)
+    elif command == "external-memory":
+        data, served = real_data(), kept_feature_set(load())
+        if data.feature_set != served:
+            raise SystemExit(f"Run on the served feature files: set {FEATURE_SET_ENV}={served}")
+        section = run_external_memory(Loop(data, v2_plan(), loop_dir()))["experiments"][EXTERNAL_MEMORY_EXPERIMENT]
+        rows = [section["base_arm"], *section["arms"]]
+        print(json.dumps({
+            "kept": section["kept"], "win_threshold": section["win_threshold"],
+            "decided_by_stopping_rule": decided_by_stopping_rule(rows),
+            **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "training_rows", "seconds")} for r in rows},
+        }), flush=True)
     elif command == "confirm":
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
@@ -172,7 +185,7 @@ def main(argv: Sequence[str]) -> None:
         raise SystemExit(
             "usage: python -m exportspredictor.loop "
             "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|sibling-demand|"
-            "hyperparameters <stage>|model-family <family>|wider-scope|confirm|time"
+            "hyperparameters <stage>|model-family <family>|wider-scope|external-memory|confirm|time"
         )
 
 

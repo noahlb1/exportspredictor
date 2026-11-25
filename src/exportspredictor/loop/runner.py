@@ -22,6 +22,7 @@ from exportspredictor.folds import outside_fold, with_folds
 from exportspredictor.loop.arms import (
     ANY_FLOW,
     EXPORTER_COUNT_EXPERIMENT,
+    EXTERNAL_MEMORY_EXPERIMENT,
     HYPERPARAMETER_STAGES,
     MARKET_REACH_CAP_EXPERIMENT,
     MAX_TRAINED_MODELS,
@@ -35,6 +36,7 @@ from exportspredictor.loop.arms import (
     LoopPlan,
     Settings,
     exporter_count_arms,
+    external_memory_arm,
     hyperparameter_experiment,
     market_reach_cap_arm,
     model_family_experiment,
@@ -63,6 +65,7 @@ from exportspredictor.loop.selection import (
     win_threshold,
 )
 from exportspredictor.loop.trainers import (
+    XGBOOST,
     Model,
     Trainer,
     TrainingJob,
@@ -190,6 +193,14 @@ def run_wider_scope(
     best = Settings.from_dict(lp.results["best"]["settings"])
     base, arm = wider_scope_arms(best, top=top, non_uk_rate=non_uk_rate)
     return lp.run_experiment(WIDER_SCOPE_EXPERIMENT, [arm], base_arm=base, files_kept_if_dropped=False)
+
+
+def run_external_memory(lp: "Loop") -> dict:
+    """#170: every other Exporter's row (non-UK rate 1.0) through XGBoost external memory, against the best so far as
+    served (`served_base_arm`) on this loop's files. A kept Arm becomes the best so far, with Market Reach."""
+    lp.noise_floor()
+    best = Settings.from_dict(lp.results["best"]["settings"])
+    return lp.run_experiment(EXTERNAL_MEMORY_EXPERIMENT, [external_memory_arm()], base_arm=served_base_arm(best))
 
 
 class Loop:
@@ -332,7 +343,8 @@ class Loop:
             key = training_key(settings, self._fingerprint())
             if key not in self._models and not self._model_file(key, settings.family).exists():
                 models.setdefault(key, models_trained_by(settings.to_dict()))
-                self._check_rows(settings)
+                if not settings.external_memory:  # its rows stream to the device page by page (#170)
+                    self._check_rows(settings)
         if sum(models.values()) > MAX_TRAINED_MODELS:
             raise ValueError(
                 f"Experiment {name!r} would train {sum(models.values())} models; the budget is at most "
@@ -440,6 +452,8 @@ class Loop:
 
     def _resolved(self, settings: Settings) -> Settings:
         trainer_for(settings.family)  # refuses a family with no trainer before anything trains
+        if settings.external_memory and settings.family != XGBOOST:
+            raise ValueError(f"The {settings.family} trainer has no external memory; only XGBoost's does")
         zero_rate = settings.zero_rate if settings.zero_rate is not None else self.data.data.built_zero_rate
         non_uk_rate = settings.non_uk_rate
         if non_uk_rate is None:
@@ -533,6 +547,7 @@ class Loop:
             rows=self._training_rows(settings, part), params=settings.params, seed=settings.seed,
             monotone=settings.monotone, max_rounds=settings.max_rounds, patience=settings.patience,
             measure=measure, device=self.plan.device, threads=self.plan.threads, binary=part == ANY_FLOW,
+            external_memory=settings.external_memory,
         )
         return self._trainer(settings.family).train(job)
 
