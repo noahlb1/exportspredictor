@@ -156,6 +156,10 @@ _Avoid_: hit rate, conversion
 ITC's check of its Export Potential Map, run on our model as Lift's regression counterpart (`exportspredictor.realisation`, spec #156): three regressions with fixed effects and errors clustered by unit. A **unit** is a Product–Market pair at HS6, or a Sector–Market pair at HS2. The **intensive margin** regresses later growth of trading pairs on their Unrealised Share in a base year; the **extensive margin** asks whether pairs not trading then start within three years, and **new-flow size** how much those that start sell, both on log Export Potential. Each runs at HS6 and at HS2, where a Sector–Market's unrealised potential is floored pair by pair, then summed, and with the Naive Baseline in Export Potential's place, each on the units it scores above zero, so the two samples differ where the Naive Baseline scores a unit 0. Each base year's Export Potential comes from fold models trained only on years up to it, and the test year is never read. Only the HS2 coefficients are set beside ITC's published ones, as a rough benchmark of agreement, never a validation.
 _Avoid_: validation test, accuracy test
 
+**Base year**:
+A year t (2015–2019) at which the Realisation Test scores UK pairs, with fold models trained only on years up to t, and from which it reads Actual Exports three years either side. It is not the Baseline year, the one year (2024) whose conditions the Baseline scores for Advisors; never shorten either to "base".
+_Avoid_: anchor year, scoring year
+
 **Unrealised Share**:
 ITC's floored share of a pair's Export Potential not yet realised in one year: (Export Potential − min(Actual Exports, Export Potential)) / Export Potential, between 0 and 1. Unlike the Relative Export Gap it uses one year's values, not Gap Period means, and a pair selling above its Export Potential scores 0, not a negative share.
 _Avoid_: untapped share
