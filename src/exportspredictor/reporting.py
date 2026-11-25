@@ -4,13 +4,16 @@ Each function takes an `Artefacts` and returns a `Chart` (a static image with th
 a small table, or `NotRun` where the artefact does not record that part. Nothing here trains,
 fits or recomputes a result: every figure is read from what the artefact records (its
 evaluation report, the experiment loop's results in `metadata["ranking_experiments"]` and the
-saved PPML benchmark). The notebook calls these and defines no functions of its own.
+saved PPML benchmark). The one exception is `final_round`, which reads the loop's saved results and the
+round's saved probe directly, because spec #155's final round ran after the served artefact was built and
+kept nothing. The notebook calls these and defines no functions of its own.
 
 Charts are drawn with matplotlib and saved as SVG, which GitHub renders as an image. Text stays
 text, so each chart is a few kilobytes in the committed notebook.
 """
 
 import io
+import json
 import re
 import textwrap
 from collections.abc import Mapping
@@ -21,7 +24,7 @@ import matplotlib
 import polars as pl
 from matplotlib.figure import Figure
 
-from exportspredictor import model_choice, offsets, ppml, rankings, scenarios
+from exportspredictor import loop, model_choice, offsets, ppml, rankings, scenarios
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.currency import format_usd
@@ -32,6 +35,7 @@ from exportspredictor.evaluation import (
 )
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
+from exportspredictor.paths import data_dir
 from exportspredictor.rankings import REACH_DEPTHS, in_top, ranked_opportunities
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
@@ -207,6 +211,61 @@ def experiments_chart(bundle: Artefacts) -> Chart | NotRun:
         title, bars, lines={} if threshold is None else {"Win Threshold": threshold},
         axis=f"change in the Selection Measure (* stopped within {EARLY_STOP_ROUNDS} rounds)",
     ))
+
+# Spec #155's final round, one idea per row in the order run (docs/research/final-round-2022.md, "Summary"),
+# each with the loop experiments that decided it.
+FINAL_ROUND_IDEAS: dict[str, tuple[str, ...]] = {
+    "Cap on Market Reach's upside (#163)": (loop.MARKET_REACH_CAP_EXPERIMENT,),
+    "Sibling Demand as a feature (#164)": (loop.SIBLING_DEMAND_EXPERIMENT,),
+    "A fresh hyperparameter search (#166)": tuple(loop.hyperparameter_experiment(s) for s in loop.HYPERPARAMETER_STAGES),
+    "Other model families (#167)": tuple(loop.model_family_experiment(f) for f in loop.MODEL_FAMILY_ARMS),
+    "A wider Exporter scope (#169)": (loop.WIDER_SCOPE_EXPERIMENT,),
+    "More rows through external memory (#170)": (loop.EXTERNAL_MEMORY_EXPERIMENT,),
+    "Training on the Excluded Products (#171)": (loop.EXCLUDED_PRODUCTS_EXPERIMENT,),
+}
+FINAL_ROUND_PROBE_IDEA = "Tariff 0 where an agreement's preference is unrecorded (#171)"
+FINAL_ROUND_PROBE_FILE = Path("derived") / "final_round_2022" / "unrecorded_preferences.json"
+
+
+def final_round_probe(root: Path | None = None) -> dict | None:
+    """The unrecorded-preferences probe as `scripts/research/final_round_2022/unrecorded_preferences.py` saved it,
+    or None where it was not run (the fixture world)."""
+    path = Path(root or data_dir()) / FINAL_ROUND_PROBE_FILE
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def final_round(results: Mapping, probe: Mapping | None = None) -> pl.DataFrame | NotRun:
+    """Spec #155's final round, one row per idea: its experiments and Arms, the best Arm, the best so far as served
+    it was paired with (`base`), the best Arm's Selection Measure and gain, the Win Threshold it had to beat and the
+    decision. Read from the loop's saved results (`loop.load`) and the scoring-only probe (`final_round_probe`),
+    which is decided against its own gate."""
+    recorded = results.get("experiments", {})
+    rows = []
+    for idea, names in FINAL_ROUND_IDEAS.items():
+        sections = [recorded[name] for name in names if name in recorded]
+        if not sections:
+            continue
+        section, arm = max(((s, a) for s in sections for a in s["arms"]), key=lambda pair: pair[1]["change"])
+        rows.append({
+            "idea": idea, "experiments": len(sections), "arms": sum(len(s["arms"]) for s in sections),
+            "best_arm": arm["arm"], "base": section["base"]["selection_measure"], "best": arm["selection_measure"],
+            "gain": arm["change"], "threshold": section["win_threshold"],
+            "decision": "kept" if any(s.get("kept") for s in sections) else "dropped",
+        })
+    if not rows:
+        return NotRun("The final round")
+    if probe is not None:
+        rows.append({
+            "idea": FINAL_ROUND_PROBE_IDEA, "experiments": 0, "arms": 0, "best_arm": "scoring-only probe",
+            "base": probe["base"]["selection_measure"], "best": probe["probe"]["selection_measure"],
+            "gain": probe["gain"], "threshold": probe["gate"],
+            "decision": "retrained Arm run" if probe["retrained_arm_runs"] else "skipped (gate)",
+        })
+    return pl.DataFrame(rows, schema={
+        "idea": pl.String, "experiments": pl.Int64, "arms": pl.Int64, "best_arm": pl.String, "base": pl.Float64,
+        "best": pl.Float64, "gain": pl.Float64, "threshold": pl.Float64, "decision": pl.String,
+    })
+
 
 def confirmation(bundle: Artefacts) -> pl.DataFrame | NotRun:
     """The five-fold confirmation fold by fold: the winner's and v2's Selection Measure on each held-out
