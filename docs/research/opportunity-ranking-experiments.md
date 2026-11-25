@@ -51,7 +51,7 @@ GPU budget: 13 trained models across the experiments (noise floor 3, starting po
 - **The naive baseline holds what the model lacks.** v2 alone ranks non-zero Flows better than the naive baseline (0.525 against 0.450) and "any Flow" worse (0.486 against 0.509). The blend keeps most of the first and gains the second (0.537), and it beats both of its parts.
 - **Giving the model the naive baseline as its starting point is worse than blending.** At the v2 learning rate the trees improve on the starting point for 13 rounds and then make the ranking worse.
 - **Configuration barely matters once blended.** The three confirmed v2 configurations sit within 0.003 of each other.
-- **Neither part of the v1-to-v2 sampling change moves the ranking.** That leaves the gain ladder's −0.020 with the Exporter scope or the Excluded Products, which were not tested (out of scope).
+- **Neither part of the v1-to-v2 sampling change moves the ranking.** That leaves the gain ladder's −0.020 with the Exporter scope or the Excluded Products, which were not tested (out of scope). *Both were tested later, on today's form (the Blend with Market Reach), and neither explains it: every Exporter's rows +0.0000 (#169) and training on the Excluded Products' rows −0.0007 (#171), both dropped ([final-round-2022.md](final-round-2022.md), sections 6 and 8).*
 - **Product-level constants lower the model-alone ranking a little** (about 0.525 against 0.533), though they lower deviance too.
 - **The monotone constraints cost the ranking nothing measurable.** Without them the selection measure was 0.0064 lower (inside the noise, in the wrong direction) and deviance was worse. So they stay, and no further ADR is needed. This answers ADR 0008's open point.
 

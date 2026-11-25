@@ -16,8 +16,10 @@ One row per idea, in the order run. Later tickets add their rows here and their 
 | 4 | [Other model families: LightGBM and CatBoost](#5-other-model-families-lightgbm-and-catboost-167) (#167) | 2 (one experiment per family) | 0.6210 | LightGBM ⚑, 0.6205 (CatBoost 0.6191) | −0.0005 | 0.008869 | none: CPU only, 28.7 min (2 models) | **Dropped** (both) |
 | 5 | [A wider Exporter scope](#6-a-wider-exporter-scope-169) (#169) | 1 (paired, one non-UK rate) | 0.6212 (retrained on `all_exporters`, top 100 Exporters) | every Exporter, 0.6212 | +0.0000 | 0.008869 | 20.6 min (2 models) | **Dropped** |
 | 6 | [More training rows through GPU external memory](#7-more-training-rows-through-gpu-external-memory-170) (#170) | 1 (non-UK rate 1.0; the wider scope unsampled not run, as #169 dropped the scope) | 0.6210 | 132 M rows, 0.6209 | −0.0000 | 0.008869 | 493.6 min (1 model, 35 s a round) | **Dropped** |
+| 7 | [Train on the Excluded Products](#8-the-leftover-research-leads-171) (#171) | 1 (paired, one non-UK rate) | 0.6214 (retrained on `excluded_products`, Excluded Products dropped) | trained on them, 0.6207 | −0.0007 | 0.008869 | 18.2 min (2 models) | **Dropped** |
+| 8 | [Tariff 0 where an agreement's preference is unrecorded](#8-the-leftover-research-leads-171) (#171) | a scoring-only probe; the retrained Arm gated out | 0.6210 | the probe, 0.6209 | −0.0001 | gate +0.0044 | none (26 s, cached) | **Skipped** (retrained Arm not run) |
 
-Not an idea, so not a row: [section 2](#2-wider-exporter-scope-feature-files-168) records the build of the `all_exporters` feature files (#168), which the wider Exporter scope experiment (#169, section 6) trains on.
+Not an idea, so not a row: [section 2](#2-wider-exporter-scope-feature-files-168) records the build of the `all_exporters` feature files (#168), which the wider Exporter scope experiment (#169, section 6) trains on. Section 8 also lists the leads #171 skipped, each with its reason.
 
 ## The base every idea starts from
 
@@ -325,7 +327,7 @@ The Arm's blend grid with Market Reach, from w = 0.1 to 0.9, reads 0.6191, 0.620
 **Reading it.**
 - **The scope does not change how held-out UK Markets are ranked.** The two models agree to the fourth decimal on the Selection Measure, with and without Market Reach, and on the model alone (0.5330 against 0.5324). The secondary measures move by under 0.004, in both directions: "non-zero" falls slightly (0.505 against 0.509) and value-weighted rises slightly (0.816 against 0.815).
 - **The extra rows help the model fit, not rank.** The deviance falls by 9% (351.1 against 384.2), mostly on the smaller Exporters' own 2022 rows, which the base never trained on. That is the same pattern as Sibling Demand's (section 3): a better fit to dollar levels across all rows, with no change in how UK Markets are ordered within a Product.
-- **So the scope is not the cause of v2's −0.020 against v1.** #73 had ruled out the sampling parts of the v1-to-v2 change. This experiment rules out the scope, under today's features, Blend and Market Reach. Of the causes #73 left open, that leaves the Excluded Products, or the change being specific to v1's form. Neither is tested here.
+- **So the scope is not the cause of v2's −0.020 against v1.** #73 had ruled out the sampling parts of the v1-to-v2 change. This experiment rules out the scope, under today's features, Blend and Market Reach. Of the causes #73 left open, that leaves the Excluded Products, or the change being specific to v1's form. Neither is tested here. Section 8 (#171) then tests the Excluded Products: −0.0007, dropped.
 - **The lower rate costs nothing measurable.** The base at 0.5079 scores 0.6212, against 0.6210 for the served model at 0.6157 on `exporter_count` (sections 1, 4 and 5). Fewer sampled rows of other Exporters, 70.5 M against 84.1 M, leave the ranking where it was.
 - As always, this is an association on one fold and one year. Training on every Exporter does not rank held-out UK Markets better in 2022, and that says nothing about why.
 
@@ -422,3 +424,56 @@ The Arm's blend grid with Market Reach, from w = 0.1 to 0.9, reads 0.6189, 0.620
 - **Command:** `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python scripts/research/final_round_2022/unrecorded_preferences.py` (CPU or GPU prediction only). It writes `data/derived/final_round_2022/unrecorded_preferences.json`.
 
 2023 is not read by either.
+
+**Decision on a: drop it; ADR 0005 stays.** Training on the Excluded Products' rows scores **0.6207** (0.62072) against **0.6214** (0.62142) for the best so far as served retrained on the same files with those rows dropped. That is a change of **−0.0007**, against a Win Threshold of 0.008869. Without Market Reach it is −0.0027 (0.5741 against 0.5768). The best so far is unchanged, and the served files stay `exporter_count` (`files_kept_if_dropped: false`). No five-fold confirmation was run, and ADR 0005 is not amended.
+
+**Results of a.** Fold 0 of 2022, 231,217 held-out UK pairs, 4,858 ranked Products, under the tie-proof measure with Market Reach at β = 4. Both models train at the non-UK rate these files allow, **0.6109** (the served 0.6157, less the room the Excluded Products' rows take). Deviance is on the validation rows, from which the loop drops the Excluded Products, so the two are comparable.
+
+| Arm | Excluded Products | w | **Selection Measure** | Change | Without Reach | Non-zero | Zero vs non-zero | Value-weighted | Top-10 share | Deviance | Rounds kept / trained | Training rows |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Best so far as served, Excluded Products dropped (base) | dropped | 0.3 | **0.6214** | | 0.5768 | 0.507 | 0.590 | 0.815 | 0.943 | 467.1 | 1,003 / 1,103 | 83,459,416 |
+| Train on the Excluded Products (the Arm) | trained | 0.3 (chosen) | **0.6207** | **−0.0007** | 0.5741 | 0.504 | 0.589 | 0.816 | 0.943 | 466.6 | 501 / 601 | 83,958,601 |
+
+The Arm's blend grid with Market Reach, from w = 0.1 to 0.9, reads 0.6187, 0.6201, **0.6207**, 0.6207, 0.6198, 0.6185, 0.6168, 0.6149 and 0.6126. Its model alone scores 0.5317 (the stopping measure).
+
+**Reading a.**
+- **The Excluded Products' rows neither help nor hurt the ranking of the other Products.** They are few: about 80,000 rows a year, 0.6% of the training rows (499,185 of 84.0 M on fold 0 at this rate). The Arm sits 0.0007 below its base, well inside the noise of one retrain, and every secondary measure moves by under 0.003.
+- **So they are not the cause of v2's −0.020 against v1.** With the sampling (#73) and the scope (section 6) also ruled out, none of the parts of the v1-to-v2 change that can be tried on today's form explains it. What is left is that the gap belonged to v1's form as a whole, which no Arm on today's form can test.
+- **ADR 0005's reason was the Tweedie loss**: large, erratic Flows of oil and bullion might shape splits for every other Product. On this evidence they do not, measurably, but they add nothing either, so the exclusion stays. It also keeps them out of the Advisor's rankings and leaves the rows to the sample.
+- As always, this is an association on one fold and one year.
+
+**Result of b: the probe moves nothing, so the retrained Arm is skipped.** The rule marks **28 Markets** whose UK pair had a Trade Agreement in 2022 but no preference recorded on any fold-0 line: Albania, Antigua and Barbuda, Canada, Switzerland, Côte d'Ivoire, Cameroon, Costa Rica, Fiji, Georgia, Ghana, Haiti, Iceland, Israel, Kenya, Mauritius, Norway, Panama, Papua New Guinea, Palestine, Singapore, Solomon Islands, Serbia, Trinidad and Tobago, Tunisia, Türkiye, Vietnam, Samoa and Zimbabwe. The UK's continuity agreements are mostly missing from TRAINS's 2021 schedules, a wider set than #161's list. The probe set the Applied Tariff to 0 on **14,181** of their 28,626 fold-0 grid rows. The rest were already duty-free under MFN or had no MFN rate, so nothing changed for Switzerland, Palestine, Singapore or Tunisia.
+
+| Fold 0 of 2022, cached base `e5943f03616c0cf7` | **Selection Measure** | Non-zero | Zero vs non-zero | Value-weighted | Top-10 share |
+|---|---|---|---|---|---|
+| As served (base) | **0.62099** | 0.5072 | 0.5892 | 0.8156 | 0.9426 |
+| Unrecorded preferences set to 0 (the probe) | **0.62089** | 0.5071 | 0.5891 | 0.8155 | 0.9427 |
+
+The change is **−0.0001**, against the pre-registered gate of +0.0044 (half the Win Threshold), so the retrained Arm is not run. Lowering these Markets' tariffs raises their Export Potential in every Product with a positive MFN rate, roughly evenly, and so barely reorders the Markets within a Product. The correction remains a data fix for Scenarios (an agreement partner shown with MFN tariffs), which #140 raised with the owner. It is not a ranking gain.
+
+**Runs.**
+- The `excluded_products` feature files: `scripts/wt.ps1 python -m exportspredictor.features --set excluded_products --parts 8` (2012–2024), 32.8 min on the CPU, 5.6 GB. Every row they share with `exporter_count` is identical (checked on 2021), and so is the 2022 grid.
+- The probe: `$env:EXPORTSPREDICTOR_FEATURE_SET='exporter_count'; scripts/wt.ps1 python scripts/research/final_round_2022/unrecorded_preferences.py`, 26 s, prediction only (XGBoost fell back to CPU prediction, as in section 1). It reproduces the base's 0.62099 and writes `data/derived/final_round_2022/unrecorded_preferences.json`.
+- The experiment: `$env:EXPORTSPREDICTOR_FEATURE_SET='excluded_products'; scripts/wt.ps1 python -m exportspredictor.loop excluded-products`, on 2026-11-25 from 03:04 to 03:22 (18.7 min wall), started in the background from the main checkout. Before the run, `nvidia-smi` showed 0.5 GB of the 10 GB in use, with the GPU idle, no other loop, pipeline or feature process, and 18.4 GB of RAM free. It writes `experiments["excluded products"]` to the loop's `results.json`.
+
+| Model | Matrices | Training (matrices included) | Rounds kept / trained |
+|---|---|---|---|
+| Base, Excluded Products dropped (`5c750451ea0cdc96`) | 86 s | 680 s | 1,003 / 1,103 |
+| Train on the Excluded Products (`cb4813ee21e64bc1`) | 79 s | 412 s | 501 / 601 |
+| **Total** | | **1,091 s = 18.2 min of GPU time** | |
+
+Neither Arm is decided by the stopping rule. 2023 was not read.
+
+**Summary of section 8.** Nothing is kept. The best so far stays `results["best"]` (the Blend at w = 0.3, with Market Reach at β = 4 added by `served_base_arm`), on the `exporter_count` files.
+
+| # | Idea | Source | Run or skipped | Result and decision, or reason |
+|---|---|---|---|---|
+| a | Train on the Excluded Products' rows | #73 ([opportunity-ranking-experiments.md](opportunity-ranking-experiments.md)), section 6 | **Run** (paired Arm, 2 models) | 0.6207 against 0.6214: −0.0007. **Dropped**; ADR 0005 stays |
+| b | Tariff 0 where an agreement's preference is unrecorded | #140, flag H3 | **Probe run** (scoring only); the retrained Arm skipped by its gate | −0.0001 against the +0.0044 gate. **Skipped**: no ranking gain; a data fix for Scenarios |
+| c | The tariff's step near 0 | #140, flags H1 and M1 | Skipped | Trees are invariant to the tariff's form; constraints off tested by #75; not measured by the Selection Measure |
+| d | Year-to-year stability of Export Potential | #140, flags M3 and M7 | Skipped | A one-year measure cannot reward it; new features with no evidence of a ranking gain |
+| e | Non-tariff market access | open review, idea 6 | Skipped | New data (#172's further work) |
+| f | Agreement depth | #138 | Skipped | New data (#172's further work) |
+| g | Gravity for 20 small Markets; group the Overseas Territories | open review, idea 8 | Skipped | GDP and population already filled (#126, #127); distance needs new data; grouping is not a model change |
+| h | Early stopping flattening the bottom | open review, section 2 | Skipped | Answered by #115 and #116 |
+| i | UK-free demand proxy as a feature | open review, idea 9 | Already run | Section 3 (#164): +0.0003, dropped |
