@@ -264,7 +264,7 @@ def _pairs() -> pl.DataFrame:
     return pl.DataFrame(rows, schema=columns, orient="row")
 
 
-# --- A synthetic frozen v1 (spec #39: the v1/v2 comparison's fixture) ----------------------------
+# --- A synthetic frozen v1 (the v1/v2 comparison's fixture) ---------------------------------------
 
 # v1 had no Exporter scope: its frozen test rows hold Exporters v2 leaves out. The fixture's
 # stand-in is one Exporter outside every fixture scope, with a few rows of its own.

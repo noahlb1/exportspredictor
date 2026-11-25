@@ -4,24 +4,24 @@ Out-of-fold scoring, Scenario application, the Blocked Opportunity values, the P
 Range, the explanations, the evaluation, the backtests and the API all get Export Potential
 (USD) from `export_potential`, and the log-scale SHAP factors from `log_contributions`. So
 every number the app shows comes from the same model in the same way, and a change to the
-form of the model (spec #65) is made here only.
+form of the model is made here only.
 
 The model form is a single XGBoost model with a Tweedie objective and a log link: Export
-Potential is the exponential of its margin. A model trained from a starting point (spec
-#65, experiment 2) takes that point per row as `base_margin` on the log scale, and its trees
+Potential is the exponential of its margin. A model trained from a starting point
+takes that point per row as `base_margin` on the log scale, and its trees
 add a correction to it.
 
 The served form is a `ModelForm`: the model alone, or a **blend** of the model with the naive
-baseline (spec #65, experiment 1, confirmed on five folds in #76): Export Potential =
+baseline (chosen by the experiment loop and confirmed on five folds): Export Potential =
 exp((1 − w) · log model + w · log naive), each floored at $1, with w the naive weight. The
 naive baseline (`evaluation.naive_potential`) is a column of the rows (`naive_usd`), not a
 feature, so a Scenario, which changes only policy features, leaves it unchanged.
 
-A two-part model (spec #65, experiment 4) is a binary model of whether a Flow exists and a
+A two-part model is a binary model of whether a Flow exists and a
 size model fitted on non-zero Flows: its Export Potential is the probability of a Flow times
 the size (`two_part_potential`).
 
-A form may also carry **Market Reach** (spec #113, ADR 0010, `MarketReach`): Export Potential is
+A form may also carry **Market Reach** (ADR 0010, `MarketReach`): Export Potential is
 then multiplied by exp(β · offset) × c, with the offset of the row's fold and Market from the
 Market Reach table and c the rescale constant (`market_reach.apply`). Only UK rows take it: a row
 with an `exporter` column naming another Exporter, or scored by the mean of the models, is left as
@@ -52,7 +52,7 @@ from exportspredictor.features import FEATURES
 PREDICT_ROWS = 2_000_000  # rows predicted at a time, so a large table fits on the device
 
 # A trained model: an XGBoost Booster (the served family, ADR 0002), or a LightGBM or CatBoost model
-# from the loop's other families (#167). Each predicts Export Potential in dollars through `_predict`.
+# from the loop's other families. Each predicts Export Potential in dollars through `_predict`.
 Model = Union[xgb.Booster, "lightgbm.Booster", "catboost.CatBoost"]
 Models = Model | Sequence[Model]
 NAIVE_COLUMN = "naive_usd"  # the naive baseline (USD) of each row, which a blend needs

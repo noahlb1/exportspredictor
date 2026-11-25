@@ -38,7 +38,7 @@ The **stability** check compares the Baseline's rankings with the same models' r
 the test year's UK grid: how much the rankings move from one year of data to the next.
 
 The result is a JSON-ready dict stored in the artefact as `evaluation.json`; Lift and the
-Event Backtest (#21) add their own keys to it. `uv run python -m exportspredictor.evaluation`
+Event Backtest add their own keys to it. `uv run python -m exportspredictor.evaluation`
 adds an evaluation to the newest real artefact without retraining its Baseline models.
 """
 
@@ -118,7 +118,7 @@ _PREDICTORS = {"model": "export_potential_usd", "naive": "naive_usd"}
 # The two sides of the test-metric split by `tariff_imputed` (ADR 0006), in display order.
 TARIFF_GROUPS = ("observed", "imputed")
 # Evaluation results kept in the artefact (and the model card) but never served by the API:
-# the pre-registered v1/v2 comparison (`comparison`, spec #39).
+# the pre-registered v1/v2 comparison (`comparison`).
 NOT_SERVED = frozenset({"v1_comparison"})
 
 NOT_RUN = "not run for this version"
@@ -135,7 +135,7 @@ def served_report(report: dict) -> dict:
         served[realisation.REPORT_KEY] = realisation_wording.served(served[realisation.REPORT_KEY])
     return served
 
-# The opt-in parts of a pipeline run (`pipeline.Parts`, spec #65 story 23): title, the report
+# The opt-in parts of a pipeline run (`pipeline.Parts`): title, the report
 # block that holds its result, and the switch that runs it. A part whose block is absent was skipped.
 OPTIONAL_PARTS = (
     ("Event Backtests", "event_backtest", "--event-backtests",
@@ -250,7 +250,6 @@ LIMITATIONS = [
         + ", so the model reads their size from their trade alone, and their Export Potential is less reliable.",
     },
     {
-        # Review flag H1 (#161).
         "title": "A Tariff part is not a tariff elasticity",
         "text": "The model's response to an Applied Tariff is more a step than a slope: it separates duty-free pairs "
         "from dutiable ones, which differ in more than their tariff. So removing a tariff of 1% or less can be "
@@ -259,7 +258,6 @@ LIMITATIONS = [
         "part of the agreement association the model ties to the tariff, not the priced effect of a tariff cut.",
     },
     {
-        # Review flag H3 (#161).
         "title": "Some Trade Agreements carry most-favoured-nation tariffs",
         "text": "TRAINS records no preferential rates in some Markets' schedules where a Trade Agreement is in force, "
         "so every Exporter with an agreement there carries the Market's MFN rate. Among UK Markets these are Canada, "
@@ -293,7 +291,7 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
 
 def range_below_potential_limitations(bands: pl.DataFrame) -> list[dict]:
     """When a log-scale band's upper offset is negative, its pairs' whole Potential Range lies below their Export
-    Potential (review flag M4, #161). Stated up to the lower edge of the band above the last such band; none for
+    Potential. Stated up to the lower edge of the band above the last such band; none for
     dollar-offset versions or when every upper offset is positive."""
     if bands.is_empty() or "high_offset_log" not in bands.columns:
         return []
@@ -346,7 +344,7 @@ def read_configuration_limitations(metadata: dict, report: dict) -> list[dict]:
 
 
 def offset_pair_limitations(metadata: dict) -> list[dict]:
-    """When a version's Baseline holds Offset Pairs (`offsets.METADATA_KEY`, spec #129): the model can be right about a
+    """When a version's Baseline holds Offset Pairs (`offsets.METADATA_KEY`): the model can be right about a
     Heading and wrong about the split between its Products. None for a version that records no Offset Pair."""
     saved = metadata.get(offsets.METADATA_KEY)
     if not saved:
@@ -365,7 +363,7 @@ def offset_pair_limitations(metadata: dict) -> list[dict]:
     }]
 
 
-# UK-pair coverage further than this below the Potential Range's target is a known limitation (spec #113 story 13).
+# UK-pair coverage further than this below the Potential Range's target is a known limitation.
 UK_PAIR_COVERAGE_TOLERANCE = 0.05
 
 
@@ -709,7 +707,7 @@ def headline(overall: dict, test_year: int) -> dict:
 
 # v2's 2023 figures, from its evaluation report (artefact 20261118T100524Z, model alone). Its naive
 # baseline was computed from the test year's training rows (top-100 Exporters' Flows and sampled
-# Zero Cells); since spec #65 the naive baseline comes from every Exporter's Flows, so this run's
+# Zero Cells); since then the naive baseline comes from every Exporter's Flows, so this run's
 # naive figure is reported beside it, not in place of it.
 V2_REPORTED = {
     "version": "20261118T100524Z",
@@ -721,7 +719,7 @@ V2_REPORTED = {
     "tweedie_deviance_uk": 568.5883343927953,
 }
 # The Blend's 2023 figures, from its evaluation report (artefact 20261118T185910Z, the ledger's third read), on the
-# old measure: the version served before spec #113. Its naive baseline came from every Exporter's Flows, as this
+# old measure: the version served before the measure was tie-proof. Its naive baseline came from every Exporter's Flows, as this
 # run's does, so it is not listed apart.
 BLEND_REPORTED = {
     "version": "20261118T185910Z",
@@ -982,7 +980,7 @@ def _with_nested_size_matched_lift(report: dict) -> dict:
 def _with_served_uk_pair_coverage(report: dict) -> dict:
     """`market_reach_effect` with the Potential Range's UK-pair coverage the report serves, worded again. `rereach`
     rewrites the Potential Range's figure for the corrected Market Reach but not the block saved with the test-year
-    read, so a card would state both (#162). The test-year figures stay as saved."""
+    read, so a card would otherwise state both. The test-year figures stay as saved."""
     effect = report.get("market_reach_effect")
     served = (report.get("potential_range") or {}).get("uk_pair_coverage")
     if not effect or "uk_pair_coverage" not in effect or not served:

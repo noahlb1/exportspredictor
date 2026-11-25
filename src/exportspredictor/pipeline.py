@@ -5,7 +5,7 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 0. **Fit the row budget** (ADR 0004): count the training years' UK and other rows, then
    derive the largest non-UK sampling rate that fits the VRAM row budget, or refuse a
    given rate that does not, before any training.
-1. **The model form** the experiment loop chose (spec #65, `loop.chosen_form`): the model
+1. **The model form** the experiment loop chose (`loop.chosen_form`): the model
    alone or a blend with the naive baseline. The real run reads the saved loop results, the
    fixture runs a tiny loop; the artefact records the form, the selection measure, the noise
    floor and the experiment results (`loop.ranking_record`). Every row scored below carries
@@ -148,7 +148,7 @@ FIXTURE_ZERO_SAMPLING_RATE = 0.5
 # Share of non-UK training rows kept (reweighted by 1/rate; UK rows are always kept). None
 # derives it: the largest rate whose 2012–2023 rows fit the VRAM row budget (ADR 0004,
 # `training.fit_non_uk_rate`). A given rate is checked against the budget before training.
-# The learning curve (ticket #53) chose None: on 2022 the deviance still fell by 6% from a
+# The learning curve chose None: on 2022 the deviance still fell by 6% from a
 # rate of 0.3 to 0.65, so the model takes every non-UK row the budget allows.
 REAL_NON_UK_RATE: float | None = None
 HISTORY_YEARS = 6  # Actual Exports history: the Baseline year and the five before it
@@ -183,7 +183,7 @@ FIXTURE_BACKTESTS = backtests.Plan(
 
 @dataclass(frozen=True)
 class Parts:
-    """The opt-in parts of a run (spec #65, story 23). The default trains only the fold models
+    """The opt-in parts of a run. The default trains only the fold models
     and the test-year models; each part switched on adds exactly its own models and report block.
     """
 
@@ -753,9 +753,9 @@ def _train_and_score(
         "training_years": training_years,
         "n_folds": n_folds,
         "features": FEATURES,
-        "feature_set": selected.feature_set,  # the feature files read ("" is the original build; #127)
+        "feature_set": selected.feature_set,  # the feature files read ("" is the original build)
         "monotone_constraints": MONOTONE_CONSTRAINTS,
-        # The served form and the experiments that chose it (spec #65, ADR 0008), with Market Reach (ADR 0010):
+        # The served form and the experiments that chose it (ADR 0008), with Market Reach (ADR 0010):
         # its settings, and each Gap Period year's reference year and rescale constant.
         "model_form": form.to_dict(),
         "market_reach": market_reach.settings(reach.beta),
@@ -797,7 +797,7 @@ def _train_and_score(
             "calibration_exporters": scored.calibration_exporters,
             "seconds": round(scored.potential_range_seconds, 2),
         },
-        # The defaults the tables were built and are ranked with (spec #39 *Artefacts*).
+        # The defaults the tables were built and are ranked with.
         "thresholds": {
             "blocked_min_share": BLOCKED_MIN_SHARE,
             "blocked_min_usd": BLOCKED_MIN_USD,
@@ -808,7 +808,7 @@ def _train_and_score(
         },
         # The volatility rule's years, threshold and Flagged Products with their reasons (ADR 0005).
         volatility.METADATA_KEY: volatile_products.to_dict(),
-        # What every summed figure is read against (spec #113, "Totals understate").
+        # What every summed figure is read against: summed Export Potential falls short of Actual Exports.
         "potential_share_of_actual_exports": potential_share_of_actual_exports(baseline),
         # The Potential Range's coverage of UK pairs' Actual Exports without and with Market Reach (as `rereach` records).
         "market_reach_pair_coverage": _pair_coverage_metadata(scored.potential_range_report["uk_pair_coverage"]),
@@ -952,7 +952,7 @@ def _uk_pair_coverage(
 ) -> dict:
     """The share of UK pairs whose Gap Period Actual Exports lie inside their Potential Range (`conformal.pair_coverage`),
     with Market Reach (the served Baseline) and without it (each year's Export Potential divided by its Market Reach
-    multiplier, ranged by the same bands): what Market Reach does to the range for UK pairs (spec #113 story 13)."""
+    multiplier, ranged by the same bands): what Market Reach does to the range for UK pairs."""
     plain = pl.concat([
         table.select(
             "hs6", "iso3", year=pl.lit(year, pl.Int16), actual_exports_usd="value_usd",
@@ -1180,7 +1180,7 @@ class Rescore:
     reported: Mapping[str, Mapping] = field(default_factory=dict)
 
 
-# How far a re-scored version's old measure may be from the figure it reported: they matched exactly on 2023 (#128).
+# How far a re-scored version's old measure may be from the figure it reported: they matched exactly on 2023.
 RESCORE_TOLERANCE = 1e-9
 
 
@@ -1855,7 +1855,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     print(json.dumps(summary), flush=True)
     folder = save_version(bundle, artefacts_dir(), test_year_ledger=test_year_ledger)
     print(folder, flush=True)
-    # The notebook reads the model card and writes none (#88), so the run that saves the version writes it.
+    # The notebook reads the model card and writes none (it trains and builds nothing), so the run that saves the version writes it.
     print(governance.write_model_card(bundle, folder), flush=True)
 
 

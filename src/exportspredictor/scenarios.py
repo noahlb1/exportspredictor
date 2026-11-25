@@ -7,7 +7,7 @@ for the affected Markets, changes only the policy columns and re-predicts each p
 its own fold model (ADR 0001), so a Scenario Effect never comes from a model that trained
 on that pair. `check_only_policy_changed` guards that nothing else moves.
 
-**Presets** (wayfinder #8). Bloc membership comes from the Baseline year's `<bloc>_d`
+**Presets**. Bloc membership comes from the Baseline year's `<bloc>_d`
 flags, and a bloc Scenario changes only the rows of the bloc's member Markets:
 
 - EU re-join: a Trade Agreement with every EU member, the Customs Union flag and the
@@ -366,7 +366,7 @@ class ScenarioResult:
     def summary(self, *, year: int) -> str:
         """One sentence, worded as an association, never as a cause or a forecast.
 
-        It frames the result without its figures (#149): the Scenario Effect, its share of the Baseline and the
+        It frames the result without its figures: the Scenario Effect, its share of the Baseline and the
         Blocked Opportunity count are the result's own fields, shown once each beside it. `year` is the Baseline year,
         named only when the Scenario changes nothing.
         """

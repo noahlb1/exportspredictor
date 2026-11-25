@@ -1,4 +1,4 @@
-"""The pre-registered v1/v2 comparison (spec #39, decision #38): fixed before 2023 is read for it.
+"""The pre-registered v1/v2 comparison: fixed before 2023 is read for it.
 
 v1's predictions come only from its frozen tables (`freeze`), checked against their manifest.
 v1, v2 and the naive baseline are scored on exactly the same **common rows**:
@@ -247,7 +247,7 @@ def _by_product(frame: pl.DataFrame, predictors: Sequence[str]) -> pl.DataFrame:
         },
     )
     # Pre-registered on the measure of its day (average ranks for ties), so it keeps the legacy measure: a
-    # continuity table of the 2023 reads already made, not a choice (ticket #115).
+    # continuity table of the 2023 reads already made, not a choice.
     for p in predictors:
         rho = within_product_correlations(frame, p, tie_proof=False).select("hs6", pl.col("rho").alias(f"{p}_rho"))
         sums = sums.join(rho, on="hs6", how="left")

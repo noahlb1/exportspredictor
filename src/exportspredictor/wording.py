@@ -25,8 +25,8 @@ OPPORTUNITY_TYPE_HELP = (
 
 
 def totals_note(share: float | None, gap_period_label: str) -> str:
-    """The note beside every sum of Export Potential, Export Gaps or Blocked Opportunity values (spec #113, "Totals
-    understate"): Export Potential is a median-type estimate, so its sum falls short of Actual Exports. `share` is the
+    """The note beside every sum of Export Potential, Export Gaps or Blocked Opportunity values: Export
+    Potential is a median-type estimate, so its sum falls short of Actual Exports. `share` is the
     artefact's `potential_share_of_actual_exports`; None words the note without a figure."""
     reaches = (
         "falls short of their Actual Exports" if share is None
@@ -39,7 +39,7 @@ def totals_note(share: float | None, gap_period_label: str) -> str:
 
 
 def term_definitions(gap_period_label: str) -> dict[str, str]:
-    """What each term the app's tables and panels explain in a tooltip means, by row field (spec #103, #98).
+    """What each term the app's tables and panels explain in a tooltip means, by row field.
 
     `gap_period_label` is the artefact's Gap Period label (`gap_period.label`), e.g. "2022–2024 average".
     """

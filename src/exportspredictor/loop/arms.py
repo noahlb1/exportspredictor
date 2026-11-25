@@ -1,4 +1,4 @@
-"""Arms and their settings, the plan a loop runs, the model cache key and the definitions of the seven experiments (spec #65)."""
+"""Arms and their settings, the plan a loop runs, the model cache key and the definitions of the first loop's seven experiments."""
 
 import hashlib
 import json
@@ -17,7 +17,7 @@ from exportspredictor.folds import N_FOLDS
 from exportspredictor.loop.selection import MIN_WIN_THRESHOLD
 from exportspredictor.loop.trainers import CATBOOST, LIGHTGBM, XGBOOST
 
-MAX_TRAINED_MODELS = 6  # the budget of one experiment (spec #65); a cached model is free
+MAX_TRAINED_MODELS = 6  # the budget of one experiment; a cached model is free
 NOISE_SEEDS = (0, 1, 2)
 MAX_ROUNDS = 5000
 # Rounds without a better selection measure before training stops. The measure is noisy
@@ -42,34 +42,34 @@ class Settings:
     # The model's starting point: None (a constant, XGBoost's base score) or "naive" (the log of
     # the naive baseline, so the trees learn a correction to it).
     base_margin: str | None = None
-    # True: a two-part model (#72), a binary model of "any Flow" times a size model fitted on
+    # True: a two-part model, a binary model of "any Flow" times a size model fitted on
     # non-zero Flows; False: one Tweedie model.
     two_part: bool = False
     # True: UK Zero Cells sampled at `zero_rate` and weighted 1/rate as other Exporters' are
-    # (#73, v1's rule); False: every UK Zero Cell kept at weight 1 (ADR 0004).
+    # (v1's rule); False: every UK Zero Cell kept at weight 1 (ADR 0004).
     uk_zeros_sampled: bool = False
     # True: the monotone constraints on policy features (ADR 0002, kept by ADR 0008 until
-    # tested); False: none (#75).
+    # tested); False: none.
     monotone: bool = True
-    # The model family, which picks the trainer (`trainers.TRAINERS`, #165). `params` are that family's.
+    # The model family, which picks the trainer (`trainers.TRAINERS`). `params` are that family's.
     family: str = XGBOOST
-    # The training scope (spec #155, ticket #169): only the rows of the top `exporter_scope` Exporters by mean GDP
+    # The training scope: only the rows of the top `exporter_scope` Exporters by mean GDP
     # (`scope.exporter_scope`, the UK always in) train the model; None: every Exporter the feature files hold.
     exporter_scope: int | None = None
-    # XGBoost only (spec #155, ticket #170): True builds the training rows as an `ExtMemQuantileDMatrix`, its pages
+    # XGBoost only: True builds the training rows as an `ExtMemQuantileDMatrix`, its pages
     # cached in host memory and streamed to the GPU each round, so more rows train than fit in VRAM (ADR 0004's
     # "last resort"); such an arm is exempt from the VRAM row budget. False: in-core, as before.
     external_memory: bool = False
-    # Spec #155, ticket #171: True trains on the Excluded Products' rows where the feature files hold them (the
+    # True trains on the Excluded Products' rows where the feature files hold them (the
     # `excluded_products` set); they are still never scored or ranked. False drops them, as ADR 0005 does.
     train_excluded_products: bool = False
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
-    # Scoring only: Market Reach's beta (`market_reach`, spec #113, ticket #127). 0 scores without it;
+    # Scoring only: Market Reach's beta (`market_reach`, ADR 0010). 0 scores without it;
     # otherwise each held-out UK pair's Export Potential is multiplied by exp(beta · offset) of its fold
     # and Market, learned from the year before, and rescaled to keep the scored rows' summed Export Potential.
     market_reach_beta: float = 0.0
-    # Scoring only (spec #155, ticket #163): the highest Market Reach multiplier exp(beta · offset) any Market
+    # Scoring only: the highest Market Reach multiplier exp(beta · offset) any Market
     # takes, before the rescale; None caps nothing.
     market_reach_cap: float | None = None
 
@@ -97,7 +97,7 @@ class Settings:
 
 SCORING_FIELDS = ("naive_weight", "market_reach_beta", "market_reach_cap")
 TRAINING_FIELDS = tuple(f.name for f in fields(Settings) if f.name not in SCORING_FIELDS)
-# The training fields of the first loop (#67), always part of a model's cache key. A training
+# The training fields of the first loop, always part of a model's cache key. A training
 # field added later is keyed only when it leaves its default, so adding one keeps every
 # cached model's key.
 KEYED_FIELDS = ("params", "features", "non_uk_rate", "zero_rate", "seed", "max_rounds", "patience")
@@ -150,7 +150,7 @@ class LoopPlan:
     uk: str = baci.UK
     # The most rows a model may train on (with the whole validation year, as `search.final_non_uk_rate` counts
     # them); None: the VRAM budget for the arm's features (`training.row_budget`). An experiment whose arm would
-    # need more is refused before anything trains (#169: the loop did not check an explicit `non_uk_rate`).
+    # need more is refused before anything trains, an explicit `non_uk_rate` included.
     row_budget: int | None = None
 
 
@@ -232,7 +232,7 @@ UK_ZEROS_EXPERIMENT = "scope: UK Zero Cells"
 ZERO_RATE_EXPERIMENT = "scope: zero rate"
 UK_ZEROS_SAMPLED = "UK Zero Cells sampled"
 LOWER_ZERO_RATE = 0.02  # v1's rate for other Exporters' Zero Cells
-BLEND_GRID = {"naive_weight": BLEND_WEIGHTS}  # the blend weight re-chosen for each arm's model (#71)
+BLEND_GRID = {"naive_weight": BLEND_WEIGHTS}  # the blend weight re-chosen for each arm's model
 SCOPE_EXPERIMENTS = (
     (UK_ZEROS_EXPERIMENT, [Arm(UK_ZEROS_SAMPLED, {"uk_zeros_sampled": True}, BLEND_GRID)]),
     (ZERO_RATE_EXPERIMENT, [Arm(f"zero rate {LOWER_ZERO_RATE:.0%}", {"zero_rate": LOWER_ZERO_RATE}, BLEND_GRID)]),
@@ -267,11 +267,11 @@ def constraint_arms(weights: Sequence[float] = BLEND_WEIGHTS) -> list[Arm]:
     return [Arm("constraints on", {"monotone": True}, grid), Arm("constraints off", {"monotone": False}, grid)]
 
 
-# Spec #113, Phase 2 (#127): the Exporter count on the rebuilt `exporter_count` files (which also fill
+# The Exporter count on the rebuilt `exporter_count` files (which also fill
 # missing GDP). Its base is the best so far retrained on those files (`Loop.run_experiment`'s
 # `base_arm`), and both are scored with Market Reach at the adopted beta, so the feature is kept only
 # if it adds something on top of Reach. The base keeps the best so far's blend weight; the Arm
-# re-chooses its own, as every Arm with a new model has (#71).
+# re-chooses its own, as every Arm with a new model has.
 EXPORTER_COUNT_EXPERIMENT = "exporter count"
 REBUILT_BASE = "base on rebuilt files"
 
@@ -283,7 +283,7 @@ def exporter_count_arms(best: Settings, beta: float = market_reach.CHOSEN_BETA) 
     return base, [Arm(f"+ {feature}", {"features": (*best.features, feature)}, BLEND_GRID)]
 
 
-# Spec #155, the final round. Market Reach was adopted outside the loop (#124's five-fold gate), so the
+# The final round. Market Reach was adopted outside the loop (by its own five-fold experiment), so the
 # loop's recorded best so far carries no Market Reach until an Arm of this round is kept. Every experiment of
 # the round runs against `served_base_arm` of the best so far (`Loop.run_experiment`'s `base_arm`): the best so
 # far as the pipeline serves it, on this loop's files.
@@ -296,7 +296,7 @@ def served_base_arm(best: Settings, beta: float = market_reach.CHOSEN_BETA) -> A
     return Arm(SERVED_BASE, {} if best.market_reach_beta else {"market_reach_beta": beta})
 
 
-# #163: the cap on Market Reach's upside. The grid of multipliers was fixed before any 2022 result was read
+# The cap on Market Reach's upside. The grid of multipliers was fixed before any 2022 result was read
 # (docs/research/final-round-2022.md); at beta 4 it caps offsets above log(cap) / 4, from 0.17 (2×) to 0.69 (16×).
 MARKET_REACH_CAP_EXPERIMENT = "market reach cap"
 MARKET_REACH_CAP = "cap Market Reach"
@@ -308,10 +308,10 @@ def market_reach_cap_arm(caps: Sequence[float] = MARKET_REACH_CAP_GRID) -> Arm:
     return Arm(MARKET_REACH_CAP, grid={"market_reach_cap": tuple(caps)})
 
 
-# #164: Sibling Demand, the UK-free demand proxy (idea 9 of the open review), as a model feature. It runs on the
+# Sibling Demand, the UK-free demand proxy (idea 9 of the open review), as a model feature. It runs on the
 # `sibling_demand` files, the served `exporter_count` files with the feature stored, against the best so far as
 # served retrained on them. A dropped Arm leaves the served files as they were (`Loop.run_experiment`'s
-# `files_kept_if_dropped`). The Arm re-chooses its blend weight, as every Arm with a new model has (#71).
+# `files_kept_if_dropped`). The Arm re-chooses its blend weight, as every Arm with a new model has.
 SIBLING_DEMAND_EXPERIMENT = "sibling demand"
 SIBLING_DEMAND_BASE_SET = EXPORTER_COUNT_SET  # the served files `sibling_demand` (SIBLING_DEMAND_SET) extends by one column
 
@@ -322,7 +322,7 @@ def sibling_demand_arm(best: Settings) -> Arm:
     return Arm(f"+ {feature}", {"features": (*best.features, feature)}, BLEND_GRID)
 
 
-# #166: a fresh hyperparameter search, in stages run in this order, each one experiment of at most
+# A fresh hyperparameter search, in stages run in this order, each one experiment of at most
 # MAX_TRAINED_MODELS models against the best so far as served (its model cached, so each Arm is one model).
 # Winners stack: a kept stage becomes the best so far, and the next stage's Arms change its parameters. Each
 # Arm names only the parameters it changes (merged into the best so far's) and re-chooses its blend weight.
@@ -351,7 +351,7 @@ def hyperparameter_experiment(stage: str) -> str:
     return f"hyperparameters: {stage}"
 
 
-# #167: other model families, one experiment each against the best so far as served, on the same rows,
+# Other model families, one experiment each against the best so far as served, on the same rows,
 # weights, features, fold and stopping rule, with the monotone constraints on the policy features. Each Arm's
 # parameters are its family's own, translated from the best so far's XGBoost parameters where the family has
 # an equivalent, and fixed before any 2022 result was read (docs/research/final-round-2022.md). Each Arm
@@ -382,7 +382,7 @@ def model_family_experiment(family: str) -> str:
     return f"model family: {family}"
 
 
-# #169: the wider Exporter scope (#168's `all_exporters` files: every Exporter's rows) against the best so far as
+# The wider Exporter scope (the `all_exporters` files: every Exporter's rows) against the best so far as
 # served retrained on the same files with ADR 0004's top 100 only (`Settings.exporter_scope`), both at one non-UK
 # rate, so the pair differs only by the scope. The rate is the largest that fits the VRAM budget on these files
 # (`search.final_non_uk_rate`); the served 0.6157 would not fit. A dropped Arm leaves the served files unchanged.
@@ -403,7 +403,7 @@ def wider_scope_arms(best: Settings, *, top: int, non_uk_rate: float) -> tuple[A
     return base, Arm(WIDER_SCOPE, {"exporter_scope": None, "non_uk_rate": non_uk_rate}, BLEND_GRID)
 
 
-# #170: more training rows through XGBoost external memory (`Settings.external_memory`, ADR 0004's "last resort"):
+# More training rows through XGBoost external memory (`Settings.external_memory`, ADR 0004's "last resort"):
 # the best so far as served with every other Exporter's row (non-UK rate 1.0) on the served files, against the best
 # so far as served (its cached model). In-core, rate 1.0 would not fit the VRAM row budget.
 EXTERNAL_MEMORY_EXPERIMENT = "external memory"
@@ -415,7 +415,7 @@ def external_memory_arm() -> Arm:
     return Arm(EXTERNAL_MEMORY, {"external_memory": True, "non_uk_rate": 1.0}, BLEND_GRID)
 
 
-# #171: training on the Excluded Products' rows (ADR 0005 drops them from training). On the `excluded_products`
+# Training on the Excluded Products' rows (ADR 0005 drops them from training). On the `excluded_products`
 # files (`exporter_count` plus those rows), the best so far as served with them dropped is the paired base, and the
 # Arm keeps them; both at the largest non-UK rate these files allow (`non_uk_rate` None), so only the field differs.
 # A dropped Arm leaves the served files unchanged.

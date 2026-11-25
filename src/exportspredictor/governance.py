@@ -365,7 +365,7 @@ def _excluded_products(table: pl.DataFrame) -> list[dict]:
     return [{"reason": row["reason"], "products": row["hs6"]} for row in groups.iter_rows(named=True)]
 
 
-# The row budget spec #39 planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
+# The row budget v2 was planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
 SPEC_ROW_BUDGET_M = 110
 
 

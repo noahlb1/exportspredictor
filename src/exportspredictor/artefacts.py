@@ -30,8 +30,8 @@ Layout of `<root>/<version>/`:
                        published range and the model's Trade Agreement association on the served
                        Model Form (optional: a version without it loads and serves)
 
-`artefact_format` is 4: format 3 had no Market Reach (spec #113, ADR 0010), and format 2
-served the model alone and recorded no Model Form (spec #65 made the served form a choice).
+`artefact_format` is 4: format 3 had no Market Reach (ADR 0010), and format 2
+served the model alone and recorded no Model Form (before the served form became a choice).
 `load` refuses any other format, including v1 folders (which carry none), and a folder missing
 any table above, so the API never serves a bundle it cannot read. Only `pipeline.rereach`, which
 turns a format-3 folder into a format-4 one from its own fold models, reads format 3
@@ -71,8 +71,8 @@ _TABLES = (
     "market_reach",
 )
 _FORMAT_3_TABLES = tuple(name for name in _TABLES if name != "market_reach")
-# Baseline columns renamed after the first format-2 folders were written (code review of
-# spec #39): `load` reads an older folder under the current names.
+# Baseline columns renamed after the first format-2 folders were written: `load` reads an older
+# folder under the current names.
 _RENAMED_BASELINE_COLUMNS = {
     "blocked_effect_usd": "blocked_opportunity_value_usd",
     "uncertain": "uncertain_opportunity",

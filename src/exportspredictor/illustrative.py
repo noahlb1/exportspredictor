@@ -24,7 +24,7 @@ ILLUSTRATIVE_TEXT = (
     "on them."
 )
 
-# Spec #66 story 29: the primary Event Backtest is one agreement's Markets, scored by the model alone; the model's
+# The primary Event Backtest is one agreement's Markets, scored by the model alone; the model's
 # association is every UK pair without a Trade Agreement, on the served Model Form.
 DIFFERENT_POPULATIONS = (
     "It covers one agreement's Markets and the model alone, while the model's association above covers every UK pair "

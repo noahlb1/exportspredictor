@@ -1,4 +1,4 @@
-"""Offset Pairs (ADR 0005, spec #129): Opportunities whose Export Gap the rest of their Heading offsets in that Market.
+"""Offset Pairs (ADR 0005): Opportunities whose Export Gap the rest of their Heading offsets in that Market.
 
 A Heading is the first four digits of a Product's HS6 code. It groups Products for this rule only: it is not a
 feature, and the model is neither trained nor measured at it.
