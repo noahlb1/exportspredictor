@@ -59,6 +59,7 @@ from exportspredictor.downloads import write_parquet
 from exportspredictor.exclusions import EXCLUSIONS, drop_excluded
 from exportspredictor.gap_period import gap_period, gap_years
 from exportspredictor.paths import data_dir
+from exportspredictor.sectors import sector_of
 from exportspredictor.tariffs import Tariffs, applied_tariffs
 from exportspredictor.tariffs import load as load_tariffs
 
@@ -405,7 +406,7 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources, *,
             high_income_share_loo=pl.when(demand_loo > 0).then(
                 ((pl.col("demand_high_income") - own_high_income) / demand_loo).clip(0.0, 1.0)
             ),
-            sector=pl.col("hs6").cast(pl.String).str.slice(0, 2).cast(pl.Int8),
+            sector=sector_of("hs6").cast(pl.Int8),
             market_import_growth=pl.when(has_earlier_year).then(demand_loo.log1p() - demand_then_loo.log1p()),
             reexport_ratio=pl.when(demand_loo > 0)
             .then(reexport.log1p())

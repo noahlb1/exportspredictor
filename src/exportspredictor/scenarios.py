@@ -70,6 +70,7 @@ from exportspredictor.prediction import (
     ModelForm,
     export_potential,
 )
+from exportspredictor.sectors import sector_of
 
 # The Blocked Opportunity thresholds, fixed (ADR 0012): a Blocked Opportunity value (or Scenario Effect) of at least
 # 20% of Baseline Export Potential and at least $1M. Every page, the API and the artefact metadata use these, and no
@@ -714,7 +715,7 @@ def _changes(rows: pl.DataFrame, scenario: Scenario) -> list[tuple[str, pl.Expr,
         change = scenario.tariff
         chosen = pl.col("iso3").is_in(list(change.markets))
         if change.sectors is not None:
-            chosen &= pl.col("hs6").str.slice(0, 2).is_in(list(change.sectors))
+            chosen &= sector_of("hs6").is_in(list(change.sectors))
         return [(TARIFF, chosen, pl.lit(float(np.log1p(change.rate_pct / 100))))]
     if scenario.preset is None:
         add = pl.col("iso3").is_in(list(scenario.add_agreements))

@@ -58,6 +58,7 @@ import polars as pl
 
 from exportspredictor import ppml
 from exportspredictor.ledger import TEST_YEAR
+from exportspredictor.sectors import sector_of
 
 if TYPE_CHECKING:
     from exportspredictor.artefacts import Artefacts
@@ -79,11 +80,20 @@ NEW_FLOW_SIZE = "new_flow_size"
 TESTS = (INTENSIVE_MARGIN, EXTENSIVE_MARGIN, NEW_FLOW_SIZE)
 HS6 = "HS6"
 HS2 = "HS2"
-# Each level's unit; the HS2 level is the one compared with ITC's 76 sub-sectors, so it comes first.
+# ITC's static realisation test with fixed effects pools every exporter over these years, at this level.
+ITC_YEARS = "2006–2018"
+ITC_LEVEL = "76 sub-sectors"
+# Each level's unit; the HS2 level is the one compared with ITC's level (`ITC_LEVEL`), so it comes first.
 LEVELS = {HS2: ("sector", "iso3"), HS6: PAIR}
 COMPARED_LEVEL = HS2
-# The panel column each predictor's scores come from.
-PREDICTORS = {"model": "export_potential_usd", "naive_baseline": "naive_baseline_usd"}
+# The predictors, and the panel column each one's scores come from.
+MODEL = "model"
+NAIVE_BASELINE = "naive_baseline"
+PREDICTORS = {MODEL: "export_potential_usd", NAIVE_BASELINE: "naive_baseline_usd"}
+# The tests' regressors and control, as sample columns and report terms.
+UNREALISED_SHARE = "unrealised_share"
+PAST_GROWTH = "past_growth"
+LOG_EXPORT_POTENTIAL = "log_export_potential"
 FIXED_EFFECTS = (("iso3",), ("year", "sector"))
 FIXED_EFFECTS_TEXT = ("Market", "year × Sector")
 CLUSTER_TEXT = "Product–Market pair (Sector–Market pair at HS2)"
@@ -92,30 +102,30 @@ METHODS_PAPER = (
     "ITC, Export Potential Assessment methodology (June 2023), {table}, pp. 17–22; "
     "https://umbraco.exportpotential.intracen.org/media/cklh2pi5/epa-methodology_230627.pdf"
 )
-# ITC's static realisation test with fixed effects: every exporter pooled, 2006–2018, 76 sub-sectors.
+# ITC's published coefficients for that test (`ITC_YEARS`, `ITC_LEVEL`).
 PUBLISHED = (
     {
         "test": INTENSIVE_MARGIN,
-        "regressor": "unrealised_share",
+        "regressor": UNREALISED_SHARE,
         "coefficient": 0.615,
-        "controls": {"past_growth": -0.386},
-        "level": "76 sub-sectors",
+        "controls": {PAST_GROWTH: -0.386},
+        "level": ITC_LEVEL,
         "source": METHODS_PAPER.format(table="Table 1"),
     },
     {
         "test": EXTENSIVE_MARGIN,
-        "regressor": "log_export_potential",
+        "regressor": LOG_EXPORT_POTENTIAL,
         "coefficient": 0.023,
         "controls": {},
-        "level": "76 sub-sectors",
+        "level": ITC_LEVEL,
         "source": METHODS_PAPER.format(table="Table 2"),
     },
     {
         "test": NEW_FLOW_SIZE,
-        "regressor": "log_export_potential",
+        "regressor": LOG_EXPORT_POTENTIAL,
         "coefficient": 0.243,
         "controls": {},
-        "level": "76 sub-sectors",
+        "level": ITC_LEVEL,
         "source": METHODS_PAPER.format(table="Table 4"),
     },
 )
@@ -139,7 +149,7 @@ def unrealised_share(potential: pl.Expr, actual: pl.Expr) -> pl.Expr:
     return unrealised_potential(potential, actual) / potential
 
 
-def base_years(panel: pl.DataFrame, predictor: str = PREDICTORS["model"]) -> list[int]:
+def base_years(panel: pl.DataFrame, predictor: str = PREDICTORS[MODEL]) -> list[int]:
     """The years in which `panel` holds scores of `predictor`."""
     return sorted(int(y) for y in panel.filter(pl.col(predictor).is_not_null())["year"].unique())
 
@@ -180,7 +190,7 @@ def _windows(panel: pl.DataFrame) -> pl.DataFrame:
             .with_columns(year=pl.lit(t, dtype=pl.Int16))
         )
     return pl.concat(frames).with_columns(
-        sector=pl.col("hs6").str.slice(0, 2),
+        sector=sector_of("hs6"),
         **{
             _unrealised_column(score): unrealised_potential(pl.col(score), pl.col("actual_usd"))
             for score in _SCORES
@@ -198,7 +208,7 @@ def _units(panel: pl.DataFrame, level: str) -> pl.DataFrame:
     product = LEVELS[level][0]
     exported = (
         panel.filter(pl.col("actual_exports_usd") > 0)
-        .with_columns(sector=pl.col("hs6").str.slice(0, 2))
+        .with_columns(sector=sector_of("hs6"))
         .select(product, "year")
         .unique()
         .with_columns(exported=pl.lit(True))
@@ -242,10 +252,12 @@ def _intensive(units: pl.DataFrame, level: str) -> pl.DataFrame:
         .filter(pl.col("scored") & (pl.col("later_usd") > 0) & (pl.col("earlier_usd") > 0))
         .with_columns(
             growth=(pl.col("later_usd") / pl.col("actual_usd")).log(),
-            unrealised_share=pl.col("unrealised_usd") / pl.col("potential_usd"),
-            past_growth=(pl.col("actual_usd") / pl.col("earlier_usd")).log(),
+            **{
+                UNREALISED_SHARE: pl.col("unrealised_usd") / pl.col("potential_usd"),
+                PAST_GROWTH: (pl.col("actual_usd") / pl.col("earlier_usd")).log(),
+            },
         )
-        .select(*_key(level), "growth", "unrealised_share", "past_growth")
+        .select(*_key(level), "growth", UNREALISED_SHARE, PAST_GROWTH)
     )
 
 
@@ -253,7 +265,7 @@ def _extensive(units: pl.DataFrame, level: str) -> pl.DataFrame:
     return _starting_candidates(units).select(
         *_key(level),
         started=(pl.col("later_usd") > 0).cast(pl.Float64),
-        log_export_potential=pl.col("potential_usd").log(),
+        **{LOG_EXPORT_POTENTIAL: pl.col("potential_usd").log()},
     )
 
 
@@ -261,7 +273,7 @@ def _new_flow(units: pl.DataFrame, level: str) -> pl.DataFrame:
     return _starting_candidates(units).filter(pl.col("later_usd") > 0).select(
         *_key(level),
         size=(pl.col("later_usd") * WINDOW).log(),
-        log_export_potential=pl.col("potential_usd").log(),
+        **{LOG_EXPORT_POTENTIAL: pl.col("potential_usd").log()},
     )
 
 
@@ -325,17 +337,18 @@ def _starting_counts(units: pl.DataFrame) -> dict:
 
 # Each test: its sample, its outcome, its regressor and controls, and how units reached its sample.
 _TESTS = {
-    INTENSIVE_MARGIN: (_intensive, "growth", "unrealised_share", ("past_growth",), _intensive_counts),
-    EXTENSIVE_MARGIN: (_extensive, "started", "log_export_potential", (), _starting_counts),
-    NEW_FLOW_SIZE: (_new_flow, "size", "log_export_potential", (), _starting_counts),
+    INTENSIVE_MARGIN: (_intensive, "growth", UNREALISED_SHARE, (PAST_GROWTH,), _intensive_counts),
+    EXTENSIVE_MARGIN: (_extensive, "started", LOG_EXPORT_POTENTIAL, (), _starting_counts),
+    NEW_FLOW_SIZE: (_new_flow, "size", LOG_EXPORT_POTENTIAL, (), _starting_counts),
 }
 
 
 def _row(units: pl.DataFrame, test: str, level: str, predictor: str) -> dict:
     """One test (`TESTS`) on the units of one level (`LEVELS`) and predictor (`PREDICTORS`), as one report row."""
     sample_of, outcome, regressor, controls, counts = _TESTS[test]
+    scored = _of(units, predictor)
     fit = ppml.fit_fixed_effects_ols(
-        sample_of(_of(units, predictor), level),
+        sample_of(scored, level),
         outcome=outcome,
         regressors=[regressor, *controls],
         fixed_effects=FIXED_EFFECTS,
@@ -348,7 +361,7 @@ def _row(units: pl.DataFrame, test: str, level: str, predictor: str) -> dict:
         "regressor": regressor,
         **_fit(fit.coefficients[regressor], fit.std_errors[regressor]),
         "controls": {name: _fit(fit.coefficients[name], fit.std_errors[name]) for name in controls},
-        **counts(_of(units, predictor)),
+        **counts(scored),
         "observations": fit.rows,
         "singletons_dropped": fit.dropped_rows,
         "pairs": fit.clusters,

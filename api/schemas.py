@@ -143,7 +143,7 @@ class PairMarketReachOut(MarketReachOut):
 # Each choice set is built from the package's own constant, so it is defined once. Pydantic validates
 # and documents the Literal; pyright cannot evaluate a Literal built at runtime, so it reads a str.
 if TYPE_CHECKING:
-    RankBy = OpportunityType = PresetName = BlockedRankBy = RealisationTest = RealisationLevel = Predictor = str
+    RankBy = OpportunityType = PresetName = BlockedRankBy = RealisationTest = RealisationLevel = RealisationPredictor = str
 else:
     RankBy = Literal[tuple(RANK_BY)]  # the ranking orders of `exportspredictor.rankings.RANK_BY`
     OpportunityType = Literal[OPPORTUNITY_TYPES]  # Expand, New Market or New Product (GLOSSARY.md)
@@ -151,7 +151,7 @@ else:
     BlockedRankBy = Literal[tuple(BLOCKED_ORDERS)]  # the Blocked Opportunities orders (`rankings.BLOCKED_ORDERS`)
     RealisationTest = Literal[realisation.TESTS]  # the Realisation Test's three tests (`realisation.TESTS`)
     RealisationLevel = Literal[tuple(realisation.LEVELS)]  # HS2 or HS6 (`realisation.LEVELS`)
-    Predictor = Literal[tuple(realisation.PREDICTORS)]  # the model or the Naive Baseline (`realisation.PREDICTORS`)
+    RealisationPredictor = Literal[tuple(realisation.PREDICTORS)]  # the model or the Naive Baseline (`realisation.PREDICTORS`)
 
 
 class RankOrderOut(BaseModel):
@@ -555,7 +555,7 @@ class RealisationRow(RealisationFit):
 
     test: RealisationTest
     level: RealisationLevel
-    predictor: Predictor
+    predictor: RealisationPredictor
     regressor: str
     controls: dict[str, RealisationFit]
     observations: int

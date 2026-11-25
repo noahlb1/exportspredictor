@@ -39,6 +39,7 @@ import polars as pl
 
 from exportspredictor import baci, features, scope
 from exportspredictor.exclusions import drop_excluded
+from exportspredictor.sectors import sector_of
 
 if TYPE_CHECKING:
     from exportspredictor.artefacts import Artefacts
@@ -121,7 +122,7 @@ def sector_flows(
     sums = (
         lf.filter(pl.col(OUTCOME) > 0)
         .group_by(
-            "exporter", "importer", sector=pl.col("hs6").cast(pl.String).str.slice(0, 2), year=pl.col("year").cast(pl.Int16)
+            "exporter", "importer", sector=sector_of("hs6"), year=pl.col("year").cast(pl.Int16)
         )
         .agg(pl.col(OUTCOME).sum())
         .collect()
