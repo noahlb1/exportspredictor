@@ -24,7 +24,15 @@ import matplotlib
 import polars as pl
 from matplotlib.figure import Figure
 
-from exportspredictor import loop, model_choice, offsets, ppml, rankings, realisation, scenarios
+from exportspredictor import (
+    loop,
+    model_choice,
+    offsets,
+    ppml,
+    rankings,
+    realisation,
+    scenarios,
+)
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.currency import format_usd

@@ -124,7 +124,9 @@ def served_report(report: dict) -> dict:
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
     if served.get("itc_comparison"):
-        from exportspredictor import realisation  # it imports `experiments`, which imports this module
+        from exportspredictor import (
+            realisation,  # it imports `experiments`, which imports this module
+        )
 
         served["itc_comparison"] = realisation.served(served["itc_comparison"])
     return served

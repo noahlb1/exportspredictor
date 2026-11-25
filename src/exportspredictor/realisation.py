@@ -124,7 +124,7 @@ def base_years(panel: pl.DataFrame, predictor: str = "export_potential") -> list
 
 def _windows(panel: pl.DataFrame, predictor: str) -> pl.DataFrame:
     """Per base year and pair with a score: the score, Actual Exports at t, and their means before and after."""
-    years = set(int(y) for y in panel["year"].unique())
+    years = {int(y) for y in panel["year"].unique()}
     frames = []
     for t in base_years(panel, predictor):
         missing = sorted(set(range(t - WINDOW, t + WINDOW + 1)) - years)
@@ -259,12 +259,12 @@ def method_rows(report: dict) -> list[dict]:
     rows = [
         ("Estimator",
          "A decomposition: the exporter's supply, the market's projected demand and the ease of trade between them",
-         "Gradient-boosted trees (XGBoost, Tweedie loss) on global HS6 trade, blended with the Naive Baseline and "
-         "scaled by Market Reach"),
+         ("Gradient-boosted trees (XGBoost, Tweedie loss) on global HS6 trade, blended with the Naive Baseline and "
+         "scaled by Market Reach")),
         ("Data and years",
          "ITC Trade Map, every exporter; the realisation test rebuilds the indicator for 2006–2018",
-         f"BACI HS6 Flows of the top 100 Exporters; the realisation test reads "
-         f"{years_text(report['outcome_years'])} and never the test year"),
+         (f"BACI HS6 Flows of the top 100 Exporters; the realisation test reads "
+         f"{years_text(report['outcome_years'])} and never the test year")),
         ("Target year",
          "About five years ahead (the current map is an estimate for 2031)",
          "The year scored itself"),
@@ -273,14 +273,14 @@ def method_rows(report: dict) -> list[dict]:
          f"HS6; the realisation test runs at {levels}"),
         ("Gap definition",
          "Unrealised potential, floored at zero: potential − min(actual, potential)",
-         "The Export Gap is signed (Export Potential − Actual Exports, over the Gap Period); the test uses ITC's "
-         "floored Unrealised Share"),
+         ("The Export Gap is signed (Export Potential − Actual Exports, over the Gap Period); the test uses ITC's "
+         "floored Unrealised Share")),
         ("How it is tested",
-         "Later trade regressed on the indicator, every exporter pooled, with exporter, market and year × sub-sector "
-         "fixed effects",
-         f"The same regression on UK pairs in base years {years}, each scored by fold models trained on years up to "
+         ("Later trade regressed on the indicator, every exporter pooled, with exporter, market and year × sub-sector "
+         "fixed effects"),
+         (f"The same regression on UK pairs in base years {years}, each scored by fold models trained on years up to "
          f"the base year; {' and '.join(report['fixed_effects'])} fixed effects, errors clustered by "
-         f"{report['cluster']}"),
+         f"{report['cluster']}")),
     ]
     return [{"Aspect": a, "ITC's Export Potential Map": itc, "This model": ours} for a, itc, ours in rows]
 

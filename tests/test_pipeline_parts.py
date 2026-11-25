@@ -9,6 +9,7 @@ import math
 import pytest
 import xgboost
 
+from exportspredictor import realisation
 from exportspredictor.pipeline import (
     Parts,
     build_artefacts,
@@ -110,7 +111,9 @@ def test_all_three_parts_together_reproduce_the_full_run(runs, fixture_artefacts
     added = sum(runs[name][1] - default_trained for name in ("event_backtests", "constraint_comparison", "gain_ladder"))
     bundle, trained = runs["every"]
     assert trained == default_trained + added
-    assert _comparable(bundle.evaluation) == _comparable(fixture_artefacts.evaluation)
+    # The ITC comparison is added to the fixture's full run after the pipeline (`realisation`), not by a part.
+    full = {key: value for key, value in fixture_artefacts.evaluation.items() if key != realisation.REPORT_KEY}
+    assert _comparable(bundle.evaluation) == _comparable(full)
 
 
 @pytest.mark.parametrize(
