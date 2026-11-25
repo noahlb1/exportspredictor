@@ -169,15 +169,15 @@ def lift(pairs: pl.DataFrame, *, resamples: int = RESAMPLES, seed: int = 0, leve
         "exporters": len(exporters),
         "top_rate": top_rate,
         "base_rate": total_g / total_w if total_w else None,
-        "lift": _finite(plain[0]),
-        "ci": _interval(boot_plain, level),
+        "lift": finite(plain[0]),
+        "ci": interval(boot_plain, level),
         "ci_level": level,
         "bootstrap_unit": "Exporter",
         "resamples": resamples,
         "size_matched": {
-            "expected_rate": _finite(top_rate / matched[0]) if top_rate is not None and matched[0] else None,
-            "lift": _finite(matched[0]),
-            "ci": _interval(boot_matched, level),
+            "expected_rate": finite(top_rate / matched[0]) if top_rate is not None and matched[0] else None,
+            "lift": finite(matched[0]),
+            "ci": interval(boot_matched, level),
         },
         "by_decile": [
             {"decile": row["gap_decile"], "rate": row["rate"], "pairs": row["pairs"]} for row in rates.iter_rows(named=True)
@@ -185,17 +185,21 @@ def lift(pairs: pl.DataFrame, *, resamples: int = RESAMPLES, seed: int = 0, leve
     }
 
 
-def _finite(value) -> float | None:
+def finite(value) -> float | None:
+    """`value` as a plain float for a saved report, or None where it is missing, NaN or infinite."""
+    if value is None:
+        return None
     value = float(value)
     return value if math.isfinite(value) else None
 
 
-def _interval(values: np.ndarray, level: float) -> list[float | None]:
-    finite = values[np.isfinite(values)]
-    if not finite.size:
+def interval(values: np.ndarray, level: float) -> list[float | None]:
+    """The central `level` percentile interval of the finite `values` (bootstrap resamples); [None, None] if none."""
+    kept = values[np.isfinite(values)]
+    if not kept.size:
         return [None, None]
     tail = (1 - level) / 2 * 100
-    low, high = np.percentile(finite, [tail, 100 - tail])
+    low, high = np.percentile(kept, [tail, 100 - tail])
     return [float(low), float(high)]
 
 
@@ -316,10 +320,10 @@ def compare(
 
     def entry(j: int) -> dict:
         return {
-            "observed": _finite(observed[0, j]),
-            "observed_ci": _interval(boot_observed[:, j], level),
-            "predicted": _finite(model_effect[0, j]),
-            "predicted_ci": _interval(boot_model[:, j], level),
+            "observed": finite(observed[0, j]),
+            "observed_ci": interval(boot_observed[:, j], level),
+            "predicted": finite(model_effect[0, j]),
+            "predicted_ci": interval(boot_model[:, j], level),
         }
 
     return {
