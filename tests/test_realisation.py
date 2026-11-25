@@ -87,6 +87,107 @@ def test_growth_runs_from_the_base_year_to_the_mean_of_the_next_three_and_past_g
     assert row["past_growth"] == pytest.approx(np.log(2.0))
 
 
+def _not_trading_panel() -> pl.DataFrame:
+    """Base year 2016 only. FRA trades 010101 throughout; DEU starts it in 2018; ITA never buys it; 020202 sold
+    to FRA in 2015 only, so at 2016 the UK exports it nowhere."""
+    zeros = [0.0] * 11
+    starts = [0.0] * 6 + [5.0, 7.0, 0.0, 0.0, 0.0]  # 2018 and 2019
+    lapsed = [0.0, 0.0, 0.0, 4.0] + [0.0] * 7  # 2015 only
+    return _panel({
+        ("010101", "FRA"): ([10.0] * 11, {2016: 20.0}),
+        ("010101", "DEU"): (starts, {2016: 8.0}),
+        ("010101", "ITA"): (zeros, {2016: 2.0}),
+        ("020202", "FRA"): (lapsed, {2016: 3.0}),
+    })
+
+
+def test_the_extensive_margin_takes_pairs_not_trading_at_t_whose_product_the_uk_exports_somewhere():
+    sample = realisation.extensive_margin_sample(_not_trading_panel(), predictor="export_potential").sort("iso3")
+
+    assert sample["iso3"].to_list() == ["DEU", "ITA"]
+    assert sample["started"].to_list() == [1.0, 0.0]
+    assert sample["log_export_potential"].to_list() == pytest.approx([np.log(8.0), np.log(2.0)])
+
+
+def test_new_flow_size_takes_the_pairs_that_start_with_the_log_of_their_three_year_sum():
+    [row] = realisation.new_flow_size_sample(_not_trading_panel(), predictor="export_potential").iter_rows(named=True)
+
+    assert (row["hs6"], row["iso3"]) == ("010101", "DEU")
+    assert row["size"] == pytest.approx(np.log(12.0))
+
+
+def test_the_extensive_margin_row_counts_who_was_not_trading_and_who_was_left_out():
+    report = realisation.realisation_report(_not_trading_panel())
+    [row] = [
+        row for row in report["rows"]
+        if (row["test"], row["level"], row["predictor"]) == ("extensive_margin", "HS6", "model")
+    ]
+
+    assert row["not_trading"] == 3
+    assert row["product_not_exported"] == 1
+    assert row["started"] == 1
+
+
+def test_at_hs2_the_unrealised_share_sums_floored_unrealised_potential_so_a_surplus_cannot_cancel_a_gap():
+    # Sector 01 in FRA at 2016: 010101 sells 10 of 20 (10 unrealised); 010102 sells 30 of 10 (surplus 20).
+    # Netted, the Sector sells 40 of 30 and shows nothing unrealised; ITC's sum of floored unrealised potential gives 10 / 30.
+    [row] = realisation.intensive_margin_sample(
+        _panel({
+            ("010101", "FRA"): ([10.0] * 11, {2016: 20.0}),
+            ("010102", "FRA"): ([30.0] * 5 + [60.0] * 6, {2016: 10.0}),
+        }),
+        predictor="export_potential",
+        level="HS2",
+    ).iter_rows(named=True)
+
+    assert row["sector"] == "01"
+    assert row["unrealised_share"] == pytest.approx(1 / 3)
+    # Actual Exports are summed too: 40 at t, 70 a year after it.
+    assert row["growth"] == pytest.approx(np.log(70 / 40))
+
+
+def test_the_naive_baseline_column_runs_through_the_same_code_as_the_model_s():
+    panel = realisation.fixture_panel().with_columns(naive_baseline=pl.col("export_potential"))
+
+    rows = realisation.realisation_report(panel)["rows"]
+
+    by_predictor = {
+        predictor: {(row["test"], row["level"]): row for row in rows if row["predictor"] == predictor}
+        for predictor in ("model", "naive_baseline")
+    }
+    assert set(by_predictor["model"]) == {
+        (test, level)
+        for test in ("intensive_margin", "extensive_margin", "new_flow_size")
+        for level in ("HS2", "HS6")
+    }
+    for key, model in by_predictor["model"].items():
+        naive = by_predictor["naive_baseline"][key]
+        assert {k: v for k, v in naive.items() if k != "predictor"} == {
+            k: v for k, v in model.items() if k != "predictor"
+        }, key
+
+
+def test_on_the_fixture_panel_every_test_is_fitted_at_both_levels_for_both_predictors():
+    report = realisation.realisation_report(realisation.fixture_panel())
+
+    assert len(report["rows"]) == 12
+    for row in report["rows"]:
+        assert row["coefficient"] is not None and row["std_error"] is not None, row
+
+
+def test_itc_s_three_static_coefficients_are_stored_with_their_tables():
+    published = {row["test"]: row for row in realisation.PUBLISHED}
+
+    assert (published["intensive_margin"]["coefficient"], published["intensive_margin"]["controls"]) == (
+        0.615, {"past_growth": -0.386}
+    )
+    assert published["extensive_margin"]["coefficient"] == 0.023
+    assert published["new_flow_size"]["coefficient"] == 0.243
+    assert "Table 1" in published["intensive_margin"]["source"]
+    assert "Table 2" in published["extensive_margin"]["source"]
+    assert "Table 4" in published["new_flow_size"]["source"]
+
+
 def test_the_report_names_its_base_years_and_holds_itc_s_published_coefficient():
     report = realisation.realisation_report(realisation.fixture_panel())
 

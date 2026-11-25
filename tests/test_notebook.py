@@ -252,6 +252,11 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
     assert note["text"] in printed
     # The ITC comparison runs on a synthetic base-year panel and says why part (c) was dropped.
     assert realisation.direct_comparison_text(loaded.evaluation[realisation.REPORT_KEY]) in printed
+    # Its coefficient table shows both levels, ITC's figures on HS2 only, and the Naive Baseline column.
+    [coefficients] = [cell for cell in notebook.cells if cell.source.strip() == "reporting.itc_coefficients(bundle)"]
+    table = " ".join(o.get("data", {}).get("text/html", "") for o in coefficients.outputs)
+    for shown in ("HS2", "HS6", "not compared", "Naive Baseline", "Extensive margin", "New-flow size"):
+        assert shown in table, shown
     # The pre-registered v1 comparison section runs on the fixture's synthetic frozen v1.
     assert loaded.evaluation["v1_comparison"]["verdict"]["text"] in printed
     # The outputs name the artefact version they come from.

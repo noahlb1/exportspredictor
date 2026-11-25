@@ -17,18 +17,45 @@ def bundle(fixture_artefacts, report):
     return realisation.with_itc_comparison(fixture_artefacts, report)
 
 
-def test_the_coefficient_table_sets_our_coefficient_beside_itc_s(bundle, report):
-    table = reporting.itc_coefficients(bundle)
-    [row] = [row for row in report["rows"] if row["test"] == "intensive_margin"]
+def _fit(report: dict, test: str, level: str, predictor: str) -> dict:
+    [row] = [
+        row for row in report["rows"] if (row["test"], row["level"], row["predictor"]) == (test, level, predictor)
+    ]
+    return row
 
-    assert list(table.columns) == ["Test", "Term", "ITC (76 sub-sectors)", "Model, HS6"]
-    share, past = table.rows(named=True)
-    assert (share["Test"], share["Term"]) == ("Intensive margin", "Unrealised Share")
-    assert share["ITC (76 sub-sectors)"] == "0.615"
-    assert share["Model, HS6"] == f"{row['coefficient']:.3f} ({row['std_error']:.3f})"
-    assert past["Term"] == "past growth" and past["ITC (76 sub-sectors)"] == "-0.386"
-    past_fit = row["controls"]["past_growth"]
-    assert past["Model, HS6"] == f"{past_fit['coefficient']:.3f} ({past_fit['std_error']:.3f})"
+
+def test_the_coefficient_table_has_a_row_per_test_level_and_term_and_a_column_per_predictor(bundle, report):
+    table = reporting.itc_coefficients(bundle)
+
+    assert list(table.columns) == ["Test", "Level", "Term", "ITC (76 sub-sectors)", "Model", "Naive Baseline"]
+    assert [(row["Test"], row["Level"], row["Term"]) for row in table.rows(named=True)] == [
+        ("Intensive margin", "HS2", "Unrealised Share"),
+        ("Intensive margin", "HS2", "past growth"),
+        ("Intensive margin", "HS6", "Unrealised Share"),
+        ("Intensive margin", "HS6", "past growth"),
+        ("Extensive margin", "HS2", "log Export Potential"),
+        ("Extensive margin", "HS6", "log Export Potential"),
+        ("New-flow size", "HS2", "log Export Potential"),
+        ("New-flow size", "HS6", "log Export Potential"),
+    ]
+    share = table.row(0, named=True)
+    model, naive = (_fit(report, "intensive_margin", "HS2", p) for p in ("model", "naive_baseline"))
+    assert share["Model"] == f"{model['coefficient']:.3f} ({model['std_error']:.3f})"
+    assert share["Naive Baseline"] == f"{naive['coefficient']:.3f} ({naive['std_error']:.3f})"
+    past = table.row(1, named=True)
+    past_fit = model["controls"]["past_growth"]
+    assert past["Model"] == f"{past_fit['coefficient']:.3f} ({past_fit['std_error']:.3f})"
+
+
+def test_itc_s_figures_sit_on_the_hs2_rows_only(bundle):
+    table = reporting.itc_coefficients(bundle)
+
+    itc = {(row["Test"], row["Level"], row["Term"]): row["ITC (76 sub-sectors)"] for row in table.rows(named=True)}
+    assert itc[("Intensive margin", "HS2", "Unrealised Share")] == "0.615"
+    assert itc[("Intensive margin", "HS2", "past growth")] == "-0.386"
+    assert itc[("Extensive margin", "HS2", "log Export Potential")] == "0.023"
+    assert itc[("New-flow size", "HS2", "log Export Potential")] == "0.243"
+    assert {value for (_, level, _), value in itc.items() if level == "HS6"} == {"not compared"}
 
 
 def test_the_method_table_sets_the_two_methods_side_by_side(bundle):
