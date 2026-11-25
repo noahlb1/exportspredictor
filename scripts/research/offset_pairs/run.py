@@ -1,8 +1,8 @@
-"""Ticket #131: the evidence for the Offset Pair tier (spec #129). CPU only; trains nothing, reads no 2023 file.
+"""The evidence for the Offset Pair tier. CPU only; trains nothing, reads no 2023 file.
 
 The scripts used when the idea was first explored were not kept, so this one recomputes every figure
-in `docs/research/offset-pairs.md`. It applies the spec's rule on its own, without the package's
-Offset Pair code (#130), so the two can be checked against each other.
+in `docs/research/offset-pairs.md`. It applies the tier's rule on its own, without the package's
+Offset Pair code, so the two can be checked against each other.
 
 From the served artefact (the lexically newest version folder, `20261120T221726Z` when written):
 

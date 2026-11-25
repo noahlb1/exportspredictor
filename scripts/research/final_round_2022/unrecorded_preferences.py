@@ -1,8 +1,9 @@
-"""Ticket #171, idea b: a scoring-only probe of a tariff of 0 where a Trade Agreement's preference is unrecorded.
+"""A leftover idea of the final round: a scoring-only probe of a tariff of 0 where a Trade Agreement's preference
+is unrecorded.
 
 TRAINS holds no preference schedule for some Trade Agreement partners, so their pairs carry the MFN rate while
-the agreement dummy is 1 (#140's flag H3). This re-predicts fold 0's 2022 UK grid with the best so far as served
-(the cached model `e5943f03616c0cf7`: Blend w = 0.3, Market Reach at beta 4, the Market Reach table unchanged)
+the agreement dummy is 1, as a fresh-eyes review of the served outputs found. This re-predicts fold 0's 2022 UK
+grid with the best so far as served (the cached model `e5943f03616c0cf7`: Blend w = 0.3, Market Reach at beta 4, the Market Reach table unchanged)
 after `tariffs.zero_unrecorded_preferences`, and compares the Selection Measure with the uncorrected grid. The
 Naive Baseline has no policy feature, so it does not move. Nothing is trained (the script refuses a model that is
 not cached) and `results.json` is not written. The pre-registered gate (docs/research/final-round-2022.md, section
