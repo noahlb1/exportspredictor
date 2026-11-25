@@ -68,8 +68,10 @@ from exportspredictor.features import (
 )
 from exportspredictor.fixture import World
 from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
+from exportspredictor.ledger import TEST_YEAR
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import export_potential
+from exportspredictor.sectors import sector_of
 from exportspredictor.selection_measure import selection_measure
 from exportspredictor.training import (
     SECTOR_SUBSET,
@@ -85,8 +87,7 @@ from exportspredictor.training import (
     training_matrix,
 )
 
-# The test year. Feature and rate choices are made on the validation year, before it.
-TEST_YEAR = 2023
+# Feature and rate choices are made on the validation year, before the test year (`ledger.TEST_YEAR`).
 VALIDATION_YEAR = 2022
 # v2's new features, each dropped in turn by the ablation (ADR 0006).
 CANDIDATE_FEATURES = [*RELATEDNESS_FEATURES, *MARKET_TREND_FEATURES, *TARIFF_FEATURES]
@@ -424,7 +425,7 @@ def _predict(model: xgb.Booster, table: pl.DataFrame, features: Sequence[str], r
 def _in_sectors(sectors: Sequence[str] | None) -> pl.Expr:
     if not sectors:
         return pl.lit(True)
-    return pl.col("hs6").cast(pl.String).str.slice(0, 2).is_in(list(sectors))
+    return sector_of("hs6").is_in(list(sectors))
 
 
 def _plan_dict(plan: Plan) -> dict:

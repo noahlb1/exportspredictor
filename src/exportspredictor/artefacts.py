@@ -237,6 +237,25 @@ def latest_folder(root: Path) -> Path:
     return folders[-1]
 
 
+def copy_lineage(root: Path, version: str) -> list[str]:
+    """`version` and each version it was copied from (`copied_from` in each metadata under `root`), newest first.
+
+    A copy keeps its source's models and settings, so every version listed is the same frozen version. The walk ends
+    at a version that was not copied or whose folder is no longer under `root`."""
+    lineage: list[str] = []
+    source: str | None = version
+    while source and source not in lineage:
+        lineage.append(source)
+        metadata = Path(root) / source / METADATA_FILE
+        source = json.loads(metadata.read_text(encoding="utf-8")).get("copied_from") if metadata.exists() else None
+    return lineage
+
+
+def read_evaluation(folder: Path) -> dict | None:
+    """A version folder's evaluation report alone, without loading its models and tables; None if it has none."""
+    return _read_json(Path(folder) / EVALUATION_FILE)
+
+
 def load_latest(root: Path, *, tiers: Sequence | None = None, blocked_values: bool = True) -> Artefacts:
     """Load the newest complete artefact folder under `root` (`load`, with its `tiers` and `blocked_values`)."""
     return load(latest_folder(root), tiers=tiers, blocked_values=blocked_values)

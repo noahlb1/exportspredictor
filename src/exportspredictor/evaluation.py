@@ -54,7 +54,14 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor import artefacts as store
-from exportspredictor import baci, ledger, market_reach, offsets
+from exportspredictor import (
+    baci,
+    ledger,
+    market_reach,
+    offsets,
+    realisation,
+    realisation_wording,
+)
 from exportspredictor.conformal import COVERAGE, COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
@@ -80,6 +87,7 @@ from exportspredictor.prediction import (
     ModelForm,
     export_potential,
 )
+from exportspredictor.sectors import sector_of
 from exportspredictor.selection_measure import (
     MIN_RANKED_ROWS,
     legacy_selection_measure,
@@ -123,6 +131,8 @@ def served_report(report: dict) -> dict:
     served = {key: value for key, value in relabelled(report).items() if key not in NOT_SERVED}
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
+    if served.get(realisation.REPORT_KEY):
+        served[realisation.REPORT_KEY] = realisation_wording.served(served[realisation.REPORT_KEY])
     return served
 
 # The opt-in parts of a pipeline run (`pipeline.Parts`, spec #65 story 23): title, the report
@@ -138,6 +148,11 @@ OPTIONAL_PARTS = (
     ("PPML benchmark", "ppml_benchmark", "--ppml-benchmark",
      ("It compares the model's Trade Agreement association with a 3-way fixed-effects PPML gravity model and with "
      "published estimates.")),
+)
+# Parts added to a saved version by their own command, not by a pipeline switch: title, report block, command, why.
+ADDED_PARTS = (
+    ("ITC comparison", realisation.REPORT_KEY, "python -m exportspredictor.realisation",
+     "It runs ITC's realisation test, the one behind its Export Potential Map, on the model's Export Potential."),
 )
 
 
@@ -155,6 +170,10 @@ def parts_not_run(report: dict, ppml_benchmark: dict | None) -> list[dict]:
         {"title": title, "text": f"{title}: {NOT_RUN}. {why} It runs when the pipeline is asked for it "
          f"(`python -m exportspredictor.pipeline {switch}`)."}
         for title, block, switch, why in OPTIONAL_PARTS
+        if block not in blocks
+    ] + [
+        {"title": title, "text": f"{title}: {NOT_RUN}. {why} It is added to a saved version with `{command}`."}
+        for title, block, command, why in ADDED_PARTS
         if block not in blocks
     ]
 
@@ -568,7 +587,7 @@ def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
             hs6=pl.col("hs6").cast(pl.String),
             _i=pl.col("importer").cast(pl.String),
         )
-        .with_columns(sector=pl.col("hs6").str.slice(0, 2))
+        .with_columns(sector=sector_of("hs6"))
         .join(regions, on="_i", how="left")
         .with_columns(pl.col("region", *(["income_level"] if has_income else [])).fill_null("Unclassified"))
     )

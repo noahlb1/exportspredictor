@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
-from exportspredictor import scenarios
+from exportspredictor import realisation, scenarios
 from exportspredictor.caveats import TIERS, CaveatTier, caveat_texts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.rankings import (
@@ -143,12 +143,15 @@ class PairMarketReachOut(MarketReachOut):
 # Each choice set is built from the package's own constant, so it is defined once. Pydantic validates
 # and documents the Literal; pyright cannot evaluate a Literal built at runtime, so it reads a str.
 if TYPE_CHECKING:
-    RankBy = OpportunityType = PresetName = BlockedRankBy = str
+    RankBy = OpportunityType = PresetName = BlockedRankBy = RealisationTest = RealisationLevel = RealisationPredictor = str
 else:
     RankBy = Literal[tuple(RANK_BY)]  # the ranking orders of `exportspredictor.rankings.RANK_BY`
     OpportunityType = Literal[OPPORTUNITY_TYPES]  # Expand, New Market or New Product (GLOSSARY.md)
     PresetName = Literal[tuple(PRESETS)]  # the presets of `exportspredictor.scenarios.PRESETS`
     BlockedRankBy = Literal[tuple(BLOCKED_ORDERS)]  # the Blocked Opportunities orders (`rankings.BLOCKED_ORDERS`)
+    RealisationTest = Literal[realisation.TESTS]  # the Realisation Test's three tests (`realisation.TESTS`)
+    RealisationLevel = Literal[tuple(realisation.LEVELS)]  # HS2 or HS6 (`realisation.LEVELS`)
+    RealisationPredictor = Literal[tuple(realisation.PREDICTORS)]  # the model or the Naive Baseline (`realisation.PREDICTORS`)
 
 
 class RankOrderOut(BaseModel):
@@ -542,6 +545,61 @@ class EventBacktest(BaseModel):
     caveat: str
 
 
+class RealisationFit(BaseModel):
+    coefficient: float | None
+    std_error: float | None
+
+
+class RealisationRow(RealisationFit):
+    """One regression of ITC's realisation test, keyed by test, level and predictor (`realisation.realisation_report`)."""
+
+    test: RealisationTest
+    level: RealisationLevel
+    predictor: RealisationPredictor
+    regressor: str
+    controls: dict[str, RealisationFit]
+    observations: int
+    pairs: int
+
+
+class PublishedRealisation(BaseModel):
+    """ITC's own published coefficient for one test (static version, with fixed effects), with its citation."""
+
+    test: str
+    regressor: str
+    coefficient: float
+    controls: dict[str, float]
+    level: str
+    source: str
+
+
+class TrainingCutOff(BaseModel):
+    base_year: int
+    training_cut_off: int  # the last year the base year's fold models trained on
+
+
+class DirectComparison(BaseModel):
+    run: bool  # part (c) of #156: the EPM's UK figures set beside ours
+    reason: str = ""
+
+
+class ItcComparison(BaseModel):
+    """How the model compares with ITC's Export Potential Map: ITC's realisation test run on the model (#156)."""
+
+    rows: list[RealisationRow]  # the HS2 rows, the level compared with ITC; HS6 stays in the notebook
+    published: list[PublishedRealisation]
+    base_years: list[int]  # each scored by fold models trained on years up to it
+    training_cut_offs: list[TrainingCutOff]  # one per base year
+    outcome_years: list[int]  # the first and last year read
+    fixed_effects: list[str]
+    cluster: str
+    direct_comparison: DirectComparison
+    text: str  # written by the API (`realisation_wording.text`)
+    caveat: str
+    # The HS2 coefficients by column label, as tables show them ("Test", "Level", "Term", ITC's, "Model", ...).
+    table: list[dict[str, str]]
+
+
 class NotRun(BaseModel):
     """An opt-in part of the pipeline that this artefact version skipped (`evaluation.parts_not_run`)."""
 
@@ -682,6 +740,7 @@ class Evaluation(BaseModel):
     tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None
+    itc_comparison: ItcComparison | None = None  # None where it was not added to this version
     event_backtest: EventBacktest | None = None
     model_choice: ModelChoice
     event_backtest_note: EventBacktestNote | None = None

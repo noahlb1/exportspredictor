@@ -16,7 +16,7 @@ import io
 import json
 import re
 import textwrap
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,8 +24,22 @@ import matplotlib
 import polars as pl
 from matplotlib.figure import Figure
 
-from exportspredictor import loop, model_choice, offsets, ppml, rankings, scenarios
-from exportspredictor.artefacts import Artefacts
+from exportspredictor import (
+    loop,
+    model_choice,
+    offsets,
+    ppml,
+    rankings,
+    realisation,
+    realisation_wording,
+    scenarios,
+)
+from exportspredictor.artefacts import (
+    METADATA_FILE,
+    Artefacts,
+    copy_lineage,
+    read_evaluation,
+)
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.currency import format_usd
 from exportspredictor.evaluation import (
@@ -35,7 +49,7 @@ from exportspredictor.evaluation import (
 )
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
-from exportspredictor.paths import data_dir
+from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.rankings import REACH_DEPTHS, in_top, ranked_opportunities
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
@@ -78,15 +92,44 @@ PROVENANCE_PREFIX = "Outputs below come from artefact version"
 _PROVENANCE = re.compile(re.escape(PROVENANCE_PREFIX) + r" (\S+) \(source: ([^;)]+)")
 
 
-def provenance(bundle: Artefacts) -> str:
-    """Which artefact version the outputs come from, and whether it is real data or the fixture."""
+def provenance(bundle: Artefacts, *, artefacts_root: Path | None = None) -> str:
+    """Which artefact version the outputs come from, whether it is real data or the fixture, and how it was derived.
+
+    A copy names the version it was copied from (`copied_from`, the latest copy step) and, where `artefacts_root` (by
+    default the served artefacts directory) still holds that version, which evaluation blocks the copy added or
+    replaced and the versions it was copied from in turn (`artefacts.copy_lineage`). A version whose values an earlier
+    step rebuilt from another (`blocked_values_from`, `ppml_benchmark_from`) names that one too."""
     metadata = bundle.metadata
-    derived = metadata.get("blocked_values_from") or metadata.get("ppml_benchmark_from") or metadata.get("copied_from")
+    steps = []
+    copied = metadata.get("copied_from")
+    if copied:
+        steps.append(f"a copy of version {copied}" + _copy_step(bundle, copied, artefacts_root or artefacts_dir()))
+    derived = metadata.get("blocked_values_from") or metadata.get("ppml_benchmark_from")
+    if derived and derived != copied:
+        steps.append(f"derived from version {derived}")
     return (
         f"{PROVENANCE_PREFIX} {bundle.version} (source: {metadata.get('source')}; "
         f"Model Form: {bundle.model_form.text.rstrip('.')}"
-        + (f"; derived from version {derived}" if derived else "")
+        + "".join(f"; {step}" for step in steps)
         + ")."
+    )
+
+
+def _copy_step(bundle: Artefacts, source: str, artefacts_root: Path) -> str:
+    """What a copy changed in its source's evaluation, and what that source was itself copied from; "" if the source's
+    folder is gone."""
+    folder = Path(artefacts_root) / source
+    if not (folder / METADATA_FILE).exists():
+        return ""
+    before = read_evaluation(folder) or {}
+    after = json.loads(json.dumps(bundle.evaluation or {}))  # as saved, so tuples compare equal to lists
+    added = [name for name in after if name not in before]
+    replaced = [name for name in after if name in before and after[name] != before[name]]
+    changes = [f"{', '.join(names)} {verb}" for names, verb in ((added, "added"), (replaced, "replaced")) if names]
+    earlier = copy_lineage(artefacts_root, source)[1:]
+    return (
+        (f" with {' and '.join(changes)} to its evaluation" if changes else "")
+        + (f", itself copied from {', then '.join(earlier)}" if earlier else "")
     )
 
 
@@ -396,6 +439,31 @@ def lift_by_tenth(bundle: Artefacts) -> Chart | NotRun:
         for row in data.iter_rows(named=True)
     ]
     return Chart(title, data, bar_svg(title, bars, lines={"all pairs": lift["base_rate"]}, axis="share that grew"))
+
+
+ITC_COMPARISON = "ITC's realisation test on our model"
+
+
+def _from_itc_report[T](bundle: Artefacts, make: Callable[[dict], T]) -> T | NotRun:
+    """`make` applied to the saved ITC comparison report, or `NotRun` where this version has none."""
+    report = (bundle.evaluation or {}).get(realisation.REPORT_KEY)
+    return make(report) if report else NotRun(ITC_COMPARISON)
+
+
+def itc_coefficients(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """ITC's realisation test on our model (#156 part b): each coefficient, with its standard error, beside ITC's
+    published static figure (`realisation_wording.coefficient_rows`), read from the saved evaluation report."""
+    return _from_itc_report(bundle, lambda report: pl.DataFrame(realisation_wording.coefficient_rows(report)))
+
+
+def itc_method(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """ITC's method and ours side by side (#156 part a, `realisation_wording.method_rows`)."""
+    return _from_itc_report(bundle, lambda report: pl.DataFrame(realisation_wording.method_rows(report)))
+
+
+def itc_direct_comparison(bundle: Artefacts) -> str | NotRun:
+    """Whether the direct comparison with the EPM's UK figures (#156 part c) ran, and if not, why."""
+    return _from_itc_report(bundle, realisation_wording.direct_comparison_text)
 
 
 def event_backtests(bundle: Artefacts) -> Chart | NotRun:

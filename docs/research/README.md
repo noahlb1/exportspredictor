@@ -17,3 +17,4 @@ Each note is the cited evidence behind a decision on the wayfinder map, a spec o
 | [exporter-count-2022.md](exporter-count-2022.md) | The Exporter count and the gravity fill on 2022: the count dropped, the fill kept | #127 |
 | [offset-pairs.md](offset-pairs.md) | Offset Pairs: an Export Gap offset by the same Heading in the same Market | #131 |
 | [final-round-2022.md](final-round-2022.md) | The final round on 2022: every idea dropped, the shipped version stands | Spec #155 |
+| [base-year-models.md](base-year-models.md) | The base-year fold models (2015–2019, trained on years up to t), the scored UK panel, and the Realisation Test's results beside ITC's | #176, #178 |

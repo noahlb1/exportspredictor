@@ -12,7 +12,7 @@ from exportspredictor import artefacts as store
 from exportspredictor import governance
 
 PAGE = "pages/model_evaluation.py"
-PARTS = ["Event Backtests", "Monotone-constraint comparison", "Gain ladder", "PPML benchmark"]
+PARTS = ["Event Backtests", "Monotone-constraint comparison", "Gain ladder", "PPML benchmark", "ITC comparison"]
 NOTICE = "not run for this version"
 
 

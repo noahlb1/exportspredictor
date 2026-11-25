@@ -33,6 +33,7 @@ from exportspredictor import currency
 from exportspredictor.downloads import download as download_file
 from exportspredictor.downloads import fetch, write_parquet
 from exportspredictor.paths import data_dir
+from exportspredictor.sectors import sector_of
 
 YEAR = 2023
 ARCHIVE_PAGE = "https://www.uktradeinfo.com/trade-data/latest-bulk-data-sets/bulk-data-sets-archive/"
@@ -173,7 +174,7 @@ def crosscheck(
     no_product = float(ots.filter(~has_product)["ots_usd"].sum())
     no_market = float(ots.filter(has_product & ~has_market)["ots_usd"].sum())
 
-    sector = pl.col("hs6").str.slice(0, 2).alias("sector")
+    sector = sector_of("hs6").alias("sector")
     by_sector = _compare(
         ots.filter(has_product).with_columns(sector), baci_uk.with_columns(sector), ["sector"]
     )
