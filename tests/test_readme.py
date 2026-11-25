@@ -104,6 +104,26 @@ def test_checklist_covers_the_market_reach_sentence_in_the_market_view_and_the_p
     assert any("panel" in line for line in lines)
 
 
+def _repo_map() -> str:
+    text = README.read_text(encoding="utf-8")
+    return text.split("## Repo map", 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_repo_map_names_every_top_level_tracked_folder():
+    import subprocess
+
+    names = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, capture_output=True, check=True).stdout.decode()
+    folders = {name.split("/", 1)[0] for name in names.split("\0") if "/" in name}
+    repo_map = _repo_map()
+    missing = sorted(folder for folder in folders if f"`{folder}/`" not in repo_map)
+    assert not missing, f"Add these folders to the README's repo map: {missing}"
+
+
+def test_the_repo_map_says_to_start_reading_at_the_notebook_then_the_package():
+    start = next(line for line in _repo_map().splitlines() if "start reading" in line.lower())
+    assert start.index("notebooks/exports_predictor.ipynb") < start.index("src/exportspredictor/")
+
+
 def test_checklist_covers_the_tie_proof_large_market_and_market_reach_figures():
     checklist = _checklist()
     for figure in ("tie-proof", "old measure", "30 largest", "What Market Reach changes", "by size", "UK pairs"):
