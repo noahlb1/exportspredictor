@@ -1606,6 +1606,8 @@ def test_evaluation_serves_the_itc_comparison_s_hs2_rows_its_years_and_the_api_s
     for difference in ("UK only", "no exporter fixed effect", "76 sub-sectors", "HS2", "2006–2018", "2015–2019",
                        "learned model", "no forward projection"):
         assert difference in served["caveat"], difference
+    # Each predictor runs on the units it scores above zero, so the caveat says where the samples differ.
+    assert "units the Naive Baseline scores above zero" in served["caveat"]
     # Advisors see only the level compared with ITC.
     assert {row["Level"] for row in served["table"]} == {"HS2"}
     assert "not compared" not in {row["ITC (76 sub-sectors)"] for row in served["table"]}

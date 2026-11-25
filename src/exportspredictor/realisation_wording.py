@@ -83,7 +83,7 @@ def method_rows(report: dict) -> list[dict]:
          ("Three regressions of later trade on the indicator (growth of existing flows, whether new flows start, "
          "their size), every exporter pooled, with exporter, market and year × sub-sector fixed effects"),
          (f"The same three on UK pairs in base years {years}, each scored by fold models trained on years up to "
-         f"the base year, with the Naive Baseline run the same way beside the model, on the same units; at HS2 the "
+         f"the base year, with the Naive Baseline run the same way beside the model, each on the units it scores above zero; at HS2 the "
          f"HS6 figures are summed, unrealised potential floored pair by pair; {' and '.join(report['fixed_effects'])} "
          f"fixed effects, errors clustered by {report['cluster']}")),
     ]
@@ -104,7 +104,9 @@ def caveat(report: dict) -> str:
         f"only, in base years {years_text(report['base_years'])}, with no exporter fixed effect. ITC's test runs on 76 "
         f"sub-sectors; the rows set beside it are {COMPARED_LEVEL} Sectors, which group Products differently, and the "
         f"HS6 rows are not compared with it. ITC's indicator is a decomposition that projects about five years ahead; "
-        f"ours is a learned model scoring the base year itself, with no forward projection. The coefficients describe "
+        f"ours is a learned model scoring the base year itself, with no forward projection. The Naive Baseline column "
+        f"runs on the units the Naive Baseline scores above zero, so where it scores a unit 0 its sample and the "
+        f"model's differ. The coefficients describe "
         f"a tendency across many pairs, not a forecast for any one."
     )
 

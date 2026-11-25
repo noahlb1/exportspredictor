@@ -168,8 +168,9 @@ def test_the_naive_baseline_column_runs_through_the_same_code_as_the_model_s():
         }, key
 
 
-def test_both_predictors_run_on_the_units_every_predictor_scores_above_zero_and_the_rest_are_counted():
-    # Three trading pairs at 2016; the Naive Baseline gives 010103 nothing, so it leaves both columns' samples.
+def test_each_predictor_runs_on_the_units_it_scores_above_zero_and_counts_the_rest():
+    # Three trading pairs at 2016; the Naive Baseline gives 010103 nothing, so it leaves the Naive Baseline's sample
+    # only: the model's row keeps every unit it scores, as ITC's does.
     series = {
         ("010101", "FRA"): ([10.0] * 11, {2016: 20.0}),
         ("010102", "FRA"): ([10.0] * 11, {2016: 40.0}),
@@ -181,13 +182,13 @@ def test_both_predictors_run_on_the_units_every_predictor_scores_above_zero_and_
         predictor: realisation.intensive_margin_sample(panel, predictor=predictor)["hs6"].to_list()
         for predictor in ("model", "naive_baseline")
     }
-    assert samples == {"model": ["010101", "010102"], "naive_baseline": ["010101", "010102"]}
+    assert samples == {"model": ["010101", "010102", "010103"], "naive_baseline": ["010101", "010102"]}
     rows = [
         row for row in realisation.realisation_report(panel)["rows"]
         if (row["test"], row["level"]) == ("intensive_margin", "HS6")
     ]
     assert [(row["predictor"], row["trading"], row["zero_score"]) for row in rows] == [
-        ("model", 3, 1), ("naive_baseline", 3, 1),
+        ("model", 3, 0), ("naive_baseline", 3, 1),
     ]
 
 

@@ -28,8 +28,9 @@ the unrealised potential floored at zero pair by pair before summing, so one Pro
 unrealised potential. The HS2 rows are the ones set beside ITC's figures; the HS6 rows are reported, not compared.
 
 **Predictors.** Each test runs on the model's Export Potential and, through the same code, on the Naive Baseline in
-its place (`PREDICTORS`). Both run on one **common sample**: a unit-year enters a test only where every predictor's
-score is above zero, so the columns compare on the same rows; the unit-years left out are counted (`zero_score`).
+its place (`PREDICTORS`). Each predictor runs on the units it scores above zero (a log needs it), so the model's
+row keeps every unit it scores, as ITC's does, and the Naive Baseline's leaves out the units it scores 0; each row
+counts the unit-years it left out (`zero_score`), so the two samples differ visibly.
 
 **The panel** (`realisation_report`'s input, `PANEL_SCHEMA`) holds one row per UK pair and year: `hs6`, `iso3`,
 `year`, `export_potential_usd` and `naive_baseline_usd` (non-null in base years only, each scored by fold models
@@ -189,8 +190,8 @@ def _windows(panel: pl.DataFrame) -> pl.DataFrame:
 
 def _units(panel: pl.DataFrame, level: str) -> pl.DataFrame:
     """Per base year and unit of `level` (`LEVELS`): each predictor's score and floored unrealised potential, Actual
-    Exports at t and their means before and after, whether every predictor scores the unit above zero (`scored`, the
-    common sample), and whether the UK exports the unit's Product (or Sector) to some Market at t.
+    Exports at t and their means before and after, and whether the UK exports the unit's Product (or Sector) to some
+    Market at t.
 
     Each figure is summed over the unit's scored pairs (one pair at HS6), the unrealised potential floored pair by
     pair before summing."""
@@ -206,7 +207,6 @@ def _units(panel: pl.DataFrame, level: str) -> pl.DataFrame:
         _windows(panel)
         .group_by(_key(level))
         .agg(pl.col(_SUMMED).sum())
-        .with_columns(scored=pl.all_horizontal(pl.col(_SCORES) > 0))
         .join(exported, on=[product, "year"], how="left")
         .with_columns(pl.col("exported").fill_null(False))
         .sort(_key(level))  # a fixed order, so a report is reproducible to the last digit
@@ -214,9 +214,14 @@ def _units(panel: pl.DataFrame, level: str) -> pl.DataFrame:
 
 
 def _of(units: pl.DataFrame, predictor: str) -> pl.DataFrame:
-    """`units` with `predictor`'s score as `potential_usd` and its unrealised potential as `unrealised_usd`."""
+    """`units` with `predictor`'s score as `potential_usd`, its unrealised potential as `unrealised_usd`, and whether
+    it scores the unit above zero (`scored`): each predictor's sample is its own."""
     score = PREDICTORS[predictor]
-    return units.with_columns(potential_usd=pl.col(score), unrealised_usd=pl.col(_unrealised_column(score)))
+    return units.with_columns(
+        potential_usd=pl.col(score),
+        unrealised_usd=pl.col(_unrealised_column(score)),
+        scored=(pl.col(score) > 0).fill_null(False),
+    )
 
 
 def _trading(units: pl.DataFrame) -> pl.DataFrame:
@@ -268,8 +273,8 @@ def intensive_margin_sample(panel: pl.DataFrame, *, predictor: str, level: str =
     """The intensive margin's rows: units trading at a base year with exports both before and after it.
 
     One row per unit and base year with `growth`, `unrealised_share` and `past_growth`, plus `sector` (HS2) for the
-    fixed effects. `predictor` (a key of `PREDICTORS`) names the score the Unrealised Share is computed from; every
-    predictor must score the unit above zero (the common sample).
+    fixed effects. `predictor` (a key of `PREDICTORS`) names the score the Unrealised Share is computed from; it must
+    score the unit above zero.
     """
     return _sample(_intensive, panel, predictor, level)
 
@@ -301,7 +306,7 @@ def _intensive_counts(units: pl.DataFrame) -> dict:
     scored = trading.filter(pl.col("scored"))
     return {
         "trading": trading.height,  # unit-years trading at the base year
-        "zero_score": int((~trading["scored"]).sum()),  # left out of the common sample: a score not above zero
+        "zero_score": int((~trading["scored"]).sum()),  # left out: scored 0, so no Unrealised Share
         "no_later_exports": int((scored["later_usd"] == 0).sum()),
         "no_earlier_exports": int(((scored["later_usd"] > 0) & (scored["earlier_usd"] == 0)).sum()),
     }
@@ -313,7 +318,7 @@ def _starting_counts(units: pl.DataFrame) -> dict:
     return {
         "not_trading": not_trading.height,  # unit-years with no Actual Exports at the base year
         "product_not_exported": int((~not_trading["exported"]).sum()),  # left out: Product sold nowhere at t
-        "zero_score": int((not_trading["exported"] & ~not_trading["scored"]).sum()),  # no log, or not common
+        "zero_score": int((not_trading["exported"] & ~not_trading["scored"]).sum()),  # left out: scored 0, so no log
         "started": int((_starting_candidates(units)["later_usd"] > 0).sum()),
     }
 
@@ -343,7 +348,7 @@ def _row(units: pl.DataFrame, test: str, level: str, predictor: str) -> dict:
         "regressor": regressor,
         **_fit(fit.coefficients[regressor], fit.std_errors[regressor]),
         "controls": {name: _fit(fit.coefficients[name], fit.std_errors[name]) for name in controls},
-        **counts(units),
+        **counts(_of(units, predictor)),
         "observations": fit.rows,
         "singletons_dropped": fit.dropped_rows,
         "pairs": fit.clusters,
