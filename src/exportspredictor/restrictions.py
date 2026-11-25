@@ -30,7 +30,7 @@ from datetime import date
 
 import polars as pl
 
-from exportspredictor.exclusions import as_code
+from exportspredictor.lookups import as_code
 
 VERIFIED = date(2026, 11, 20)  # the day every entry below was last checked against its sources
 
@@ -166,7 +166,7 @@ def sanction_reason_expr(year: int, regimes: tuple[SanctionsRegime, ...] = SANCT
 
 
 def _covers(prohibition: Prohibition) -> pl.Expr:
-    product = pl.col("hs6").cast(pl.String)
+    product = as_code("hs6")
     return (as_code("iso3") == prohibition.iso3) & pl.any_horizontal(
         product.str.starts_with(code) for code in prohibition.hs_codes
     )

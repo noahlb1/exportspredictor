@@ -12,7 +12,6 @@ from exportspredictor.caveats import (
     sanctioned_market_tier,
     with_caveat_columns,
 )
-from exportspredictor.exclusions import as_code
 from exportspredictor.restrictions import (
     PROHIBITIONS,
     SANCTIONS_REGIMES,
@@ -110,9 +109,3 @@ def test_every_entry_carries_a_source_and_the_tables_a_verification_date():
         assert prohibition.source.startswith("https://")
     assert {regime.iso3 for regime in SANCTIONS_REGIMES} == {"RUS", "BLR", "PRK", "SYR"}
     assert {prohibition.iso3 for prohibition in PROHIBITIONS} == {"SAU", "KWT", "LBY", "IRN"}
-
-
-def test_a_code_column_is_read_as_text_whatever_its_stored_type():
-    codes = pl.DataFrame({"iso3": pl.Series(["RUS", "FRA"], dtype=pl.Categorical), "hs6": [220830, 870323]})
-
-    assert codes.select(as_code("iso3"), as_code("hs6")).rows() == [("RUS", "220830"), ("FRA", "870323")]

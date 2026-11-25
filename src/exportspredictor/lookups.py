@@ -1,4 +1,4 @@
-"""Product and Market lookups, and Product search.
+"""Product and Market lookups, Product search, and reading a code column as text.
 
 The lookup tables have the same shape for the fixture and for real data:
 
@@ -31,6 +31,11 @@ PRODUCT_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 _DEFAULT_LIMIT = 20
+
+
+def as_code(column: str) -> pl.Expr:
+    """Column `column` as text, so a code compares the same whether it is stored as a string, a category or a number."""
+    return pl.col(column).cast(pl.String)
 
 
 def search_products(

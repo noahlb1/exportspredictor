@@ -61,7 +61,9 @@ from exportspredictor.features import FEATURES
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, with_folds
 from exportspredictor.prediction import MarketReach, ModelForm
 
-FORM = "nested_share"  # the open review's share form with sent nested in imported (the first "share" was not)
+# The open review's share form with sent nested in imported; the first form tried, "share", counted
+# every UK Flow as sent.
+FORM = "nested_share"
 BETA_GRID = (0.0, 0.5, 1.0, 2.0, 4.0)
 PSEUDO_COUNT = 5.0
 LAG_YEARS = 1

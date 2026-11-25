@@ -357,7 +357,8 @@ class Loop:
         if sum(models.values()) > MAX_TRAINED_MODELS:
             raise ValueError(
                 f"Experiment {name!r} would train {sum(models.values())} models; the budget is at most "
-                f"{MAX_TRAINED_MODELS} trained models per experiment (spec #65)"
+                f"{MAX_TRAINED_MODELS} trained models per experiment, so that the fixed list of experiments ends "
+                "within its GPU budget"
             )
 
     def _check_rows(self, settings: Settings) -> None:

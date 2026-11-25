@@ -39,6 +39,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
@@ -86,6 +87,9 @@ from exportspredictor.training import (
     scan_chunks,
     training_matrix,
 )
+
+if TYPE_CHECKING:
+    from exportspredictor.search import SearchPlan  # search imports this module
 
 # Feature and rate choices are made on the validation year, before the test year (`ledger.TEST_YEAR`).
 VALIDATION_YEAR = 2022
@@ -419,7 +423,7 @@ def _predict(model: xgb.Booster, table: pl.DataFrame, features: Sequence[str], r
     return export_potential(table, model, features=features, rounds=rounds, device=device)
 
 
-def plan_dict(plan) -> dict:
+def plan_dict(plan: "Plan | SearchPlan") -> dict:
     """A `Plan` or `search.SearchPlan` as saved in results: a plain dict, its Sectors a list (None: every Sector)."""
     return {**asdict(plan), "sectors": list(plan.sectors) if plan.sectors else None}
 

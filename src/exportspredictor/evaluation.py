@@ -707,8 +707,8 @@ def headline(overall: dict, test_year: int) -> dict:
 
 # v2's 2023 figures, from its evaluation report (artefact 20261118T100524Z, model alone). Its naive
 # baseline was computed from the test year's training rows (top-100 Exporters' Flows and sampled
-# Zero Cells); since then the naive baseline comes from every Exporter's Flows, so this run's
-# naive figure is reported beside it, not in place of it.
+# Zero Cells); since the run that chose the model on the UK ranking, the naive baseline comes from
+# every Exporter's Flows, so this run's naive figure is reported beside it, not in place of it.
 V2_REPORTED = {
     "version": "20261118T100524Z",
     "uk_ranking": 0.5114955233364546,

@@ -92,10 +92,10 @@ RELATEDNESS_FEATURES = ["relatedness"]
 # Market import growth over GROWTH_YEARS, and the Market's exports of the Product over its
 # imports of it (log-capped), both leaving out the row's own Exporter.
 MARKET_TREND_FEATURES = ["market_import_growth", "reexport_ratio"]
-# The Exporter count (also called the supplier count): ln(1 + the number of Exporters other than
-# the row's own with a non-zero Flow of the Product into the Market that year), from every
-# Exporter's Flows (ADR 0004). A UK row never counts the UK. How open a Market is to a Product;
-# not a policy feature, so it has no monotone constraint.
+# The Exporter count: ln(1 + the number of Exporters other than the row's own with a non-zero
+# Flow of the Product into the Market that year), from every Exporter's Flows (ADR 0004). A UK
+# row never counts the UK. How open a Market is to a Product; not a policy feature, so it has no
+# monotone constraint.
 EXPORTER_COUNT_FEATURES = ["log_exporters_loo"]
 # Sibling Demand (idea 9 of docs/research/open-review-2022.md), the UK-free demand
 # proxy: ln(1 + the Market's imports that year of the Product's HS4 siblings, the other Products of
