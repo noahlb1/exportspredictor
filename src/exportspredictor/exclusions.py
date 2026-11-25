@@ -23,6 +23,8 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from exportspredictor.lookups import as_code
+
 
 @dataclass(frozen=True)
 class Exclusion:
@@ -51,11 +53,6 @@ EXCLUSIONS = (
     Exclusion("9706", ("9706",), "Antiques: one-off objects, not production capacity."),
     Exclusion("2844", ("2844",), "Radioactive elements: strategic, licensed trade the model cannot see."),
 )
-
-
-def as_code(column: str) -> pl.Expr:
-    """Column `column` as text, so a code compares the same whether it is stored as a string, a category or a number."""
-    return pl.col(column).cast(pl.String)
 
 
 def _matches(exclusion: Exclusion, code: pl.Expr) -> pl.Expr:
@@ -152,7 +149,7 @@ def flagged_product_reason_expr(reasons: Mapping[str, str], column: str = "hs6")
 
 def reexport_hub_expr(column: str = "iso3") -> pl.Expr:
     """True where the row's Market is a Re-export Hub."""
-    return pl.col(column).cast(pl.String).is_in(sorted(REEXPORT_HUBS))
+    return as_code(column).is_in(sorted(REEXPORT_HUBS))
 
 
 def not_ranked_message(excluded: pl.DataFrame, hs6: str) -> str | None:
