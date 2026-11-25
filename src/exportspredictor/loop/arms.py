@@ -7,7 +7,9 @@ from dataclasses import asdict, dataclass, field, fields, replace
 
 from exportspredictor import baci, market_reach, search
 from exportspredictor.features import (
+    ALL_EXPORTERS_SET,
     EXPORTER_COUNT_FEATURES,
+    EXPORTER_COUNT_SET,
     FEATURES,
     SIBLING_DEMAND_FEATURES,
 )
@@ -311,8 +313,7 @@ def market_reach_cap_arm(caps: Sequence[float] = MARKET_REACH_CAP_GRID) -> Arm:
 # served retrained on them. A dropped Arm leaves the served files as they were (`Loop.run_experiment`'s
 # `files_kept_if_dropped`). The Arm re-chooses its blend weight, as every Arm with a new model has (#71).
 SIBLING_DEMAND_EXPERIMENT = "sibling demand"
-SIBLING_DEMAND_SET = "sibling_demand"
-SIBLING_DEMAND_BASE_SET = "exporter_count"  # the served files `sibling_demand` extends by one column
+SIBLING_DEMAND_BASE_SET = EXPORTER_COUNT_SET  # the served files `sibling_demand` (SIBLING_DEMAND_SET) extends by one column
 
 
 def sibling_demand_arm(best: Settings) -> Arm:
@@ -354,22 +355,25 @@ def hyperparameter_experiment(stage: str) -> str:
 # weights, features, fold and stopping rule, with the monotone constraints on the policy features. Each Arm's
 # parameters are its family's own, translated from the best so far's XGBoost parameters where the family has
 # an equivalent, and fixed before any 2022 result was read (docs/research/final-round-2022.md). Each Arm
-# re-chooses its blend weight and keeps Market Reach (from the served base). The best so far's parameters:
-_BEST = {
+# re-chooses its blend weight and keeps Market Reach (from the served base).
+# The best so far's XGBoost parameters as they stood when the Arms were pre-registered, copied by hand on purpose:
+# derived from `results["best"]`, the Arms would change whenever a later experiment is kept, and a pre-registered
+# Arm stays fixed. tests/test_loop_families.py checks they equal the recorded base of each family experiment.
+PRE_REGISTERED_BEST_PARAMS = {
     "tweedie_variance_power": 1.2655329893555092, "min_child_weight": 3.0468601316016213,
     "subsample": 0.9158324106709628, "colsample_bytree": 0.8794644314402613, "reg_lambda": 4.953922320798769,
 }
 MODEL_FAMILY_ARMS: dict[str, Arm] = {
     LIGHTGBM: Arm("LightGBM", {"family": LIGHTGBM, "params": {
-        "tweedie_variance_power": _BEST["tweedie_variance_power"], "learning_rate": 0.1,
-        "max_depth": 12, "num_leaves": 1023, "min_sum_hessian_in_leaf": _BEST["min_child_weight"],
-        "min_data_in_leaf": 1, "bagging_fraction": _BEST["subsample"], "bagging_freq": 1,
-        "feature_fraction": _BEST["colsample_bytree"], "lambda_l2": _BEST["reg_lambda"],
+        "tweedie_variance_power": PRE_REGISTERED_BEST_PARAMS["tweedie_variance_power"], "learning_rate": 0.1,
+        "max_depth": 12, "num_leaves": 1023, "min_sum_hessian_in_leaf": PRE_REGISTERED_BEST_PARAMS["min_child_weight"],
+        "min_data_in_leaf": 1, "bagging_fraction": PRE_REGISTERED_BEST_PARAMS["subsample"], "bagging_freq": 1,
+        "feature_fraction": PRE_REGISTERED_BEST_PARAMS["colsample_bytree"], "lambda_l2": PRE_REGISTERED_BEST_PARAMS["reg_lambda"],
     }}, BLEND_GRID),
     CATBOOST: Arm("CatBoost", {"family": CATBOOST, "params": {
-        "tweedie_variance_power": _BEST["tweedie_variance_power"], "learning_rate": 0.1,
-        "depth": 8, "l2_leaf_reg": _BEST["reg_lambda"], "bootstrap_type": "Bernoulli",
-        "subsample": _BEST["subsample"], "rsm": _BEST["colsample_bytree"],
+        "tweedie_variance_power": PRE_REGISTERED_BEST_PARAMS["tweedie_variance_power"], "learning_rate": 0.1,
+        "depth": 8, "l2_leaf_reg": PRE_REGISTERED_BEST_PARAMS["reg_lambda"], "bootstrap_type": "Bernoulli",
+        "subsample": PRE_REGISTERED_BEST_PARAMS["subsample"], "rsm": PRE_REGISTERED_BEST_PARAMS["colsample_bytree"],
     }}, BLEND_GRID),
 }
 
@@ -383,8 +387,8 @@ def model_family_experiment(family: str) -> str:
 # rate, so the pair differs only by the scope. The rate is the largest that fits the VRAM budget on these files
 # (`search.final_non_uk_rate`); the served 0.6157 would not fit. A dropped Arm leaves the served files unchanged.
 WIDER_SCOPE_EXPERIMENT = "wider exporter scope"
-WIDER_SCOPE_SET = "all_exporters"
-WIDER_SCOPE_BASE_SET = "exporter_count"  # the served files whose top 100's rows `all_exporters` repeats
+WIDER_SCOPE_SET = ALL_EXPORTERS_SET
+WIDER_SCOPE_BASE_SET = EXPORTER_COUNT_SET  # the served files whose top 100's rows `all_exporters` repeats
 WIDER_SCOPE_NON_UK_RATE = 0.5079
 WIDER_SCOPE = "every Exporter"
 
@@ -416,8 +420,7 @@ def external_memory_arm() -> Arm:
 # Arm keeps them; both at the largest non-UK rate these files allow (`non_uk_rate` None), so only the field differs.
 # A dropped Arm leaves the served files unchanged.
 EXCLUDED_PRODUCTS_EXPERIMENT = "excluded products"
-EXCLUDED_PRODUCTS_SET = "excluded_products"
-EXCLUDED_PRODUCTS_BASE_SET = "exporter_count"  # the served files `excluded_products` adds rows to
+EXCLUDED_PRODUCTS_BASE_SET = EXPORTER_COUNT_SET  # the served files `excluded_products` (EXCLUDED_PRODUCTS_SET) adds rows to
 EXCLUDED_PRODUCTS = "train on the Excluded Products"
 
 

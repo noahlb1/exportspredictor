@@ -196,6 +196,7 @@ have); its base drops them and its Arm keeps them, both at the largest non-UK ra
 """
 
 from exportspredictor.experiments import TestYearRead
+from exportspredictor.features import EXCLUDED_PRODUCTS_SET, SIBLING_DEMAND_SET
 from exportspredictor.loop.arms import (
     ANY_FLOW,
     BLEND,
@@ -205,7 +206,6 @@ from exportspredictor.loop.arms import (
     EXCLUDED_PRODUCTS,
     EXCLUDED_PRODUCTS_BASE_SET,
     EXCLUDED_PRODUCTS_EXPERIMENT,
-    EXCLUDED_PRODUCTS_SET,
     EXPORTER_COUNT_EXPERIMENT,
     EXTERNAL_MEMORY,
     EXTERNAL_MEMORY_EXPERIMENT,
@@ -231,7 +231,6 @@ from exportspredictor.loop.arms import (
     SHALLOW_DEPTH,
     SIBLING_DEMAND_BASE_SET,
     SIBLING_DEMAND_EXPERIMENT,
-    SIBLING_DEMAND_SET,
     SIZE,
     STARTING_POINT,
     STOPPING_RULE_ROUNDS,

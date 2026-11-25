@@ -161,7 +161,7 @@ def real_data(root: Path | None = None, *, validation_year: int = experiments.VA
         return pl.read_parquet(folder / f"uk_grid_{lag}.parquet", columns=columns)
 
     def country_year() -> pl.DataFrame:
-        return pl.read_parquet(root / "derived" / FEATURE_SETS[name], columns=["iso3", "year", "gdp_usd"])
+        return pl.read_parquet(root / "derived" / FEATURE_SETS[name].country_year, columns=["iso3", "year", "gdp_usd"])
 
     return LoopData(
         data=rows, flows=flows, zero_seed=settings.get("zero_sampling_seed", 0), world_products=world_exports,

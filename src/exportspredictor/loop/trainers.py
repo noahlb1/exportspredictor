@@ -6,7 +6,8 @@ stopping on the Selection Measure of that grid. `Settings.family` picks the trai
 (`trainer_for`); `XGBOOST` is the default. `LIGHTGBM` and `CATBOOST` (#167) train on the CPU:
 LightGBM's wheel has no GPU learner, and CatBoost enforces monotone constraints only on the CPU and
 only for symmetric trees. Both read the rows from a float32 matrix on disk, so the raw rows are
-never held in memory beside the binned ones.
+never held in memory beside the binned ones. Both families were dropped (#167), so `lightgbm` and `catboost` are dev
+dependencies, imported only where a model of their family trains, loads or predicts: the API and app never need them.
 """
 
 import gc
@@ -81,9 +82,9 @@ class TrainingJob:
     external_memory: bool = False
 
 
-def _refuse_external_memory(job: TrainingJob, family: str) -> None:
-    """Only the XGBoost trainer trains through external memory."""
-    if job.external_memory:
+def refuse_external_memory(family: str, external_memory: bool) -> None:
+    """Only the XGBoost trainer trains through external memory: refuse it for any other family."""
+    if external_memory and family != XGBOOST:
         raise ValueError(f"The {family} trainer has no external memory; only XGBoost's does")
 
 
@@ -276,7 +277,7 @@ class LightGBMTrainer:
         import lightgbm as lgb
 
         _refuse_binary(job, LIGHTGBM)
-        _refuse_external_memory(job, LIGHTGBM)
+        refuse_external_memory(LIGHTGBM, job.external_memory)
         started = time.perf_counter()
         params = {**LIGHTGBM_DEFAULT_PARAMS, **job.params, "seed": job.seed}
         params |= {"num_threads": job.threads} if job.threads else {}
@@ -369,7 +370,7 @@ class CatBoostTrainer:
         import catboost as cb
 
         _refuse_binary(job, CATBOOST)
-        _refuse_external_memory(job, CATBOOST)
+        refuse_external_memory(CATBOOST, job.external_memory)
         params = {**CATBOOST_DEFAULT_PARAMS, **job.params}
         if job.monotone and params["grow_policy"] != "SymmetricTree":
             raise ValueError("CatBoost enforces monotone constraints only for symmetric trees (grow_policy)")
