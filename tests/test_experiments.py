@@ -153,3 +153,44 @@ def test_the_real_path_never_reads_test_year_files(derived_data_root, monkeypatc
     assert any("flows_2022" in path for path in read)
     assert json.loads((folder / experiments.SETTINGS_FILE).read_text())["validation_year"] == 2022
     assert experiments.load(derived_data_root) == json.loads(saved.read_text())
+
+
+# --- Saved plans, progress and results --------------------------------------------------
+
+
+def test_a_saved_plan_is_a_dict_with_its_sectors_as_a_list():
+    plan = experiments.Plan(
+        params={"eta": 0.1}, max_rounds=10, sectors=("22", "87"), built_zero_rate=0.1,
+        ablation_rates=(0.1, 0.1), non_uk_rates=(0.1,), zero_rates=(0.1,),
+    )
+
+    saved = experiments.plan_dict(plan)
+
+    assert saved["sectors"] == ["22", "87"]
+    assert saved["max_rounds"] == 10
+
+
+def test_a_plan_over_every_sector_saves_none():
+    plan = experiments.Plan(
+        params={}, max_rounds=1, sectors=None, built_zero_rate=0.1,
+        ablation_rates=(0.1, 0.1), non_uk_rates=(0.1,), zero_rates=(0.1,),
+    )
+
+    assert experiments.plan_dict(plan)["sectors"] is None
+
+
+def test_progress_is_printed_as_it_happens(capsys):
+    experiments.log_progress("trial 3 done")
+
+    assert capsys.readouterr().out == "trial 3 done\n"
+
+
+def test_saved_results_are_read_back_from_their_folder(tmp_path):
+    (tmp_path / "results.json").write_text(json.dumps({"trials": [1, 2]}), encoding="utf-8")
+
+    assert experiments.read_results(tmp_path) == {"trials": [1, 2]}
+
+
+def test_there_are_no_saved_results_without_a_folder_or_a_file(tmp_path):
+    assert experiments.read_results(None) is None
+    assert experiments.read_results(tmp_path) is None

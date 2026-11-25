@@ -216,13 +216,13 @@ def run_ablation(data: Data, plan: Plan) -> dict:
         kept = [f for f in ALL_FEATURES if f != dropped]
         row = fitter.fit(kept, non_uk_rate=non_uk_rate, zero_rate=zero_rate)
         rows.append({"dropped": dropped, **row})
-        _log(f"ablation without {dropped}: {row}")
+        log_progress(f"ablation without {dropped}: {row}")
     full = rows[0]
     for row in rows:
         row["deviance_change"] = row["validation_deviance"] - full["validation_deviance"]
         row["spearman_change"] = _difference(row["uk_spearman"], full["uk_spearman"])
         row["hurts"] = row["dropped"] is not None and _hurts(row, full)
-    return {"plan": _plan_dict(plan), "ablation": rows, "kept_features": kept_features(rows)}
+    return {"plan": plan_dict(plan), "ablation": rows, "kept_features": kept_features(rows)}
 
 
 def run_learning_curve(data: Data, plan: Plan, features: Sequence[str] = FEATURES) -> dict:
@@ -244,9 +244,9 @@ def run_learning_curve(data: Data, plan: Plan, features: Sequence[str] = FEATURE
                     "fits_budget": None if full_rate is None else non_uk_rate <= full_rate,
                 }
             )
-            _log(f"learning curve at non-UK {non_uk_rate}, zeros {zero_rate}: {row}")
+            log_progress(f"learning curve at non-UK {non_uk_rate}, zeros {zero_rate}: {row}")
     return {
-        "curve_plan": _plan_dict(plan),
+        "curve_plan": plan_dict(plan),
         "curve_features": list(features),
         "learning_curve": rows,
         "plateau": plateau(rows),
@@ -422,11 +422,13 @@ def _predict(model: xgb.Booster, table: pl.DataFrame, features: Sequence[str], r
     return export_potential(table, model, features=features, rounds=rounds, device=device)
 
 
-def _plan_dict(plan: Plan) -> dict:
+def plan_dict(plan) -> dict:
+    """A `Plan` or `search.SearchPlan` as saved in results: a plain dict, its Sectors a list (None: every Sector)."""
     return {**asdict(plan), "sectors": list(plan.sectors) if plan.sectors else None}
 
 
-def _log(message: str) -> None:
+def log_progress(message: str) -> None:
+    """Print a progress line at once, so a long run's log shows how far it has got."""
     print(message, flush=True)
 
 
@@ -508,7 +510,7 @@ def build(
         if year == validation_year:
             grid = uk_grid(flows, uk).filter(chosen)
             write_parquet(build_features(grid, with_earlier, sources), out / f"uk_grid_{year}.parquet", compression="zstd")
-        _log(f"experiment rows for {year} written")
+        log_progress(f"experiment rows for {year} written")
     settings = {
         "baci_version": baci.BACI_VERSION,
         "validation_year": validation_year,
@@ -597,6 +599,13 @@ def save(results: dict, root: Path | None = None) -> Path:
 def load(root: Path | None = None) -> dict:
     """The saved results of the real runs (`save`)."""
     return json.loads(results_path(root).read_text(encoding="utf-8"))
+
+
+def read_results(folder: Path | None) -> dict | None:
+    """The results saved in `folder` so far (a search's or the loop's), or None without a folder or a file."""
+    if folder is None or not (folder / RESULTS_FILE).exists():
+        return None
+    return json.loads((folder / RESULTS_FILE).read_text(encoding="utf-8"))
 
 
 def json_default(value):
