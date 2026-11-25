@@ -152,6 +152,14 @@ _Avoid_: blocker, obstacle, friction
 How many times more likely Product–Market pairs with large Export Gaps are than random pairs to grow or appear in later years. **Size-matched Lift** compares them instead with pairs of similar Export Potential, so it says whether a large Export Gap points at growth beyond what a pair's size already does. It describes a tendency, not a forecast.
 _Avoid_: hit rate, conversion
 
+**Realisation Test**:
+ITC's check of its Export Potential Map, run on our model as Lift's regression counterpart (`exportspredictor.realisation`, spec #156): later growth of UK Product–Market pairs regressed on their Unrealised Share in a base year, with fixed effects and errors clustered by pair. Each base year's Export Potential comes from fold models trained only on years up to it, and the test year is never read. Its coefficients are a rough benchmark of agreement with ITC's published ones, never a validation.
+_Avoid_: validation test, accuracy test
+
+**Unrealised Share**:
+ITC's floored share of a pair's Export Potential not yet realised in one year: (Export Potential − min(Actual Exports, Export Potential)) / Export Potential, between 0 and 1. Unlike the Relative Export Gap it uses one year's values, not Gap Period means, and a pair selling above its Export Potential scores 0, not a negative share.
+_Avoid_: untapped share
+
 **Event Backtest**:
 A check of Scenario Effects against a real trade-policy change that formed and took effect within about two years, comparing predicted with observed change against unaffected pairs.
 _Avoid_: validation event, natural experiment

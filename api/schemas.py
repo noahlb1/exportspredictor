@@ -542,6 +542,55 @@ class EventBacktest(BaseModel):
     caveat: str
 
 
+class RealisationFit(BaseModel):
+    coefficient: float | None
+    std_error: float | None
+
+
+class RealisationRow(RealisationFit):
+    """One regression of ITC's realisation test, keyed by test, level and predictor (`realisation.realisation_report`)."""
+
+    test: str  # "intensive_margin", ...
+    level: str  # "HS6", ...
+    predictor: str  # "model", ...
+    regressor: str
+    controls: dict[str, RealisationFit]
+    observations: int
+    pairs: int
+
+
+class PublishedRealisation(BaseModel):
+    """ITC's own published coefficient for one test (static version, with fixed effects), with its citation."""
+
+    test: str
+    regressor: str
+    coefficient: float
+    controls: dict[str, float]
+    level: str
+    source: str
+
+
+class DirectComparison(BaseModel):
+    run: bool  # part (c) of #156: the EPM's UK figures set beside ours
+    reason: str = ""
+
+
+class ItcComparison(BaseModel):
+    """How the model compares with ITC's Export Potential Map: ITC's realisation test run on the model (#156)."""
+
+    rows: list[RealisationRow]
+    published: list[PublishedRealisation]
+    base_years: list[int]  # each scored by fold models trained on years up to it
+    outcome_years: list[int]  # the first and last year read
+    fixed_effects: list[str]
+    cluster: str
+    direct_comparison: DirectComparison
+    text: str  # written by the API (`realisation.text`)
+    caveat: str
+    # The coefficients by column label, as tables show them ("Test", "Term", ITC's, "Model, HS6", ...).
+    table: list[dict[str, str]]
+
+
 class NotRun(BaseModel):
     """An opt-in part of the pipeline that this artefact version skipped (`evaluation.parts_not_run`)."""
 
@@ -682,6 +731,7 @@ class Evaluation(BaseModel):
     tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None
+    itc_comparison: ItcComparison | None = None  # None where it was not added to this version
     event_backtest: EventBacktest | None = None
     model_choice: ModelChoice
     event_backtest_note: EventBacktestNote | None = None

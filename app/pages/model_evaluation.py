@@ -147,6 +147,21 @@ def _show_lift(lift: dict) -> None:
     st.bar_chart(deciles, x="Export Gap tenth (1 = largest gaps)", y="Share that grew materially")
 
 
+def _show_itc_comparison(itc: dict) -> None:
+    """ITC's realisation test run on the model: the API's summary, the coefficients beside ITC's, and the caveats."""
+    st.markdown(itc["text"])
+    st.dataframe(pd.DataFrame(itc["table"]), hide_index=True)
+    st.caption(
+        f"Each coefficient comes with its standard error in brackets. Base years {years_text(itc['base_years'])}, "
+        f"each scored by fold models trained only on years up to it; {' and '.join(itc['fixed_effects'])} fixed "
+        f"effects, errors clustered by {itc['cluster']}."
+    )
+    st.caption(itc["caveat"])
+    direct = itc["direct_comparison"]
+    if not direct["run"]:
+        st.caption(f"A direct comparison with the map's own UK figures was {direct['reason']}.")
+
+
 def _effects_table(direction: dict, post_years: list[int]) -> pd.DataFrame:
     pooled = [{**direction["pooled"], "year": years_text(post_years)}] if len(post_years) > 1 else []
     rows = [*direction["by_year"], *pooled]
@@ -461,6 +476,9 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
         if report.get("lift"):
             with _section("Do large Export Gaps point at growth? (Lift)"):
                 _show_lift(report["lift"])
+        if report.get("itc_comparison"):
+            with _section("How the model compares with ITC's Export Potential Map"):
+                _show_itc_comparison(report["itc_comparison"])
         if report.get("event_backtest"):
             with _section("Scenario Effects against a real Trade Agreement (Event Backtest)"):
                 names = {market["iso3"]: market["name"] for market in fetch("/markets", client.api_url())}
