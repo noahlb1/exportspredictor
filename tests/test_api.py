@@ -1609,7 +1609,7 @@ def test_evaluation_serves_the_itc_comparison_s_hs2_rows_its_years_and_the_api_s
     # Each predictor runs on the units it scores above zero, so the caveat says where the samples differ.
     assert "units the Naive Baseline scores above zero" in served["caveat"]
     # The base-year models' departures from "never saw a year after the base year" are named (#178).
-    for departure in ("Relatedness", "Exporter scope", "no later trade", "round count"):
+    for departure in ("Relatedness", "training scope", "no later trade", "round count"):
         assert departure in served["caveat"], departure
     # Advisors see only the level compared with ITC.
     assert {row["Level"] for row in served["table"]} == {"HS2"}

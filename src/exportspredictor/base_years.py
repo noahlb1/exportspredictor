@@ -36,6 +36,7 @@ from pathlib import Path
 import polars as pl
 
 from exportspredictor import baci, downloads, ledger, market_reach
+from exportspredictor.artefacts import copy_lineage
 from exportspredictor.backtests import LeakageError
 from exportspredictor.evaluation import (
     TEST_MODELS_FILE,
@@ -353,11 +354,7 @@ def check_panel_version(info: Mapping, artefacts_root: Path, version: str) -> No
 
     The copies (`copied_from` in each version's metadata under `artefacts_root`) keep their models and settings, so a
     panel built from any of them is the frozen version's."""
-    lineage = []
-    while version and version not in lineage:
-        lineage.append(version)
-        metadata = Path(artefacts_root) / version / "metadata.json"
-        version = json.loads(metadata.read_text(encoding="utf-8")).get("copied_from") if metadata.exists() else None
+    lineage = copy_lineage(artefacts_root, version)
     if info.get("artefact_version") not in lineage:
         raise ValueError(
             f"The base-year panel was built from artefact {info.get('artefact_version')!r}, not from {lineage[0]!r} or "

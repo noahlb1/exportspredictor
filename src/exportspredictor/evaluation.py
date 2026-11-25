@@ -87,6 +87,7 @@ from exportspredictor.prediction import (
     ModelForm,
     export_potential,
 )
+from exportspredictor.sectors import sector_of
 from exportspredictor.selection_measure import (
     MIN_RANKED_ROWS,
     legacy_selection_measure,
@@ -586,7 +587,7 @@ def accuracy(scored: pl.DataFrame, markets: pl.DataFrame) -> dict:
             hs6=pl.col("hs6").cast(pl.String),
             _i=pl.col("importer").cast(pl.String),
         )
-        .with_columns(sector=pl.col("hs6").str.slice(0, 2))
+        .with_columns(sector=sector_of("hs6"))
         .join(regions, on="_i", how="left")
         .with_columns(pl.col("region", *(["income_level"] if has_income else [])).fill_null("Unclassified"))
     )

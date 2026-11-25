@@ -34,6 +34,7 @@ import polars as pl
 
 from exportspredictor.downloads import download, write_parquet, writing
 from exportspredictor.paths import data_dir
+from exportspredictor.sectors import sector_of
 
 BACI_VERSION = "V202601"
 BACI_URL = f"https://www.cepii.fr/DATA_DOWNLOAD/baci/data/BACI_HS12_{BACI_VERSION}.zip"
@@ -214,7 +215,7 @@ def _convert_year(
 
 def _products_lookup(product_codes: pl.DataFrame) -> pl.DataFrame:
     return product_codes.select(
-        hs6="code", description="description", sector=pl.col("code").str.slice(0, 2)
+        hs6="code", description="description", sector=sector_of("code")
     ).sort("hs6")
 
 

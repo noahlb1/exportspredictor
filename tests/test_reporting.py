@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import create_app
+from exportspredictor import artefacts as store
 from exportspredictor import reporting, scenarios
 from exportspredictor.caveats import CaveatContext, with_caveat_columns
 from exportspredictor.exclusions import SECTOR_71_REASON
@@ -188,6 +189,29 @@ def test_the_provenance_names_the_version_a_blocked_value_rebuild_derived_from(f
     metadata = {**fixture_artefacts.metadata, "blocked_values_from": "20260101T000000Z"}
 
     assert "derived from version 20260101T000000Z" in reporting.provenance(replace(fixture_artefacts, metadata=metadata))
+
+
+def test_the_provenance_names_the_latest_copy_step_and_what_it_added_beside_the_earlier_derivation(
+    fixture_artefacts, tmp_path
+):
+    # 20261125T171812Z's shape: a copy of a version whose Blocked Opportunity values were rebuilt from a third, with
+    # one evaluation block added.
+    source = {**fixture_artefacts.metadata, "version": "20260201T000000Z", "blocked_values_from": "20260101T000000Z"}
+    store.save(replace(fixture_artefacts, metadata=source), tmp_path)
+    copy = replace(
+        fixture_artefacts,
+        metadata={**source, "version": "20260301T000000Z", "copied_from": "20260201T000000Z"},
+        evaluation={**fixture_artefacts.evaluation, "new_block": {"rows": []}},
+    )
+    store.save(copy, tmp_path)
+
+    text = reporting.provenance(copy, artefacts_root=tmp_path)
+
+    assert "a copy of version 20260201T000000Z with new_block added to its evaluation" in text
+    assert "derived from version 20260101T000000Z" in text
+    # Where the source's folder is gone, the step alone.
+    assert "a copy of version 20260201T000000Z; derived" in reporting.provenance(copy, artefacts_root=tmp_path / "elsewhere")
+    assert reporting.provenance_versions(text) == [("20260301T000000Z", fixture_artefacts.metadata["source"])]
 
 
 def test_the_round_count_of_a_version_built_by_the_loop_was_chosen_on_the_selection_measure(fixture_artefacts):

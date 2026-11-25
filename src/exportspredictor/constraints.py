@@ -37,6 +37,7 @@ from exportspredictor.features import FeatureTransform
 from exportspredictor.folds import N_FOLDS, outside_fold
 from exportspredictor.prediction import export_potential
 from exportspredictor.scenarios import check_only_policy_changed
+from exportspredictor.sectors import sector_of
 from exportspredictor.training import Chunk, model_params, preparer, training_matrix
 
 WRONG_SIGN_TOLERANCE = 1e-9  # effect shares smaller than this are treated as no change
@@ -116,7 +117,7 @@ def compare(
 def _in_sectors(sectors: Sequence[str] | None) -> pl.Expr:
     if not sectors:
         return pl.lit(True)
-    return pl.col("hs6").cast(pl.String).str.slice(0, 2).is_in(list(sectors))
+    return sector_of("hs6").is_in(list(sectors))
 
 
 def _effects(pairs: pl.DataFrame, model: xgb.Booster) -> pl.DataFrame:
