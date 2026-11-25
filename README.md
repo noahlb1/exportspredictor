@@ -59,7 +59,7 @@ The layout:
 - `api/` serves saved artefacts;
 - `app/` talks to the API only over HTTP.
 
-See [CLAUDE.md](CLAUDE.md) for the modelling guardrails.
+See [CODING_STANDARDS.md](CODING_STANDARDS.md) for the modelling guardrails, the shape of the code and the hardware budget.
 
 ## Rebuild the data and artefacts
 

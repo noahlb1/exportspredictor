@@ -1599,7 +1599,7 @@ def test_evaluation_serves_the_itc_comparison_s_hs2_rows_its_years_and_the_api_s
     assert f"{saved['coefficient']:.3f}" in served["text"] and "0.615" in served["text"]
     assert "(HS2)" in served["text"] and "of 3" in served["text"] and "Naive Baseline" in served["text"]
     assert "2015–2019" in served["text"]
-    # Agreement, never validation (CLAUDE.md: associational language).
+    # Agreement, never validation (CODING_STANDARDS.md: associational language).
     assert "rough benchmark" in served["text"]
     assert "validat" not in served["text"].replace("not a validation", "")
     # The caveats name each difference from ITC.
