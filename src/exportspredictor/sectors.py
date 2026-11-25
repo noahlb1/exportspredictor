@@ -113,11 +113,6 @@ def sector_of(hs6: str = "hs6") -> pl.Expr:
     return pl.col(hs6).cast(pl.String).str.slice(0, 2)
 
 
-def sector_name(code: str) -> str:
-    """The name of one Sector (HS2 chapter, e.g. "22"); the code itself if the table has no name for it."""
-    return SECTOR_NAMES.get(code, code)
-
-
 def with_sector_names[T: (pl.DataFrame, pl.LazyFrame)](table: T) -> T:
     """`table` with a `sector_name` column beside its `sector` column (the code where no name is known)."""
     return table.with_columns(
