@@ -366,7 +366,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "altair" },
     { name = "catboost" },
     { name = "cupy-cuda13x", extra = ["ctk"] },
     { name = "hypothesis" },
@@ -399,7 +398,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "altair", specifier = ">=5.4" },
     { name = "catboost", specifier = ">=1.2.10" },
     { name = "cupy-cuda13x", extras = ["ctk"], specifier = ">=14.2.0" },
     { name = "hypothesis", specifier = ">=6.170.15" },
