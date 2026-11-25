@@ -1,4 +1,4 @@
-"""The app talks to the model only through the API over HTTP (CLAUDE.md "Shape"): no app file imports the package."""
+"""The app talks to the model only through the API over HTTP (CODING_STANDARDS.md "Shape"): no app file imports the package."""
 
 import ast
 import re
