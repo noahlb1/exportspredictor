@@ -12,12 +12,9 @@ The rows must fit the VRAM row budget (ADR 0004): `count_rows` measures them, an
 `check_row_budget` refuses a given one, before any training.
 
 The model is a single XGBoost model (ADR 0002): Tweedie objective, histogram trees and a
-+1 monotone constraint on every policy feature. Hyperparameters are tuned on the
-validation year only (`tune`); the test year is never read here.
++1 monotone constraint on every policy feature. The test year is never read here.
 """
 
-import json
-import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -313,48 +310,3 @@ def preparer(
 
     return prepare
 
-
-def tune(
-    train_chunks: Sequence[Chunk],
-    valid_chunks: Sequence[Chunk],
-    configs: Sequence[dict],
-    *,
-    uk: str,
-    transform: FeatureTransform | None = None,
-    device: str = "cpu",
-    non_uk_rate: float = 1.0,
-    max_rounds: int = 1000,
-    early_stopping_rounds: int = 30,
-    seed: int = 0,
-) -> pl.DataFrame:
-    """Train one model per config on the training chunks and score it on the validation chunks.
-
-    Early stopping on the validation chunks picks each config's number of rounds. Returns one
-    row per config: its parameters (as a JSON string), best round count, validation
-    `SELECTION_METRIC` and seconds taken, best first.
-    """
-    prepare = preparer(uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed)
-    train = training_matrix(train_chunks, prepare, device=device)
-    valid = training_matrix(valid_chunks, prepare, ref=train, device=device)
-    results = []
-    for config in configs:
-        params = model_params(config, device=device, seed=seed) | {"eval_metric": SELECTION_METRIC}
-        started = time.perf_counter()
-        model = xgb.train(
-            params,
-            train,
-            num_boost_round=max_rounds,
-            evals=[(valid, "valid")],
-            early_stopping_rounds=early_stopping_rounds,
-            verbose_eval=False,
-        )
-        results.append(
-            {
-                "config": json.dumps(dict(config), sort_keys=True),
-                "rounds": model.best_iteration + 1,
-                "valid_metric": float(model.best_score),
-                "seconds": time.perf_counter() - started,
-            }
-        )
-    del train, valid
-    return pl.DataFrame(results).sort("valid_metric")

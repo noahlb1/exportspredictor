@@ -154,16 +154,6 @@ def reexport_hub_expr(column: str = "iso3") -> pl.Expr:
     return pl.col(column).cast(pl.String).is_in(sorted(REEXPORT_HUBS))
 
 
-def flag_columns(hs6: str = "hs6", iso3: str = "iso3") -> list[pl.Expr]:
-    """The boolean `flagged_product` and `reexport_hub` columns of rows keyed by Product and Market."""
-    return [flagged_product_expr(hs6).alias("flagged_product"), reexport_hub_expr(iso3).alias("reexport_hub")]
-
-
-def is_flagged_product(hs6: str) -> bool:
-    """Whether `hs6` is a Sector 71 Flagged Product (the volatility rule's are in `volatility`)."""
-    return hs6.startswith(FLAGGED_PRODUCT_PREFIXES)
-
-
 def not_ranked_message(excluded: pl.DataFrame, hs6: str) -> str | None:
     """Why `hs6` has no ranking or explanation, from the artefact's `excluded_products` table; None if it has.
 

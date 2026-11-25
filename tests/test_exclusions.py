@@ -9,8 +9,7 @@ from exportspredictor.exclusions import (
     drop_excluded,
     excluded_products,
     exclusion_reason,
-    flag_columns,
-    is_flagged_product,
+    flagged_product_expr,
     not_ranked_message,
 )
 
@@ -121,17 +120,8 @@ def test_an_excluded_product_is_not_ranked_with_its_reason_named():
     ],
 )
 def test_flagged_products_are_the_rest_of_sector_71(hs6, flagged):
-    assert is_flagged_product(hs6) is flagged
+    assert pl.DataFrame({"hs6": [hs6]}).select(flagged_product_expr()).item() is flagged
 
 
 def test_re_export_hubs_are_the_adr_markets():
     assert REEXPORT_HUBS == frozenset({"NLD", "BEL", "IRL", "HKG", "SGP", "ARE", "CHE", "LUX"})
-
-
-def test_flag_columns_mark_rows_by_the_constants():
-    rows = pl.DataFrame({"hs6": ["711319", "220830"], "iso3": ["HKG", "JPN"]})
-
-    flagged = rows.with_columns(flag_columns())
-
-    assert flagged["flagged_product"].to_list() == [True, False]
-    assert flagged["reexport_hub"].to_list() == [True, False]

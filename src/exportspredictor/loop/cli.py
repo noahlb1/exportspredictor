@@ -1,12 +1,11 @@
-"""`python -m exportspredictor.loop <command>`: one command per experiment, the confirmation and the timing."""
+"""`python -m exportspredictor.loop <command>`: one command per experiment and the confirmation."""
 
 import json
-import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from exportspredictor import experiments, search
+from exportspredictor import search
 from exportspredictor.features import (
     EXCLUDED_PRODUCTS_SET,
     EXPORTER_COUNT_SET,
@@ -33,7 +32,6 @@ from exportspredictor.loop.arms import (
     WIDER_SCOPE_BASE_SET,
     WIDER_SCOPE_EXPERIMENT,
     WIDER_SCOPE_SET,
-    Arm,
     Settings,
     blend_arm,
     constraint_arms,
@@ -46,7 +44,7 @@ from exportspredictor.loop.arms import (
     two_part_arm,
 )
 from exportspredictor.loop.confirmation import V2, WINNER, confirm
-from exportspredictor.loop.data import RESULTS_FILE, load, loop_dir, real_data
+from exportspredictor.loop.data import load, loop_dir, real_data
 from exportspredictor.loop.recheck import current_win_threshold
 from exportspredictor.loop.runner import (
     Loop,
@@ -154,13 +152,11 @@ def main(argv: Sequence[str]) -> None:
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
         print(json.dumps({**summary, **{k: section[k] for k in ("difference", "win_threshold", "beats_v2")}}), flush=True)
-    elif command == "time":
-        print(json.dumps(time_one_arm()), flush=True)
     else:
         raise SystemExit(
             "usage: python -m exportspredictor.loop "
             "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|sibling-demand|"
-            "hyperparameters <stage>|model-family <family>|wider-scope|external-memory|excluded-products|confirm|time"
+            "hyperparameters <stage>|model-family <family>|wider-scope|external-memory|excluded-products|confirm"
         )
 
 
@@ -202,22 +198,3 @@ def confirm_best(root: Path | None = None) -> dict:
         threshold=current_win_threshold(results), folder=loop_dir(root),
     )
 
-
-def time_one_arm(root: Path | None = None) -> dict:
-    """Train the start configuration once more, in memory (the cache is not read), and save its timing.
-
-    The timing is saved in the loop's results under `timing`; nothing else there changes.
-    """
-    started = time.perf_counter()
-    lp = Loop(real_data(root), v2_plan(root))
-    row = lp.run_arm(Arm("timing"), lp.plan.start)
-    timing = {
-        "setup_seconds": lp.results["setup_seconds"],
-        **{k: row[k] for k in ("seconds", "matrix_seconds", "train_seconds", "rounds", "trained_rounds", "training_rows", SELECTION_MEASURE)},
-        "total_seconds": round(time.perf_counter() - started, 1),
-    }
-    path = loop_dir(root) / RESULTS_FILE
-    results = json.loads(path.read_text(encoding="utf-8"))
-    results["timing"] = timing
-    path.write_text(json.dumps(results, indent=2, default=experiments.json_default), encoding="utf-8")
-    return timing

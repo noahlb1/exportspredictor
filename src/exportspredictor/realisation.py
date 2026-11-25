@@ -144,11 +144,6 @@ def unrealised_potential(potential: pl.Expr, actual: pl.Expr) -> pl.Expr:
     return potential - pl.min_horizontal(actual, potential)
 
 
-def unrealised_share(potential: pl.Expr, actual: pl.Expr) -> pl.Expr:
-    """ITC's floored share: (potential − min(actual, potential)) / potential, between 0 and 1."""
-    return unrealised_potential(potential, actual) / potential
-
-
 def base_years(panel: pl.DataFrame, predictor: str = PREDICTORS[MODEL]) -> list[int]:
     """The years in which `panel` holds scores of `predictor`."""
     return sorted(int(y) for y in panel.filter(pl.col(predictor).is_not_null())["year"].unique())

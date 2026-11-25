@@ -4,9 +4,9 @@ import polars as pl
 from polars.testing import assert_frame_equal
 
 from exportspredictor.exclusions import (
+    FLAGGED_PRODUCT_PREFIXES,
     REEXPORT_HUBS,
     exclusion_reason,
-    is_flagged_product,
 )
 from exportspredictor.fixture import UK, build_world
 
@@ -69,5 +69,5 @@ def test_world_has_exactly_one_excluded_product():
 def test_world_has_a_flagged_product_and_a_re_export_hub():
     world = build_world()
 
-    assert [hs6 for hs6 in world.products["hs6"] if is_flagged_product(hs6)] == ["711319"]
+    assert [hs6 for hs6 in world.products["hs6"] if hs6.startswith(FLAGGED_PRODUCT_PREFIXES)] == ["711319"]
     assert [iso3 for iso3 in world.markets["iso3"] if iso3 in REEXPORT_HUBS] == ["HKG"]

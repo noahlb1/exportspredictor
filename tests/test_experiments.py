@@ -1,6 +1,7 @@
 """The feature ablation and the learning curve (ticket #53): measured on the validation year, never the test year."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import polars as pl
@@ -129,7 +130,7 @@ def test_the_runs_refuse_the_test_year(fixture_world):
     plan = experiments.FIXTURE_PLAN
 
     with pytest.raises(experiments.TestYearRead):
-        experiments.run(data, plan.with_validation_year(2023))
+        experiments.run(data, replace(plan, validation_year=2023))
     with pytest.raises(experiments.TestYearRead):
         experiments.fixture_data(fixture_world, validation_year=2023)
 
