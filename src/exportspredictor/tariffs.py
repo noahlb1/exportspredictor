@@ -392,6 +392,30 @@ def applied_tariffs(rows: pl.DataFrame, tariffs: Tariffs, agreements: pl.DataFra
     )
 
 
+def zero_unrecorded_preferences(rows: pl.DataFrame) -> pl.DataFrame:
+    """Feature rows with the Applied Tariff set to 0 where a Trade Agreement's preference is unrecorded (#171).
+
+    An Exporter–Importer pair has an *unrecorded preference* in a year when it has a Trade Agreement, no Customs
+    Union, and on none of its rows with a known MFN rate is the Applied Tariff below MFN: TRAINS holds no preference
+    schedule for the agreement (#140's flag H3), so `applied_tariffs` charged MFN everywhere. Those rows'
+    `log_applied_tariff` becomes 0 where the MFN rate is known, and `unrecorded_preference` marks the pair's rows.
+    Read from `rows` alone (`log_applied_tariff`, `mfn_tariff`, `trade_agreement`, `customs_union`), so a pair counts
+    as recorded if any of its rows here shows a preference. A research probe; the model is trained without it.
+    """
+    pair = ["exporter", "importer", "year"]
+    applied = (pl.col("log_applied_tariff").exp() - 1.0) * 100.0
+    below_mfn = (applied < pl.col("mfn_tariff") - 1e-3).fill_null(False)
+    unrecorded = (
+        (pl.col("trade_agreement") == 1) & (pl.col("customs_union") == 0) & ~below_mfn.any().over(pair)
+    ).fill_null(False)
+    return rows.with_columns(
+        log_applied_tariff=pl.when(unrecorded & pl.col("mfn_tariff").is_not_null())
+        .then(pl.lit(0.0, rows.schema["log_applied_tariff"]))
+        .otherwise(pl.col("log_applied_tariff")),
+        unrecorded_preference=unrecorded,
+    )
+
+
 # --- HS concordances (UN Statistics Division) ----------------------------------------------
 
 _UNSD = "https://unstats.un.org/unsd/classifications/Econ/tables"
