@@ -279,3 +279,30 @@ def test_the_sibling_demand_set_is_the_exporter_count_set_with_sibling_demand_st
         assert "log_sibling_demand_loo" not in before.columns  # the set built before it is unchanged
         assert rows.drop("log_sibling_demand_loo").equals(before)
         assert rows["log_sibling_demand_loo"].null_count() == 0
+
+
+# --- The Excluded Products' rows kept for training (#171) ---------------------------------------
+
+
+def test_the_excluded_products_set_trains_on_them_and_still_never_scores_them(derived_data_root):
+    """`exporter_count` plus the Excluded Products' training rows: every shared row is the same, the grid unchanged."""
+    _filled_gravity(derived_data_root, "JPN", 1e6)
+    base = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="exporter_count")
+
+    out = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="excluded_products")
+
+    assert out.name.endswith("_excluded_products")
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["excluded_products_trained"] is True
+    assert settings["gravity"]["country_year"] == "country_year_filled.parquet"
+    rows = pl.read_parquet(out / "training_2023.parquet")
+    before = pl.read_parquet(base / "training_2023.parquet").sort(features.KEYS)
+    excluded = pl.col("hs6").cast(pl.String) == "270900"
+    assert rows.filter(excluded & (pl.col("value_usd") > 0)).height > 0  # its Flows train the model
+    assert rows.filter(~excluded).sort(features.KEYS).equals(before)
+    for set_dir in (out, base):  # never scored
+        assert "270900" not in set(pl.read_parquet(set_dir / "uk_grid_2023.parquet")["hs6"].cast(pl.String))
+    assert pl.read_parquet(out / "uk_grid_2023.parquet").sort(features.KEYS).equals(
+        pl.read_parquet(base / "uk_grid_2023.parquet").sort(features.KEYS)
+    )
+    assert json.loads((base / "features.json").read_text())["excluded_products_trained"] is False
