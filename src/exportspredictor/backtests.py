@@ -66,7 +66,7 @@ from exportspredictor.training import (
     Chunk,
     model_params,
     preparer,
-    read_chunk,
+    read_rows,
     scan_chunks,
     training_matrix,
 )
@@ -445,13 +445,6 @@ def train_backtest_model(
     return BacktestModel(name, years, held, model, transform)
 
 
-def _rows(chunk: Chunk, condition: pl.Expr) -> pl.DataFrame:
-    """The rows of one chunk that match `condition`, read lazily from a Parquet path."""
-    if isinstance(chunk, (str, Path)):
-        return pl.scan_parquet(chunk).filter(condition).collect()
-    return read_chunk(chunk).filter(condition)
-
-
 # --- Lift on held-out Exporters ----------------------------------------------------------
 
 
@@ -570,7 +563,7 @@ def lift_rows(
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
     frames = []
     for year in settings.gap_years:
-        rows = _rows(training[year], is_held)
+        rows = read_rows(training[year], is_held)
         potential = model.predict(rows)
         kept = [pl.col(_PAIR).cast(pl.String), pl.col("year").cast(pl.Int16), "value_usd", "weight"]
         if form.naive_weight:
@@ -578,7 +571,7 @@ def lift_rows(
             potential = blend(potential, rows[NAIVE_COLUMN].to_numpy(), form.naive_weight)
             kept.append(NAIVE_COLUMN)
         if reach is not None:
-            source = _rows(training[year - reach.lag_years], is_held).select(
+            source = read_rows(training[year - reach.lag_years], is_held).select(
                 "exporter", "hs6", "importer", "value_usd", market_reach.DEMAND, "weight",
                 year=pl.lit(year - reach.lag_years),
             )
@@ -613,7 +606,7 @@ def lift_backtest(
     """
     yearly = lift_rows(training, settings, model, form=form, year_flows=year_flows)
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
-    later = _rows(training[settings.outcome_year], is_held & (pl.col("value_usd") > 0)).select(*_PAIR, "value_usd")
+    later = read_rows(training[settings.outcome_year], is_held & (pl.col("value_usd") > 0)).select(*_PAIR, "value_usd")
     result = lift(gap_period_pairs(yearly, later, settings), resamples=resamples, seed=seed)
     result.update(
         held_out_exporters=model.held_out_exporters,
@@ -717,7 +710,7 @@ def event_backtest(
     window = [*event.pre_years, *event.post_years]
     exporters = sorted({c for d in event.directions for c in d.exporters})
     rows = pl.concat(
-        [_rows(training[y], pl.col("exporter").cast(pl.String).is_in(exporters)) for y in window],
+        [read_rows(training[y], pl.col("exporter").cast(pl.String).is_in(exporters)) for y in window],
         how="vertical_relaxed",
     ).with_columns(pl.col("exporter", "importer").cast(pl.String))
     directions = []

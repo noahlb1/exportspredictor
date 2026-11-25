@@ -43,7 +43,7 @@ from exportspredictor.evaluation import TestModels, score_rows, test_models_dir
 from exportspredictor.features import features_dir
 from exportspredictor.folds import score_out_of_fold
 from exportspredictor.paths import REPO_ROOT, artefacts_dir, data_dir
-from exportspredictor.training import Chunk, read_chunk
+from exportspredictor.training import Chunk, read_chunk, read_rows
 
 FOLDER = "v1_predictions"
 MANIFEST_FILE = "manifest.json"
@@ -115,7 +115,7 @@ def _lift(v1: V1) -> pl.DataFrame:
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
     frames = []
     for year in v1.lift_years:
-        rows = _read(v1.rows[year], is_held)
+        rows = read_rows(v1.rows[year], is_held)
         frames.append(
             _keyed(rows.with_columns(export_potential_usd=pl.Series(model.predict(rows), dtype=pl.Float64)))
             .select(*_ROW_KEYS, "year", "value_usd", "weight", "export_potential_usd")
@@ -133,7 +133,7 @@ def _event_backtest(v1: V1) -> pl.DataFrame:
             pl.String
         ).is_in(list(d.importers))
         for year in event.post_years:
-            rows = _read(v1.rows[year], condition)
+            rows = read_rows(v1.rows[year], condition)
             flag = rows.schema["trade_agreement"]
             on = model.predict(rows.with_columns(trade_agreement=pl.lit(1, flag)))
             off = model.predict(rows.with_columns(trade_agreement=pl.lit(0, flag)))
@@ -147,12 +147,6 @@ def _event_backtest(v1: V1) -> pl.DataFrame:
                 .select(pl.lit(d.label).alias("direction"), pl.all())
             )
     return pl.concat(frames).sort("direction", "year", *_ROW_KEYS)
-
-
-def _read(chunk: Chunk, condition: pl.Expr) -> pl.DataFrame:
-    if isinstance(chunk, (str, Path)):
-        return pl.scan_parquet(chunk).filter(condition).collect()
-    return read_chunk(chunk).filter(condition)
 
 
 def _keyed(frame: pl.DataFrame) -> pl.DataFrame:
