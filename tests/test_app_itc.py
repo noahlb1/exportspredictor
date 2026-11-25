@@ -5,7 +5,7 @@ from dataclasses import replace
 from conftest import run_page
 
 from exportspredictor import artefacts as store
-from exportspredictor import realisation
+from exportspredictor import realisation, realisation_wording
 
 PAGE = "pages/model_evaluation.py"
 SECTION = "How the model compares with ITC's Export Potential Map"
@@ -23,7 +23,7 @@ def test_the_section_follows_lift_folded_with_the_api_s_text_its_table_and_cavea
     monkeypatch, live_api, fixture_artefacts, fixture_artefacts_dir
 ):
     page = _page(monkeypatch, live_api, fixture_artefacts_dir)
-    served = realisation.served(fixture_artefacts.evaluation[realisation.REPORT_KEY])
+    served = realisation_wording.served(fixture_artefacts.evaluation[realisation.REPORT_KEY])
 
     labels = [e.label for e in page.expander]
     assert labels.index(SECTION) == labels.index("Do large Export Gaps point at growth? (Lift)") + 1

@@ -28,24 +28,26 @@ the unrealised potential floored at zero pair by pair before summing, so one Pro
 unrealised potential. The HS2 rows are the ones set beside ITC's figures; the HS6 rows are reported, not compared.
 
 **Predictors.** Each test runs on the model's Export Potential and, through the same code, on the Naive Baseline in
-its place (`PREDICTORS`).
+its place (`PREDICTORS`). Both run on one **common sample**: a unit-year enters a test only where every predictor's
+score is above zero, so the columns compare on the same rows; the unit-years left out are counted (`zero_score`).
 
-**The panel** (`realisation_report`'s input) holds one row per UK pair and year: `hs6`, `iso3`, `year`,
-`export_potential` and `naive_baseline` (non-null in base years only, each scored by fold models trained on years up
-to that base year, #176), and `actual_exports` (0 where no Flow). Base years are the years with Export Potential.
-A panel reaching the test year is refused: the test never reads it, so nothing goes through the Test-year Ledger
-(ADR 0009), and the result feeds no modelling choice.
+**The panel** (`realisation_report`'s input, `PANEL_SCHEMA`) holds one row per UK pair and year: `hs6`, `iso3`,
+`year`, `export_potential_usd` and `naive_baseline_usd` (non-null in base years only, each scored by fold models
+trained on years up to that base year, #176), and `actual_exports_usd` (0 where no Flow). Base years are the years
+with Export Potential. A panel reaching the test year is refused: the test never reads it, so nothing goes through
+the Test-year Ledger (ADR 0009), and the result feeds no modelling choice.
 
 **The report** is JSON-ready and saved in the artefact's evaluation as `itc_comparison`. Its `rows` are keyed by
-`test`, `level` and `predictor`. The result is a rough benchmark of agreement, never a validation.
+`test`, `level` and `predictor`. The result is a rough benchmark of agreement, never a validation. Its tables and
+Advisor wording are made from it by `realisation_wording`.
 
 `python -m exportspredictor.realisation` adds the report, from the base-year panel (`base_years.load_panel`), to the
 newest artefact's evaluation as a new version.
 """
 
-import importlib
 import math
 import time
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -54,14 +56,21 @@ import numpy as np
 import polars as pl
 
 from exportspredictor import ppml
-from exportspredictor.experiments import TEST_YEAR
-from exportspredictor.wording import number_text, years_text
+from exportspredictor.ledger import TEST_YEAR
 
 if TYPE_CHECKING:
     from exportspredictor.artefacts import Artefacts
 
 REPORT_KEY = "itc_comparison"  # the evaluation report's block
 PAIR = ("hs6", "iso3")
+PANEL_SCHEMA = {
+    "hs6": pl.String,
+    "iso3": pl.String,
+    "year": pl.Int16,
+    "export_potential_usd": pl.Float64,
+    "naive_baseline_usd": pl.Float64,
+    "actual_exports_usd": pl.Float64,
+}
 WINDOW = 3  # years after the base year for growth, and before it for past growth
 INTENSIVE_MARGIN = "intensive_margin"
 EXTENSIVE_MARGIN = "extensive_margin"
@@ -73,7 +82,7 @@ HS2 = "HS2"
 LEVELS = {HS2: ("sector", "iso3"), HS6: PAIR}
 COMPARED_LEVEL = HS2
 # The panel column each predictor's scores come from.
-PREDICTORS = {"model": "export_potential", "naive_baseline": "naive_baseline"}
+PREDICTORS = {"model": "export_potential_usd", "naive_baseline": "naive_baseline_usd"}
 FIXED_EFFECTS = (("iso3",), ("year", "sector"))
 FIXED_EFFECTS_TEXT = ("Market", "year × Sector")
 CLUSTER_TEXT = "Product–Market pair (Sector–Market pair at HS2)"
@@ -109,18 +118,6 @@ PUBLISHED = (
         "source": METHODS_PAPER.format(table="Table 4"),
     },
 )
-TEST_NAMES = {
-    INTENSIVE_MARGIN: "Intensive margin",
-    EXTENSIVE_MARGIN: "Extensive margin",
-    NEW_FLOW_SIZE: "New-flow size",
-}
-TERM_NAMES = {
-    "unrealised_share": "Unrealised Share",
-    "past_growth": "past growth",
-    "log_export_potential": "log Export Potential",
-}
-PREDICTOR_NAMES = {"model": "Model", "naive_baseline": "Naive Baseline"}
-ITC_COLUMN = "ITC (76 sub-sectors)"  # the coefficient table's column of ITC's published figures
 
 # Part (c) of #156, the direct comparison with the EPM's UK figures, was dropped at step one (#174); #178 words the
 # reason in full for the notebook.
@@ -141,86 +138,107 @@ def unrealised_share(potential: pl.Expr, actual: pl.Expr) -> pl.Expr:
     return unrealised_potential(potential, actual) / potential
 
 
-def base_years(panel: pl.DataFrame, predictor: str = "export_potential") -> list[int]:
+def base_years(panel: pl.DataFrame, predictor: str = PREDICTORS["model"]) -> list[int]:
     """The years in which `panel` holds scores of `predictor`."""
     return sorted(int(y) for y in panel.filter(pl.col(predictor).is_not_null())["year"].unique())
 
 
-def _windows(panel: pl.DataFrame, predictor: str) -> pl.DataFrame:
-    """Per base year and pair with a score: the score, Actual Exports at t, their means before and after, and the
-    floored unrealised potential at t."""
+def _unrealised_column(score: str) -> str:
+    return f"unrealised_{score}"  # e.g. unrealised_export_potential_usd
+
+
+_SCORES = tuple(PREDICTORS.values())
+_SUMMED = (*_SCORES, "actual_usd", "later_usd", "earlier_usd", *map(_unrealised_column, _SCORES))
+
+
+def _key(level: str) -> list[str]:
+    """A unit-year's columns at `level`, with its Sector for the year × Sector fixed effect."""
+    return list(dict.fromkeys([*LEVELS[level], "year", "sector"]))
+
+
+def _windows(panel: pl.DataFrame) -> pl.DataFrame:
+    """Per base year and scored pair: each predictor's score, Actual Exports at t, their means before and after, and
+    each predictor's floored unrealised potential at t."""
     years = {int(y) for y in panel["year"].unique()}
+    actual, year = pl.col("actual_exports_usd"), pl.col("year")
     frames = []
-    for t in base_years(panel, predictor):
+    for t in base_years(panel):
         missing = sorted(set(range(t - WINDOW, t + WINDOW + 1)) - years)
         if missing:
             raise ValueError(f"Base year {t} needs Actual Exports for {missing}, which the panel does not hold")
-        year = pl.col("year")
         frames.append(
             panel.filter(year.is_between(t - WINDOW, t + WINDOW))
             .group_by(*PAIR)
             .agg(
-                potential=pl.col(predictor).filter(year == t).first(),
-                actual=pl.col("actual_exports").filter(year == t).first(),
-                later=pl.col("actual_exports").filter(year.is_between(t + 1, t + WINDOW)).mean(),
-                earlier=pl.col("actual_exports").filter(year.is_between(t - WINDOW, t - 1)).mean(),
+                *(pl.col(score).filter(year == t).first() for score in _SCORES),
+                actual_usd=actual.filter(year == t).first(),
+                later_usd=actual.filter(year.is_between(t + 1, t + WINDOW)).mean(),
+                earlier_usd=actual.filter(year.is_between(t - WINDOW, t - 1)).mean(),
             )
-            .filter(pl.col("potential").is_not_null())
+            .filter(pl.any_horizontal(pl.col(_SCORES).is_not_null()))
             .with_columns(year=pl.lit(t, dtype=pl.Int16))
         )
-    return pl.concat(frames).sort(*PAIR, "year").with_columns(
-        sector=pl.col("hs6").str.slice(0, 2), unrealised=unrealised_potential(pl.col("potential"), pl.col("actual"))
+    return pl.concat(frames).with_columns(
+        sector=pl.col("hs6").str.slice(0, 2),
+        **{
+            _unrealised_column(score): unrealised_potential(pl.col(score), pl.col("actual_usd"))
+            for score in _SCORES
+        },
     )
 
 
-def _units(panel: pl.DataFrame, predictor: str, level: str) -> pl.DataFrame:
-    """Per base year and unit of `level` (`LEVELS`): the score, Actual Exports at t and their means before and after,
-    the summed floored unrealised potential, and whether the UK exports the unit's Product (or Sector) to some Market at t.
+def _units(panel: pl.DataFrame, level: str) -> pl.DataFrame:
+    """Per base year and unit of `level` (`LEVELS`): each predictor's score and floored unrealised potential, Actual
+    Exports at t and their means before and after, whether every predictor scores the unit above zero (`scored`, the
+    common sample), and whether the UK exports the unit's Product (or Sector) to some Market at t.
 
-    At HS2 each figure is summed over the Sector–Market's scored pairs, the unrealised potential floored pair by pair before summing."""
-    pairs = _windows(panel, predictor)
-    units = pairs if level == HS6 else (
-        pairs.group_by(*LEVELS[level], "year", maintain_order=True)
-        .agg(pl.col("potential", "actual", "later", "earlier", "unrealised").sum())
-    )
+    Each figure is summed over the unit's scored pairs (one pair at HS6), the unrealised potential floored pair by
+    pair before summing."""
     product = LEVELS[level][0]
     exported = (
-        panel.filter(pl.col("actual_exports") > 0)
-        .select(pl.col("hs6").str.slice(0, 2).alias("sector") if product == "sector" else pl.col("hs6"), "year")
+        panel.filter(pl.col("actual_exports_usd") > 0)
+        .with_columns(sector=pl.col("hs6").str.slice(0, 2))
+        .select(product, "year")
         .unique()
         .with_columns(exported=pl.lit(True))
     )
     return (
-        units.join(exported, on=[product, "year"], how="left")
+        _windows(panel)
+        .group_by(_key(level))
+        .agg(pl.col(_SUMMED).sum())
+        .with_columns(scored=pl.all_horizontal(pl.col(_SCORES) > 0))
+        .join(exported, on=[product, "year"], how="left")
         .with_columns(pl.col("exported").fill_null(False))
-        .sort(*LEVELS[level], "year")  # a fixed order, so a report is reproducible to the last digit
+        .sort(_key(level))  # a fixed order, so a report is reproducible to the last digit
     )
 
 
+def _of(units: pl.DataFrame, predictor: str) -> pl.DataFrame:
+    """`units` with `predictor`'s score as `potential_usd` and its unrealised potential as `unrealised_usd`."""
+    score = PREDICTORS[predictor]
+    return units.with_columns(potential_usd=pl.col(score), unrealised_usd=pl.col(_unrealised_column(score)))
+
+
 def _trading(units: pl.DataFrame) -> pl.DataFrame:
-    return units.filter((pl.col("actual") > 0) & (pl.col("potential") > 0))
+    return units.filter(pl.col("actual_usd") > 0)
 
 
 def _not_trading(units: pl.DataFrame) -> pl.DataFrame:
-    return units.filter(pl.col("actual") == 0)
+    return units.filter(pl.col("actual_usd") == 0)
 
 
 def _starting_candidates(units: pl.DataFrame) -> pl.DataFrame:
-    return _not_trading(units).filter(pl.col("exported") & (pl.col("potential") > 0))
-
-
-def _key(level: str) -> list[str]:
-    return [*LEVELS[level], "year", "sector"] if level == HS6 else [*LEVELS[level], "year"]
+    return _not_trading(units).filter(pl.col("exported") & pl.col("scored"))
 
 
 def _intensive(units: pl.DataFrame, level: str) -> pl.DataFrame:
     return (
         _trading(units)
-        .filter((pl.col("later") > 0) & (pl.col("earlier") > 0))
+        .filter(pl.col("scored") & (pl.col("later_usd") > 0) & (pl.col("earlier_usd") > 0))
         .with_columns(
-            growth=(pl.col("later") / pl.col("actual")).log(),
-            unrealised_share=pl.col("unrealised") / pl.col("potential"),
-            past_growth=(pl.col("actual") / pl.col("earlier")).log(),
+            growth=(pl.col("later_usd") / pl.col("actual_usd")).log(),
+            unrealised_share=pl.col("unrealised_usd") / pl.col("potential_usd"),
+            past_growth=(pl.col("actual_usd") / pl.col("earlier_usd")).log(),
         )
         .select(*_key(level), "growth", "unrealised_share", "past_growth")
     )
@@ -229,39 +247,44 @@ def _intensive(units: pl.DataFrame, level: str) -> pl.DataFrame:
 def _extensive(units: pl.DataFrame, level: str) -> pl.DataFrame:
     return _starting_candidates(units).select(
         *_key(level),
-        started=(pl.col("later") > 0).cast(pl.Float64),
-        log_export_potential=pl.col("potential").log(),
+        started=(pl.col("later_usd") > 0).cast(pl.Float64),
+        log_export_potential=pl.col("potential_usd").log(),
     )
 
 
 def _new_flow(units: pl.DataFrame, level: str) -> pl.DataFrame:
-    return _starting_candidates(units).filter(pl.col("later") > 0).select(
+    return _starting_candidates(units).filter(pl.col("later_usd") > 0).select(
         *_key(level),
-        size=(pl.col("later") * WINDOW).log(),
-        log_export_potential=pl.col("potential").log(),
+        size=(pl.col("later_usd") * WINDOW).log(),
+        log_export_potential=pl.col("potential_usd").log(),
     )
+
+
+def _sample(sample_of, panel: pl.DataFrame, predictor: str, level: str) -> pl.DataFrame:
+    return sample_of(_of(_units(panel, level), predictor), level)
 
 
 def intensive_margin_sample(panel: pl.DataFrame, *, predictor: str, level: str = HS6) -> pl.DataFrame:
     """The intensive margin's rows: units trading at a base year with exports both before and after it.
 
     One row per unit and base year with `growth`, `unrealised_share` and `past_growth`, plus `sector` (HS2) for the
-    fixed effects. `predictor` is the panel column the Unrealised Share is computed from.
+    fixed effects. `predictor` (a key of `PREDICTORS`) names the score the Unrealised Share is computed from; every
+    predictor must score the unit above zero (the common sample).
     """
-    return _intensive(_units(panel, predictor, level), level)
+    return _sample(_intensive, panel, predictor, level)
 
 
 def extensive_margin_sample(panel: pl.DataFrame, *, predictor: str, level: str = HS6) -> pl.DataFrame:
     """The extensive margin's rows: units with no Actual Exports at a base year whose Product (Sector at HS2) the UK
     exports to some Market that year, with `started` (1 if any of the next three years is above zero) and
     `log_export_potential`, the log of `predictor`'s score."""
-    return _extensive(_units(panel, predictor, level), level)
+    return _sample(_extensive, panel, predictor, level)
 
 
 def new_flow_size_sample(panel: pl.DataFrame, *, predictor: str, level: str = HS6) -> pl.DataFrame:
     """New-flow size's rows: the extensive margin's units that start, with `size`, the log of their Actual Exports
     summed over the next three years, and `log_export_potential`."""
-    return _new_flow(_units(panel, predictor, level), level)
+    return _sample(_new_flow, panel, predictor, level)
 
 
 def _number(value: float) -> float | None:
@@ -272,38 +295,42 @@ def _fit(value: float, error: float) -> dict:
     return {"coefficient": _number(value), "std_error": _number(error)}
 
 
-# Each test: its sample, its outcome, its regressor and controls.
-_TESTS = {
-    INTENSIVE_MARGIN: (_intensive, "growth", "unrealised_share", ("past_growth",)),
-    EXTENSIVE_MARGIN: (_extensive, "started", "log_export_potential", ()),
-    NEW_FLOW_SIZE: (_new_flow, "size", "log_export_potential", ()),
-}
+def _intensive_counts(units: pl.DataFrame) -> dict:
+    """How the units reached the intensive margin's sample: who was trading at t, and who dropped out and why."""
+    trading = _trading(units)
+    scored = trading.filter(pl.col("scored"))
+    return {
+        "trading": trading.height,  # unit-years trading at the base year
+        "zero_score": int((~trading["scored"]).sum()),  # left out of the common sample: a score not above zero
+        "no_later_exports": int((scored["later_usd"] == 0).sum()),
+        "no_earlier_exports": int(((scored["later_usd"] > 0) & (scored["earlier_usd"] == 0)).sum()),
+    }
 
 
-def _counts(test: str, units: pl.DataFrame) -> dict:
-    """How the units reached the test's sample: who was trading or not at t, and who dropped out and why."""
-    if test == INTENSIVE_MARGIN:
-        trading = _trading(units)
-        return {
-            "trading": trading.height,  # unit-years trading at the base year
-            "no_later_exports": int((trading["later"] == 0).sum()),
-            "no_earlier_exports": int(((trading["later"] > 0) & (trading["earlier"] == 0)).sum()),
-        }
+def _starting_counts(units: pl.DataFrame) -> dict:
+    """How the units reached the extensive margin's sample: who was not trading at t, and who was left out and why."""
     not_trading = _not_trading(units)
-    candidates = _starting_candidates(units)
     return {
         "not_trading": not_trading.height,  # unit-years with no Actual Exports at the base year
         "product_not_exported": int((~not_trading["exported"]).sum()),  # left out: Product sold nowhere at t
-        "zero_score": int((not_trading["exported"] & (not_trading["potential"] <= 0)).sum()),  # no log
-        "started": int((candidates["later"] > 0).sum()),
+        "zero_score": int((not_trading["exported"] & ~not_trading["scored"]).sum()),  # no log, or not common
+        "started": int((_starting_candidates(units)["later_usd"] > 0).sum()),
     }
+
+
+# Each test: its sample, its outcome, its regressor and controls, and how units reached its sample.
+_TESTS = {
+    INTENSIVE_MARGIN: (_intensive, "growth", "unrealised_share", ("past_growth",), _intensive_counts),
+    EXTENSIVE_MARGIN: (_extensive, "started", "log_export_potential", (), _starting_counts),
+    NEW_FLOW_SIZE: (_new_flow, "size", "log_export_potential", (), _starting_counts),
+}
 
 
 def _row(units: pl.DataFrame, test: str, level: str, predictor: str) -> dict:
     """One test (`TESTS`) on the units of one level (`LEVELS`) and predictor (`PREDICTORS`), as one report row."""
-    sample_of, outcome, regressor, controls = _TESTS[test]
+    sample_of, outcome, regressor, controls, counts = _TESTS[test]
     fit = ppml.fit_fixed_effects_ols(
-        sample_of(units, level),
+        sample_of(_of(units, predictor), level),
         outcome=outcome,
         regressors=[regressor, *controls],
         fixed_effects=FIXED_EFFECTS,
@@ -316,7 +343,7 @@ def _row(units: pl.DataFrame, test: str, level: str, predictor: str) -> dict:
         "regressor": regressor,
         **_fit(fit.coefficients[regressor], fit.std_errors[regressor]),
         "controls": {name: _fit(fit.coefficients[name], fit.std_errors[name]) for name in controls},
-        **_counts(test, units),
+        **counts(units),
         "observations": fit.rows,
         "singletons_dropped": fit.dropped_rows,
         "pairs": fit.clusters,
@@ -324,8 +351,11 @@ def _row(units: pl.DataFrame, test: str, level: str, predictor: str) -> dict:
     }
 
 
-def realisation_report(panel: pl.DataFrame) -> dict:
+def realisation_report(panel: pl.DataFrame, *, training_cut_offs: Mapping[int, int] | None = None) -> dict:
     """ITC's realisation test on a scored UK panel (see the module docstring), JSON-ready.
+
+    `training_cut_offs` maps each base year to the last year its fold models trained on (`base_years`' records); by
+    default it is the base year itself, as the panel's contract states. A cut-off after its base year is refused.
 
     `rows` holds one entry per test, level and predictor; `published` ITC's own coefficients, cited;
     `direct_comparison` whether part (c) of #156 ran, and why not.
@@ -333,17 +363,22 @@ def realisation_report(panel: pl.DataFrame) -> dict:
     if panel.height and int(panel["year"].max()) >= TEST_YEAR:  # pyright: ignore[reportArgumentType]
         raise ValueError(f"The panel reaches the test year ({TEST_YEAR}); the realisation test never reads it")
     years = base_years(panel)
-    units = {
-        (level, predictor): _units(panel, column, level) for level in LEVELS for predictor, column in PREDICTORS.items()
-    }
+    cut_offs = {t: t for t in years} if training_cut_offs is None else {int(t): int(c) for t, c in training_cut_offs.items()}
+    if sorted(cut_offs) != years:
+        raise ValueError(f"Training cut-offs are given for {sorted(cut_offs)}, but the base years are {years}")
+    late = {t: c for t, c in cut_offs.items() if c > t}
+    if late:
+        raise ValueError(f"Base-year models trained on years after their base year: {late}")
+    units = {level: _units(panel, level) for level in LEVELS}
     return {
         "rows": [
-            _row(units[level, predictor], test, level, predictor)
+            _row(units[level], test, level, predictor)
             for test in TESTS
             for level in LEVELS
             for predictor in PREDICTORS
         ],
         "base_years": years,
+        "training_cut_offs": [{"base_year": t, "training_cut_off": cut_offs[t]} for t in years],
         "outcome_years": [min(years) - WINDOW, max(years) + WINDOW],
         "fixed_effects": list(FIXED_EFFECTS_TEXT),
         "cluster": CLUSTER_TEXT,
@@ -352,143 +387,6 @@ def realisation_report(panel: pl.DataFrame) -> dict:
         "direct_comparison": {"run": False, "reason": DIRECT_COMPARISON_DROPPED},
     }
 
-
-NOT_COMPARED = "not compared"  # ITC's column on HS6 rows: its test runs on 76 sub-sectors, nearer HS2
-
-
-def coefficient_rows(report: dict, *, levels: tuple[str, ...] = tuple(LEVELS)) -> list[dict]:
-    """The coefficient table: one row per test, level (of `levels`) and term, with ITC's published figure and each
-    predictor's coefficient, its standard error in brackets ("0.512 (0.031)"). Columns are `Test`, `Level`, `Term`,
-    ITC's, then one per predictor ("Model", "Naive Baseline"). ITC's figure sits on the compared level's rows
-    (`COMPARED_LEVEL`) only; HS6 rows read "not compared"."""
-    published = {row["test"]: row for row in report["published"]}
-    columns = list(dict.fromkeys(PREDICTOR_NAMES[row["predictor"]] for row in report["rows"]))
-    table: dict[tuple[str, str, str], dict] = {}
-    for row in report["rows"]:
-        if row["level"] not in levels:
-            continue
-        itc = published.get(row["test"], {})
-        terms = {row["regressor"]: row, **row["controls"]}
-        itc_terms = {itc.get("regressor"): itc.get("coefficient"), **itc.get("controls", {})}
-        for term, fit in terms.items():
-            entry = table.setdefault((row["test"], row["level"], term), {
-                "Test": TEST_NAMES[row["test"]],
-                "Level": row["level"],
-                "Term": TERM_NAMES[term],
-                ITC_COLUMN: (
-                    number_text(itc_terms.get(term), ".3f") if row["level"] == COMPARED_LEVEL else NOT_COMPARED
-                ),
-                **dict.fromkeys(columns, ""),
-            })
-            entry[PREDICTOR_NAMES[row["predictor"]]] = (
-                f"{number_text(fit['coefficient'], '.3f')} ({number_text(fit['std_error'], '.3f')})"
-            )
-    return list(table.values())
-
-def method_rows(report: dict) -> list[dict]:
-    """Part (a) of #156: ITC's method and ours side by side, one row per aspect."""
-    years = years_text(report["base_years"])
-    levels = " and ".join(dict.fromkeys(row["level"] for row in report["rows"]))
-    rows = [
-        ("Estimator",
-         "A decomposition: the exporter's supply, the market's projected demand and the ease of trade between them",
-         ("Gradient-boosted trees (XGBoost, Tweedie loss) on global HS6 trade, blended with the Naive Baseline and "
-         "scaled by Market Reach")),
-        ("Data and years",
-         "ITC Trade Map, every exporter; the realisation test rebuilds the indicator for 2006–2018",
-         (f"BACI HS6 Flows of the top 100 Exporters; the realisation test reads "
-         f"{years_text(report['outcome_years'])} and never the test year")),
-        ("Target year",
-         "About five years ahead (the current map is an estimate for 2031)",
-         "The year scored itself"),
-        ("Product level",
-         "HS6, some codes grouped; the realisation test runs on 76 sub-sectors",
-         f"HS6; the realisation test runs at {levels}"),
-        ("Gap definition",
-         "Unrealised potential, floored at zero: potential − min(actual, potential)",
-         ("The Export Gap is signed (Export Potential − Actual Exports, over the Gap Period); the test uses ITC's "
-         "floored Unrealised Share")),
-        ("How it is tested",
-         ("Three regressions of later trade on the indicator (growth of existing flows, whether new flows start, "
-         "their size), every exporter pooled, with exporter, market and year × sub-sector fixed effects"),
-         (f"The same three on UK pairs in base years {years}, each scored by fold models trained on years up to "
-         f"the base year, with the Naive Baseline run the same way beside the model; at HS2 the HS6 figures are "
-         f"summed, unrealised potential floored pair by pair; {' and '.join(report['fixed_effects'])} fixed effects, errors "
-         f"clustered by {report['cluster']}")),
-    ]
-    return [{"Aspect": a, "ITC's Export Potential Map": itc, "This model": ours} for a, itc, ours in rows]
-
-
-def direct_comparison_text(report: dict) -> str:
-    """Part (c) of #156 in one line: whether the direct comparison with the EPM's UK figures ran, and why not."""
-    part = report["direct_comparison"]
-    return "Direct comparison with the EPM's UK figures: " + ("run." if part["run"] else f"{part['reason']}.")
-
-
-def caveat(report: dict) -> str:
-    """How this test differs from ITC's: the exporters, the fixed effects, the levels, the years, the method and the
-    projection."""
-    return (
-        f"A rough benchmark, not a like-for-like test. ITC pools every exporter over 2006–2018; this covers the UK "
-        f"only, in base years {years_text(report['base_years'])}, with no exporter fixed effect. ITC's test runs on 76 "
-        f"sub-sectors; the rows set beside it are {COMPARED_LEVEL} Sectors, which group Products differently, and the "
-        f"HS6 rows are not compared with it. ITC's indicator is a decomposition that projects about five years ahead; "
-        f"ours is a learned model scoring the base year itself, with no forward projection. The coefficients describe "
-        f"a tendency across many pairs, not a forecast for any one."
-    )
-
-
-def _agrees(fit: dict | None, published: dict) -> bool | None:
-    if fit is None or fit["coefficient"] is None:
-        return None
-    return (fit["coefficient"] > 0) == (published["coefficient"] > 0)
-
-
-def text(report: dict) -> str:
-    """The plain-language summary the API serves beside the figures, at the level compared with ITC
-    (`COMPARED_LEVEL`): agreement in sign and broad size, never a validation."""
-    fits = {
-        (row["test"], row["predictor"]): row for row in report["rows"] if row["level"] == COMPARED_LEVEL
-    }
-    published = {row["test"]: row for row in report["published"]}
-    years = years_text(report["base_years"])
-    row = fits.get((INTENSIVE_MARGIN, "model"))
-    if row is None or row["coefficient"] is None:
-        return f"ITC's realisation test could not be fitted on the UK pairs of {years}."
-    coefficient = row["coefficient"]
-    direction = (
-        "grew faster" if coefficient > 0 else "grew more slowly" if coefficient < 0 else "grew no differently"
-    )
-    agreement = {test: _agrees(fits.get((test, "model")), published[test]) for test in TESTS}
-    fitted = [test for test, agrees in agreement.items() if agrees is not None]
-    naive = fits.get((INTENSIVE_MARGIN, "naive_baseline"))
-    naive_text = (
-        f" The Naive Baseline, run through the same tests in place of Export Potential, gives "
-        f"{number_text(naive['coefficient'], '.3f')} on that first test."
-        if naive and naive["coefficient"] is not None else ""
-    )
-    return (
-        f"ITC tests its Export Potential Map by asking whether pairs with more unrealised potential grow faster "
-        f"over the next three years. Run on UK Sector–Market pairs ({COMPARED_LEVEL}) in {years}, the model's "
-        f"Unrealised Share is associated with later growth: pairs with a larger share {direction} over the next three "
-        f"years, other things equal (coefficient {number_text(coefficient, '.3f')}, against "
-        f"{number_text(published[INTENSIVE_MARGIN]['coefficient'], '.3f')} published by ITC for its own indicator). "
-        f"Across ITC's three tests (whether pairs grow, whether new pairs start, and how large new flows are), the "
-        f"model agrees with ITC's sign on {sum(1 for test in fitted if agreement[test])} of {len(fitted)}.{naive_text} "
-        f"This is a rough benchmark of agreement, not a validation of either tool."
-    )
-
-
-def served(report: dict) -> dict:
-    """The report as the API serves it: with its `text`, `caveat` and coefficient `table` made now, not when saved.
-    The table (`coefficient_rows`, by column label as tables show them) holds the level compared with ITC only;
-    `rows` keeps every level."""
-    return {
-        **report,
-        "text": text(report),
-        "caveat": caveat(report),
-        "table": coefficient_rows(report, levels=(COMPARED_LEVEL,)),
-    }
 
 def with_itc_comparison(bundle: "Artefacts", report: dict) -> "Artefacts":
     """`bundle` with `report` in its evaluation (`REPORT_KEY`); every other block is kept."""
@@ -539,23 +437,15 @@ def fixture_panel(*, effect: float = 0.6, seed: int = 0, products: int = 60, mar
             "hs6": [hs6 for hs6, _ in pairs for _ in years],
             "iso3": [iso3 for _, iso3 in pairs for _ in years],
             "year": years * n,
-            "export_potential": np.where(scored, potential, np.nan).ravel(),
-            "naive_baseline": np.where(scored, naive, np.nan).ravel(),
-            "actual_exports": actual.ravel(),
+            "export_potential_usd": np.where(scored, potential, np.nan).ravel(),
+            "naive_baseline_usd": np.where(scored, naive, np.nan).ravel(),
+            "actual_exports_usd": actual.ravel(),
         },
-        schema={
-            "hs6": pl.String, "iso3": pl.String, "year": pl.Int16,
-            "export_potential": pl.Float64, "naive_baseline": pl.Float64, "actual_exports": pl.Float64,
-        },
-    ).with_columns(pl.col("export_potential", "naive_baseline").fill_nan(None))
+        schema=PANEL_SCHEMA,
+    ).with_columns(pl.col(_SCORES).fill_nan(None))
 
 
 # --- Adding the report to a saved artefact ---------------------------------------------------------------------
-
-
-def real_panel(root: Path | None = None) -> pl.DataFrame:
-    """The scored UK panel of the base-year fold models (`base_years.load_panel`, #176), imported only when read."""
-    return importlib.import_module("exportspredictor.base_years").load_panel(root)
 
 
 def add_to_latest(
@@ -567,11 +457,15 @@ def add_to_latest(
 ) -> Path:
     """Run the realisation test and save it in the newest artefact's evaluation, as a new version.
 
-    `panel` defaults to the real base-year panel (`real_panel`, under the data `root`). Models and tables are
-    copied byte for byte (`artefacts.copy_version`), and the rest of the evaluation is kept; nothing is trained,
-    and the test year is never read, so the Test-year Ledger is not written. Returns the new folder.
+    `panel` defaults to the real base-year panel (`base_years.load_panel`, under the data `root`), whose record must
+    name the newest artefact or one it was copied from (`base_years.check_panel_version`), and whose base-year models'
+    training cut-offs go into the report. Models and tables are copied byte for byte (`artefacts.copy_version`), and
+    the rest of the evaluation is kept; nothing is trained, and the test year is never read, so the Test-year Ledger
+    is not written. Returns the new folder.
     """
+    # Imported here: `base_years` trains through `evaluation`, which serves this module's report.
     from exportspredictor import artefacts as store
+    from exportspredictor import base_years as panels
     from exportspredictor.paths import artefacts_dir
 
     artefacts_root = Path(artefacts_root or artefacts_dir())
@@ -579,8 +473,14 @@ def add_to_latest(
     bundle = store.load(source)
     if bundle.evaluation is None:
         raise ValueError(f"Artefact {bundle.version} has no evaluation; run `python -m exportspredictor.evaluation` first")
+    cut_offs = None
+    if panel is None:
+        info = panels.load_panel_info(root)
+        panels.check_panel_version(info, artefacts_root, bundle.version)
+        panel = panels.load_panel(root)
+        cut_offs = panels.training_cut_offs(info)
     started = time.perf_counter()
-    report = realisation_report(real_panel(root) if panel is None else panel)
+    report = realisation_report(panel, training_cut_offs=cut_offs)
     report["seconds"] = round(time.perf_counter() - started, 2)
     metadata = {**bundle.metadata, "version": version or store.new_version(), "copied_from": bundle.version}
     return store.copy_version(

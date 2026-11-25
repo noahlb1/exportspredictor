@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import artefacts as store
-from exportspredictor import conformal, evaluation, illustrative, loop
+from exportspredictor import conformal, evaluation, illustrative, loop, realisation
 from exportspredictor.fixture import PRODUCTS
 from exportspredictor.pipeline import build_artefacts
 
@@ -1552,3 +1552,77 @@ def test_evaluation_serves_the_large_market_measures_beside_earlier_versions(cli
     assert rows[0]["name"].startswith("This version")
     # Worded in the package, so the app shows the columns without naming them itself.
     assert by_name["v1"]["columns"] == {"30 largest Markets": v1[30], "60 largest Markets": v1[60]}
+
+
+# --- `/evaluation`'s `itc_comparison`: ITC's realisation test on our model, worded for Advisors by the API (#175) ---
+
+
+def _served_evaluation(bundle, root) -> dict:
+    store.save(bundle, root)
+    with TestClient(create_app(root)) as test_client:
+        response = test_client.get("/evaluation")
+    assert response.status_code == 200
+    return response.json()
+
+
+@pytest.fixture(scope="module")
+def itc_report():
+    return realisation.realisation_report(realisation.fixture_panel())
+
+
+def test_evaluation_serves_the_itc_comparison_s_hs2_rows_its_years_and_the_api_s_own_text(
+    fixture_artefacts, itc_report, tmp_path
+):
+    served = _served_evaluation(realisation.with_itc_comparison(fixture_artefacts, itc_report), tmp_path)[
+        "itc_comparison"
+    ]
+
+    # The HS2 rows, the level compared with ITC, for the three tests and both predictors; HS6 stays in the notebook.
+    hs2 = [row for row in itc_report["rows"] if row["level"] == "HS2"]
+    assert [(row["test"], row["level"], row["predictor"]) for row in served["rows"]] == [
+        (test, "HS2", predictor)
+        for test in ("intensive_margin", "extensive_margin", "new_flow_size")
+        for predictor in ("model", "naive_baseline")
+    ]
+    for row, saved in zip(served["rows"], hs2, strict=True):
+        assert row["coefficient"] == pytest.approx(saved["coefficient"])
+    [saved] = [row for row in hs2 if (row["test"], row["predictor"]) == ("intensive_margin", "model")]
+    # The base years, and the last year each base year's fold models trained on.
+    assert served["base_years"] == [2015, 2016, 2017, 2018, 2019]
+    assert served["training_cut_offs"] == [
+        {"base_year": t, "training_cut_off": t} for t in (2015, 2016, 2017, 2018, 2019)
+    ]
+    assert {row["test"]: row["coefficient"] for row in served["published"]} == {
+        "intensive_margin": 0.615, "extensive_margin": 0.023, "new_flow_size": 0.243,
+    }
+    # The text reads the HS2 level, the one compared with ITC.
+    assert f"{saved['coefficient']:.3f}" in served["text"] and "0.615" in served["text"]
+    assert "(HS2)" in served["text"] and "of 3" in served["text"] and "Naive Baseline" in served["text"]
+    assert "2015–2019" in served["text"]
+    # Agreement, never validation (CLAUDE.md: associational language).
+    assert "rough benchmark" in served["text"]
+    assert "validat" not in served["text"].replace("not a validation", "")
+    # The caveats name each difference from ITC.
+    for difference in ("UK only", "no exporter fixed effect", "76 sub-sectors", "HS2", "2006–2018", "2015–2019",
+                       "learned model", "no forward projection"):
+        assert difference in served["caveat"], difference
+    # Advisors see only the level compared with ITC.
+    assert {row["Level"] for row in served["table"]} == {"HS2"}
+    assert "not compared" not in {row["ITC (76 sub-sectors)"] for row in served["table"]}
+    assert [row["Test"] for row in served["table"]] == [
+        "Intensive margin", "Intensive margin", "Extensive margin", "New-flow size",
+    ]
+    assert served["direct_comparison"]["run"] is False
+    assert "ITC comparison" not in [part["title"] for part in _served_evaluation(
+        realisation.with_itc_comparison(fixture_artefacts, itc_report), tmp_path / "again"
+    )["not_run"]]
+
+
+def test_evaluation_without_the_itc_comparison_omits_it_and_lists_the_part_as_not_run(fixture_artefacts, tmp_path):
+    evaluation = {k: v for k, v in fixture_artefacts.evaluation.items() if k != realisation.REPORT_KEY}
+    served = _served_evaluation(replace(fixture_artefacts, evaluation=evaluation), tmp_path)
+
+    assert served.get("itc_comparison") is None
+    [part] = [part for part in served["not_run"] if part["title"] == "ITC comparison"]
+    assert "not run for this version" in part["text"]
+    assert "python -m exportspredictor.realisation" in part["text"]

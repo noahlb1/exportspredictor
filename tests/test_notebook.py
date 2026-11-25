@@ -11,7 +11,13 @@ import pytest
 from nbclient import NotebookClient
 
 from exportspredictor import artefacts as store
-from exportspredictor import illustrative, pipeline, realisation, reporting
+from exportspredictor import (
+    illustrative,
+    pipeline,
+    realisation,
+    realisation_wording,
+    reporting,
+)
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "exports_predictor.ipynb"
 
@@ -251,7 +257,7 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
         assert note[part]["text"] in printed, part
     assert note["text"] in printed
     # The ITC comparison runs on a synthetic base-year panel and says why part (c) was dropped.
-    assert realisation.direct_comparison_text(loaded.evaluation[realisation.REPORT_KEY]) in printed
+    assert realisation_wording.direct_comparison_text(loaded.evaluation[realisation.REPORT_KEY]) in printed
     # Its coefficient table shows both levels, ITC's figures on HS2 only, and the Naive Baseline column.
     [coefficients] = [cell for cell in notebook.cells if cell.source.strip() == "reporting.itc_coefficients(bundle)"]
     table = " ".join(o.get("data", {}).get("text/html", "") for o in coefficients.outputs)

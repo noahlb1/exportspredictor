@@ -15,7 +15,7 @@ A single HS6 subheading of the Harmonized System, the most detailed internationa
 _Avoid_: good, commodity, item
 
 **Sector**:
-An HS2 chapter, used only to group and summarise Products, never as a modelling unit.
+An HS2 chapter, used to group and summarise Products. The model never learns or scores at Sector level; the one place a Sector is a unit is the Realisation Test's HS2 level, which sums its Products' figures by Sector and Market.
 _Avoid_: industry, category
 
 **Heading**:
@@ -153,7 +153,7 @@ How many times more likely Product–Market pairs with large Export Gaps are tha
 _Avoid_: hit rate, conversion
 
 **Realisation Test**:
-ITC's check of its Export Potential Map, run on our model as Lift's regression counterpart (`exportspredictor.realisation`, spec #156): three regressions with fixed effects and errors clustered by pair. The **intensive margin** regresses later growth of trading pairs on their Unrealised Share in a base year; the **extensive margin** asks whether pairs not trading then start within three years, and **new-flow size** how much those that start sell, both on log Export Potential. Each runs at HS6 and at HS2, where a Sector–Market's unrealised potential is floored pair by pair, then summed, and with the Naive Baseline in Export Potential's place. Each base year's Export Potential comes from fold models trained only on years up to it, and the test year is never read. Only the HS2 coefficients are set beside ITC's published ones, as a rough benchmark of agreement, never a validation.
+ITC's check of its Export Potential Map, run on our model as Lift's regression counterpart (`exportspredictor.realisation`, spec #156): three regressions with fixed effects and errors clustered by unit. A **unit** is a Product–Market pair at HS6, or a Sector–Market pair at HS2. The **intensive margin** regresses later growth of trading pairs on their Unrealised Share in a base year; the **extensive margin** asks whether pairs not trading then start within three years, and **new-flow size** how much those that start sell, both on log Export Potential. Each runs at HS6 and at HS2, where a Sector–Market's unrealised potential is floored pair by pair, then summed, and with the Naive Baseline in Export Potential's place, on the same units: a unit enters only where both score it above zero. Each base year's Export Potential comes from fold models trained only on years up to it, and the test year is never read. Only the HS2 coefficients are set beside ITC's published ones, as a rough benchmark of agreement, never a validation.
 _Avoid_: validation test, accuracy test
 
 **Unrealised Share**:

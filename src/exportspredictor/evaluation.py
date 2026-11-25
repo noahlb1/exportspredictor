@@ -54,7 +54,14 @@ import polars as pl
 import xgboost as xgb
 
 from exportspredictor import artefacts as store
-from exportspredictor import baci, ledger, market_reach, offsets
+from exportspredictor import (
+    baci,
+    ledger,
+    market_reach,
+    offsets,
+    realisation,
+    realisation_wording,
+)
 from exportspredictor.conformal import COVERAGE, COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
 from exportspredictor.exclusions import drop_excluded
@@ -123,12 +130,8 @@ def served_report(report: dict) -> dict:
     served = {key: value for key, value in relabelled(report).items() if key not in NOT_SERVED}
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
-    if served.get("itc_comparison"):
-        from exportspredictor import (
-            realisation,  # it imports `experiments`, which imports this module
-        )
-
-        served["itc_comparison"] = realisation.served(served["itc_comparison"])
+    if served.get(realisation.REPORT_KEY):
+        served[realisation.REPORT_KEY] = realisation_wording.served(served[realisation.REPORT_KEY])
     return served
 
 # The opt-in parts of a pipeline run (`pipeline.Parts`, spec #65 story 23): title, the report
@@ -147,7 +150,7 @@ OPTIONAL_PARTS = (
 )
 # Parts added to a saved version by their own command, not by a pipeline switch: title, report block, command, why.
 ADDED_PARTS = (
-    ("ITC comparison", "itc_comparison", "python -m exportspredictor.realisation",
+    ("ITC comparison", realisation.REPORT_KEY, "python -m exportspredictor.realisation",
      "It runs ITC's realisation test, the one behind its Export Potential Map, on the model's Export Potential."),
 )
 

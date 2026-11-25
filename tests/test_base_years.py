@@ -5,7 +5,7 @@ from dataclasses import replace
 import polars as pl
 import pytest
 
-from exportspredictor import base_years, ledger, pipeline
+from exportspredictor import base_years, ledger, pipeline, realisation
 from exportspredictor.backtests import LeakageError
 from exportspredictor.fixture import UK
 
@@ -15,8 +15,8 @@ FIXTURE_PANEL_YEARS = (2021, 2022)
 
 
 @pytest.fixture(scope="module")
-def configuration(fixture_artefacts):
-    return base_years.Configuration.from_metadata(fixture_artefacts.metadata)
+def frozen(fixture_artefacts):
+    return base_years.FrozenSettings.from_metadata(fixture_artefacts.metadata)
 
 
 @pytest.fixture(scope="module")
@@ -24,31 +24,31 @@ def fixture_inputs(fixture_world):
     return base_years.fixture_inputs(fixture_world)
 
 
-def _panel(inputs, configuration, cache=None):
+def _panel(inputs, frozen, cache=None):
     return base_years.build_panel(
-        inputs, configuration, base_years=FIXTURE_BASE_YEARS, panel_years=FIXTURE_PANEL_YEARS, test_year=2023,
+        inputs, frozen, base_years=FIXTURE_BASE_YEARS, panel_years=FIXTURE_PANEL_YEARS, test_year=2023,
         uk=UK, device="cpu", cache=cache,
     )
 
 
-def test_training_base_year_models_on_a_year_after_the_base_year_raises_leakage_error(fixture_world, configuration):
+def test_training_base_year_models_on_a_year_after_the_base_year_raises_leakage_error(fixture_world, frozen):
     chunks = pipeline.fixture_training(fixture_world, baseline_year=2024)  # 2021-2023
 
     with pytest.raises(LeakageError):
-        base_years.train_base_year_models(chunks, base_year=2022, configuration=configuration, uk=UK, device="cpu")
+        base_years.train_base_year_models(chunks, base_year=2022, frozen=frozen, uk=UK, device="cpu")
 
     kept = {year: chunk for year, chunk in chunks.items() if year <= 2022}
-    models = base_years.train_base_year_models(kept, base_year=2022, configuration=configuration, uk=UK, device="cpu")
+    models = base_years.train_base_year_models(kept, base_year=2022, frozen=frozen, uk=UK, device="cpu")
     assert models.training_years == [2021, 2022]
-    assert len(models.models) == configuration.n_folds
+    assert len(models.models) == frozen.n_folds
 
 
 def test_base_year_models_are_cached_by_their_settings_and_a_second_run_reads_no_training_data(
-    fixture_world, configuration, tmp_path
+    fixture_world, frozen, tmp_path
 ):
     chunks = {y: c for y, c in pipeline.fixture_training(fixture_world, baseline_year=2023).items() if y <= 2022}
     first = base_years.train_base_year_models(
-        chunks, base_year=2022, configuration=configuration, uk=UK, device="cpu", cache=tmp_path
+        chunks, base_year=2022, frozen=frozen, uk=UK, device="cpu", cache=tmp_path
     )
 
     class Unreadable(dict):
@@ -56,36 +56,36 @@ def test_base_year_models_are_cached_by_their_settings_and_a_second_run_reads_no
             raise AssertionError(f"read training year {year}")
 
     again = base_years.train_base_year_models(
-        Unreadable(chunks), base_year=2022, configuration=configuration, uk=UK, device="cpu", cache=tmp_path
+        Unreadable(chunks), base_year=2022, frozen=frozen, uk=UK, device="cpu", cache=tmp_path
     )
     assert [bytes(m.save_raw()) for m in again.models] == [bytes(m.save_raw()) for m in first.models]
 
     # Other settings are other models: a different round count misses the cache.
-    other = replace(configuration, rounds=configuration.rounds + 1)
+    other = replace(frozen, rounds=frozen.rounds + 1)
     folders = {
-        base_years.models_dir(tmp_path, base_year=2022, configuration=c, training_years=[2021, 2022])
-        for c in (configuration, other)
+        base_years.models_dir(tmp_path, base_year=2022, frozen=c, training_years=[2021, 2022])
+        for c in (frozen, other)
     }
     assert len(folders) == 2
 
 
 def test_the_panel_holds_every_uk_pair_in_every_year_scored_only_in_base_years(
-    fixture_world, fixture_inputs, configuration
+    fixture_world, fixture_inputs, frozen
 ):
-    panel = _panel(fixture_inputs, configuration)
+    panel = _panel(fixture_inputs, frozen)
 
-    assert panel.schema == pl.Schema(base_years.PANEL_SCHEMA)
-    assert list(panel.columns) == ["hs6", "iso3", "year", "export_potential", "naive_baseline", "actual_exports"]
+    assert panel.schema == pl.Schema(realisation.PANEL_SCHEMA)
+    assert list(panel.columns) == ["hs6", "iso3", "year", "export_potential_usd", "naive_baseline_usd", "actual_exports_usd"]
     pairs = panel.select("hs6", "iso3").unique()
     assert panel.height == pairs.height * len(FIXTURE_PANEL_YEARS)
     assert not panel.select("hs6", "iso3", "year").is_duplicated().any()
     # The fixture's UK grid: 5 Products (its Excluded Product left out) x 4 Markets.
     assert pairs.height == 5 * 4
     scored = panel.filter(pl.col("year") == 2022)
-    assert scored["export_potential"].is_not_null().all() and (scored["export_potential"] > 0).all()
-    assert scored["naive_baseline"].is_not_null().all()
+    assert scored["export_potential_usd"].is_not_null().all() and (scored["export_potential_usd"] > 0).all()
+    assert scored["naive_baseline_usd"].is_not_null().all()
     unscored = panel.filter(pl.col("year") == 2021)
-    assert unscored["export_potential"].is_null().all() and unscored["naive_baseline"].is_null().all()
+    assert unscored["export_potential_usd"].is_null().all() and unscored["naive_baseline_usd"].is_null().all()
 
     flows = fixture_world.flows.filter((pl.col("exporter") == UK) & pl.col("year").is_in(FIXTURE_PANEL_YEARS))
     expected = flows.select(
@@ -93,11 +93,11 @@ def test_the_panel_holds_every_uk_pair_in_every_year_scored_only_in_base_years(
         expected="value_usd",
     )
     joined = panel.join(expected, on=["hs6", "iso3", "year"], how="left")
-    assert joined.select((pl.col("actual_exports") == pl.col("expected").fill_null(0.0)).all()).item()
+    assert joined.select((pl.col("actual_exports_usd") == pl.col("expected").fill_null(0.0)).all()).item()
 
 
 def test_the_panel_never_reads_the_test_year_or_later_and_leaves_the_ledger_untouched(
-    fixture_world, fixture_inputs, configuration, monkeypatch
+    fixture_world, fixture_inputs, frozen, monkeypatch
 ):
     def refuse(*args, **kwargs):
         raise AssertionError("the panel touched the Test-year Ledger")
@@ -127,18 +127,18 @@ def test_the_panel_never_reads_the_test_year_or_later_and_leaves_the_ledger_unto
 
     recording = base_years.Inputs(training=Recording(poisoned.training), grids=Recording(poisoned.grids), year_flows=flows)
 
-    assert _panel(recording, configuration).equals(_panel(fixture_inputs, configuration))
+    assert _panel(recording, frozen).equals(_panel(fixture_inputs, frozen))
     assert read and max(read) < 2023
 
     with pytest.raises(LeakageError):
         base_years.build_panel(
-            fixture_inputs, configuration, base_years=(2022,), panel_years=(2021, 2022, 2023), test_year=2023,
+            fixture_inputs, frozen, base_years=(2022,), panel_years=(2021, 2022, 2023), test_year=2023,
             uk=UK, device="cpu",
         )
 
 
-def test_the_panel_is_saved_under_the_data_root_and_loaded_back(fixture_inputs, configuration, tmp_path):
-    panel = _panel(fixture_inputs, configuration)
+def test_the_panel_is_saved_under_the_data_root_and_loaded_back(fixture_inputs, frozen, tmp_path):
+    panel = _panel(fixture_inputs, frozen)
 
     path = base_years.save_panel(panel, tmp_path, info={"artefact_version": "fixture-test"})
 
