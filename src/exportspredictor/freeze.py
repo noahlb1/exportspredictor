@@ -26,7 +26,6 @@ leaves nothing behind. Re-running is a no-op once a manifest exists (it is verif
 `uv run python -m exportspredictor.freeze` freezes the real v1 artefact on the CPU.
 """
 
-import hashlib
 import json
 import shutil
 import subprocess
@@ -201,7 +200,7 @@ def write(artefact_folder: Path, built: Mapping[str, pl.DataFrame], fields: dict
         entries = {}
         for name, frame in built.items():
             path = downloads.write_parquet(frame, staging / TABLES[name])
-            entries[name] = {"file": TABLES[name], "rows": frame.height, "sha256": _sha256(path)}
+            entries[name] = {"file": TABLES[name], "rows": frame.height, "sha256": downloads.sha256(path)}
         manifest = {
             **fields,
             "tables": entries,
@@ -224,7 +223,7 @@ def verify(folder: Path) -> dict:
     manifest = json.loads((folder / MANIFEST_FILE).read_text(encoding="utf-8"))
     for name, entry in manifest["tables"].items():
         path = folder / entry["file"]
-        if _sha256(path) != entry["sha256"] or pl.scan_parquet(path).select(pl.len()).collect().item() != entry["rows"]:
+        if downloads.sha256(path) != entry["sha256"] or pl.scan_parquet(path).select(pl.len()).collect().item() != entry["rows"]:
             raise ValueError(f"The frozen table {name} does not match its manifest")
     return manifest
 
@@ -238,7 +237,7 @@ def lift_held_out_exporters(folder: Path) -> list[str]:
     entry = json.loads((folder / MANIFEST_FILE).read_text(encoding="utf-8"))["tables"]["lift_held_out_exporters"]
     path = folder / entry["file"]
     table = pl.read_parquet(path)
-    if _sha256(path) != entry["sha256"] or table.height != entry["rows"]:
+    if downloads.sha256(path) != entry["sha256"] or table.height != entry["rows"]:
         raise ValueError("The frozen table lift_held_out_exporters does not match its manifest")
     return sorted(table["exporter"].cast(pl.String).to_list())
 
@@ -246,14 +245,6 @@ def lift_held_out_exporters(folder: Path) -> list[str]:
 def v1_folder(artefacts_root: Path | None = None) -> Path:
     """The frozen v1 tables of the real v1 artefact."""
     return Path(artefacts_root or artefacts_dir()) / V1_IDS["artefact"] / FOLDER
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as file:
-        for block in iter(lambda: file.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 # --- The real v1 --------------------------------------------------------------------------------

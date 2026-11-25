@@ -11,7 +11,6 @@
   above 0.20 act).
 """
 
-import hashlib
 import math
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from exportspredictor import comparison, evaluation, rankings
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
+from exportspredictor.downloads import sha256
 from exportspredictor.evaluation import parts_not_run
 from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
@@ -677,16 +677,8 @@ def data_lineage(root: Path | None = None) -> pl.DataFrame:
             continue
         for path in sorted(p for p in base.rglob("*") if p.is_file() and not p.name.endswith(".part")):
             rows.append({"source": source, "file": path.relative_to(root).as_posix(),
-                         "bytes": path.stat().st_size, "sha256": _sha256(path)})
+                         "bytes": path.stat().st_size, "sha256": sha256(path)})
     return pl.DataFrame(rows, schema={"source": pl.String, "file": pl.String, "bytes": pl.Int64, "sha256": pl.String})
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as file:
-        for block in iter(lambda: file.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 # --- Drift ---------------------------------------------------------------------------------

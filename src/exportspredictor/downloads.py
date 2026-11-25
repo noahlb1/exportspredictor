@@ -4,6 +4,7 @@ Every build step writes to `<name>.part` and renames it when complete (`writing`
 several processes share one data directory. `download` fetches a URL that way, once.
 """
 
+import hashlib
 import shutil
 import urllib.request
 from collections.abc import Iterator
@@ -34,6 +35,15 @@ def write_parquet(frame: pl.DataFrame, target: Path, **options) -> Path:
     with writing(target) as part:
         frame.write_parquet(part, **options)
     return Path(target)
+
+
+def sha256(path: Path) -> str:
+    """The SHA-256 hex digest of the file at `path`, read in 1 MiB blocks."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as file:
+        for block in iter(lambda: file.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def fetch(url: str, *, timeout: float = 300) -> bytes:
