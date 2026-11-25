@@ -49,7 +49,7 @@ from exportspredictor.evaluation import (
 )
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
-from exportspredictor.paths import data_dir
+from exportspredictor.paths import artefacts_dir, data_dir
 from exportspredictor.rankings import REACH_DEPTHS, in_top, ranked_opportunities
 
 # Colours: one neutral, one accent for "this version" or a gain, one for a loss.
@@ -95,15 +95,15 @@ _PROVENANCE = re.compile(re.escape(PROVENANCE_PREFIX) + r" (\S+) \(source: ([^;)
 def provenance(bundle: Artefacts, *, artefacts_root: Path | None = None) -> str:
     """Which artefact version the outputs come from, whether it is real data or the fixture, and how it was derived.
 
-    A copy names the version it was copied from (`copied_from`, the latest copy step) and, where `artefacts_root` still
-    holds that version, which evaluation blocks the copy added or replaced and the versions it was copied from in turn
-    (`artefacts.copy_lineage`). A version whose values an earlier step rebuilt from another
-    (`blocked_values_from`, `ppml_benchmark_from`) names that one too."""
+    A copy names the version it was copied from (`copied_from`, the latest copy step) and, where `artefacts_root` (by
+    default the served artefacts directory) still holds that version, which evaluation blocks the copy added or
+    replaced and the versions it was copied from in turn (`artefacts.copy_lineage`). A version whose values an earlier
+    step rebuilt from another (`blocked_values_from`, `ppml_benchmark_from`) names that one too."""
     metadata = bundle.metadata
     steps = []
     copied = metadata.get("copied_from")
     if copied:
-        steps.append(f"a copy of version {copied}" + (_copy_step(bundle, copied, artefacts_root) if artefacts_root else ""))
+        steps.append(f"a copy of version {copied}" + _copy_step(bundle, copied, artefacts_root or artefacts_dir()))
     derived = metadata.get("blocked_values_from") or metadata.get("ppml_benchmark_from")
     if derived and derived != copied:
         steps.append(f"derived from version {derived}")

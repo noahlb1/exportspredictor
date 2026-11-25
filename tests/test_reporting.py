@@ -209,7 +209,8 @@ def test_the_provenance_names_the_latest_copy_step_and_what_it_added_beside_the_
 
     assert "a copy of version 20260201T000000Z with new_block added to its evaluation" in text
     assert "derived from version 20260101T000000Z" in text
-    assert "a copy of version 20260201T000000Z" in reporting.provenance(copy)  # without the folders, the step alone
+    # Where the source's folder is gone, the step alone.
+    assert "a copy of version 20260201T000000Z; derived" in reporting.provenance(copy, artefacts_root=tmp_path / "elsewhere")
     assert reporting.provenance_versions(text) == [("20260301T000000Z", fixture_artefacts.metadata["source"])]
 
 
