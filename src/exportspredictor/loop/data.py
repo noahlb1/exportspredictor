@@ -102,9 +102,12 @@ def save_results(folder: Path, results: dict) -> None:
     partial.replace(path)
 
 
-def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR) -> LoopData:
-    """The fixture world's rows for every Product, built only from Flows up to the validation year."""
-    rows = experiments.fixture_data(world, validation_year=validation_year)
+def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR, keep_excluded: bool = False) -> LoopData:
+    """The fixture world's rows for every Product, built only from Flows up to the validation year.
+
+    `keep_excluded` keeps the Excluded Products' training rows, as the `excluded_products` feature set does (#171).
+    """
+    rows = experiments.fixture_data(world, validation_year=validation_year, keep_excluded=keep_excluded)
     flows = world.flows.filter(pl.col("year") == validation_year)
     world_exports = world_products(world.flows.filter(pl.col("year") < validation_year))
     detail = fit_product_detail(world.flows, sorted(rows.training), uk=baci.UK)

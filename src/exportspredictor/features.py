@@ -188,9 +188,11 @@ def training_rows(
     seed: int = 0,
     uk: str = baci.UK,
     exporters: Collection[str] | None = None,
+    keep_excluded: bool = False,
 ) -> pl.DataFrame:
     """Every non-zero Flow (weight 1), every UK Zero Cell (weight 1) and a random sample of
-    other Exporters' Zero Cells (weight 1/rate), leaving out Excluded Products.
+    other Exporters' Zero Cells (weight 1/rate), leaving out Excluded Products unless `keep_excluded`
+    (#171: their rows kept by the same rules, for an Arm that trains on them).
 
     A Zero Cell is an Exporter–Importer–Product–year where the Exporter exports the
     Product to someone and the Importer imports it from someone that year, but not from
@@ -207,7 +209,10 @@ def training_rows(
     if not 0 < rate <= 1:
         raise ValueError(f"rate must be in (0, 1], got {rate}")
     flows = flows.lazy()
-    active = flows.filter(pl.col("value_usd") > 0).select(*KEYS, "value_usd").pipe(drop_excluded)
+    products = flows.filter(pl.col("value_usd") > 0)
+    if not keep_excluded:
+        products = products.pipe(drop_excluded)
+    active = products.select(*KEYS, "value_usd")
     is_uk = pl.col("exporter").cast(pl.String) == uk
     if exporters is not None:
         active = active.filter(is_uk | pl.col("exporter").cast(pl.String).is_in(sorted(set(exporters))))
@@ -215,7 +220,7 @@ def training_rows(
         active.select("exporter", "hs6", "year")
         .unique()
         .join(
-            flows.filter(pl.col("value_usd") > 0).pipe(drop_excluded).select("importer", "hs6", "year").unique(),
+            products.select("importer", "hs6", "year").unique(),
             on=["hs6", "year"],
         )
         .filter(pl.col("exporter").cast(pl.String) != pl.col("importer").cast(pl.String))
@@ -761,12 +766,18 @@ SETTINGS_FILE = "features.json"
 #   fits the VRAM budget, and GPU external memory can train on all of them;
 # - "sibling_demand" (`features_<BACI version>_sibling_demand`, #164): `exporter_count` with Sibling
 #   Demand stored as a second candidate feature (`FEATURE_SET_CANDIDATES`); every other column is the same.
+# - "excluded_products" (`features_<BACI version>_excluded_products`, #171): `exporter_count` with the Excluded
+#   Products' training rows kept (`FEATURE_SETS_TRAINING_EXCLUDED`); the UK grid still leaves them out. Features
+#   are built from all Flows either way (ADR 0005), so every row the two sets share is the same.
 FEATURE_SETS = {
     "": "country_year.parquet",
     "exporter_count": gravity.COUNTRY_YEAR_FILLED,
     "all_exporters": gravity.COUNTRY_YEAR_FILLED,
     "sibling_demand": gravity.COUNTRY_YEAR_FILLED,
+    "excluded_products": gravity.COUNTRY_YEAR_FILLED,
 }
+# The sets whose training rows keep the Excluded Products (never scored or ranked: the grid leaves them out).
+FEATURE_SETS_TRAINING_EXCLUDED = frozenset({"excluded_products"})
 # The training scope of each set (`scope.exporter_scope`'s `n`); a set not listed has ADR 0004's.
 FEATURE_SET_SCOPES = {"all_exporters": scope.ALL_EXPORTERS}
 # The candidate features each set stores; a set not listed stores the Exporter count only, as it was built.
@@ -901,7 +912,9 @@ def build(
             continue  # each file is renamed into place only when complete (`write_parquet`)
         flows = load_year_flows(year, to_iso3, root)
         with_earlier = pl.concat([flows, load_year_flows(year - GROWTH_YEARS, to_iso3, root)])
-        rows = training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters)
+        rows = training_rows(
+            flows, rate=rate, seed=seed, uk=uk, exporters=exporters, keep_excluded=name in FEATURE_SETS_TRAINING_EXCLUDED
+        )
         write_parquet(
             _features_in_parts(rows, with_earlier, sources, parts, uk=uk).drop(unstored), written[0], compression="zstd"
         )
@@ -932,6 +945,7 @@ def build(
         "monotone_constraints": MONOTONE_CONSTRAINTS,
         "gravity": {"country_year": FEATURE_SETS[name], **gravity.fill_record(sources.country_year)},
         "excluded_products": [exclusion.codes for exclusion in EXCLUSIONS],
+        "excluded_products_trained": name in FEATURE_SETS_TRAINING_EXCLUDED,
         "proximity_years": fitted_on,
         "gap_years": gap_period(baseline_year),
     }

@@ -149,9 +149,9 @@ Gains are on folds 3–4, with the adjustment's weight chosen on folds 0–2 by 
 | 3 | **Closed-Market flags**: sanctions, alcohol prohibition | Advisor protection | not a model gain (leaving Russia and Belarus out moves the 2022 measure by +0.003) | – | a short hand-kept table, a filter and a caveat | extends ADR 0005's Market flags |
 | 4 | **Honest Blocked Opportunity and dollar figures** | Advisor protection | 0 | 0 | app and API text | GLOSSARY wording; ADR 0008's "Illustrative" |
 | 5 | **Flag volatile and one-off Products** | Advisor protection | 0 | – | a Product table from training years | extends ADR 0005's Flagged tier |
-| 6 | Non-tariff market access (SPS, trade remedies) as a policy feature | feature, **hypothesis** | not testable here | unknown | new data; a full fold set retrained on the GPU (about 1 hour) | a new policy feature: monotone constraint, Scenarios (ADR 0006, 0008) |
+| 6 | Non-tariff market access (SPS, trade remedies) as a policy feature | feature, **hypothesis** | not testable here; **skipped** by #171 (new data; further work) | unknown | new data; a full fold set retrained on the GPU (about 1 hour) | a new policy feature: monotone constraint, Scenarios (ADR 0006, 0008) |
 | 7 | Report the measure on the Markets Advisors use | measurement | 0 | – | none | ADR 0008 (reported, never selected on) |
-| 8 | Gravity for the 20 Markets without it; group the UK Overseas Territories | data, partly **hypothesis** | untested; these Markets are small | – | one lookup table; features rebuilt (CPU) and fold models retrained | none |
+| 8 | Gravity for the 20 Markets without it; group the UK Overseas Territories | data, partly **hypothesis** | GDP and population filled by #126 and kept by #127 (−0.0001); distance needs new data: **skipped** by #171 | – | one lookup table; features rebuilt (CPU) and fold models retrained | none |
 | 9 | UK-free demand proxy | feature, **hypothesis** | +0.0067 as a blend term (below); as a feature (#164), +0.0003 on fold 0 with Market Reach: **dropped** | worse as a blend term | features rebuilt and fold models retrained | none |
 
 ### 1. A UK Market reach offset
@@ -200,7 +200,7 @@ and Export Potential × exp(β · offset). The second term is label-free; only t
 
 The Spearman correlation is a correlation of ranks. Most pairs at the bottom of a Product's ranking are tied zeros in Actual Exports, so ordering them adds variance without covariance, and tying them removes it. On the same check, **v2 alone floored at $11k scores 0.5717, above the unfloored Blend (0.5676).** So an Arm that compresses the bottom of the ranking, by design or by accident, can win on the measure without ranking anything better. Each form compared at its own best floor (chosen on folds 0–2): the Blend still beats v2 by +0.046 and the Naive Baseline by +0.075. The loop's choice therefore stands.
 
-**Proposal.** Leave the measure unchanged and add a pre-registered control: compare every Arm with the best so far at each one's own best floor (chosen on the fit folds), and report it beside the measure. Alternatively, fix one common floor in the Model Form. Do not serve a floor as an improvement: it changes no ranking an Advisor uses. A hypothesis worth checking: the loop chooses rounds by the measure every round, so its early stopping may prefer trees that flatten the bottom of the ranking.
+**Proposal.** Leave the measure unchanged and add a pre-registered control: compare every Arm with the best so far at each one's own best floor (chosen on the fit folds), and report it beside the measure. Alternatively, fix one common floor in the Model Form. Do not serve a floor as an improvement: it changes no ranking an Advisor uses. A hypothesis worth checking: the loop chooses rounds by the measure every round, so its early stopping may prefer trees that flatten the bottom of the ranking. *(Answered, so not run by #171: #115 made the measure tie-proof, so a flatter bottom can no longer raise the measure the loop stops on, and #116 replayed every stopping decision under it, [loop-recheck-tie-proof-2022.md](loop-recheck-tie-proof-2022.md).)*
 
 ### 3. Closed-Market flags (Advisor protection)
 
@@ -218,6 +218,8 @@ Neither changes the measure.
 Extend ADR 0005's Flagged Product tier with a volatility rule computed on training years (for example, the top quintile of the year-to-year volatility of UK exports). Name the one-off Products the case review found: 4907 (stamps and banknotes, sovereign contracts), 8802 (aircraft), 8901 and 8905 (vessels and platforms), and 284390 (precious-metal compounds, probably one producer's Flows, close to the Sector 71 Products already flagged). Correlation falls from 0.76 to 0.30 across volatility quintiles. Gaps on these Products are mostly timing.
 
 ### 6. Non-tariff market access (hypothesis)
+
+*Skipped by #171 ([final-round-2022.md](final-round-2022.md#8-the-leftover-research-leads-171)): it needs new data (export health certificate lists or I-TIP notifications), so it is further work.*
 
 The model knows tariffs and agreements, not whether a UK Product may enter a Market at all. The agri-food and steel false leads of section 5 (26.5% with no Flow among the top-10 Markets in large non-EU Markets, against 7.6% elsewhere) fit sanitary and phytosanitary barriers and trade remedies. A candidate source is the UK's own export health certificate lists (which agri-food Products have an agreed certificate for each Market), or WTO I-TIP's notifications. A binary "access agreed" feature would be a policy feature (monotone, Scenario-able) and needs a retrained fold set. Untested here.
 
@@ -237,6 +239,8 @@ The measure weighs each of the 225 Markets equally, and about 100 of them are mi
 On the largest Markets the model alone ranks better than the Blend, and the Naive Baseline much worse: the Naive Baseline's weight was chosen on every Market. That is an association on one validation year, reported, not chosen on.
 
 ### 8. Gravity for the 20 Markets without it; group the UK Overseas Territories
+
+*Partly done, the rest skipped by #171 ([final-round-2022.md](final-round-2022.md#8-the-leftover-research-leads-171)): #126 filled GDP and population for these Markets and #127 kept the fill as a data correction (its own effect −0.0001, [exporter-count-2022.md](exporter-count-2022.md)). Distance for them is not in the gravity tables we hold, so it needs new data. Grouping the UK Overseas Territories is an Advisor-facing filter, not a model change.*
 
 Twenty Markets have no GDP or distance (section 2), so every split on those features sends them down the default branch. Gibraltar and the Falklands receive $5–15 for every $1 of Export Potential. Filling GDP and distance from another source is cheap but needs features rebuilt and models retrained, for small Markets: a hypothesis with a small expected gain. A cheaper Advisor-facing step is to group the UK Overseas Territories (Gibraltar, the Falklands, Montserrat, Saint Helena, Anguilla, the British Virgin Islands, the British Indian Ocean Territory, Pitcairn, Bermuda, the Cayman Islands, Turks and Caicos) so they can be filtered like the Re-export Hubs.
 

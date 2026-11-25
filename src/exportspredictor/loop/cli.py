@@ -10,6 +10,9 @@ from exportspredictor import experiments, search
 from exportspredictor.features import FEATURE_SET_ENV, PRODUCT_DETAIL_FEATURES
 from exportspredictor.loop.arms import (
     CONSTRAINTS_EXPERIMENT,
+    EXCLUDED_PRODUCTS_BASE_SET,
+    EXCLUDED_PRODUCTS_EXPERIMENT,
+    EXCLUDED_PRODUCTS_SET,
     EXPORTER_COUNT_EXPERIMENT,
     EXTERNAL_MEMORY_EXPERIMENT,
     HYPERPARAMETER_STAGES,
@@ -43,6 +46,7 @@ from exportspredictor.loop.data import RESULTS_FILE, load, loop_dir, real_data
 from exportspredictor.loop.recheck import current_win_threshold
 from exportspredictor.loop.runner import (
     Loop,
+    run_excluded_products,
     run_exporter_count,
     run_external_memory,
     run_hyperparameter_stage,
@@ -175,6 +179,20 @@ def main(argv: Sequence[str]) -> None:
             "decided_by_stopping_rule": decided_by_stopping_rule(rows),
             **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "training_rows", "seconds")} for r in rows},
         }), flush=True)
+    elif command == "excluded-products":
+        data, served = real_data(), kept_feature_set(load())
+        if data.feature_set != EXCLUDED_PRODUCTS_SET:
+            raise SystemExit(f"Run on the files that hold them: set {FEATURE_SET_ENV}={EXCLUDED_PRODUCTS_SET}")
+        if served != EXCLUDED_PRODUCTS_BASE_SET:
+            raise SystemExit(f"The served files are {served!r}, not the {EXCLUDED_PRODUCTS_BASE_SET!r} files this set adds to")
+        section = run_excluded_products(Loop(data, v2_plan(), loop_dir()))["experiments"][EXCLUDED_PRODUCTS_EXPERIMENT]
+        rows = [section["base_arm"], *section["arms"]]
+        print(json.dumps({
+            "kept": section["kept"], "win_threshold": section["win_threshold"],
+            "decided_by_stopping_rule": decided_by_stopping_rule(rows),
+            **{r["arm"]: {k: r[k] for k in (SELECTION_MEASURE, "rounds", "training_rows", "non_uk_rate", "seconds")}
+               for r in ({**row, "non_uk_rate": row["settings"]["non_uk_rate"]} for row in rows)},
+        }), flush=True)
     elif command == "confirm":
         section = confirm_best()
         summary = {n: section[n][SELECTION_MEASURE] for n in (WINNER, V2, "naive")}
@@ -185,7 +203,7 @@ def main(argv: Sequence[str]) -> None:
         raise SystemExit(
             "usage: python -m exportspredictor.loop "
             "noise|naive|select|two-part|scope|product-detail|constraints|exporter-count|market-reach-cap|sibling-demand|"
-            "hyperparameters <stage>|model-family <family>|wider-scope|external-memory|confirm|time"
+            "hyperparameters <stage>|model-family <family>|wider-scope|external-memory|excluded-products|confirm|time"
         )
 
 
