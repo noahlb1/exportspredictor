@@ -366,7 +366,7 @@ def _excluded_products(table: pl.DataFrame) -> list[dict]:
 
 
 # The row budget v2 was planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
-SPEC_ROW_BUDGET_M = 110
+PLANNED_ROW_BUDGET_M = 110
 
 
 def _sampling_decision(metadata: dict) -> tuple[str, str]:
@@ -374,7 +374,7 @@ def _sampling_decision(metadata: dict) -> tuple[str, str]:
     budget = metadata.get("row_budget")
     measured = (
         f" The budget measured on the RTX 3080 (`scripts/gpu_check.py`) is {budget:,} rows, about "
-        f"{1 - budget / (SPEC_ROW_BUDGET_M * 1e6):.0%} below the about {SPEC_ROW_BUDGET_M} M rows the spec planned "
+        f"{1 - budget / (PLANNED_ROW_BUDGET_M * 1e6):.0%} below the about {PLANNED_ROW_BUDGET_M} M rows the spec planned "
         "around, so the non-UK rate is lower than planned."
         if budget
         else ""

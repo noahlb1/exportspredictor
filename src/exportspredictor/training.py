@@ -104,11 +104,11 @@ FEATURE_BYTES = 1.5  # per row and feature: the compressed histogram index
 ROW_BYTES = 72.86 - 22 * FEATURE_BYTES  # per row, whatever the features
 RATE_STEP = 1e-4  # the derived non-UK rate is a multiple of this
 SAMPLE_SDS = 4  # headroom for hash sampling: a sample this many standard deviations large still fits
-# Short GPU runs (the row-budget check, and the experiments of `experiments`) train on this
-# Sector subset: the three large UK Sectors of `constraints.REAL_PLAN` (beverages,
-# pharmaceuticals, vehicles) plus fish, plastics, knitted apparel and electrical machinery,
-# so that food, chemicals, textiles and machinery all appear and the subset has tens of
-# millions of rows.
+# Short GPU runs (the row-budget check, and the feature ablation and learning curve of
+# `experiments`) train on this Sector subset: the three large UK Sectors of
+# `constraints.REAL_PLAN` (beverages, pharmaceuticals, vehicles) plus fish, plastics, knitted
+# apparel and electrical machinery, so that food, chemicals, textiles and machinery all appear
+# and the subset has tens of millions of rows.
 SECTOR_SUBSET = ("03", "22", "30", "39", "61", "85", "87")
 # The GPU check (`scripts/gpu_check.py`): v1's configuration on a device-built
 # matrix of the Sector subset's 2012–2021 rows (top-100 scope, every UK Zero Cell, 5% of
