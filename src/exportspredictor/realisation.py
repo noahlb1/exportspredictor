@@ -43,6 +43,7 @@ import polars as pl
 
 from exportspredictor import ppml
 from exportspredictor.experiments import TEST_YEAR
+from exportspredictor.wording import number_text, years_text
 
 if TYPE_CHECKING:
     from exportspredictor.artefacts import Artefacts
@@ -100,6 +101,7 @@ TERM_NAMES = {
     "log_export_potential": "log Export Potential",
 }
 PREDICTOR_NAMES = {"model": "Model", "naive_baseline": "Naive Baseline"}
+ITC_COLUMN = "ITC (76 sub-sectors)"  # the coefficient table's column of ITC's published figures
 
 # Part (c) of #156, the direct comparison with the EPM's UK figures, was dropped at step one (#174); #178 words the
 # reason in full for the notebook.
@@ -224,6 +226,69 @@ def realisation_report(panel: pl.DataFrame) -> dict:
         "published": [dict(row) for row in PUBLISHED],
         "direct_comparison": {"run": False, "reason": DIRECT_COMPARISON_DROPPED},
     }
+
+
+def coefficient_rows(report: dict) -> list[dict]:
+    """The coefficient table: one row per test and term, ITC's published figure beside each predictor and level's
+    coefficient with its standard error in brackets ("0.512 (0.031)"). Columns are `Test`, `Term`, ITC's, then one
+    per predictor and level in the report ("Model, HS6"), so more levels and predictors add columns."""
+    published = {row["test"]: row for row in report["published"]}
+    columns = list(dict.fromkeys(f"{PREDICTOR_NAMES[row['predictor']]}, {row['level']}" for row in report["rows"]))
+    table: dict[tuple[str, str], dict] = {}
+    for row in report["rows"]:
+        itc = published.get(row["test"], {})
+        terms = {row["regressor"]: row, **row["controls"]}
+        itc_terms = {itc.get("regressor"): itc.get("coefficient"), **itc.get("controls", {})}
+        for term, fit in terms.items():
+            entry = table.setdefault((row["test"], term), {
+                "Test": TEST_NAMES[row["test"]],
+                "Term": TERM_NAMES[term],
+                ITC_COLUMN: number_text(itc_terms.get(term), ".3f"),
+                **dict.fromkeys(columns, ""),
+            })
+            entry[f"{PREDICTOR_NAMES[row['predictor']]}, {row['level']}"] = (
+                f"{number_text(fit['coefficient'], '.3f')} ({number_text(fit['std_error'], '.3f')})"
+            )
+    return list(table.values())
+
+
+def method_rows(report: dict) -> list[dict]:
+    """Part (a) of #156: ITC's method and ours side by side, one row per aspect."""
+    years = years_text(report["base_years"])
+    levels = " and ".join(dict.fromkeys(row["level"] for row in report["rows"]))
+    rows = [
+        ("Estimator",
+         "A decomposition: the exporter's supply, the market's projected demand and the ease of trade between them",
+         "Gradient-boosted trees (XGBoost, Tweedie loss) on global HS6 trade, blended with the Naive Baseline and "
+         "scaled by Market Reach"),
+        ("Data and years",
+         "ITC Trade Map, every exporter; the realisation test rebuilds the indicator for 2006–2018",
+         f"BACI HS6 Flows of the top 100 Exporters; the realisation test reads "
+         f"{years_text(report['outcome_years'])} and never the test year"),
+        ("Target year",
+         "About five years ahead (the current map is an estimate for 2031)",
+         "The year scored itself"),
+        ("Product level",
+         "HS6, some codes grouped; the realisation test runs on 76 sub-sectors",
+         f"HS6; the realisation test runs at {levels}"),
+        ("Gap definition",
+         "Unrealised potential, floored at zero: potential − min(actual, potential)",
+         "The Export Gap is signed (Export Potential − Actual Exports, over the Gap Period); the test uses ITC's "
+         "floored Unrealised Share"),
+        ("How it is tested",
+         "Later trade regressed on the indicator, every exporter pooled, with exporter, market and year × sub-sector "
+         "fixed effects",
+         f"The same regression on UK pairs in base years {years}, each scored by fold models trained on years up to "
+         f"the base year; {' and '.join(report['fixed_effects'])} fixed effects, errors clustered by "
+         f"{report['cluster']}"),
+    ]
+    return [{"Aspect": a, "ITC's Export Potential Map": itc, "This model": ours} for a, itc, ours in rows]
+
+
+def direct_comparison_text(report: dict) -> str:
+    """Part (c) of #156 in one line: whether the direct comparison with the EPM's UK figures ran, and why not."""
+    part = report["direct_comparison"]
+    return "Direct comparison with the EPM's UK figures: " + ("run." if part["run"] else f"{part['reason']}.")
 
 
 def with_itc_comparison(bundle: "Artefacts", report: dict) -> "Artefacts":

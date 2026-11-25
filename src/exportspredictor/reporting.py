@@ -24,7 +24,7 @@ import matplotlib
 import polars as pl
 from matplotlib.figure import Figure
 
-from exportspredictor import loop, model_choice, offsets, ppml, rankings, scenarios
+from exportspredictor import loop, model_choice, offsets, ppml, rankings, realisation, scenarios
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.currency import format_usd
@@ -396,6 +396,38 @@ def lift_by_tenth(bundle: Artefacts) -> Chart | NotRun:
         for row in data.iter_rows(named=True)
     ]
     return Chart(title, data, bar_svg(title, bars, lines={"all pairs": lift["base_rate"]}, axis="share that grew"))
+
+
+ITC_COMPARISON = "ITC's realisation test on our model"
+
+
+def _itc_report(bundle: Artefacts) -> dict | None:
+    return (bundle.evaluation or {}).get(realisation.REPORT_KEY)
+
+
+def itc_coefficients(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """ITC's realisation test on our model (#156 part b): each coefficient, with its standard error, beside ITC's
+    published static figure (`realisation.coefficient_rows`), read from the saved evaluation report."""
+    report = _itc_report(bundle)
+    if not report:
+        return NotRun(ITC_COMPARISON)
+    return pl.DataFrame(realisation.coefficient_rows(report))
+
+
+def itc_method(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """ITC's method and ours side by side (#156 part a, `realisation.method_rows`)."""
+    report = _itc_report(bundle)
+    if not report:
+        return NotRun(ITC_COMPARISON)
+    return pl.DataFrame(realisation.method_rows(report))
+
+
+def itc_direct_comparison(bundle: Artefacts) -> str | NotRun:
+    """Whether the direct comparison with the EPM's UK figures (#156 part c) ran, and if not, why."""
+    report = _itc_report(bundle)
+    if not report:
+        return NotRun(ITC_COMPARISON)
+    return realisation.direct_comparison_text(report)
 
 
 def event_backtests(bundle: Artefacts) -> Chart | NotRun:
