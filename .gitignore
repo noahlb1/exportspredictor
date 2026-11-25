@@ -15,3 +15,13 @@ __pycache__/
 
 # Course notes: kept locally for reference, not published
 ML_AI_Concept_Notes.html
+
+# Agent files: kept in a private repo and linked into each checkout (junctions and hard links,
+# so written without a trailing slash: git may see a junction as a link, not a folder)
+/CLAUDE.md
+/.claude
+/.agents
+/docs/agents
+/docs/runs
+/skills-lock.json
+/scripts/add-dep.ps1

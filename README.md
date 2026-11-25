@@ -29,6 +29,7 @@ Then open <http://localhost:8501>.
 - The app starts only after the API is healthy.
 - `./artefacts` is mounted read-only into the API container, so a new artefact version needs only `podman compose restart api`, not a rebuild.
 - Stop with `Ctrl+C`, or run `podman compose down`.
+- On Windows, podman runs in a virtual machine: if `podman compose` cannot connect after a reboot, run `podman machine start`.
 
 If the app says the API is unavailable, check `podman compose logs api` and <http://localhost:8000/health>. The usual causes are an empty `./artefacts` folder, or a newest folder that is not artefact format 4 (such as a v1 folder, a format-2 folder from before the served Model Form was recorded, or a format-3 folder from before Market Reach, which `python -m exportspredictor.pipeline rereach` upgrades): the API serves only the lexically newest folder, and `/health` gives the reason it refused it.
 
@@ -59,7 +60,11 @@ The layout:
 - `api/` serves saved artefacts;
 - `app/` talks to the API only over HTTP.
 
-See [CLAUDE.md](CLAUDE.md) for the modelling guardrails.
+See [CODING_STANDARDS.md](CODING_STANDARDS.md) for the modelling guardrails, the shape of the code and the hardware budget.
+
+Once per clone, enable the pre-push hook: `git config core.hooksPath .githooks`. It runs ruff, pyright and the full suite before every push (about 6 to 10 minutes).
+
+On Windows, set `PYTHONUTF8=1` before running Python. The default cp1252 encoding crashes on printing `£` or an accented Market name, and garbles UTF-8 files a tool opens without naming an encoding; subprocesses such as the notebook kernel inherit the setting, which `-X utf8` alone does not reach.
 
 ## Rebuild the data and artefacts
 
@@ -95,6 +100,14 @@ The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild
 | Five-fold confirmation of the loop's best form on 2022 (GPU, resumable, about 1 h) | `python -m exportspredictor.loop confirm`; the best Arm against v2 on every held-out UK pair of five folds; the pipeline serves the form the loop chose and records these results in the artefact |
 | Train the fold and test-year models, evaluate and save the artefacts (GPU, about 2.5 h) | `python -m exportspredictor.pipeline`; trains the five fold models (about 75 minutes), scores the 2022–2024 Gap Period and the Potential Range, trains and evaluates the 2023 test-year models (about 75 minutes), reads the v1 comparison's primary metric from the frozen v1 tables (no training), and saves a new artefact version. Before it evaluates, it records the 2023 read in the Test-year Ledger (`docs/test-year-ledger.csv`) and refuses a configuration the ledger already holds, unless `--read-test-year-again` is passed, which is recorded too (ADR 0009); commit the ledger with the run. The Event Backtests (Lift included), the monotone-constraint comparison and the gain ladder each run only when asked for: `--event-backtests`, `--constraint-comparison`, `--gain-ladder`, or `--every-part` for all three (together about two more hours). The evaluation, the Model Evaluation page and the model card show a skipped part as not run for this version. Fold, test-year, backtest and ladder models are cached under `data/derived/`, so a re-run only scores. `python -m exportspredictor.pipeline compare` adds the v1 comparison with its gain ladder to a copy of the newest version, which must hold the Event Backtests |
 | The notebook (reads the saved artefact) | runs `notebooks/exports_predictor.ipynb` with `EXPORTSPREDICTOR_FIXTURE_MODE=0` and saves its outputs in place (`--only notebook` runs this step alone). It reads saved results only (the newest artefact, its model card and PPML benchmark, and the experiment loop's results) and trains nothing; about 2 minutes on the CPU |
+
+A full rebuild of the artefacts takes hours on the GPU. To change the newest artefact without retraining, derive a new version from its saved fold models. The API serves the lexically newest artefact folder, and an artefact missing a table that `artefacts.load` expects fails to load, so derive a new version after adding a table:
+- `python -m exportspredictor.pipeline refresh` copies the newest version with fresh metadata, in seconds.
+- `python -m exportspredictor.pipeline rerange` copies it with its Potential Range recomputed from the Baseline year's feature file (a few minutes on the CPU).
+- `python -m exportspredictor.pipeline recaveat` copies it with its Baseline marked again with the declared Caveat Tiers (seconds; run it after adding a tier or changing a tier's table).
+- `python -m exportspredictor.pipeline rereach` upgrades a format-3 version to format 4 with Market Reach.
+
+The experiment loop (`python -m exportspredictor.loop`) caches its models in `data/derived/loop_V202601/models` (about 9.5 GB), so a re-run trains only what it misses. Its `results.json` and `confirmation/` beside them must stay: the notebook and the pipeline read them. The loop's package docstring says how to add an Arm.
 
 ## Manual UI checklist
 

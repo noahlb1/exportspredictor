@@ -7,7 +7,7 @@ Money has its own module (`currency.format_usd`); the Gap Period's label is `gap
 import math
 from collections.abc import Iterable
 
-# Under the heading of every page that shows figures (CLAUDE.md: language about results stays associational).
+# Under the heading of every page that shows figures (CODING_STANDARDS.md: language about results stays associational).
 CAUTION = "Figures are associations the model has learned, not causes or forecasts."
 
 # What "a Trade Agreement" means in the model (GLOSSARY.md, ADR 0011), said on the Blocked Opportunities page and
