@@ -95,7 +95,7 @@ Market Reach associates broad UK reach into a Market with higher Export Potentia
 
 - **An Export Gap now means a Product-specific shortfall within a Market.** A Market-wide shortfall (the UK sends few Products to Iran) no longer shows as many pair-level gaps, so #125 shows each Market's reach beside it.
 - **Scenarios.** The multiplier is the same for every Product of a Market, and c is a fixed constant, so a Scenario's relative effect is unchanged (tested). Dollar Scenario Effects scale with the Market's multiplier.
-- **Not a feature.** It is post-processing in the Model Form, so `features.py`'s "no pair trade in other Products" rule for features still holds. CLAUDE.md's leave-one-out guardrail needs rewording for this exception, and #125 writes the ADR.
+- **Not a feature.** It is post-processing in the Model Form, so `features.py`'s "no pair trade in other Products" rule for features still holds. The leave-one-out guardrail needed rewording for this exception; [ADR 0010](../adr/0010-market-reach-in-the-model-form.md) records it.
 - **Not measured here.** Whether the Potential Range's coverage on UK-like pairs suffers (calibration rows are other Exporters' and get no offset) is left to #125, which rebuilds the bands through the served path.
 
 ## For the tickets that use it

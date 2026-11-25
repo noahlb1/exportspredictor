@@ -7,7 +7,7 @@ Money has its own module (`currency.format_usd`); the Gap Period's label is `gap
 import math
 from collections.abc import Iterable
 
-# Under the heading of every page that shows figures (CLAUDE.md: language about results stays associational).
+# Under the heading of every page that shows figures (CODING_STANDARDS.md: language about results stays associational).
 CAUTION = "Figures are associations the model has learned, not causes or forecasts."
 
 # What "a Trade Agreement" means in the model (GLOSSARY.md, ADR 0011), said on the Blocked Opportunities page and
@@ -25,8 +25,8 @@ OPPORTUNITY_TYPE_HELP = (
 
 
 def totals_note(share: float | None, gap_period_label: str) -> str:
-    """The note beside every sum of Export Potential, Export Gaps or Blocked Opportunity values (spec #113, "Totals
-    understate"): Export Potential is a median-type estimate, so its sum falls short of Actual Exports. `share` is the
+    """The note beside every sum of Export Potential, Export Gaps or Blocked Opportunity values: Export
+    Potential is a median-type estimate, so its sum falls short of Actual Exports. `share` is the
     artefact's `potential_share_of_actual_exports`; None words the note without a figure."""
     reaches = (
         "falls short of their Actual Exports" if share is None
@@ -39,7 +39,7 @@ def totals_note(share: float | None, gap_period_label: str) -> str:
 
 
 def term_definitions(gap_period_label: str) -> dict[str, str]:
-    """What each term the app's tables and panels explain in a tooltip means, by row field (spec #103, #98).
+    """What each term the app's tables and panels explain in a tooltip means, by row field.
 
     `gap_period_label` is the artefact's Gap Period label (`gap_period.label`), e.g. "2022–2024 average".
     """
@@ -78,3 +78,8 @@ def rate_text(rate: float | None) -> str:
     if rate is None:
         return "an unrecorded rate"
     return f"{rate:.0%}" if round(rate * 100, 1) == round(rate * 100) else f"{rate:.1%}"
+
+
+def percent_text(change: float | None) -> str:
+    """A change as a signed whole percentage ("+12%", "-5%"), or "n/a" where it is missing."""
+    return "n/a" if change is None else f"{change:+.0%}"

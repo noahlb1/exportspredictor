@@ -19,7 +19,7 @@ Layout under the data root (`EXPORTSPREDICTOR_DATA_DIR`):
 
 Flows Parquet columns: `year` Int16, `exporter` and `importer` Enum of ISO3 codes,
 `hs6` Enum of zero-padded HS6 codes, `value_usd` Float64 (BACI's `v` is thousand USD;
-we store USD). BACI's quantity `q` is unused (spec #10) and dropped. Only strictly
+we store USD). BACI's quantity `q` is unused and dropped. Only strictly
 positive Flows exist in BACI: a missing row means zero or unreported.
 """
 
@@ -40,7 +40,6 @@ BACI_VERSION = "V202601"
 BACI_URL = f"https://www.cepii.fr/DATA_DOWNLOAD/baci/data/BACI_HS12_{BACI_VERSION}.zip"
 COUNTRIES_URL = "https://api.worldbank.org/v2/country?format=json&per_page=400"
 UK = "GBR"
-PROVISIONAL_YEAR = 2024  # BACI's latest year is revised in the next release
 
 _ZIP_NAME = f"BACI_HS12_{BACI_VERSION}.zip"
 _COUNTRY_CODES = f"country_codes_{BACI_VERSION}.csv"
@@ -63,10 +62,6 @@ class PrepareReport:
     extracted: list[str] = field(default_factory=list)
     converted_years: list[int] = field(default_factory=list)
     built_lookups: bool = False
-
-    @property
-    def did_nothing(self) -> bool:
-        return not (self.downloaded or self.extracted or self.converted_years or self.built_lookups)
 
 
 def raw_dir(root: Path | None = None) -> Path:

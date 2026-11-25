@@ -1,4 +1,4 @@
-"""The five-fold confirmation (#76): the best arm beside v2 on every fold, measured on every held-out UK pair pooled."""
+"""The five-fold confirmation: the best arm beside v2 on every fold, measured on every held-out UK pair pooled."""
 
 import json
 import statistics
@@ -10,9 +10,10 @@ from pathlib import Path
 import polars as pl
 
 from exportspredictor import experiments
+from exportspredictor.experiments import log_progress, read_results
 from exportspredictor.loop.arms import LoopPlan, Settings
-from exportspredictor.loop.data import MODELS_DIR, LoopData, read_results, save_results
-from exportspredictor.loop.runner import Loop, log_progress
+from exportspredictor.loop.data import MODELS_DIR, LoopData, save_results
+from exportspredictor.loop.runner import Loop
 from exportspredictor.loop.selection import ROUNDING, SELECTION_MEASURE, measures
 
 # The best arm after the experiments ("winner") beside the current v2 configuration ("v2") on

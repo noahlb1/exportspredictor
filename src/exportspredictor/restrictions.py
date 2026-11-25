@@ -30,6 +30,8 @@ from datetime import date
 
 import polars as pl
 
+from exportspredictor.lookups import as_code
+
 VERIFIED = date(2026, 11, 20)  # the day every entry below was last checked against its sources
 
 
@@ -150,26 +152,22 @@ PROHIBITIONS: tuple[Prohibition, ...] = (
 )
 
 
-def _market(column: str) -> pl.Expr:
-    return pl.col(column).cast(pl.String)
-
-
 def sanctioned_market_expr(year: int, regimes: tuple[SanctionsRegime, ...] = SANCTIONS_REGIMES) -> pl.Expr:
     """True where the row's Market is under a broad UK sanctions regime in force in `year`."""
-    return _market("iso3").is_in([regime.iso3 for regime in regimes if regime.covers(year)])
+    return as_code("iso3").is_in([regime.iso3 for regime in regimes if regime.covers(year)])
 
 
 def sanction_reason_expr(year: int, regimes: tuple[SanctionsRegime, ...] = SANCTIONS_REGIMES) -> pl.Expr:
     """The regime of each row's Market in `year`, as its caveat names it; null where there is none."""
     reason = pl.lit(None, pl.String)
     for regime in reversed([regime for regime in regimes if regime.covers(year)]):
-        reason = pl.when(_market("iso3") == regime.iso3).then(pl.lit(regime.reason)).otherwise(reason)
+        reason = pl.when(as_code("iso3") == regime.iso3).then(pl.lit(regime.reason)).otherwise(reason)
     return reason
 
 
 def _covers(prohibition: Prohibition) -> pl.Expr:
-    product = pl.col("hs6").cast(pl.String)
-    return (_market("iso3") == prohibition.iso3) & pl.any_horizontal(
+    product = as_code("hs6")
+    return (as_code("iso3") == prohibition.iso3) & pl.any_horizontal(
         product.str.starts_with(code) for code in prohibition.hs_codes
     )
 

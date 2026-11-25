@@ -1,4 +1,4 @@
-"""The feature ablation and the learning curve (ticket #53): features and sampling rates decided on evidence.
+"""The feature ablation and the learning curve: features and sampling rates decided on evidence.
 
 Both experiments train v1's configuration on one fold and the Sector subset
 (`training.SECTOR_SUBSET`), on the years before the validation year (2022), and measure
@@ -39,6 +39,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
@@ -71,7 +72,7 @@ from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.ledger import TEST_YEAR
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import export_potential
-from exportspredictor.sectors import sector_of
+from exportspredictor.sectors import in_sectors
 from exportspredictor.selection_measure import selection_measure
 from exportspredictor.training import (
     SECTOR_SUBSET,
@@ -86,6 +87,9 @@ from exportspredictor.training import (
     scan_chunks,
     training_matrix,
 )
+
+if TYPE_CHECKING:
+    from exportspredictor.search import SearchPlan  # search imports this module
 
 # Feature and rate choices are made on the validation year, before the test year (`ledger.TEST_YEAR`).
 VALIDATION_YEAR = 2022
@@ -141,12 +145,9 @@ class Plan:
     seed: int = 0
     uk: str = baci.UK
 
-    def with_validation_year(self, year: int) -> "Plan":
-        return replace(self, validation_year=year)
-
 
 # ADR 0004's starting rates for the ablation (the non-UK rate about what the budget allows,
-# 5% of Zero Cells); the learning curve's grid is decision #32's.
+# 5% of Zero Cells); the learning curve's grid was fixed with the training scope, before it ran.
 REAL_PLAN = Plan(
     params=V1_CONFIG,
     max_rounds=V1_MAX_ROUNDS,
@@ -216,13 +217,13 @@ def run_ablation(data: Data, plan: Plan) -> dict:
         kept = [f for f in ALL_FEATURES if f != dropped]
         row = fitter.fit(kept, non_uk_rate=non_uk_rate, zero_rate=zero_rate)
         rows.append({"dropped": dropped, **row})
-        _log(f"ablation without {dropped}: {row}")
+        log_progress(f"ablation without {dropped}: {row}")
     full = rows[0]
     for row in rows:
         row["deviance_change"] = row["validation_deviance"] - full["validation_deviance"]
         row["spearman_change"] = _difference(row["uk_spearman"], full["uk_spearman"])
         row["hurts"] = row["dropped"] is not None and _hurts(row, full)
-    return {"plan": _plan_dict(plan), "ablation": rows, "kept_features": kept_features(rows)}
+    return {"plan": plan_dict(plan), "ablation": rows, "kept_features": kept_features(rows)}
 
 
 def run_learning_curve(data: Data, plan: Plan, features: Sequence[str] = FEATURES) -> dict:
@@ -244,9 +245,9 @@ def run_learning_curve(data: Data, plan: Plan, features: Sequence[str] = FEATURE
                     "fits_budget": None if full_rate is None else non_uk_rate <= full_rate,
                 }
             )
-            _log(f"learning curve at non-UK {non_uk_rate}, zeros {zero_rate}: {row}")
+            log_progress(f"learning curve at non-UK {non_uk_rate}, zeros {zero_rate}: {row}")
     return {
-        "curve_plan": _plan_dict(plan),
+        "curve_plan": plan_dict(plan),
         "curve_features": list(features),
         "learning_curve": rows,
         "plateau": plateau(rows),
@@ -327,7 +328,7 @@ class _Fitter:
 
     def __init__(self, data: Data, plan: Plan):
         self.data, self.plan = data, plan
-        self.in_sectors = _in_sectors(plan.sectors)
+        self.in_sectors = in_sectors(plan.sectors)
         years = sorted(data.training)
         self.chunks = [data.training[y] for y in years]
         # Fitted on the training years only, as the fold models' transform is.
@@ -422,17 +423,13 @@ def _predict(model: xgb.Booster, table: pl.DataFrame, features: Sequence[str], r
     return export_potential(table, model, features=features, rounds=rounds, device=device)
 
 
-def _in_sectors(sectors: Sequence[str] | None) -> pl.Expr:
-    if not sectors:
-        return pl.lit(True)
-    return sector_of("hs6").is_in(list(sectors))
-
-
-def _plan_dict(plan: Plan) -> dict:
+def plan_dict(plan: "Plan | SearchPlan") -> dict:
+    """A `Plan` or `search.SearchPlan` as saved in results: a plain dict, its Sectors a list (None: every Sector)."""
     return {**asdict(plan), "sectors": list(plan.sectors) if plan.sectors else None}
 
 
-def _log(message: str) -> None:
+def log_progress(message: str) -> None:
+    """Print a progress line at once, so a long run's log shows how far it has got."""
     print(message, flush=True)
 
 
@@ -445,7 +442,7 @@ def fixture_data(
     """The fixture world's experiment rows, built only from Flows up to the validation year.
 
     `keep_excluded` keeps the Excluded Products' training rows (`features.training_rows`), as the
-    `excluded_products` feature set does (#171); the grid leaves them out either way.
+    `excluded_products` feature set does; the grid leaves them out either way.
     """
     _check_years([validation_year])
     flows = world.flows.filter(pl.col("year") <= validation_year)
@@ -502,19 +499,19 @@ def build(
         raise ValueError(f"No BACI Flows on disk for the proximity years {PROXIMITY_YEARS}")
     proximity = fit_proximity(pl.concat([pl.scan_parquet(_flows_file(root, y)) for y in fitted_on]), fitted_on)
     sources = replace(sources, proximity=proximity)
-    in_sectors = _in_sectors(sectors)
+    chosen = in_sectors(sectors)
     out = experiments_dir(root)
     out.mkdir(parents=True, exist_ok=True)
     for year in years:
         flows = _year_flows(root, year, to_iso3)
         earlier = [_year_flows(root, year - GROWTH_YEARS, to_iso3)] if year - GROWTH_YEARS in on_disk else []
         with_earlier = pl.concat([flows, *earlier])
-        rows = training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters).filter(in_sectors)
+        rows = training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters).filter(chosen)
         write_parquet(build_features(rows, with_earlier, sources), out / f"training_{year}.parquet", compression="zstd")
         if year == validation_year:
-            grid = uk_grid(flows, uk).filter(in_sectors)
+            grid = uk_grid(flows, uk).filter(chosen)
             write_parquet(build_features(grid, with_earlier, sources), out / f"uk_grid_{year}.parquet", compression="zstd")
-        _log(f"experiment rows for {year} written")
+        log_progress(f"experiment rows for {year} written")
     settings = {
         "baci_version": baci.BACI_VERSION,
         "validation_year": validation_year,
@@ -603,6 +600,13 @@ def save(results: dict, root: Path | None = None) -> Path:
 def load(root: Path | None = None) -> dict:
     """The saved results of the real runs (`save`)."""
     return json.loads(results_path(root).read_text(encoding="utf-8"))
+
+
+def read_results(folder: Path | None) -> dict | None:
+    """The results saved in `folder` so far (a search's or the loop's), or None without a folder or a file."""
+    if folder is None or not (folder / RESULTS_FILE).exists():
+        return None
+    return json.loads((folder / RESULTS_FILE).read_text(encoding="utf-8"))
 
 
 def json_default(value):

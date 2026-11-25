@@ -56,7 +56,7 @@ def test_no_pair_has_a_negative_blocked_opportunity_value_and_the_summary_totals
     assert 0 < summary["blocked_opportunity_value_usd"] < values.sum()
 
 
-# The artefact the write-up reports: 20261122T133316Z (spec #133, ticket #137) rebuilt with `rereach` after Market
+# The artefact the write-up reports: 20261122T133316Z rebuilt with `rereach` after Market
 # Reach's sent was nested in imported (ADR 0010, Amendment), which took the Falkland Islands off the list. A newer
 # version moves these figures, so they are pinned to this one.
 REPORTED_VERSION = "20261122T223312Z"

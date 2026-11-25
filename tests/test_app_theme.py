@@ -1,4 +1,4 @@
-"""The app's theme (spec #103, "Theme and logo"): colours set per mode, so the app follows the computer's light or dark mode."""
+"""The app's theme and logo: colours set per mode, so the app follows the computer's light or dark mode."""
 
 import tomllib
 from pathlib import Path

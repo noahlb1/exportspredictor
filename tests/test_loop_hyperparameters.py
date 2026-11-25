@@ -1,4 +1,4 @@
-"""The final round's hyperparameter search, staged experiments of the loop (spec #155, ticket #166)."""
+"""The final round's hyperparameter search, staged experiments of the loop."""
 
 import pytest
 
@@ -27,7 +27,7 @@ def test_a_stage_that_would_train_more_than_the_budget_is_refused_before_trainin
 
 
 def test_every_pre_registered_stage_fits_the_budget():
-    # The spec's order: depth, learning rate, min child weight, subsampling, regularisation.
+    # The search's order: depth, learning rate, min child weight, subsampling, regularisation.
     assert list(loop.HYPERPARAMETER_STAGES) == ["depth", "learning rate", "min child weight", "subsampling", "regularisation"]
     for arms in loop.HYPERPARAMETER_STAGES.values():
         assert 1 <= len(arms) <= loop.MAX_TRAINED_MODELS  # the served base is cached, so each Arm is one model

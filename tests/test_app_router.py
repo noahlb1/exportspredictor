@@ -1,5 +1,5 @@
-"""The router (`app/Home.py`) and the frame every page shares (spec #103, "Pages and navigation" and
-"Shared page furniture"), run with AppTest through the router against the session's live fixture API."""
+"""The router (`app/Home.py`) and the frame every page shares (pages, navigation and shared page furniture), run
+with AppTest through the router against the session's live fixture API."""
 
 from dataclasses import replace
 
@@ -42,7 +42,7 @@ def test_the_menu_shows_the_four_pages_in_order_and_opens_on_the_leaderboard(ope
     assert [page.title for page in menu if page.visibility == "visible"] == MENU
     assert [page.title for page in menu] == MENU  # the removed pages (Why? among them) are not even hidden ones
     assert [page.title for page in menu if page.url_path == ""] == ["Leaderboard"]  # the default page
-    assert {page.title: page.url_path for page in menu}["Scenario Builder"] == "Scenario_Builder"  # #150
+    assert {page.title: page.url_path for page in menu}["Scenario Builder"] == "Scenario_Builder"
     assert [title.value for title in app.title] == ["UK Exports Predictor"]
     assert [heading.value for heading in app.header][:1] == ["Leaderboard"]
 

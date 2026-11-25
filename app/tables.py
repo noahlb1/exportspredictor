@@ -1,4 +1,4 @@
-"""Table pieces every page reuses (spec #103, "Money"): $ millions columns, short headings with tooltips, the term
+"""Table pieces every page reuses: $ millions columns, short headings with tooltips, the term
 definitions the API serves, the Applied Tariff column, and the Leaderboard's table and CSV.
 
 The term definitions for tooltips are `app.ui.term`.
@@ -21,7 +21,7 @@ import streamlit as st
 from app.ui import caveat_badges, caveat_tiers, illustrative, term, usd_unit
 
 MILLION = 1_000_000
-# The chosen row's tint, the same in light and dark mode (spec #103, "Theme and logo").
+# The chosen row's tint, the same in light and dark mode.
 TINT = {"background-color": "rgba(42, 120, 214, 0.28)", "font-weight": "600"}
 # Pixels: a long Product name otherwise widens its column until the columns after it scroll out of sight.
 PRODUCT_WIDTH = 200
@@ -156,8 +156,8 @@ def tariff_column(baseline_year: int, label: str = "Applied Tariff %", help: str
     )
 
 
-# The Leaderboard's wide table: the columns shown by default, in order, then those hidden by default (offered by the
-# table's own Show/hide columns menu). No column is pinned.
+# The Leaderboard's wide table: the columns shown by default, in order. The others are hidden by default and offered
+# by the table's own Show/hide columns menu. No column is pinned.
 LEADERBOARD_SHOWN = [
     "Product",
     "Market",
@@ -171,7 +171,6 @@ LEADERBOARD_SHOWN = [
     "Blocked Opportunity",
     "Caveats",
 ]
-LEADERBOARD_HIDDEN = ["Opportunity Type", "Potential Range", "HS6", "Sector", "Region"]
 # The right table of By Market and By Product (`app.views`): the figures that matter for a pair; the grouping's own
 # column (Market or Product) is left out.
 LEADERBOARD_RIGHT = [
@@ -308,8 +307,8 @@ def leaderboard_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
     return pd.concat([table[columns], pd.DataFrame(dollars), table[rest]], axis=1)
 
 
-# The Blocked Opportunities page (spec #103, "Blocked Opportunities"; spec #133, the before and after; spec #151, the
-# shared layout of `app.views`): every figure for the Baseline year. The Export Gap is not on this page.
+# The Blocked Opportunities page, a before and after in the shared layout of `app.views`: every figure for the
+# Baseline year. The Export Gap is not on this page.
 BLOCKED_FORMATS: dict[str, str | Callable] = {
     "Actual Exports": ONE_DECIMAL,
     "Export Potential": ONE_DECIMAL,
@@ -408,7 +407,7 @@ def blocked_products_columns(body: dict) -> dict:
 
 def blocked_csv(body: dict, rows: list[dict]) -> pd.DataFrame:
     """The Blocked Opportunities CSV: every row given, in full dollars, each money heading naming its year and unit,
-    with the Barrier, the Tariff part and the Agreement part (spec #133)."""
+    with the Barrier, the Tariff part and the Agreement part."""
     raw = pd.DataFrame(rows)
     year, unit, word = body["baseline_year"], usd_unit(), illustrative()
     return pd.DataFrame(

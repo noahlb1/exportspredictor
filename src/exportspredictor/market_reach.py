@@ -1,4 +1,4 @@
-"""Market Reach (spec #113, Phase 1): how widely the UK sends its Products to a Market, against how widely expected.
+"""Market Reach (ADR 0010): how widely the UK sends its Products to a Market, against how widely expected.
 
 The ranking does not know where the UK already sells: the open review of 2022
 (`docs/research/open-review-2022.md`, idea 1) found that most of the Selection Measure's loss
@@ -27,7 +27,7 @@ means "as expected". `products_expected` is that pooled share times `imported`. 
 no source pairs gets 0.
 
 `sent` is nested in `imported`, so the share is at most 1 and the offset is bounded. The first
-form (#124, "share") counted every UK Flow as sent. A Market that reports no imports of its own
+form ("share") counted every UK Flow as sent. A Market that reports no imports of its own
 is seen in BACI only through its Exporters' declarations, so the UK could send it many Products
 "no other Exporter" supplies: the Falkland Islands' share was about 3, its offset about 2.1
 (Ireland, the next, 0.92) and its multiplier about 230×, which made it the fourth Market by
@@ -42,7 +42,7 @@ into the target Market in other Products, which a feature may not use.
 **The adoption gate.** β comes from `BETA_GRID`, chosen on folds 0–2 of 2022 under the
 tie-proof Selection Measure, and is kept only if it beats the Win Threshold on the pooled
 five-fold 2022 grid (`scripts/research/market_reach_2022/`). `FORM`, `BETA_GRID`,
-`PSEUDO_COUNT` and `LAG_YEARS` were committed before any result was read (#124, ed982b0);
+`PSEUDO_COUNT` and `LAG_YEARS` were committed before any result was read (commit ed982b0);
 the experiment chose and adopted `CHOSEN_BETA` (`docs/research/market-reach-2022.md`). The
 nested form changed only which pairs count as sent, and was re-run through the same script.
 
@@ -61,7 +61,9 @@ from exportspredictor.features import FEATURES
 from exportspredictor.folds import N_FOLDS, score_out_of_fold, with_folds
 from exportspredictor.prediction import MarketReach, ModelForm
 
-FORM = "nested_share"  # the open review's share form with sent nested in imported (#124's "share" was not nested)
+# The open review's share form with sent nested in imported; the first form tried, "share", counted
+# every UK Flow as sent.
+FORM = "nested_share"
 BETA_GRID = (0.0, 0.5, 1.0, 2.0, 4.0)
 PSEUDO_COUNT = 5.0
 LAG_YEARS = 1
@@ -119,7 +121,7 @@ def apply(
 
     A row whose fold and Market have no offset (another Exporter's row, a Market without source
     pairs) is multiplied by the constant alone. With `cap`, the multiplier exp(β · offset) is held at
-    or below it before the constant (an experiment of spec #155, ticket #163); None caps nothing.
+    or below it before the constant (a final-round experiment); None caps nothing.
     """
     return np.asarray(potential, dtype=np.float64) * _multiplier(rows, table, beta, cap) * constant
 

@@ -53,7 +53,7 @@ def frame() -> pl.DataFrame:
 
 
 def measure(df: pl.DataFrame, col: str) -> float:
-    """The Selection Measure of `col` on `df` as the review measured it, before ties were broken (ticket #115)."""
+    """The Selection Measure of `col` on `df` as the review measured it, before ties were broken."""
     return legacy_selection_measure(df, col)
 
 

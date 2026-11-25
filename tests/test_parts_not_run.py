@@ -1,4 +1,4 @@
-"""An artefact built without an opt-in part (spec #65, story 23) loads, is served, and renders
+"""An artefact built without an opt-in part loads, is served, and renders
 "not run for this version" for that part: in the API's evaluation, on the Model Evaluation page
 and in the model card. An artefact with every part shows no such notice.
 """

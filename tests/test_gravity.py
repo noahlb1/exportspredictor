@@ -187,7 +187,7 @@ def test_build_writes_country_map_pair_features_and_country_years_for_2012_to_20
     assert extract["year"].min() == 2021 and "fta_wto" in extract.columns  # the 2011 row is dropped
 
 
-# --- Gravity gaps: secondary sources for Markets the primary sources miss (#126) ----------
+# --- Gravity gaps: secondary sources for Markets the primary sources miss ----------
 
 
 def test_secondary_sources_fill_only_the_variables_no_primary_source_holds():

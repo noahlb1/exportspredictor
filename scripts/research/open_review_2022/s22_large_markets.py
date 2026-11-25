@@ -1,7 +1,7 @@
-"""The Selection Measure on the 30 and 60 largest importing Markets of 2022 (ticket #123); reads 2022 only.
+"""The Selection Measure on the 30 and 60 largest importing Markets of 2022; reads 2022 only.
 
 Reproduces the open review's figures (the Blend 0.507 on the top 30 and 0.544 on the top 60, measured
-before ties were broken, #115) with the package's `large_markets.restricted_measures`, and gives the
+before ties were broken) with the package's `large_markets.restricted_measures`, and gives the
 tie-proof figures beside them. Markets are ranked by their total 2022 imports from every Exporter.
 From the worktree root:
 
@@ -45,7 +45,7 @@ result = {"year": YEAR, "pairs": pairs.height, "markets": len(markets), "measure
           "top_30": {name: largest_importers(flows, markets, 30) for name, flows in RANKINGS.items()}}
 for ranking, flows in RANKINGS.items():
     for name, column in COLUMNS.items():
-        for label, measure in (("legacy (before #115)", legacy_selection_measure), ("tie-proof", selection_measure)):
+        for label, measure in (("legacy (ties unbroken)", legacy_selection_measure), ("tie-proof", selection_measure)):
             measured = restricted_measures(pairs, flows, column, counts=counts, measure=measure)
             row = {"markets ranked": ranking, "predictor": name, "measure": label,
                    **{f"top_{n}": measured[n] for n in counts[:-1]}, "every_market": measured[counts[-1]]}

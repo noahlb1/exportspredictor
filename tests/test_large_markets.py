@@ -1,4 +1,4 @@
-"""The Selection Measure on the largest importing Markets, reported beside the headline (#123)."""
+"""The Selection Measure on the largest importing Markets, reported beside the headline."""
 
 import polars as pl
 import pytest

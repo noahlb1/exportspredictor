@@ -1,4 +1,4 @@
-"""The pre-registered v1/v2 comparison (spec #39, decision #38): fixed before 2023 is read for it.
+"""The pre-registered v1/v2 comparison: fixed before 2023 is read for it.
 
 v1's predictions come only from its frozen tables (`freeze`), checked against their manifest.
 v1, v2 and the naive baseline are scored on exactly the same **common rows**:
@@ -247,7 +247,7 @@ def _by_product(frame: pl.DataFrame, predictors: Sequence[str]) -> pl.DataFrame:
         },
     )
     # Pre-registered on the measure of its day (average ranks for ties), so it keeps the legacy measure: a
-    # continuity table of the 2023 reads already made, not a choice (ticket #115).
+    # continuity table of the 2023 reads already made, not a choice.
     for p in predictors:
         rho = within_product_correlations(frame, p, tie_proof=False).select("hs6", pl.col("rho").alias(f"{p}_rho"))
         sums = sums.join(rho, on="hs6", how="left")
@@ -261,9 +261,9 @@ def _metrics(products: pl.DataFrame, predictor: str, rows: int) -> dict:
         "rows": rows,
         "products": products.height,
         "ranked_products": rho.len(),
-        "tweedie_deviance": _finite(products[f"{predictor}_dev"].sum() / products["_w"].sum()),
-        "rmse_log": _finite(np.sqrt(products[f"{predictor}_sq"].sum() / n)) if n else None,
-        "spearman_within_product": _finite(rho.mean()) if rho.len() else None,
+        "tweedie_deviance": backtests.finite(products[f"{predictor}_dev"].sum() / products["_w"].sum()),
+        "rmse_log": backtests.finite(np.sqrt(products[f"{predictor}_sq"].sum() / n)) if n else None,
+        "spearman_within_product": backtests.finite(rho.mean()) if rho.len() else None,
     }
 
 
@@ -271,22 +271,6 @@ def _resamples(n: int, *, resamples: int, seed: int) -> np.ndarray:
     """Seeded bootstrap counts over `n` units (resamples × n)."""
     rng = np.random.default_rng(seed)
     return rng.multinomial(n, [1 / n] * n, size=resamples).astype(float)
-
-
-def _interval(values: np.ndarray, level: float) -> list[float | None]:
-    finite = values[np.isfinite(values)]
-    if not finite.size:
-        return [None, None]
-    tail = (1 - level) / 2 * 100
-    low, high = np.percentile(finite, [tail, 100 - tail])
-    return [float(low), float(high)]
-
-
-def _finite(value) -> float | None:
-    if value is None:
-        return None
-    value = float(value)
-    return value if np.isfinite(value) else None
 
 
 def _primary(rows: pl.DataFrame, *, resamples: int, seed: int, level: float) -> dict:
@@ -303,9 +287,9 @@ def _primary(rows: pl.DataFrame, *, resamples: int, seed: int, level: float) -> 
         "products": products.height,
         "v1": float(v1.mean()),
         "v2": float(v2.mean()),
-        "naive": _finite(naive.mean()) if naive.len() else None,
+        "naive": backtests.finite(naive.mean()) if naive.len() else None,
         "difference": float((v2 - v1).mean()),
-        "ci": _interval(boot, level),
+        "ci": backtests.interval(boot, level),
         "bootstrap_unit": "Product",
     }
 
@@ -335,16 +319,16 @@ def _accuracy_secondaries(rows: pl.DataFrame, *, resamples: int, seed: int, leve
 
             ones = np.ones((1, products.height))
             v1, v2 = value("v1", ones)[0], value("v2", ones)[0]
-            ci = _interval(value("v2", counts) - value("v1", counts), level)
+            ci = backtests.interval(value("v2", counts) - value("v1", counts), level)
             out.append(
                 {
                     "metric": metric,
                     "label": label,
                     "scope": "all_exporters",
                     "better": "lower",
-                    "v1": _finite(v1),
-                    "v2": _finite(v2),
-                    "difference": _finite(v2 - v1),
+                    "v1": backtests.finite(v1),
+                    "v2": backtests.finite(v2),
+                    "difference": backtests.finite(v2 - v1),
                     "ci": ci,
                     "worse": ci[0] is not None and ci[0] > 0,
                     "counts": True,
@@ -422,7 +406,7 @@ def _event_secondaries(frozen: Frozen, *, event_v2: dict) -> list[dict]:
             if key not in v1_effects:
                 raise ValueError(f"The frozen Event Backtest has no rows for {key}")
             observed, (low, high) = row["observed"], row["observed_ci"]
-            v1, v2 = _finite(v1_effects[key]), row["predicted"]
+            v1, v2 = backtests.finite(v1_effects[key]), row["predicted"]
             counts = row["year"] == event_v2["event_year"]
             measured = None not in (observed, v1, v2)
             d1 = abs(v1 - observed) if measured else None
@@ -517,14 +501,14 @@ def _ladder(
                 "from": before,
                 "to": after,
                 "label": STEPS[after],
-                "change": _finite(np.nanmean(rho[after]) - np.nanmean(rho[before])),
-                "ci": _interval(boot, level),
+                "change": backtests.finite(np.nanmean(rho[after]) - np.nanmean(rho[before])),
+                "ci": backtests.interval(boot, level),
             }
         )
     return {
         "metric": PRIMARY["label"],
         "products": products.height,
-        "rungs": [{"name": name, "label": RUNGS[name], "value": _finite(np.nanmean(rho[name]))} for name in names],
+        "rungs": [{"name": name, "label": RUNGS[name], "value": backtests.finite(np.nanmean(rho[name]))} for name in names],
         "steps": steps,
         "note": LADDER_NOTE,
     }

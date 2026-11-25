@@ -21,7 +21,7 @@ offset = log((sent + 5) ÷ (imported + 10)) − log((Σ sent + 5) ÷ (Σ importe
 
 The fixture pipeline tests both through the served path. Changing a pair's own Flows, or every UK Flow of the Baseline year, leaves its fold's offsets unchanged.
 
-The offset *does* read UK Flows into the target pair's own Market, in other Products. That is the exception to CLAUDE.md's leave-one-out guardrail ("any feature built from UK data excludes the target pair's own Market"). The guardrail still holds for every model **feature**: Market Reach is post-processing in the Model Form, not a feature. No fold model is trained on it, and it never enters a tree. So the rule that features carry no pair trade in other Products still stands.
+The offset *does* read UK Flows into the target pair's own Market, in other Products. That is the exception to the leave-one-out guardrail in CODING_STANDARDS.md ("Modelling guardrails") ("any feature built from UK data excludes the target pair's own Market"). The guardrail still holds for every model **feature**: Market Reach is post-processing in the Model Form, not a feature. No fold model is trained on it, and it never enters a tree. So the rule that features carry no pair trade in other Products still stands.
 
 ## What an Export Gap now means
 

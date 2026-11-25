@@ -1,4 +1,4 @@
-"""The real feature ablation and learning curve (ticket #53): their saved results and the package settings agree."""
+"""The real feature ablation and learning curve: their saved results and the package settings agree."""
 
 import pytest
 

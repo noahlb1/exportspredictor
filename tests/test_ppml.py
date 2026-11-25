@@ -1,4 +1,4 @@
-"""The PPML gravity benchmark of the Trade Agreement Scenario Effect (decision #33), saved with the artefact."""
+"""The PPML gravity benchmark of the Trade Agreement Scenario Effect, saved with the artefact."""
 
 import numpy as np
 import polars as pl
@@ -174,7 +174,7 @@ def test_the_benchmark_runs_on_the_fixture_world(fixture_world):
     assert np.isfinite(fit.coefficient) and fit.std_error > 0
 
 
-# --- The saved benchmark: fitted once by a package command, carried with the artefact (spec #66) ---
+# --- The saved benchmark: fitted once by a package command, carried with the artefact ---
 
 
 def _fixture_panel(world):

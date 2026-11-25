@@ -1,4 +1,4 @@
-"""The Review Pack: the served outputs a fresh reviewer reads, built from an artefact bundle (spec #140, #159).
+"""The Review Pack: the served outputs a fresh reviewer reads, built from an artefact bundle.
 
 Tested on the fixture artefact for what each table holds, against the modules the app and API read
 (`rankings`, `scenarios`), not for how the pack is assembled.
@@ -114,7 +114,7 @@ def test_each_offered_presets_largest_scenario_effects_are_those_scenarios_run_g
             bundle.baseline_features, bundle.baseline, bundle.fold_models, scenarios.Scenario(preset=preset.name),
             tariff_range=tariff_range, form=bundle.model_form,
         )
-        # Largest by absolute size (spec #140, user story 7), so a fall under an adding preset can reach the reviewer.
+        # Largest by absolute size, so a fall under an adding preset can reach the reviewer.
         expected = result.pairs.sort(
             pl.col("effect_usd").abs(), "hs6", "iso3", descending=[True, False, False]
         ).head(review.TOP_N)
@@ -192,7 +192,7 @@ def test_the_folder_holds_one_csv_per_table_and_a_readme_naming_each_table_and_c
 
 
 def test_the_readme_says_to_read_hs6_codes_as_text_so_their_leading_zero_survives(bundle, pack, tmp_path):
-    # Review flag L1 (#161): the CSV holds 030214, but a reader that guesses types shows 30214.
+    # The CSV holds 030214, but a reader that guesses types shows 30214.
     folder = review.write(pack, tmp_path / "review_pack", version="fixture-test", baseline_year=bundle.baseline_year)
     readme = (folder / "README.md").read_text("utf-8")
 

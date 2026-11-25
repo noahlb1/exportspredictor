@@ -1,5 +1,5 @@
-"""The Leaderboard's detail panel under its tables (spec #103, "Leaderboard" and "Detail panel"; spec #151), run with
-AppTest through the router against the session's live fixture API.
+"""The Leaderboard's detail panel under its tables, run with AppTest through the router against the session's live
+fixture API.
 
 AppTest cannot click a table row, so a test chooses a pair as the page remembers it after a click on its Market and
 then on its Product (`GROUP` and `PAIR` in session state), or through the URL's Product and Market.
@@ -151,7 +151,7 @@ def _barrier(page) -> str:
 
 
 def test_the_barrier_speaks_of_the_tariff_going_to_0_only_where_one_is_charged(monkeypatch, fixture_api_url):
-    # Spec #133 / ADR 0011: a 0% tariff's rise rests on the agreement as a whole, never on removing a tariff.
+    # ADR 0011: a 0% tariff's rise rests on the agreement as a whole, never on removing a tariff.
     charged = _barrier(_choose(_home(monkeypatch, fixture_api_url), WHISKY, "IND"))  # 150%
     free = _barrier(_choose(_home(monkeypatch, fixture_api_url), "711319", "HKG"))  # 0%
 

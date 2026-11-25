@@ -1,4 +1,4 @@
-"""The base-year fold models and the scored UK panel that ITC's Realisation Test runs on (spec #156).
+"""The base-year fold models and the scored UK panel that ITC's Realisation Test runs on.
 
 For each base year t in `BASE_YEARS`, the frozen version's fold models (ADR 0001) are trained again on the
 years up to t only, with the same hyperparameters, round count, non-UK sampling and features, through the

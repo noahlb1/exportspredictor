@@ -12,6 +12,7 @@ import polars as pl
 from exportspredictor import experiments, market_reach, scope, search
 from exportspredictor.evaluation import naive_potential
 from exportspredictor.exclusions import drop_excluded
+from exportspredictor.experiments import log_progress, read_results
 from exportspredictor.features import (
     KEYS,
     PRODUCT_DETAIL_FEATURES,
@@ -54,7 +55,6 @@ from exportspredictor.loop.data import (
     MODELS_DIR,
     LoopData,
     naive_from_features,
-    read_results,
     save_results,
 )
 from exportspredictor.loop.recheck import current_win_threshold
@@ -124,14 +124,14 @@ def run_product_detail(lp: "Loop") -> dict:
 
 
 def run_exporter_count(lp: "Loop") -> dict:
-    """#127: the Exporter count against the best so far retrained on this loop's files, both with Market Reach."""
+    """The Exporter count against the best so far retrained on this loop's files, both with Market Reach."""
     best = best_so_far(lp)
     base, arms = exporter_count_arms(best)
     return lp.run_experiment(EXPORTER_COUNT_EXPERIMENT, arms, base_arm=base)
 
 
 def run_market_reach_cap(lp: "Loop") -> dict:
-    """#163: the upward Market Reach multiplier capped, against the best so far as served (`served_base_arm`).
+    """The upward Market Reach multiplier capped, against the best so far as served (`served_base_arm`).
 
     Both are scored from the best so far's cached model on this loop's files, so nothing is trained once that
     model exists. A kept cap becomes the best so far, with Market Reach and the cap in its settings.
@@ -141,7 +141,7 @@ def run_market_reach_cap(lp: "Loop") -> dict:
 
 
 def run_sibling_demand(lp: "Loop") -> dict:
-    """#164: Sibling Demand as a feature, against the best so far as served retrained on this loop's files.
+    """Sibling Demand as a feature, against the best so far as served retrained on this loop's files.
 
     The files (`sibling_demand`) are the served ones with the feature stored, so the pair differs by one feature.
     A dropped Arm leaves the served files unchanged; a kept one serves these files.
@@ -156,7 +156,7 @@ def run_sibling_demand(lp: "Loop") -> dict:
 def run_hyperparameter_stage(
     lp: "Loop", stage: str, stages: Mapping[str, Sequence[Arm]] = HYPERPARAMETER_STAGES
 ) -> dict:
-    """#166: one stage of the hyperparameter search, against the best so far as served (`served_base_arm`).
+    """One stage of the hyperparameter search, against the best so far as served (`served_base_arm`).
 
     Stages run in `stages`' order, so that winners stack: a stage is refused until every stage before it is
     decided, and its Arms change the parameters of the best so far after them. It is refused before training
@@ -173,7 +173,7 @@ def run_hyperparameter_stage(
 
 
 def run_model_family(lp: "Loop", family: str, arms: Mapping[str, Arm] = MODEL_FAMILY_ARMS) -> dict:
-    """#167: another model family's Arm against the best so far as served (`served_base_arm`), on this loop's files.
+    """Another model family's Arm against the best so far as served (`served_base_arm`), on this loop's files.
 
     A kept family becomes the best so far, with Market Reach in its settings, so a later idea runs against it.
     """
@@ -186,7 +186,7 @@ def run_model_family(lp: "Loop", family: str, arms: Mapping[str, Arm] = MODEL_FA
 def run_wider_scope(
     lp: "Loop", *, top: int = scope.TOP_EXPORTERS, non_uk_rate: float = WIDER_SCOPE_NON_UK_RATE
 ) -> dict:
-    """#169: every Exporter's rows against the best so far as served on the top `top` Exporters of the same files.
+    """Every Exporter's rows against the best so far as served on the top `top` Exporters of the same files.
 
     Both train at `non_uk_rate`, so the pair differs only by the training scope. A dropped Arm leaves the served
     files unchanged; a kept one becomes the best so far (every Exporter, this rate) and serves these files.
@@ -197,14 +197,14 @@ def run_wider_scope(
 
 
 def run_external_memory(lp: "Loop") -> dict:
-    """#170: every other Exporter's row (non-UK rate 1.0) through XGBoost external memory, against the best so far as
+    """Every other Exporter's row (non-UK rate 1.0) through XGBoost external memory, against the best so far as
     served (`served_base_arm`) on this loop's files. A kept Arm becomes the best so far, with Market Reach."""
     best = best_so_far(lp)
     return lp.run_experiment(EXTERNAL_MEMORY_EXPERIMENT, [external_memory_arm()], base_arm=served_base_arm(best))
 
 
 def run_excluded_products(lp: "Loop") -> dict:
-    """#171: the best so far as served trained on the Excluded Products' rows, against it with them dropped, both on
+    """The best so far as served trained on the Excluded Products' rows, against it with them dropped, both on
     this loop's files (`excluded_products`) at one non-UK rate. A dropped Arm leaves the served files unchanged; a
     kept one becomes the best so far and serves these files."""
     best = best_so_far(lp)
@@ -277,11 +277,11 @@ class Loop:
 
         With `base_arm`, the arms are compared with that Arm of the best so far, run first on this
         loop's data, instead of with the best so far's recorded measure: a paired comparison when the
-        data changed (rebuilt feature files, #127) or every Arm is scored differently (Market Reach).
+        data changed (rebuilt feature files) or every Arm is scored differently (Market Reach).
         The section records it (`base_arm`), the best so far it replaced as base (`previous_best`) and
         the feature set. If no arm wins, the best so far is unchanged. The feature set is served
-        (`kept_feature_set`) whatever the decision, as #127's gravity fill was, unless
-        `files_kept_if_dropped` is False: then only if an Arm is kept (#164's files exist to hold one feature).
+        (`kept_feature_set`) whatever the decision, as the `exporter_count` gravity fill was, unless
+        `files_kept_if_dropped` is False: then only if an Arm is kept (files such as `sibling_demand` exist to hold one feature).
         """
         if name == NOISE_FLOOR:
             raise ValueError(f"{NOISE_FLOOR!r} is the noise floor's name")
@@ -352,12 +352,13 @@ class Loop:
             key = training_key(settings, self._fingerprint())
             if key not in self._models and not self._model_file(key, settings.family).exists():
                 models.setdefault(key, models_trained_by(settings.to_dict()))
-                if not settings.external_memory:  # its rows stream to the device page by page (#170)
+                if not settings.external_memory:  # its rows stream to the device page by page
                     self._check_rows(settings)
         if sum(models.values()) > MAX_TRAINED_MODELS:
             raise ValueError(
                 f"Experiment {name!r} would train {sum(models.values())} models; the budget is at most "
-                f"{MAX_TRAINED_MODELS} trained models per experiment (spec #65)"
+                f"{MAX_TRAINED_MODELS} trained models per experiment, so that the fixed list of experiments ends "
+                "within its GPU budget"
             )
 
     def _check_rows(self, settings: Settings) -> None:
@@ -514,7 +515,7 @@ class Loop:
 
         The binary part stops on the selection measure of its probability alone; the size
         part stops on the selection measure of probability × size, the binary part held at
-        its chosen round. Both measures are the model alone, never the blend (#67's rule).
+        its chosen round. Both measures are the model alone, never the blend (the loop's rule).
         The matrices are built one part at a time, so only one training matrix is on the device.
         """
         if settings.base_margin:
@@ -598,7 +599,7 @@ class Loop:
                 table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk,
                 uk_zeros_sampled=settings.uk_zeros_sampled,
             )
-            if not settings.train_excluded_products:  # ADR 0005; only the `excluded_products` files hold them (#171)
+            if not settings.train_excluded_products:  # ADR 0005; only the `excluded_products` files hold them
                 rows = drop_excluded(rows)
             rows = held_out(rows).sort(KEYS)  # a fixed order: the same rows, the same model
             rows = self._with_product_detail(rows, settings)
@@ -692,7 +693,7 @@ class Loop:
             )
             rows = with_folds(source, self.plan.n_folds)
             self._reach = market_reach.reach_table(rows, self.data.validation_year, n_folds=self.plan.n_folds)
-        # Every row is held out by this fold; other Exporters' rows take no offset, only c (as #124 measured).
+        # Every row is held out by this fold; other Exporters' rows take no offset, only c (as the Market Reach experiment measured).
         rows = market_reach.uk_keys(table, fold=pl.lit(self.plan.fold, pl.Int8), uk=self.plan.uk).drop("uk")
         constant = market_reach.rescale_constant(potential, rows, self._reach, beta=beta, cap=cap)
         return market_reach.apply(potential, rows, self._reach, beta=beta, constant=constant, cap=cap)
@@ -714,7 +715,3 @@ def _best(experiment: str, row: Mapping) -> dict:
         "settings": row["settings"],
         SELECTION_MEASURE: row[SELECTION_MEASURE],
     }
-
-
-def log_progress(message: str) -> None:
-    print(message, flush=True)

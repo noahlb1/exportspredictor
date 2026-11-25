@@ -234,7 +234,7 @@ def test_the_artefact_serves_the_form_the_ranking_experiments_chose_and_records_
         "form": "blend",
         "naive_weight": ranking["best"]["settings"]["naive_weight"],
     }
-    assert served["market_reach"]["beta"] == market_reach.CHOSEN_BETA  # adopted on 2022 (#124, ADR 0010)
+    assert served["market_reach"]["beta"] == market_reach.CHOSEN_BETA  # adopted on 2022 (ADR 0010)
     assert ranking["selection_measure"] == SELECTION_MEASURE_TEXT
     assert {"selection_measures", "mean", "sd", "win_threshold"} <= set(ranking["noise_floor"])
     assert ranking["best"]["experiment"] == NAIVE_EXPERIMENT
@@ -267,12 +267,12 @@ def test_history_holds_uk_actual_exports_up_to_the_baseline_year(world, artefact
 
 
 def test_metadata_holds_no_gbp_rate(artefacts):
-    # Every output is nominal USD (#41); £ is no longer converted for display.
+    # Every output is nominal USD; £ is no longer converted for display.
     assert not [key for key in artefacts.metadata if "gbp" in key.lower()]
 
 
 def test_metadata_records_the_thresholds_the_tables_were_built_with(artefacts):
-    # Spec #39 *Artefacts*: the Blocked Opportunity rule, the Relative Export Gap floor and the Potential Range.
+    # The artefact records the Blocked Opportunity rule, the Relative Export Gap floor and the Potential Range.
     assert artefacts.metadata["thresholds"] == {
         "blocked_min_share": 0.2,
         "blocked_min_usd": 1_000_000.0,
@@ -298,7 +298,7 @@ def test_refresh_adds_derived_metadata_to_a_saved_bundle_without_retraining(arte
 
 
 def test_refresh_records_the_share_of_actual_exports_that_summed_export_potential_reaches(artefacts):
-    # Spec #113 "Totals understate": two pairs, $30m + $40m of Export Potential against $50m + $50m exported: 70%.
+    # The note that totals understate: two pairs, $30m + $40m of Export Potential against $50m + $50m exported: 70%.
     two_pairs = artefacts.baseline.head(2).with_columns(
         export_potential_usd=pl.Series([30e6, 40e6]), actual_exports_usd=pl.Series([50e6, 50e6])
     )
@@ -399,7 +399,7 @@ def test_loop_results_validated_on_another_year_are_refused(world, artefacts):
 
 
 def test_loop_results_chosen_on_another_feature_set_are_refused(world, artefacts):
-    """#127: the loop kept its configuration on the rebuilt `exporter_count` files; the build must read those."""
+    """The loop kept its configuration on the rebuilt `exporter_count` files; the build must read those."""
     ranking = artefacts.metadata["ranking_experiments"]
     rebuilt = {**ranking, "experiments": {**ranking["experiments"], "exporter count": {"feature_set": "exporter_count"}}}
 

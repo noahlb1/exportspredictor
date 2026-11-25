@@ -88,12 +88,6 @@ def world_products(flows: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def read_results(folder: Path | None) -> dict | None:
-    if folder is None or not (folder / RESULTS_FILE).exists():
-        return None
-    return json.loads((folder / RESULTS_FILE).read_text(encoding="utf-8"))
-
-
 def save_results(folder: Path, results: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / RESULTS_FILE
@@ -105,7 +99,7 @@ def save_results(folder: Path, results: dict) -> None:
 def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR, keep_excluded: bool = False) -> LoopData:
     """The fixture world's rows for every Product, built only from Flows up to the validation year.
 
-    `keep_excluded` keeps the Excluded Products' training rows, as the `excluded_products` feature set does (#171).
+    `keep_excluded` keeps the Excluded Products' training rows, as the `excluded_products` feature set does.
     """
     rows = experiments.fixture_data(world, validation_year=validation_year, keep_excluded=keep_excluded)
     flows = world.flows.filter(pl.col("year") == validation_year)
@@ -155,7 +149,7 @@ def real_data(root: Path | None = None, *, validation_year: int = experiments.VA
         return fit_product_detail(flows, years, uk=baci.UK)
 
     def reach_source() -> pl.DataFrame:
-        # The same feature set's UK grid of the year before (2021 for 2022), as #124 measured it.
+        # The same feature set's UK grid of the year before (2021 for 2022), as the Market Reach experiment measured it.
         lag = validation_year - market_reach.LAG_YEARS
         columns = ["hs6", "importer", "value_usd", market_reach.DEMAND]
         return pl.read_parquet(folder / f"uk_grid_{lag}.parquet", columns=columns)

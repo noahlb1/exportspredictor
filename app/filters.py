@@ -1,10 +1,10 @@
 """The sidebar filters of the two ranking pages, each kept in the page's URL and for the session.
 
-- The Leaderboard (`leaderboard_filters`, spec #103 "Leaderboard"): Product search, Market, Sector, Market region,
+- The Leaderboard (`leaderboard_filters`): Product search, Market, Sector, Market region,
   Opportunity Type, UK Trade Agreement in force, minimum Export Gap, the hide filters and Rank by, then Reset filters.
-- Blocked Opportunities (`blocked_filters`, spec #103 "Blocked Opportunities"): Product search, Sector, Market region,
-  minimum Blocked Opportunity value, the hide filters, the order (by the rise with agreement or by Tariff part, spec
-  #133), then Reset filters.
+- Blocked Opportunities (`blocked_filters`): Product search, Sector, Market region,
+  minimum Blocked Opportunity value, the hide filters, the order (by the rise with agreement or by Tariff part), then
+  Reset filters.
 
 There is one hide filter per Caveat Tier the API serves (`/caveats`, e.g. Hide Re-export Hubs), keyed and kept in the
 URL under the tier's `hide_param`. A tier the API marks `hidden_by_default` starts hidden, so a link that shows it

@@ -1,12 +1,12 @@
-"""The trainer seam (ticket #165): how the loop trains one model, behind one interface per model family.
+"""The trainer seam: how the loop trains one model, behind one interface per model family.
 
 The loop builds the rows (`TrainingRows`) and says how to train on them (`TrainingJob`); a
 `Trainer` turns them into a model that predicts Export Potential for the held-out UK grid,
 stopping on the Selection Measure of that grid. `Settings.family` picks the trainer
-(`trainer_for`); `XGBOOST` is the default. `LIGHTGBM` and `CATBOOST` (#167) train on the CPU:
+(`trainer_for`); `XGBOOST` is the default. `LIGHTGBM` and `CATBOOST` train on the CPU:
 LightGBM's wheel has no GPU learner, and CatBoost enforces monotone constraints only on the CPU and
 only for symmetric trees. Both read the rows from a float32 matrix on disk, so the raw rows are
-never held in memory beside the binned ones. Both families were dropped (#167), so `lightgbm` and `catboost` are dev
+never held in memory beside the binned ones. Both families were dropped (neither won its experiment), so `lightgbm` and `catboost` are dev
 dependencies, imported only where a model of their family trains, loads or predicts: the API and app never need them.
 """
 
@@ -78,7 +78,7 @@ class TrainingJob:
     device: str
     threads: int | None = None
     binary: bool = False
-    # `Settings.external_memory` (#170): XGBoost only; another family refuses a job with it.
+    # `Settings.external_memory`: XGBoost only; another family refuses a job with it.
     external_memory: bool = False
 
 
@@ -114,11 +114,16 @@ TWEEDIE_ONLY = ("tweedie_variance_power",)
 ANY_FLOW_PARAMS = {"objective": "binary:logistic"}
 
 
+def _save_model_file(model: Model, path: Path) -> None:
+    """Save a model in its library's own file format (XGBoost's and CatBoost's `save_model`)."""
+    model.save_model(str(path))
+
+
 class XGBoostTrainer:
     """XGBoost on `QuantileDMatrix`es built chunk by chunk on the device; the matrices are reused
     while the rows' key stays the same.
 
-    With `TrainingJob.external_memory` (#170), the training rows are an `ExtMemQuantileDMatrix` instead: one
+    With `TrainingJob.external_memory`, the training rows are an `ExtMemQuantileDMatrix` instead: one
     page per chunk, cached in host memory (on the CPU, in files in a temporary folder) and streamed to the
     device each round, so they need not fit in VRAM. The held-out grid stays in-core, binned by its cuts.
     """
@@ -179,8 +184,7 @@ class XGBoostTrainer:
             self._key, self._matrices = key, (train, grid)
         return self._matrices
 
-    def save(self, model: Model, path: Path) -> None:
-        model.save_model(str(path))
+    save = staticmethod(_save_model_file)
 
     def load(self, path: Path) -> Model:
         return xgb.Booster(model_file=str(path))
@@ -193,7 +197,7 @@ class XGBoostTrainer:
             self._cache = None
 
 
-# --- Other families (#167) ---------------------------------------------------------------------
+# --- Other families ----------------------------------------------------------------------------
 
 # LightGBM's defaults under a family's `params`: XGBoost's objective, link and histogram width.
 # `basic` is LightGBM's strict monotone method (each split's children bounded at their midpoint, as
@@ -418,8 +422,7 @@ class CatBoostTrainer:
             "train_seconds": round(time.perf_counter() - started, 1),  # rows included
         }
 
-    def save(self, model: Model, path: Path) -> None:
-        model.save_model(str(path))
+    save = staticmethod(_save_model_file)
 
     def load(self, path: Path) -> Model:
         import catboost as cb

@@ -1,4 +1,4 @@
-"""The hyperparameter search (ticket #54): Optuna TPE with a Median pruner, then confirmation on every Product.
+"""The hyperparameter search: Optuna TPE with a Median pruner, then confirmation on every Product.
 
 v1 tried five hand-picked configurations. v2 searches the space below in two stages, on
 the validation year (2022) only, with one fold of UK pairs held out (ADR 0001):
@@ -32,7 +32,7 @@ import json
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import polars as pl
@@ -52,7 +52,7 @@ from exportspredictor.training import (
     row_budget,
 )
 
-# The searched space (spec #39, decision #36). eta is fixed: the round count absorbs it.
+# The searched space. eta is fixed: the round count absorbs it.
 SPACE = {
     "max_depth": (4, 12),
     "min_child_weight": (1.0, 1000.0),  # log scale
@@ -156,9 +156,9 @@ def run(subset: Data, everything: Data, plan: SearchPlan, folder: Path | None = 
     for data in (subset, everything):
         if data.validation_year != subset.validation_year:
             raise ValueError("Both stages must validate on the same year")
-    results = load_results(folder) or {}
+    results = experiments.read_results(folder) or {}
     non_uk_rate = plan.non_uk_rate if plan.non_uk_rate is not None else final_non_uk_rate(everything)
-    results |= {"plan": _plan_dict(plan), "non_uk_rate": non_uk_rate, "validation_year": subset.validation_year}
+    results |= {"plan": experiments.plan_dict(plan), "non_uk_rate": non_uk_rate, "validation_year": subset.validation_year}
 
     started = time.perf_counter()
     study = _study(plan, folder)
@@ -262,7 +262,7 @@ def _optimise(study, data: Data, plan: SearchPlan, non_uk_rate: float) -> None:
     fitter = experiments._Fitter(data, _fitter_plan(plan, data, plan.sectors))
     zero_rate = plan.zero_rate or data.built_zero_rate
     train, valid = fitter.matrices(FEATURES, non_uk_rate=non_uk_rate, zero_rate=zero_rate)
-    _log(f"stage 1: {train.num_row():,} training rows; {len(done)} trials done")
+    experiments.log_progress(f"stage 1: {train.num_row():,} training rows; {len(done)} trials done")
 
     def objective(trial) -> float:
         trial.set_user_attr("v1_config", bool(trial.user_attrs.get("v1_config")))
@@ -273,7 +273,7 @@ def _optimise(study, data: Data, plan: SearchPlan, non_uk_rate: float) -> None:
         )
         for key in ("rounds", "hit_round_cap", "training_rows", "validation_rows", "uk_pairs", "uk_spearman"):
             trial.set_user_attr(key, row[key])
-        _log(f"trial {trial.number}: {trial.params} -> {row}")
+        experiments.log_progress(f"trial {trial.number}: {trial.params} -> {row}")
         return row["validation_deviance"]
 
     study.optimize(objective, n_trials=n_trials, timeout=timeout, gc_after_trial=True)
@@ -313,14 +313,14 @@ def _confirm(everything: Data, plan: SearchPlan, non_uk_rate: float, results: di
         fitter = experiments._Fitter(everything, _fitter_plan(plan, everything, None))
         zero_rate = plan.zero_rate or everything.built_zero_rate
         train, valid = fitter.matrices(FEATURES, non_uk_rate=non_uk_rate, zero_rate=zero_rate)
-        _log(f"stage 2: {train.num_row():,} training rows")
+        experiments.log_progress(f"stage 2: {train.num_row():,} training rows")
         for trial in todo:
             row = fitter.measure(
                 train, valid, FEATURES, xgboost_params(trial["params"], plan),
                 max_rounds=plan.max_rounds, early_stopping_rounds=plan.early_stopping_rounds,
             )
             done[trial["number"]] = {"trial": trial["number"], "params": trial["params"], **row}
-            _log(f"confirmation of trial {trial['number']}: {row}")
+            experiments.log_progress(f"confirmation of trial {trial['number']}: {row}")
             results["confirmation"] = [done[t["number"]] for t in top if t["number"] in done]
             _save_results(results, folder)
         del train, valid
@@ -358,7 +358,7 @@ def _winner(results: dict) -> dict:
 
 
 def _recheck(subset: Data, plan: SearchPlan, params: Mapping) -> dict:
-    """One learning-curve point of ticket #53 again, with the tuned configuration instead of v1's."""
+    """One point of the learning curve (`experiments`) again, with the tuned configuration instead of v1's."""
     non_uk_rate, zero_rate = plan.recheck_rates
     zero_rate = zero_rate or subset.built_zero_rate
     curve_plan = replace(
@@ -391,14 +391,6 @@ def _fitter_plan(plan: SearchPlan, data: Data, sectors: Sequence[str] | None) ->
     )
 
 
-def _plan_dict(plan: SearchPlan) -> dict:
-    return {**asdict(plan), "sectors": list(plan.sectors) if plan.sectors else None}
-
-
-def _log(message: str) -> None:
-    print(message, flush=True)
-
-
 # --- Data and saved results -----------------------------------------------------------------
 
 
@@ -426,12 +418,6 @@ def results_path(root: Path | None = None) -> Path:
 def load(root: Path | None = None) -> dict:
     """The saved results of the real search (`run` with `search_dir`)."""
     return json.loads(results_path(root).read_text(encoding="utf-8"))
-
-
-def load_results(folder: Path | None) -> dict | None:
-    if folder is None or not (folder / RESULTS_FILE).exists():
-        return None
-    return json.loads((folder / RESULTS_FILE).read_text(encoding="utf-8"))
 
 
 def _save_results(results: dict, folder: Path | None) -> None:

@@ -52,7 +52,7 @@ def restricted_measures(
 
     `rows` hold one row per Product and Market (`hs6`, `importer`, `value_usd`, `prediction`);
     `flows` every Exporter's Flows of the same year. `measure` is the tie-proof Selection
-    Measure by default; `legacy_selection_measure` gives the figures measured before #115.
+    Measure by default; `legacy_selection_measure` gives the figures measured before the measure was tie-proof.
     """
     markets = rows["importer"].cast(pl.String).unique().to_list()
     ranked = largest_importers(flows, markets, max(counts, default=0))

@@ -199,7 +199,7 @@ def test_the_real_run_caches_its_fold_models_so_a_rerun_does_not_retrain(
 ):
     from exportspredictor import evaluation
 
-    # The test-year models sit where `evaluation.real_test_models` looks for them (#61 reuses them).
+    # The test-year models sit where `evaluation.real_test_models` looks for them, so the evaluation reuses them.
     assert (evaluation.test_models_dir(derived_data_root, trained.metadata) / evaluation.TEST_MODELS_FILE).exists()
 
     def no_training(*args, **kwargs):

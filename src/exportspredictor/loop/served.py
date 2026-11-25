@@ -1,4 +1,4 @@
-"""What the pipeline serves of the loop (#77): the chosen form, its configuration and round count, and the record an artefact keeps."""
+"""What the pipeline serves of the loop: the chosen form, its configuration and round count, and the record an artefact keeps."""
 
 import statistics
 from collections.abc import Mapping
@@ -55,14 +55,14 @@ class ServedConfiguration:
     non_uk_rate: float
     validation_year: int
     # The feature files the loop last decided on (`features.feature_set`; "" is the original build).
-    # A data correction an experiment ran on (#127's gravity fill) is kept with it.
+    # A data correction an experiment ran on (such as the `exporter_count` gravity fill) is kept with it.
     feature_set: str = ""
 
 
 def kept_feature_set(results: Mapping) -> str:
     """The feature set of the last experiment that recorded one (an experiment with a base retrained on its
     files, `Loop.run_experiment`'s `base_arm`), else "" (the original files). An experiment whose files are
-    kept only if it wins (`files_kept_if_dropped` False, #164) counts only when an Arm was kept."""
+    kept only if it wins (`files_kept_if_dropped` False) counts only when an Arm was kept."""
     recorded = [
         s["feature_set"] for s in results.get("experiments", {}).values()
         if "feature_set" in s and (s.get("files_kept_if_dropped", True) or s.get("kept") is not None)
@@ -110,13 +110,13 @@ def ranking_record(results: Mapping) -> dict:
     return {key: results[key] for key in RECORDED if key in results}
 
 
-CONFIRMED_NAIVE_WEIGHT = 0.3  # the real loop's blend weight, confirmed on five folds (#76)
+CONFIRMED_NAIVE_WEIGHT = 0.3  # the real loop's blend weight, confirmed on five folds
 
 
 def fixture_ranking(world) -> dict:
     """The fixture world's loop results: the noise floor and the blend experiment (CPU, under a second).
 
-    The blend sweeps only `CONFIRMED_NAIVE_WEIGHT`, the weight the real loop chose and confirmed (#76),
+    The blend sweeps only `CONFIRMED_NAIVE_WEIGHT`, the weight the real loop chose and confirmed,
     so the fixture artefact serves the same form as the real one; the fixture's 20 UK pairs cannot
     choose a weight of their own.
     """

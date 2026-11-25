@@ -1,7 +1,7 @@
 """The Gap Period: the recent years whose yearly Export Gaps are averaged into the Export Gap.
 
 Advisors see the mean over the Gap Period (2022–2024 for the 2024 Baseline) of each year's
-Export Potential minus that year's Actual Exports, not one year alone (decision #30), so one
+Export Potential minus that year's Actual Exports, not one year alone, so one
 unusual shipment or the provisional Baseline-year figures do not decide a ranking. Each
 year is scored with that year's features by the pair's out-of-fold model (ADR 0001), and a
 year with no Flow counts as $0. The plain mean is used, so Export Gaps still sum across pairs.
@@ -59,7 +59,7 @@ def potential_share_of_actual_exports(gaps: pl.DataFrame) -> float | None:
 
     Export Potential blends two skewed estimates geometrically, so it is a median-type figure and its sum falls short
     of summed Actual Exports (about 70% on 2022, `docs/research/open-review-2022.md`). Every page that sums Export
-    Potential, Export Gaps or Blocked Opportunity values states this share (spec #113, "Totals understate"). None where
+    Potential, Export Gaps or Blocked Opportunity values states this share. None where
     the pairs have no Actual Exports.
     """
     actual = float(gaps["actual_exports_usd"].sum())

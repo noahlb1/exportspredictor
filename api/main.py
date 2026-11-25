@@ -332,7 +332,7 @@ def create_app(
     def evaluation(artefacts: store.Artefacts = Depends(loaded)):
         """The evaluation artefact: test-year accuracy, breakdowns, stability, and the known limitations.
 
-        The v1/v2 comparison stays in the artefact and the model card, never in the API (spec #39).
+        The v1/v2 comparison stays in the artefact and the model card, never in the API.
         """
         if artefacts.evaluation is None:
             raise HTTPException(status_code=404, detail=f"Artefact version {artefacts.version} has no evaluation.")

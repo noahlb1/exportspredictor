@@ -137,7 +137,7 @@ def test_the_exporter_count_of_a_uk_row_never_contains_a_uk_flow(world):
 
 
 def test_the_exporter_count_is_a_candidate_feature_with_no_monotone_constraint():
-    """It is stored beside the features for the experiment loop to try as an Arm (spec #113), not yet a
+    """It is stored beside the features for the experiment loop to try as an Arm, not yet a
     model input, and it is not a policy feature."""
     assert "log_exporters_loo" in features.CANDIDATE_FEATURES
     assert "log_exporters_loo" not in FEATURES
@@ -363,7 +363,7 @@ def test_training_rows_and_the_uk_grid_keep_flagged_products_and_re_export_hubs(
     assert grid.filter(_is(*JEWELLERY_HUB)).height == 1
 
 
-# --- Product detail finer than Sector (#74) -----------------------------------------------------
+# --- Product detail finer than Sector -----------------------------------------------------
 
 
 def _detail_flows() -> pl.DataFrame:

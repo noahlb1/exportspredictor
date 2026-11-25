@@ -11,7 +11,6 @@
   above 0.20 act).
 """
 
-import hashlib
 import math
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from exportspredictor import comparison, evaluation, rankings
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.conformal import COVERAGE_TOLERANCE, coverage_text
 from exportspredictor.currency import format_usd
+from exportspredictor.downloads import sha256
 from exportspredictor.evaluation import parts_not_run
 from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
@@ -365,8 +365,8 @@ def _excluded_products(table: pl.DataFrame) -> list[dict]:
     return [{"reason": row["reason"], "products": row["hs6"]} for row in groups.iter_rows(named=True)]
 
 
-# The row budget spec #39 planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
-SPEC_ROW_BUDGET_M = 110
+# The row budget v2 was planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
+PLANNED_ROW_BUDGET_M = 110
 
 
 def _sampling_decision(metadata: dict) -> tuple[str, str]:
@@ -374,7 +374,7 @@ def _sampling_decision(metadata: dict) -> tuple[str, str]:
     budget = metadata.get("row_budget")
     measured = (
         f" The budget measured on the RTX 3080 (`scripts/gpu_check.py`) is {budget:,} rows, about "
-        f"{1 - budget / (SPEC_ROW_BUDGET_M * 1e6):.0%} below the about {SPEC_ROW_BUDGET_M} M rows the spec planned "
+        f"{1 - budget / (PLANNED_ROW_BUDGET_M * 1e6):.0%} below the about {PLANNED_ROW_BUDGET_M} M rows the spec planned "
         "around, so the non-UK rate is lower than planned."
         if budget
         else ""
@@ -677,16 +677,8 @@ def data_lineage(root: Path | None = None) -> pl.DataFrame:
             continue
         for path in sorted(p for p in base.rglob("*") if p.is_file() and not p.name.endswith(".part")):
             rows.append({"source": source, "file": path.relative_to(root).as_posix(),
-                         "bytes": path.stat().st_size, "sha256": _sha256(path)})
+                         "bytes": path.stat().st_size, "sha256": sha256(path)})
     return pl.DataFrame(rows, schema={"source": pl.String, "file": pl.String, "bytes": pl.Int64, "sha256": pl.String})
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as file:
-        for block in iter(lambda: file.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 # --- Drift ---------------------------------------------------------------------------------

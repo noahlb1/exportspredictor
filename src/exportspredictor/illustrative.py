@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from exportspredictor.evaluation import NOT_RUN, model_form_label
 from exportspredictor.model_choice import event_backtest_note, primary_event_backtest
+from exportspredictor.wording import percent_text
 
 if TYPE_CHECKING:
     from exportspredictor.artefacts import Artefacts
@@ -23,7 +24,7 @@ ILLUSTRATIVE_TEXT = (
     "on them."
 )
 
-# Spec #66 story 29: the primary Event Backtest is one agreement's Markets, scored by the model alone; the model's
+# The primary Event Backtest is one agreement's Markets, scored by the model alone; the model's
 # association is every UK pair without a Trade Agreement, on the served Model Form.
 DIFFERENT_POPULATIONS = (
     "It covers one agreement's Markets and the model alone, while the model's association above covers every UK pair "
@@ -110,11 +111,7 @@ def _event_backtest(report: dict) -> dict:
         "observed_high": high,
         "text": (
             f"In the primary Event Backtest ({primary['title']}), the model alone associated the agreement with "
-            f"{_share(predicted)} for {direction['label']}; the observed change against Control Markets was "
-            f"{_share(observed)}{interval}. {DIFFERENT_POPULATIONS}"
+            f"{percent_text(predicted)} for {direction['label']}; the observed change against Control Markets was "
+            f"{percent_text(observed)}{interval}. {DIFFERENT_POPULATIONS}"
         ),
     }
-
-
-def _share(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:+.0%}"

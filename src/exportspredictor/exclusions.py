@@ -23,6 +23,8 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from exportspredictor.lookups import as_code
+
 
 @dataclass(frozen=True)
 class Exclusion:
@@ -53,10 +55,6 @@ EXCLUSIONS = (
 )
 
 
-def _code(column: str) -> pl.Expr:
-    return pl.col(column).cast(pl.String)
-
-
 def _matches(exclusion: Exclusion, code: pl.Expr) -> pl.Expr:
     covered = pl.any_horizontal(code.str.starts_with(p) for p in exclusion.prefixes)
     if exclusion.exceptions:
@@ -66,7 +64,7 @@ def _matches(exclusion: Exclusion, code: pl.Expr) -> pl.Expr:
 
 def reason_expr(column: str = "hs6") -> pl.Expr:
     """The exclusion reason of each row's Product, null where the Product is not excluded."""
-    code = _code(column)
+    code = as_code(column)
     expr = pl.lit(None, pl.String)
     for exclusion in reversed(EXCLUSIONS):
         expr = pl.when(_matches(exclusion, code)).then(pl.lit(exclusion.reason)).otherwise(expr)
@@ -75,7 +73,7 @@ def reason_expr(column: str = "hs6") -> pl.Expr:
 
 def is_excluded(column: str = "hs6") -> pl.Expr:
     """True where the row's Product is an Excluded Product."""
-    code = _code(column)
+    code = as_code(column)
     return pl.any_horizontal(_matches(exclusion, code) for exclusion in EXCLUSIONS)
 
 
@@ -135,13 +133,13 @@ REEXPORT_HUB_CAVEAT = (
 
 def flagged_product_expr(column: str = "hs6") -> pl.Expr:
     """True where the row's Product is a Sector 71 Flagged Product (the volatility rule's are in `volatility`)."""
-    code = _code(column)
+    code = as_code(column)
     return pl.any_horizontal(code.str.starts_with(p) for p in FLAGGED_PRODUCT_PREFIXES)
 
 
 def flagged_product_reason_expr(reasons: Mapping[str, str], column: str = "hs6") -> pl.Expr:
     """Each row's Flagged Product reason: Sector 71's, else the Product's in `reasons` (hs6 -> reason), else null."""
-    code = _code(column)
+    code = as_code(column)
     other = (
         code.replace_strict(dict(reasons), default=None, return_dtype=pl.String) if reasons
         else pl.lit(None, pl.String)
@@ -151,17 +149,7 @@ def flagged_product_reason_expr(reasons: Mapping[str, str], column: str = "hs6")
 
 def reexport_hub_expr(column: str = "iso3") -> pl.Expr:
     """True where the row's Market is a Re-export Hub."""
-    return pl.col(column).cast(pl.String).is_in(sorted(REEXPORT_HUBS))
-
-
-def flag_columns(hs6: str = "hs6", iso3: str = "iso3") -> list[pl.Expr]:
-    """The boolean `flagged_product` and `reexport_hub` columns of rows keyed by Product and Market."""
-    return [flagged_product_expr(hs6).alias("flagged_product"), reexport_hub_expr(iso3).alias("reexport_hub")]
-
-
-def is_flagged_product(hs6: str) -> bool:
-    """Whether `hs6` is a Sector 71 Flagged Product (the volatility rule's are in `volatility`)."""
-    return hs6.startswith(FLAGGED_PRODUCT_PREFIXES)
+    return as_code(column).is_in(sorted(REEXPORT_HUBS))
 
 
 def not_ranked_message(excluded: pl.DataFrame, hs6: str) -> str | None:

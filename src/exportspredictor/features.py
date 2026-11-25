@@ -83,7 +83,7 @@ SUPPLY_FEATURES = ["log_supply_loo", "rca_loo"]
 # those imports that come from high-income Exporters.
 DEMAND_FEATURES = ["log_demand_loo", "high_income_share_loo"]
 PRODUCT_FEATURES = ["sector"]  # HS2 chapter, as a number
-# Product features finer than Sector (#74), fitted on training years by `fit_product_detail`
+# Product features finer than Sector, fitted on training years by `fit_product_detail`
 # and joined on the Product; built for the experiment loop's rows only, not by `build_features`.
 PRODUCT_DETAIL_FEATURES = ["trading_pair_share", "importing_markets", "hs4"]
 # Relatedness: how close the Product is to the Products the Exporter already exports
@@ -92,12 +92,12 @@ RELATEDNESS_FEATURES = ["relatedness"]
 # Market import growth over GROWTH_YEARS, and the Market's exports of the Product over its
 # imports of it (log-capped), both leaving out the row's own Exporter.
 MARKET_TREND_FEATURES = ["market_import_growth", "reexport_ratio"]
-# The Exporter count (spec #113's "supplier count"): ln(1 + the number of Exporters other than
-# the row's own with a non-zero Flow of the Product into the Market that year), from every
-# Exporter's Flows (ADR 0004). A UK row never counts the UK. How open a Market is to a Product;
-# not a policy feature, so it has no monotone constraint.
+# The Exporter count: ln(1 + the number of Exporters other than the row's own with a non-zero
+# Flow of the Product into the Market that year), from every Exporter's Flows (ADR 0004). A UK
+# row never counts the UK. How open a Market is to a Product; not a policy feature, so it has no
+# monotone constraint.
 EXPORTER_COUNT_FEATURES = ["log_exporters_loo"]
-# Sibling Demand (spec #155, #164; idea 9 of docs/research/open-review-2022.md), the UK-free demand
+# Sibling Demand (idea 9 of docs/research/open-review-2022.md), the UK-free demand
 # proxy: ln(1 + the Market's imports that year of the Product's HS4 siblings, the other Products of
 # its heading, from every Exporter except the UK and the row's own). It reads no UK Flow at all, so a
 # UK-dominated Market does not look small, and a UK row never sees its own pair or the UK's other
@@ -107,7 +107,7 @@ EXPORTER_COUNT_FEATURES = ["log_exporters_loo"]
 # name stays as the built `sibling_demand` files store it.
 SIBLING_DEMAND_FEATURES = ["log_sibling_demand_loo"]
 # Features `build_features` computes that are not yet model inputs: the experiment loop tries each
-# as an Arm (spec #113 Phase 2) and a win moves it into ALL_FEATURES. A feature set stores those
+# as an Arm and a win moves it into ALL_FEATURES. A feature set stores those
 # its `FeatureSet.candidates` names.
 CANDIDATE_FEATURES = [*EXPORTER_COUNT_FEATURES, *SIBLING_DEMAND_FEATURES]
 # The Applied Tariff as ln(1 + t), with t the rate as a fraction (ADR 0006).
@@ -123,7 +123,7 @@ ALL_FEATURES = [
     *MARKET_TREND_FEATURES,
     *POLICY_FEATURES,
 ]
-# Features the ablation (`experiments`, ticket #53) found to hurt: on 2022, the model without
+# Features the ablation (`experiments`) found to hurt: on 2022, the model without
 # Market import growth had lower deviance and a higher UK within-Product Spearman. It is still
 # computed and stored beside the features, but it is not a model input.
 ABLATED_FEATURES = ["market_import_growth"]
@@ -152,7 +152,7 @@ CLIPPED_FEATURES = [f for f in [
 # MFN rate, which a Scenario restores when it removes a Trade Agreement.
 TARIFF_METADATA = ["tariff_imputed", "mfn_tariff"]
 # Share of other Exporters' Zero Cells kept for training on real data (ADR 0004). UK Zero Cells
-# are always kept. Settled by the learning curve (`experiments`, ticket #53): on 2022 at a
+# are always kept. Settled by the learning curve (`experiments`): on 2022 at a
 # non-UK rate of 0.65, 5% gave the lowest deviance (412.1 against 413.6 at 2% and 413.8 at
 # 10%) with UK Spearman within 0.003 of 2%, and leaves a higher non-UK rate than 10% does.
 ZERO_SAMPLING_RATE = 0.05
@@ -195,7 +195,7 @@ def training_rows(
 ) -> pl.DataFrame:
     """Every non-zero Flow (weight 1), every UK Zero Cell (weight 1) and a random sample of
     other Exporters' Zero Cells (weight 1/rate), leaving out Excluded Products unless `keep_excluded`
-    (#171: their rows kept by the same rules, for an Arm that trains on them).
+    (their rows kept by the same rules, for an Arm that trains on them).
 
     A Zero Cell is an Exporter–Importer–Product–year where the Exporter exports the
     Product to someone and the Importer imports it from someone that year, but not from
@@ -436,7 +436,7 @@ def build_features(rows: pl.DataFrame, flows: pl.DataFrame, sources: Sources, *,
 
 
 def fit_product_detail(flows: pl.DataFrame | pl.LazyFrame, training_years: list[int], *, uk: str) -> pl.DataFrame:
-    """Product features finer than Sector (#74), one row per Product (`hs6` as text), fitted on `training_years`.
+    """Product features finer than Sector, one row per Product (`hs6` as text), fitted on `training_years`.
 
     - `trading_pair_share`: the share of Exporter–Importer pairs trading anything that year
       which trade the Product, averaged over the years;
@@ -774,18 +774,18 @@ class FeatureSet:
 # The sets' names, each defined once here and imported wherever a set is named:
 # - "" (`features_<BACI version>`): the original build, on the primary sources only;
 ORIGINAL_SET = ""
-# - "exporter_count" (#126): with the Exporter count stored and GDP and population filled from secondary
+# - "exporter_count": with the Exporter count stored and GDP and population filled from secondary
 #   sources for the Markets the primary ones miss;
 EXPORTER_COUNT_SET = "exporter_count"
-# - "all_exporters" (#168): `exporter_count` with every Exporter's rows, not only ADR 0004's top 100. The top
+# - "all_exporters": `exporter_count` with every Exporter's rows, not only ADR 0004's top 100. The top
 #   100's rows are the same as in `exporter_count`, so the two sets differ only by the other Exporters' rows. Its
 #   rows are not sampled at build time: the loop samples other Exporters' rows at a non-UK rate that fits the
 #   VRAM budget, and GPU external memory can train on all of them;
 ALL_EXPORTERS_SET = "all_exporters"
-# - "sibling_demand" (#164): `exporter_count` with Sibling Demand stored as a second candidate feature; every
+# - "sibling_demand": `exporter_count` with Sibling Demand stored as a second candidate feature; every
 #   other column is the same;
 SIBLING_DEMAND_SET = "sibling_demand"
-# - "excluded_products" (#171): `exporter_count` with the Excluded Products' training rows kept; the UK grid still
+# - "excluded_products": `exporter_count` with the Excluded Products' training rows kept; the UK grid still
 #   leaves them out. Features are built from all Flows either way (ADR 0005), so every row the two sets share is
 #   the same.
 EXCLUDED_PRODUCTS_SET = "excluded_products"

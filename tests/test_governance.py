@@ -301,7 +301,7 @@ def test_feature_drift_rates_each_feature_with_the_course_thresholds():
     assert drift["status"].to_list() == ["act", "stable"]
 
 
-def test_the_sampling_decision_notes_the_measured_row_budget_against_the_specs_figure(fixture_artefacts):
+def test_the_sampling_decision_notes_the_measured_row_budget_against_the_planned_110_million(fixture_artefacts):
     from dataclasses import replace
 
     measured = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "row_budget": 100_032_198})
@@ -341,7 +341,7 @@ def test_model_card_says_the_event_backtests_measure_the_model_alone_when_a_blen
     assert events and all("model alone" in m["text"] for m in events)
 
 
-# --- The card's lead (spec #66, #91) ------------------------------------------------------
+# --- The card's lead ------------------------------------------------------
 
 
 def _headings(text: str) -> list[str]:
@@ -570,7 +570,7 @@ def test_the_model_cards_blocked_opportunity_rule_includes_room_to_grow(card):
 
 
 def test_the_card_states_every_served_limitation_in_order_then_its_own_extras(fixture_artefacts):
-    # One source (spec #140 review): the card builds on `known_limitations`, so the two lists cannot drift.
+    # One source: the card builds on `known_limitations`, so the two lists cannot drift.
     served = evaluation.known_limitations(fixture_artefacts)
 
     card = governance.model_card(fixture_artefacts)["limitations"]

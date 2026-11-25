@@ -99,7 +99,7 @@ def _stale(page: AppTest) -> list[str]:
 
 
 def test_the_summed_scenario_effect_carries_the_totals_note(monkeypatch, api_url):
-    # Spec #113 "Totals understate": every summed figure is read against the artefact's share of Actual Exports.
+    # The note that totals understate: every summed figure is read against the artefact's share of Actual Exports.
     note = httpx.get(f"{api_url}/labels").json()["totals_note"]["text"]
 
     page = _run_cptpp(monkeypatch, api_url)
@@ -261,7 +261,7 @@ def test_short_headings_carry_tooltips(monkeypatch, api_url):
     assert "Pairs changed" in page.dataframe[MARKETS].value.columns
 
 
-# --- A Scenario's Blocked Opportunities (#148, ADR 0012): the Blocked Opportunities page's rows, table and panel ----
+# --- A Scenario's Blocked Opportunities (ADR 0012): the Blocked Opportunities page's rows, table and panel ----
 
 
 def _run_tariff(monkeypatch, api_url) -> AppTest:
@@ -320,7 +320,7 @@ def test_a_scenario_adding_no_trade_agreement_shows_one_neutral_line_instead(mon
     assert len(page.dataframe) == BLOCKED  # Change per Market, the drill-down and Top Products gaining only
     [line] = [element.value for element in page.markdown if "this Scenario adds none" in element.value]
     assert "Blocked Opportunities are measured by adding a Trade Agreement" in line
-    assert httpx.get(f"{blocked_api_url}/labels").json()["blocked_rule"] in line  # spec #142, story 6
+    assert httpx.get(f"{blocked_api_url}/labels").json()["blocked_rule"] in line  # the rule as the API words it
     assert "20%" in line and "$1M" in line
     [link] = [link for link in page.page_link if "Blocked Opportunities" in link.proto.label]
     assert link.proto.page.endswith(BLOCKED_PAGE) or "Blocked_Opportunities" in link.proto.page
@@ -363,7 +363,7 @@ def test_a_scenario_that_changes_nothing_says_so(monkeypatch, api_url):
     page.button(key="run").click().run()
 
     assert not page.exception
-    # #149: nothing is wrong, so the API's summary is a neutral box, not a warning, and there is no table.
+    # Nothing is wrong, so the API's summary is a neutral box, not a warning, and there is no table.
     assert any("changes nothing" in box.value for box in page.info)
     assert not page.warning
     assert not page.dataframe
@@ -393,10 +393,10 @@ def test_the_note_is_not_shown_before_a_run(monkeypatch, api_url, fixture_artefa
 
 
 def test_a_run_shows_the_apis_scenario_note_in_the_blocked_opportunities_pages_expander(monkeypatch, blocked_api_url):
-    # #149: the note sits closed under the figures, in the expander the Blocked Opportunities page uses.
+    # The note sits closed under the figures, in the expander the Blocked Opportunities page uses.
     note = httpx.post(f"{blocked_api_url}/scenarios", json=INDIA).json()["note"]
     page = _run_india(monkeypatch, blocked_api_url)
-    # The Blocked Opportunities page's note expander, found by its label: since spec #151 a pair's panel, with
+    # The Blocked Opportunities page's note expander, found by its label: a pair's panel, with
     # expanders of its own, is open on that page too.
     [label] = [box.label for box in run_page(BLOCKED_PAGE).expander if box.label.endswith(NOTE_EXPANDER)]
 
@@ -411,7 +411,7 @@ def test_a_run_shows_the_apis_scenario_note_in_the_blocked_opportunities_pages_e
 def test_no_caption_repeats_the_association_caveat_and_the_amounts_caption_names_the_clickable_tables(
     monkeypatch, api_url
 ):
-    # #149 (F10, F14): the subtitle and the Illustrative note carry the caveat; only Markets and pairs can be clicked.
+    # The subtitle and the Illustrative note carry the caveat; only Markets and pairs can be clicked.
     page = _run_india(monkeypatch, api_url)
 
     captions = [element.value for element in page.caption]
@@ -443,7 +443,7 @@ def _result_order(node) -> list[str]:
     return [part for index in sorted(children) for part in _result_order(children[index])]
 
 
-def test_a_tariff_result_renders_in_the_tickets_order(monkeypatch, api_url):
+def test_a_tariff_result_renders_summary_note_metrics_and_tables_in_reading_order(monkeypatch, api_url):
     page = _scenarios_page(monkeypatch, api_url)
     page.radio(key="kind").set_value("Tariff change").run()
     page.multiselect(key="tariff_markets").set_value(["JPN"]).run()
@@ -465,7 +465,7 @@ def test_a_tariff_result_renders_in_the_tickets_order(monkeypatch, api_url):
     ]
 
 
-def test_a_result_adding_an_agreement_renders_in_the_tickets_order(monkeypatch, blocked_api_url):
+def test_a_result_adding_an_agreement_renders_summary_metrics_and_tables_in_reading_order(monkeypatch, blocked_api_url):
     page = _run_india(monkeypatch, blocked_api_url)
 
     assert _result_order(page.main) == [
@@ -534,7 +534,7 @@ def test_the_tariff_mode_runs_and_says_when_the_effect_flattens_beyond_the_train
 
     assert not page.exception
     assert "associates" in " ".join(element.value for element in page.markdown)
-    # #149: a neutral box, information about the model rather than an error.
+    # A neutral box, information about the model rather than an error.
     clip = [element.value for element in page.info if "training range" in element.value]
     assert clip and "5" in clip[0]  # the clipped pairs, counted by the API
     assert not page.warning
@@ -573,7 +573,7 @@ def test_a_scenario_that_is_no_tariff_change_has_no_raised_and_lowered_line(monk
         assert "it raises" not in _page_text(page)
 
 
-# --- Final review of #103: click-to-select as on the other pages, adaptive money in sentences ----------------------
+# --- Click-to-select as on the other pages, adaptive money in sentences ----------------------
 
 
 def test_rows_are_chosen_by_clicking_any_value_as_on_the_leaderboard(monkeypatch, api_url):
@@ -605,7 +605,7 @@ def test_the_blocked_opportunities_line_states_the_fixed_rule_in_the_adaptive_fo
     line = next(element.value for element in page.caption if "room to grow" in element.value)
     assert "20%" in line and "$1M" in line and "$1,000,000" not in line
     assert "fixed" in line  # the rule is stated, not offered for tuning (ADR 0012)
-    assert "whatever their Actual Exports" not in line  # spec #133: room to grow
+    assert "whatever their Actual Exports" not in line  # a Blocked Opportunity needs room to grow
     assert "Actual Exports" in line and "Export Potential with a Trade Agreement" in line  # as on that page
 
 
@@ -618,7 +618,7 @@ def test_the_page_says_what_a_trade_agreement_means_before_a_run(monkeypatch, ap
 
 
 def test_the_subtitle_starts_with_what_the_advisor_does(monkeypatch, api_url):
-    # #150 (F13): the Advisor builds their own Scenario rather than picking one from a list.
+    # The Advisor builds their own Scenario rather than picking one from a list.
     page = _scenarios_page(monkeypatch, api_url)
 
     assert page.header[0].value == "Scenario Builder"
@@ -655,7 +655,7 @@ def test_a_prefilled_builder_can_be_changed(open_page, api_url):
 
 
 def test_the_illustrative_expander_is_worded_true_for_a_scenario_with_no_blocked_opportunities(monkeypatch, api_url):
-    # #142 final review: the expander qualifies the Scenario Effect too, often with no Blocked Opportunity value shown.
+    # The expander qualifies the Scenario Effect too, often with no Blocked Opportunity value shown.
     page = _run_tariff(monkeypatch, api_url)
 
     [expander] = [box for box in page.expander if box.label.startswith("Illustrative")]

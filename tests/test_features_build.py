@@ -92,7 +92,7 @@ def test_build_adds_relatedness_import_growth_and_the_reexport_ratio(derived_dat
     assert pl.read_parquet(out / "proximity.parquet").height > 0
 
 
-# --- Feature sets: a rebuild writes its own folder (#126) -------------------------------------
+# --- Feature sets: a rebuild writes its own folder -------------------------------------
 
 
 def _filled_gravity(root, iso3: str, gdp_usd: float) -> None:
@@ -209,7 +209,7 @@ def test_a_resumed_build_reuses_the_proximity_it_saved(derived_data_root):
     assert pl.read_parquet(out / "training_2024.parquet")["relatedness"].null_count() > 0
 
 
-# --- The wider Exporter scope (#168) -----------------------------------------------------------
+# --- The wider Exporter scope -----------------------------------------------------------
 
 
 def test_the_all_exporters_set_trains_on_every_exporter_and_keeps_every_uk_row(derived_data_root):
@@ -258,7 +258,7 @@ def test_the_all_exporters_rows_sampled_at_a_non_uk_rate_keep_every_uk_row_and_u
     assert min(cells) < others.height < max(cells)  # each sample is a fresh draw, not the full rows
 
 
-# --- Sibling Demand, the UK-free demand proxy (#164) -------------------------------------------
+# --- Sibling Demand, the UK-free demand proxy -------------------------------------------
 
 
 def test_the_sibling_demand_set_is_the_exporter_count_set_with_sibling_demand_stored(derived_data_root):
@@ -281,7 +281,7 @@ def test_the_sibling_demand_set_is_the_exporter_count_set_with_sibling_demand_st
         assert rows["log_sibling_demand_loo"].null_count() == 0
 
 
-# --- The Excluded Products' rows kept for training (#171) ---------------------------------------
+# --- The Excluded Products' rows kept for training ---------------------------------------
 
 
 def test_the_excluded_products_set_trains_on_them_and_still_never_scores_them(derived_data_root):

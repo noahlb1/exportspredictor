@@ -472,7 +472,7 @@ def test_every_event_backtest_model_trained_only_before_its_event(report):
         assert max(event["training_years"]) < event["event_year"]
 
 
-def test_the_real_plan_trains_before_each_event_and_reads_the_years_the_ticket_names():
+def test_the_real_plan_trains_before_each_event_and_reads_its_fixed_gap_event_and_outcome_years():
     plan = backtests.REAL_PLAN
 
     assert plan.lift.training_years == tuple(range(2012, 2018))
@@ -655,7 +655,7 @@ def test_an_event_backtest_refuses_fold_models_trained_after_the_event(fixture_w
 
 def test_backtest_models_on_another_feature_set_are_cached_apart(tmp_path, monkeypatch):
     # The Blend's Lift and Event Backtest models were trained on the original files; a build on the rebuilt
-    # `exporter_count` files with the same settings must not read them (#128).
+    # `exporter_count` files with the same settings must not read them.
     from exportspredictor.features import FEATURE_SET_ENV
 
     monkeypatch.delenv(FEATURE_SET_ENV, raising=False)
@@ -664,3 +664,28 @@ def test_backtest_models_on_another_feature_set_are_cached_apart(tmp_path, monke
 
     monkeypatch.setenv(FEATURE_SET_ENV, "exporter_count")
     assert backtests.cache_dir(tmp_path) == tmp_path / "derived" / "backtest_models_exporter_count"
+
+
+# --- Reported numbers --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [None, float("nan"), float("inf"), -np.inf])
+def test_a_missing_or_infinite_result_is_reported_as_none(value):
+    assert backtests.finite(value) is None
+
+
+def test_a_finite_result_is_reported_as_a_plain_float():
+    reported = backtests.finite(np.float32(0.5))
+
+    assert reported == 0.5
+    assert type(reported) is float
+
+
+def test_the_interval_is_the_central_percentiles_of_the_finite_resamples():
+    resamples = np.concatenate([np.arange(1.0, 102.0), [np.nan, np.inf]])
+
+    assert backtests.interval(resamples, 0.9) == pytest.approx([6.0, 96.0])
+
+
+def test_the_interval_is_missing_when_no_resample_is_finite():
+    assert backtests.interval(np.array([np.nan, np.inf]), 0.95) == [None, None]

@@ -1,4 +1,4 @@
-"""The GPU check behind the row budget (ticket #52, ADR 0004): peak VRAM and seconds per round.
+"""The GPU check behind the row budget (ADR 0004): peak VRAM and seconds per round.
 
 Two steps, run through `scripts/wt.ps1` (or `uv run`) from the repo root:
 
