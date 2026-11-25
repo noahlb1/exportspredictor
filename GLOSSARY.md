@@ -74,6 +74,10 @@ _Avoid_: density, product space, proximity
 How many other Exporters have a non-zero Flow of a Product into a Market in a year, leaving out the row's own Exporter (and the UK from every UK row). A candidate feature: tried as an Arm on 2022 and dropped, because it did not beat the Win Threshold.
 _Avoid_: supplier count, competitor count
 
+**Sibling Demand**:
+A Market's imports in a year of the other Products in a Product's HS4 heading, from every Exporter except the UK and the row's own. It is a demand proxy built from no UK Flow, so a Market the UK dominates does not look small. A candidate feature: tried as an Arm on 2022 and dropped, because it did not beat the Win Threshold.
+_Avoid_: UK-free demand (as a name), HS4 demand, sibling imports
+
 ### Prediction
 
 **Export Potential**:
@@ -227,6 +231,10 @@ _Avoid_: FTA (except as a type of Trade Agreement), deal
 **Applied Tariff**:
 The import duty a Market charges on a Product from a given Exporter: the lower of its preferential rate for that Exporter and its most-favoured-nation rate.
 _Avoid_: duty, tariff rate
+
+**Unrecorded preference**:
+A Trade Agreement whose preferential tariffs the tariff data does not hold: the pair has the agreement but no Customs Union, and none of its Products with a known most-favoured-nation rate has an Applied Tariff below that rate, so the Applied Tariff reads as the most-favoured-nation rate everywhere. A lead tested on 2022 by setting those Applied Tariffs to 0 and dropped, because the probe missed its pre-registered gate.
+_Avoid_: missing preference, tariff gap
 
 **Trading Bloc**:
 A named group of countries whose membership implies Trade Agreements with every other member, such as the EU or CPTPP.

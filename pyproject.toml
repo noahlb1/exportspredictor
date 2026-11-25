@@ -20,9 +20,11 @@ dependencies = [
 [dependency-groups]
 dev = [
     "altair>=5.4",
+    "catboost>=1.2.10",
     "cupy-cuda13x[ctk]>=14.2.0",
     "hypothesis>=6.170.15",
     "ipykernel>=6.29",
+    "lightgbm>=4.7.0",
     "nbclient>=0.10",
     "nbformat>=5.10",
     "optuna>=5.1.0",

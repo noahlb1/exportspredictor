@@ -6,7 +6,7 @@ import math
 import polars as pl
 import pytest
 
-from exportspredictor import baci, features
+from exportspredictor import baci, features, training
 from exportspredictor.fixture import UK
 
 
@@ -207,3 +207,102 @@ def test_a_resumed_build_reuses_the_proximity_it_saved(derived_data_root):
 
     assert pl.read_parquet(out / "proximity.parquet").is_empty()
     assert pl.read_parquet(out / "training_2024.parquet")["relatedness"].null_count() > 0
+
+
+# --- The wider Exporter scope (#168) -----------------------------------------------------------
+
+
+def test_the_all_exporters_set_trains_on_every_exporter_and_keeps_every_uk_row(derived_data_root):
+    """A superset of the top-N rows: the same rows for the Exporters in scope, plus every other Exporter's."""
+    _filled_gravity(derived_data_root, "JPN", 1e6)
+    top = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, scope_size=2, feature_set="exporter_count")
+    top_rows = pl.read_parquet(top / "training_2023.parquet")
+
+    out = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="all_exporters")
+
+    assert out.name.endswith("_all_exporters")
+    rows = pl.read_parquet(out / "training_2023.parquet")
+    assert set(rows["exporter"]) == {UK, "DEU", "FRA", "TWN"}  # every Exporter of the fixture
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["exporter_scope"] == ["DEU", "FRA", "GBR", "TWN"]
+    assert settings["exporter_scope_size"] == "all"
+    assert settings["candidate_features"] == ["log_exporters_loo"]
+    assert settings["gravity"]["country_year"] == "country_year_filled.parquet"
+    # Every UK row of the top-N build is here, unchanged, at weight 1, and so is every in-scope row.
+    uk = pl.col("exporter") == UK
+    assert rows.filter(uk).sort(features.KEYS).equals(top_rows.filter(uk).sort(features.KEYS))
+    assert (rows.filter(uk)["weight"] == 1.0).all()
+    in_scope = rows.filter(pl.col("exporter").is_in(set(top_rows["exporter"]))).sort(features.KEYS)
+    assert in_scope.equals(top_rows.sort(features.KEYS))
+
+
+def test_the_all_exporters_rows_sampled_at_a_non_uk_rate_keep_every_uk_row_and_unbiased_totals(derived_data_root):
+    """The loop samples the wider scope's other Exporters at a non-UK rate that fits VRAM (`training.sample_non_uk`)."""
+    _filled_gravity(derived_data_root, "JPN", 1e6)
+    out = features.build(derived_data_root, years=[2023], rate=1.0, feature_set="all_exporters")
+    rows = pl.read_parquet(out / "training_2023.parquet")
+    uk = pl.col("exporter") == UK
+    others = rows.filter(~uk)
+    rate, seeds = 0.4, range(400)
+
+    samples = [training.sample_non_uk(rows, uk=UK, rate=rate, seed=seed) for seed in seeds]
+
+    for sample in samples[:5]:
+        assert sample.filter(uk).equals(rows.filter(uk))  # every UK row, at weight 1
+        assert set(sample.filter(~uk)["weight"]) == {1 / rate}
+    # Horvitz–Thompson: over many samples, weighted totals average to the full rows' totals.
+    cells = [sample.filter(~uk)["weight"].sum() for sample in samples]
+    value = [(sample.filter(~uk)["weight"] * sample.filter(~uk)["value_usd"]).sum() for sample in samples]
+    assert sum(cells) / len(cells) == pytest.approx(others.height, rel=0.03)
+    assert sum(value) / len(value) == pytest.approx(others["value_usd"].sum(), rel=0.05)
+    assert min(cells) < others.height < max(cells)  # each sample is a fresh draw, not the full rows
+
+
+# --- Sibling Demand, the UK-free demand proxy (#164) -------------------------------------------
+
+
+def test_the_sibling_demand_set_is_the_exporter_count_set_with_sibling_demand_stored(derived_data_root):
+    """Its rows are `exporter_count`'s plus one column, so an Arm on it differs from its base by one feature."""
+    _filled_gravity(derived_data_root, "JPN", 1e6)
+    base = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="exporter_count")
+
+    out = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="sibling_demand")
+
+    assert out.name.endswith("_sibling_demand")
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["candidate_features"] == ["log_exporters_loo", "log_sibling_demand_loo"]
+    assert "log_sibling_demand_loo" not in settings["monotone_constraints"]
+    assert settings["gravity"]["country_year"] == "country_year_filled.parquet"
+    for kind in ("training", "uk_grid"):
+        rows = pl.read_parquet(out / f"{kind}_2023.parquet").sort(features.KEYS)
+        before = pl.read_parquet(base / f"{kind}_2023.parquet").sort(features.KEYS)
+        assert "log_sibling_demand_loo" not in before.columns  # the set built before it is unchanged
+        assert rows.drop("log_sibling_demand_loo").equals(before)
+        assert rows["log_sibling_demand_loo"].null_count() == 0
+
+
+# --- The Excluded Products' rows kept for training (#171) ---------------------------------------
+
+
+def test_the_excluded_products_set_trains_on_them_and_still_never_scores_them(derived_data_root):
+    """`exporter_count` plus the Excluded Products' training rows: every shared row is the same, the grid unchanged."""
+    _filled_gravity(derived_data_root, "JPN", 1e6)
+    base = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="exporter_count")
+
+    out = features.build(derived_data_root, years=[2023], rate=0.5, seed=3, feature_set="excluded_products")
+
+    assert out.name.endswith("_excluded_products")
+    settings = json.loads((out / "features.json").read_text())
+    assert settings["excluded_products_trained"] is True
+    assert settings["gravity"]["country_year"] == "country_year_filled.parquet"
+    rows = pl.read_parquet(out / "training_2023.parquet")
+    before = pl.read_parquet(base / "training_2023.parquet").sort(features.KEYS)
+    excluded = pl.col("hs6").cast(pl.String) == "270900"
+    assert rows.filter(excluded & (pl.col("value_usd") > 0)).height > 0  # its Flows train the model
+    assert rows.filter(~excluded).sort(features.KEYS).equals(before)
+    for set_dir in (out, base):  # never scored
+        assert "270900" not in set(pl.read_parquet(set_dir / "uk_grid_2023.parquet")["hs6"].cast(pl.String))
+    assert pl.read_parquet(out / "uk_grid_2023.parquet").sort(features.KEYS).equals(
+        pl.read_parquet(base / "uk_grid_2023.parquet").sort(features.KEYS)
+    )
+    assert json.loads((base / "features.json").read_text())["excluded_products_trained"] is False

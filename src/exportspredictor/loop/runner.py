@@ -8,10 +8,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import polars as pl
-import xgboost as xgb
-from xgboost.callback import EarlyStopping
 
-from exportspredictor import experiments, market_reach, search
+from exportspredictor import experiments, market_reach, scope, search
 from exportspredictor.evaluation import naive_potential
 from exportspredictor.exclusions import drop_excluded
 from exportspredictor.features import (
@@ -23,20 +21,34 @@ from exportspredictor.features import (
 from exportspredictor.folds import outside_fold, with_folds
 from exportspredictor.loop.arms import (
     ANY_FLOW,
-    ANY_FLOW_PARAMS,
+    EXCLUDED_PRODUCTS_EXPERIMENT,
     EXPORTER_COUNT_EXPERIMENT,
+    EXTERNAL_MEMORY_EXPERIMENT,
+    HYPERPARAMETER_STAGES,
+    MARKET_REACH_CAP_EXPERIMENT,
     MAX_TRAINED_MODELS,
+    MODEL_FAMILY_ARMS,
     NOISE_FLOOR,
+    SIBLING_DEMAND_EXPERIMENT,
     SIZE,
-    TWEEDIE_ONLY,
+    WIDER_SCOPE_EXPERIMENT,
+    WIDER_SCOPE_NON_UK_RATE,
     Arm,
     LoopPlan,
     Settings,
+    excluded_products_arms,
     exporter_count_arms,
+    external_memory_arm,
+    hyperparameter_experiment,
+    market_reach_cap_arm,
+    model_family_experiment,
     models_trained_by,
     product_detail_arm,
     product_detail_experiment,
+    served_base_arm,
+    sibling_demand_arm,
     training_key,
+    wider_scope_arms,
 )
 from exportspredictor.loop.data import (
     MODELS_DIR,
@@ -54,6 +66,14 @@ from exportspredictor.loop.selection import (
     rank_average_measures,
     win_threshold,
 )
+from exportspredictor.loop.trainers import (
+    Model,
+    Trainer,
+    TrainingJob,
+    TrainingRows,
+    refuse_external_memory,
+    trainer_for,
+)
 from exportspredictor.prediction import (
     MIN_PREDICTION_USD,
     blend,
@@ -64,11 +84,13 @@ from exportspredictor.prediction import (
 from exportspredictor.selection_measure import selection_measure, with_tie_key
 from exportspredictor.training import (
     BASE_MARGIN,
-    model_params,
+    RowCounts,
+    check_row_budget,
+    count_rows,
     preparer,
     read_chunk,
+    row_budget,
     scan_chunks,
-    training_matrix,
 )
 
 NO_MEASURE = -1.0  # what a round scores when no Product can be ranked (a tiny fixture fold)
@@ -83,25 +105,111 @@ def naive_margin(naive_usd: pl.Series) -> pl.Series:
 class TwoPart:
     """A two-part model's Boosters."""
 
-    any_flow: xgb.Booster
-    size: xgb.Booster
+    any_flow: Model
+    size: Model
+
+
+def best_so_far(lp: "Loop") -> Settings:
+    """The settings of the loop's best Arm so far, after the noise floor (run first if it is not yet saved)."""
+    lp.noise_floor()
+    return Settings.from_dict(lp.results["best"]["settings"])
 
 
 def run_product_detail(lp: "Loop") -> dict:
     """Run the three Product detail experiments in order, each from the best so far."""
     for feature in PRODUCT_DETAIL_FEATURES:
-        lp.noise_floor()
-        best = Settings.from_dict(lp.results["best"]["settings"])
+        best = best_so_far(lp)
         lp.run_experiment(product_detail_experiment(feature), [product_detail_arm(feature, best)])
     return lp.results
 
 
 def run_exporter_count(lp: "Loop") -> dict:
     """#127: the Exporter count against the best so far retrained on this loop's files, both with Market Reach."""
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     base, arms = exporter_count_arms(best)
     return lp.run_experiment(EXPORTER_COUNT_EXPERIMENT, arms, base_arm=base)
+
+
+def run_market_reach_cap(lp: "Loop") -> dict:
+    """#163: the upward Market Reach multiplier capped, against the best so far as served (`served_base_arm`).
+
+    Both are scored from the best so far's cached model on this loop's files, so nothing is trained once that
+    model exists. A kept cap becomes the best so far, with Market Reach and the cap in its settings.
+    """
+    best = best_so_far(lp)
+    return lp.run_experiment(MARKET_REACH_CAP_EXPERIMENT, [market_reach_cap_arm()], base_arm=served_base_arm(best))
+
+
+def run_sibling_demand(lp: "Loop") -> dict:
+    """#164: Sibling Demand as a feature, against the best so far as served retrained on this loop's files.
+
+    The files (`sibling_demand`) are the served ones with the feature stored, so the pair differs by one feature.
+    A dropped Arm leaves the served files unchanged; a kept one serves these files.
+    """
+    best = best_so_far(lp)
+    return lp.run_experiment(
+        SIBLING_DEMAND_EXPERIMENT, [sibling_demand_arm(best)], base_arm=served_base_arm(best),
+        files_kept_if_dropped=False,
+    )
+
+
+def run_hyperparameter_stage(
+    lp: "Loop", stage: str, stages: Mapping[str, Sequence[Arm]] = HYPERPARAMETER_STAGES
+) -> dict:
+    """#166: one stage of the hyperparameter search, against the best so far as served (`served_base_arm`).
+
+    Stages run in `stages`' order, so that winners stack: a stage is refused until every stage before it is
+    decided, and its Arms change the parameters of the best so far after them. It is refused before training
+    anything if it would train more than MAX_TRAINED_MODELS models.
+    """
+    if stage not in stages:
+        raise ValueError(f"{stage!r} is an unknown stage of the hyperparameter search; stages: {list(stages)}")
+    for earlier in list(stages)[: list(stages).index(stage)]:
+        section = lp.results.get("experiments", {}).get(hyperparameter_experiment(earlier), {})
+        if not section.get("decided"):
+            raise ValueError(f"Run the stage {earlier!r} before {stage!r}: winners stack in order")
+    best = best_so_far(lp)
+    return lp.run_experiment(hyperparameter_experiment(stage), stages[stage], base_arm=served_base_arm(best))
+
+
+def run_model_family(lp: "Loop", family: str, arms: Mapping[str, Arm] = MODEL_FAMILY_ARMS) -> dict:
+    """#167: another model family's Arm against the best so far as served (`served_base_arm`), on this loop's files.
+
+    A kept family becomes the best so far, with Market Reach in its settings, so a later idea runs against it.
+    """
+    if family not in arms:
+        raise ValueError(f"{family!r} has no pre-registered Arm; families: {list(arms)}")
+    best = best_so_far(lp)
+    return lp.run_experiment(model_family_experiment(family), [arms[family]], base_arm=served_base_arm(best))
+
+
+def run_wider_scope(
+    lp: "Loop", *, top: int = scope.TOP_EXPORTERS, non_uk_rate: float = WIDER_SCOPE_NON_UK_RATE
+) -> dict:
+    """#169: every Exporter's rows against the best so far as served on the top `top` Exporters of the same files.
+
+    Both train at `non_uk_rate`, so the pair differs only by the training scope. A dropped Arm leaves the served
+    files unchanged; a kept one becomes the best so far (every Exporter, this rate) and serves these files.
+    """
+    best = best_so_far(lp)
+    base, arm = wider_scope_arms(best, top=top, non_uk_rate=non_uk_rate)
+    return lp.run_experiment(WIDER_SCOPE_EXPERIMENT, [arm], base_arm=base, files_kept_if_dropped=False)
+
+
+def run_external_memory(lp: "Loop") -> dict:
+    """#170: every other Exporter's row (non-UK rate 1.0) through XGBoost external memory, against the best so far as
+    served (`served_base_arm`) on this loop's files. A kept Arm becomes the best so far, with Market Reach."""
+    best = best_so_far(lp)
+    return lp.run_experiment(EXTERNAL_MEMORY_EXPERIMENT, [external_memory_arm()], base_arm=served_base_arm(best))
+
+
+def run_excluded_products(lp: "Loop") -> dict:
+    """#171: the best so far as served trained on the Excluded Products' rows, against it with them dropped, both on
+    this loop's files (`excluded_products`) at one non-UK rate. A dropped Arm leaves the served files unchanged; a
+    kept one becomes the best so far and serves these files."""
+    best = best_so_far(lp)
+    base, arm = excluded_products_arms(best)
+    return lp.run_experiment(EXCLUDED_PRODUCTS_EXPERIMENT, [arm], base_arm=base, files_kept_if_dropped=False)
 
 
 class Loop:
@@ -120,10 +228,12 @@ class Loop:
         started = time.perf_counter()
         self.data, self.plan, self.folder = data, plan, folder
         self.models_dir = models_dir if models_dir is not None else (folder / MODELS_DIR if folder else None)
-        self._models: dict[str, tuple[xgb.Booster | TwoPart, dict]] = {}
-        self._matrix_key, self._matrices = None, None
+        self._models: dict[str, tuple[Model | TwoPart, dict]] = {}
+        self._trainers: dict[str, Trainer] = {}  # one per family, each keeping its last matrices
+        self._rows: TrainingRows | None = None
         self._detail: pl.DataFrame | None = None
         self._reach: pl.DataFrame | None = None  # this loop's Market Reach table, built on first use
+        self._row_counts: RowCounts | None = None  # the files' rows, counted on the first budget check
         self.results = read_results(folder) or {}
         rows = data.data
         years = sorted(rows.training)
@@ -160,14 +270,18 @@ class Loop:
 
     # --- Running arms --------------------------------------------------------------------------
 
-    def run_experiment(self, name: str, arms: Sequence[Arm], *, base_arm: Arm | None = None) -> dict:
+    def run_experiment(
+        self, name: str, arms: Sequence[Arm], *, base_arm: Arm | None = None, files_kept_if_dropped: bool = True
+    ) -> dict:
         """Run each arm against the best so far, decide by the win rule, and return the results.
 
         With `base_arm`, the arms are compared with that Arm of the best so far, run first on this
         loop's data, instead of with the best so far's recorded measure: a paired comparison when the
         data changed (rebuilt feature files, #127) or every Arm is scored differently (Market Reach).
         The section records it (`base_arm`), the best so far it replaced as base (`previous_best`) and
-        the feature set. If no arm wins, the best so far is unchanged.
+        the feature set. If no arm wins, the best so far is unchanged. The feature set is served
+        (`kept_feature_set`) whatever the decision, as #127's gravity fill was, unless
+        `files_kept_if_dropped` is False: then only if an Arm is kept (#164's files exist to hold one feature).
         """
         if name == NOISE_FLOOR:
             raise ValueError(f"{NOISE_FLOOR!r} is the noise floor's name")
@@ -186,6 +300,8 @@ class Loop:
                     "previous_best": previous, "base_arm": row, "base": _best(name, row),
                     "feature_set": self.data.feature_set,
                 }
+                if not files_kept_if_dropped:
+                    section["files_kept_if_dropped"] = False
                 self._save()
                 log_progress(f"{base_arm.name}: {json.dumps({k: row[k] for k in (SELECTION_MEASURE, 'rounds', 'seconds')})}")
         base = Settings.from_dict(section["base"]["settings"])
@@ -234,13 +350,29 @@ class Loop:
                 continue
             settings = self._resolved(arm.apply(base))
             key = training_key(settings, self._fingerprint())
-            if key not in self._models and not self._model_file(key).exists():
+            if key not in self._models and not self._model_file(key, settings.family).exists():
                 models.setdefault(key, models_trained_by(settings.to_dict()))
+                if not settings.external_memory:  # its rows stream to the device page by page (#170)
+                    self._check_rows(settings)
         if sum(models.values()) > MAX_TRAINED_MODELS:
             raise ValueError(
                 f"Experiment {name!r} would train {sum(models.values())} models; the budget is at most "
                 f"{MAX_TRAINED_MODELS} trained models per experiment (spec #65)"
             )
+
+    def _check_rows(self, settings: Settings) -> None:
+        """Raise `RowBudgetExceeded` if `settings`' non-UK rate might put more rows on the device than the budget.
+
+        Counted as `search.final_non_uk_rate` counts them: every training row of the files (a narrower
+        `exporter_scope` only trains on fewer) and the whole validation year, never sampled.
+        """
+        if self._row_counts is None:
+            training = count_rows(self.chunks, uk=self.plan.uk)
+            validation = search.read_chunk_rows(self.data.data.validation)
+            self._row_counts = RowCounts(uk=training.uk + validation, non_uk=training.non_uk)
+        budget = self.plan.row_budget if self.plan.row_budget is not None else row_budget(len(settings.features))
+        assert settings.non_uk_rate is not None  # resolved
+        check_row_budget(self._row_counts, settings.non_uk_rate, budget)
 
     def _run_arms(self, section: dict, arms: Sequence[Arm], base: Settings) -> list[dict]:
         done = {row["arm"] for row in section["arms"]}
@@ -316,18 +448,20 @@ class Loop:
         model, meta = self._model(settings, training_key(settings, self._fingerprint()))
         return self._score(self._model_potential(model, meta, settings, table), settings, table)
 
-    def cached_model(self, settings: Settings) -> tuple[str, bool, xgb.Booster | TwoPart, dict]:
+    def cached_model(self, settings: Settings) -> tuple[str, bool, Model | TwoPart, dict]:
         """The model of `settings` from the cache, or trained and cached now.
 
         Returns its training key, whether this call trained it, the model and its metadata.
         """
         settings = self._resolved(settings)
         key = training_key(settings, self._fingerprint())
-        trained = key not in self._models and not self._model_file(key).exists()
+        trained = key not in self._models and not self._model_file(key, settings.family).exists()
         model, meta = self._model(settings, key)
         return key, trained, model, meta
 
     def _resolved(self, settings: Settings) -> Settings:
+        trainer_for(settings.family)  # refuses a family with no trainer before anything trains
+        refuse_external_memory(settings.family, settings.external_memory)
         zero_rate = settings.zero_rate if settings.zero_rate is not None else self.data.data.built_zero_rate
         non_uk_rate = settings.non_uk_rate
         if non_uk_rate is None:
@@ -349,27 +483,28 @@ class Loop:
             "device": self.plan.device,
         }
 
-    def _model_file(self, key: str) -> Path:
-        return Path(self.models_dir or ".nowhere") / f"{key}.ubj"
+    def _model_file(self, key: str, family: str) -> Path:
+        return Path(self.models_dir or ".nowhere") / f"{key}{trainer_for(family).suffix}"
 
-    def _model(self, settings: Settings, key: str) -> tuple[xgb.Booster | TwoPart, dict]:
+    def _model(self, settings: Settings, key: str) -> tuple[Model | TwoPart, dict]:
         if key in self._models:
             return self._models[key]
-        path = self._model_file(key)
+        trainer = self._trainer(settings.family)
+        path = self._model_file(key, settings.family)
         # A two-part model's binary part sits beside its size part, which is saved last.
-        any_flow_path = path.with_name(f"{key}.{ANY_FLOW}.ubj")
+        any_flow_path = path.with_name(f"{key}.{ANY_FLOW}{path.suffix}")
         if self.models_dir is not None and path.exists():
-            model = xgb.Booster(model_file=str(path))
+            model = trainer.load(path)
             if settings.two_part:
-                model = TwoPart(any_flow=xgb.Booster(model_file=str(any_flow_path)), size=model)
+                model = TwoPart(any_flow=trainer.load(any_flow_path), size=model)
             meta = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
         else:
             model, meta = self._train_two_part(settings) if settings.two_part else self._train(settings)
             if self.models_dir is not None:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if isinstance(model, TwoPart):
-                    model.any_flow.save_model(str(any_flow_path))
-                (model.size if isinstance(model, TwoPart) else model).save_model(str(path))
+                    trainer.save(model.any_flow, any_flow_path)
+                trainer.save(model.size if isinstance(model, TwoPart) else model, path)
                 path.with_suffix(".json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         self._models[key] = (model, meta)
         return model, meta
@@ -390,9 +525,10 @@ class Loop:
             self.grid, any_flow, features=list(settings.features), rounds=any_flow_meta["rounds"],
             device=self.plan.device,
         ).to_numpy()
-        self._matrix_key, self._matrices = None, None  # free the binary part's matrices first
+        trainer = self._trainer(settings.family)
+        trainer.release()  # free the binary part's matrices first
         size, size_meta = self._train(settings, part=SIZE, grid_probability=probability)
-        self._matrix_key, self._matrices = None, None
+        trainer.release()
         return TwoPart(any_flow=any_flow, size=size), {
             "rounds": size_meta["rounds"],  # the size part's, chosen on the two-part Export Potential
             "hit_round_cap": any_flow_meta["hit_round_cap"] or size_meta["hit_round_cap"],
@@ -403,106 +539,100 @@ class Loop:
             "parts": {ANY_FLOW: any_flow_meta, SIZE: size_meta},
         }
 
-    def _train(
-        self, settings: Settings, *, part: str | None = None, grid_probability=None
-    ) -> tuple[xgb.Booster, dict]:
-        """Train with the selection measure on the held-out UK grid each round, stopping after `patience` flat rounds.
+    def _train(self, settings: Settings, *, part: str | None = None, grid_probability=None) -> tuple[Model, dict]:
+        """Train through the family's trainer, stopping on the selection measure of the held-out UK grid.
 
         `part` trains one part of a two-part model; the size part's measure each round is
         that of `grid_probability` × size.
         """
-        started = time.perf_counter()
-        train, grid = self._training_matrices(settings, part)
-        matrix_seconds = round(time.perf_counter() - started, 1)  # 0 when the matrices were reused
-        params = model_params(
-            dict(settings.params), device=self.plan.device, seed=settings.seed, features=settings.features,
-            monotone=settings.monotone,
-        )
-        if part == ANY_FLOW:
-            params = {k: v for k, v in params.items() if k not in TWEEDIE_ONLY} | ANY_FLOW_PARAMS
-        params |= {"disable_default_eval_metric": 1} | ({"nthread": self.plan.threads} if self.plan.threads else {})
-        metric = self._round_measure
+        measure = self._round_measure
         if grid_probability is not None:
 
-            def metric(predictions, matrix):
-                return self._round_measure(grid_probability * predictions, matrix)
+            def measure(predictions) -> float:
+                return self._round_measure(grid_probability * predictions)
 
-        model = xgb.train(
-            params,
-            train,
-            num_boost_round=settings.max_rounds,
-            evals=[(grid, "grid")],
-            custom_metric=metric,
-            callbacks=[
-                EarlyStopping(
-                    rounds=settings.patience, metric_name=SELECTION_MEASURE, data_name="grid", maximize=True
-                )
-            ],
-            verbose_eval=False,
+        job = TrainingJob(
+            rows=self._training_rows(settings, part), params=settings.params, seed=settings.seed,
+            monotone=settings.monotone, max_rounds=settings.max_rounds, patience=settings.patience,
+            measure=measure, device=self.plan.device, threads=self.plan.threads, binary=part == ANY_FLOW,
+            external_memory=settings.external_memory,
         )
-        rounds = model.best_iteration + 1
-        return model, {
-            "rounds": rounds,
-            "hit_round_cap": rounds >= settings.max_rounds,
-            "trained_rounds": model.num_boosted_rounds(),
-            "stopping_measure": float(model.best_score),  # the selection measure at `rounds`, as training saw it
-            "training_rows": train.num_row(),
-            "matrix_seconds": matrix_seconds,
-            "train_seconds": round(time.perf_counter() - started, 1),  # matrices included
-        }
+        return self._trainer(settings.family).train(job)
 
-    def _round_measure(self, predictions, _matrix) -> tuple[str, float]:
+    def _round_measure(self, predictions) -> float:
         value = selection_measure(self._grid_keys.with_columns(prediction=pl.Series(predictions)), "prediction")
-        return SELECTION_MEASURE, NO_MEASURE if value is None else value
+        return NO_MEASURE if value is None else value
 
-    def _training_matrices(self, settings: Settings, part: str | None = None):
-        """The training matrix and the held-out grid's, reused while the rows' settings stay the same.
+    def _trainer(self, family: str) -> Trainer:
+        """This loop's trainer of `family`; the other families' kept matrices are freed first."""
+        if family not in self._trainers:
+            self._trainers[family] = trainer_for(family)
+        for other, trainer in self._trainers.items():
+            if other != family:
+                trainer.release()
+        return self._trainers[family]
+
+    def _training_rows(self, settings: Settings, part: str | None = None) -> TrainingRows:
+        """The training rows and the held-out grid's, the same object while the rows' settings stay the same.
 
         For a two-part model's binary part (`ANY_FLOW`) the label is "any Flow" (0 or 1) and
         every row keeps its weight; its size part (`SIZE`) trains on non-zero Flows only.
         """
         key = (
             settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin,
-            settings.uk_zeros_sampled, part,
+            settings.uk_zeros_sampled, settings.exporter_scope, settings.train_excluded_products, part,
         )
-        if key != self._matrix_key:
-            self._matrices = None  # free the device memory before building the next
-            plan, built = self.plan, self.data.data.built_zero_rate
-            held_out = outside_fold(plan.uk, plan.n_folds, plan.fold)
-            zero_seed = self.data.zero_seed
-            world = self._world_products() if settings.base_margin else None
-            grid_rows = self._with_product_detail(self.grid, settings)
+        if self._rows is not None and self._rows.key == key:
+            return self._rows
+        plan, built = self.plan, self.data.data.built_zero_rate
+        held_out = outside_fold(plan.uk, plan.n_folds, plan.fold)
+        zero_seed = self.data.zero_seed
+        world = self._world_products() if settings.base_margin else None
+        grid_rows = self._with_product_detail(self.grid, settings)
+        in_scope = self._exporter_scope(settings.exporter_scope)
 
-            def keep(table: pl.DataFrame) -> pl.DataFrame:
-                rows = subsample_zeros(
-                    table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk,
-                    uk_zeros_sampled=settings.uk_zeros_sampled,
-                )
-                rows = held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
-                rows = self._with_product_detail(rows, settings)
-                if part == ANY_FLOW:
-                    rows = rows.with_columns(_any_flow(pl.col("value_usd")))
-                elif part == SIZE:
-                    rows = rows.filter(pl.col("value_usd") > 0)
-                if world is None:
-                    return rows
-                # Before the transform clips the supply and demand features: the naive baseline as built.
-                return rows.with_columns(naive_margin(naive_from_features(rows, world)).alias(BASE_MARGIN))
-
-            if settings.base_margin:
-                grid_rows = grid_rows.with_columns(naive_margin(self.grid["naive_usd"]).alias(BASE_MARGIN))
-            if part == ANY_FLOW:  # a binary label on the grid too; the measure each round reads value_usd itself
-                grid_rows = grid_rows.with_columns(_any_flow(pl.col("value_usd")))
-
-            prepare = preparer(
-                uk=plan.uk, transform=self.transform, non_uk_rate=settings.non_uk_rate, seed=settings.seed, keep=keep
+        def keep(table: pl.DataFrame) -> pl.DataFrame:
+            if in_scope is not None:
+                table = table.filter(pl.col("exporter").cast(pl.String).is_in(in_scope))
+            rows = subsample_zeros(
+                table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk,
+                uk_zeros_sampled=settings.uk_zeros_sampled,
             )
-            train = training_matrix(self.chunks, prepare, device=plan.device, features=settings.features)
-            grid = training_matrix([grid_rows], ref=train, device=plan.device, features=settings.features)
-            self._matrix_key, self._matrices = key, (train, grid)
-        return self._matrices
+            if not settings.train_excluded_products:  # ADR 0005; only the `excluded_products` files hold them (#171)
+                rows = drop_excluded(rows)
+            rows = held_out(rows).sort(KEYS)  # a fixed order: the same rows, the same model
+            rows = self._with_product_detail(rows, settings)
+            if part == ANY_FLOW:
+                rows = rows.with_columns(_any_flow(pl.col("value_usd")))
+            elif part == SIZE:
+                rows = rows.filter(pl.col("value_usd") > 0)
+            if world is None:
+                return rows
+            # Before the transform clips the supply and demand features: the naive baseline as built.
+            return rows.with_columns(naive_margin(naive_from_features(rows, world)).alias(BASE_MARGIN))
 
-    def _model_potential(self, model: xgb.Booster | TwoPart, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
+        if settings.base_margin:
+            grid_rows = grid_rows.with_columns(naive_margin(self.grid["naive_usd"]).alias(BASE_MARGIN))
+        if part == ANY_FLOW:  # a binary label on the grid too; the measure each round reads value_usd itself
+            grid_rows = grid_rows.with_columns(_any_flow(pl.col("value_usd")))
+
+        prepare = preparer(
+            uk=plan.uk, transform=self.transform, non_uk_rate=settings.non_uk_rate, seed=settings.seed, keep=keep
+        )
+        self._rows = TrainingRows(
+            chunks=self.chunks, prepare=prepare, grid=grid_rows, features=settings.features, key=key
+        )
+        return self._rows
+
+    def _exporter_scope(self, top: int | None) -> list[str] | None:
+        """The Exporters whose rows train an arm with `Settings.exporter_scope` `top` (None: every Exporter)."""
+        if top is None:
+            return None
+        if self.data.country_year is None:
+            raise ValueError("This loop's data has no country-year table, so no arm can set an Exporter scope")
+        return scope.exporter_scope(self.data.country_year(), uk=self.plan.uk, n=top)
+
+    def _model_potential(self, model: Model | TwoPart, meta: dict, settings: Settings, table: pl.DataFrame) -> pl.Series:
         """The model's Export Potential in dollars at its chosen round count."""
         table = self._with_product_detail(table, settings)
         if isinstance(model, TwoPart):
@@ -543,11 +673,11 @@ class Loop:
         at w = 0, then Market Reach where the settings' beta is not 0."""
         potential = blend(predicted.to_numpy(), table["naive_usd"].to_numpy(), settings.naive_weight)
         if settings.market_reach_beta:
-            potential = self._with_market_reach(potential, table, settings.market_reach_beta)
+            potential = self._with_market_reach(potential, table, settings.market_reach_beta, settings.market_reach_cap)
         return pl.Series("export_potential_usd", potential, dtype=pl.Float64)
 
-    def _with_market_reach(self, potential, table: pl.DataFrame, beta: float):
-        """`potential` × exp(beta · offset) of each held-out UK row's Market, rescaled to keep the rows' sum.
+    def _with_market_reach(self, potential, table: pl.DataFrame, beta: float, cap: float | None = None):
+        """`potential` × exp(beta · offset) of each held-out UK row's Market (at most `cap` where set), rescaled to keep the rows' sum.
 
         The offsets are this fold's (`market_reach.reach_table`), learned from the year before the
         validation year on the UK pairs outside this fold. Other Exporters' rows get no offset.
@@ -564,8 +694,8 @@ class Loop:
             self._reach = market_reach.reach_table(rows, self.data.validation_year, n_folds=self.plan.n_folds)
         # Every row is held out by this fold; other Exporters' rows take no offset, only c (as #124 measured).
         rows = market_reach.uk_keys(table, fold=pl.lit(self.plan.fold, pl.Int8), uk=self.plan.uk).drop("uk")
-        constant = market_reach.rescale_constant(potential, rows, self._reach, beta=beta)
-        return market_reach.apply(potential, rows, self._reach, beta=beta, constant=constant)
+        constant = market_reach.rescale_constant(potential, rows, self._reach, beta=beta, cap=cap)
+        return market_reach.apply(potential, rows, self._reach, beta=beta, constant=constant, cap=cap)
 
     def _save(self) -> None:
         if self.folder is not None:

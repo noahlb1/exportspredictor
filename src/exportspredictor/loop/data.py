@@ -11,6 +11,7 @@ from exportspredictor import baci, experiments, market_reach
 from exportspredictor.evaluation import naive_from_totals
 from exportspredictor.experiments import Data, uk_grid
 from exportspredictor.features import (
+    FEATURE_SETS,
     build_features,
     feature_set,
     features_dir,
@@ -41,6 +42,9 @@ class LoopData:
     # The UK grid of the year Market Reach learns from (`market_reach.LAG_YEARS` before the validation
     # year): hs6, importer, value_usd and the Market's demand; read only by an arm scored with Market Reach.
     reach_source: Callable[[], pl.DataFrame] | None = None
+    # The country-year table the feature set was built from (iso3, year, gdp_usd), which ranks the Exporters of a
+    # training scope (`scope.exporter_scope`); read only by an arm with `Settings.exporter_scope`.
+    country_year: Callable[[], pl.DataFrame] | None = None
 
     @property
     def validation_year(self) -> int:
@@ -98,9 +102,12 @@ def save_results(folder: Path, results: dict) -> None:
     partial.replace(path)
 
 
-def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR) -> LoopData:
-    """The fixture world's rows for every Product, built only from Flows up to the validation year."""
-    rows = experiments.fixture_data(world, validation_year=validation_year)
+def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR, keep_excluded: bool = False) -> LoopData:
+    """The fixture world's rows for every Product, built only from Flows up to the validation year.
+
+    `keep_excluded` keeps the Excluded Products' training rows, as the `excluded_products` feature set does (#171).
+    """
+    rows = experiments.fixture_data(world, validation_year=validation_year, keep_excluded=keep_excluded)
     flows = world.flows.filter(pl.col("year") == validation_year)
     world_exports = world_products(world.flows.filter(pl.col("year") < validation_year))
     detail = fit_product_detail(world.flows, sorted(rows.training), uk=baci.UK)
@@ -109,7 +116,7 @@ def fixture_data(world, *, validation_year: int = experiments.VALIDATION_YEAR) -
     reach = build_features(uk_grid(before.filter(pl.col("year") == lag), baci.UK), before, world.sources)
     return LoopData(
         data=rows, flows=lambda: flows, world_products=lambda: world_exports, product_detail=lambda: detail,
-        reach_source=lambda: reach,
+        reach_source=lambda: reach, country_year=lambda: world.sources.country_year,
     )
 
 
@@ -153,9 +160,12 @@ def real_data(root: Path | None = None, *, validation_year: int = experiments.VA
         columns = ["hs6", "importer", "value_usd", market_reach.DEMAND]
         return pl.read_parquet(folder / f"uk_grid_{lag}.parquet", columns=columns)
 
+    def country_year() -> pl.DataFrame:
+        return pl.read_parquet(root / "derived" / FEATURE_SETS[name].country_year, columns=["iso3", "year", "gdp_usd"])
+
     return LoopData(
         data=rows, flows=flows, zero_seed=settings.get("zero_sampling_seed", 0), world_products=world_exports,
-        product_detail=product_detail, feature_set=name, reach_source=reach_source,
+        product_detail=product_detail, feature_set=name, reach_source=reach_source, country_year=country_year,
     )
 
 

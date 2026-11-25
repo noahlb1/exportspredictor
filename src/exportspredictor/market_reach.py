@@ -111,23 +111,29 @@ def reach_table(
     return pl.concat(tables).sort("fold", "importer")
 
 
-def apply(potential: np.ndarray, rows: pl.DataFrame, table: pl.DataFrame, *, beta: float, constant: float) -> np.ndarray:
+def apply(
+    potential: np.ndarray, rows: pl.DataFrame, table: pl.DataFrame, *, beta: float, constant: float,
+    cap: float | None = None,
+) -> np.ndarray:
     """Export Potential × exp(β · offset) × `constant` for `rows` (`fold`, `importer`), in their order.
 
     A row whose fold and Market have no offset (another Exporter's row, a Market without source
-    pairs) is multiplied by the constant alone.
+    pairs) is multiplied by the constant alone. With `cap`, the multiplier exp(β · offset) is held at
+    or below it before the constant (an experiment of spec #155, ticket #163); None caps nothing.
     """
-    return np.asarray(potential, dtype=np.float64) * _multiplier(rows, table, beta) * constant
+    return np.asarray(potential, dtype=np.float64) * _multiplier(rows, table, beta, cap) * constant
 
 
 def rescale_constant(
-    potential: np.ndarray, rows: pl.DataFrame, table: pl.DataFrame, *, beta: float, weight: np.ndarray | None = None
+    potential: np.ndarray, rows: pl.DataFrame, table: pl.DataFrame, *, beta: float, weight: np.ndarray | None = None,
+    cap: float | None = None,
 ) -> float:
-    """c such that `apply` with it keeps the summed Export Potential of `rows` (weighted by `weight`) unchanged."""
+    """c such that `apply` with it (and the same `cap`) keeps the summed Export Potential of `rows` (weighted by
+    `weight`) unchanged."""
     potential = np.asarray(potential, dtype=np.float64)
     if weight is not None:
         potential = potential * np.asarray(weight, dtype=np.float64)
-    return float(potential.sum() / (potential * _multiplier(rows, table, beta)).sum())
+    return float(potential.sum() / (potential * _multiplier(rows, table, beta, cap)).sum())
 
 
 def exporter_reach(
@@ -173,7 +179,7 @@ def uk_keys(rows: pl.DataFrame, *, fold: pl.Expr, uk: str) -> pl.DataFrame:
     )
 
 
-def _multiplier(rows: pl.DataFrame, table: pl.DataFrame, beta: float) -> np.ndarray:
+def _multiplier(rows: pl.DataFrame, table: pl.DataFrame, beta: float, cap: float | None = None) -> np.ndarray:
     offsets = (
         rows.select(pl.col("fold").cast(pl.Int8), pl.col("importer").cast(pl.String))
         .join(table.select("fold", "importer", "offset"), on=["fold", "importer"], how="left", maintain_order="left")
@@ -181,7 +187,8 @@ def _multiplier(rows: pl.DataFrame, table: pl.DataFrame, beta: float) -> np.ndar
         .fill_null(0.0)
         .to_numpy()
     )
-    return np.exp(beta * offsets)
+    multiplier = np.exp(beta * offsets)
+    return multiplier if cap is None else np.minimum(multiplier, cap)
 
 
 def settings(beta: float = CHOSEN_BETA) -> dict:

@@ -37,6 +37,24 @@ def test_a_row_is_never_scored_by_a_model_that_did_not_hold_its_fold_out(fixture
         export_potential(features.with_columns(fold=pl.lit(len(models), features.schema["fold"])), models)
 
 
+def test_a_model_of_another_family_is_refused_as_a_fold_model_since_it_records_no_held_out_fold(fixture_artefacts):
+    # ADR 0001: only an XGBoost fold model records the fold it held out, so another family cannot score by fold.
+    import lightgbm
+
+    features = fixture_artefacts.baseline_features
+    values = features.select(FEATURES).cast(pl.Float32).to_numpy()
+    other = lightgbm.train(
+        {"objective": "tweedie", "num_leaves": 4, "verbose": -1},
+        lightgbm.Dataset(values, label=np.ones(features.height)), num_boost_round=2,
+    )
+    models = [other, *fixture_artefacts.fold_models[1:]]
+
+    with pytest.raises(TypeError, match="records no held-out fold"):
+        export_potential(features, models)
+    # One model scoring every row is not scored by fold, so it predicts.
+    assert export_potential(features, other).len() == features.height
+
+
 def test_log_contributions_add_up_to_the_same_export_potential(fixture_artefacts):
     features = fixture_artefacts.baseline_features
 

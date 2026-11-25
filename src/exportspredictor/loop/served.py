@@ -61,8 +61,12 @@ class ServedConfiguration:
 
 def kept_feature_set(results: Mapping) -> str:
     """The feature set of the last experiment that recorded one (an experiment with a base retrained on its
-    files, `Loop.run_experiment`'s `base_arm`), else "" (the original files)."""
-    recorded = [s["feature_set"] for s in results.get("experiments", {}).values() if "feature_set" in s]
+    files, `Loop.run_experiment`'s `base_arm`), else "" (the original files). An experiment whose files are
+    kept only if it wins (`files_kept_if_dropped` False, #164) counts only when an Arm was kept."""
+    recorded = [
+        s["feature_set"] for s in results.get("experiments", {}).values()
+        if "feature_set" in s and (s.get("files_kept_if_dropped", True) or s.get("kept") is not None)
+    ]
     return recorded[-1] if recorded else ""
 
 
