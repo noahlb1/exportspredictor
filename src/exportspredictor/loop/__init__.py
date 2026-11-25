@@ -65,7 +65,7 @@ refuses it, and `real_data` refuses it before opening a file.
     # retrained on the top 100 Exporters of those files, then on every Exporter, both at one non-UK rate (two models)
     uv run python -m exportspredictor.loop wider-scope
     # #170, with EXPORTSPREDICTOR_FEATURE_SET set to the served files: the best so far as served (cached) against it
-    # with every other Exporter's row (non-UK rate 1.0) through XGBoost external memory (one model, ~2.3 h on the GPU)
+    # with every other Exporter's row (non-UK rate 1.0) through XGBoost external memory (one model, 8.2 h on this GPU)
     uv run python -m exportspredictor.loop external-memory
 
 The results are associations measured on one fold and one year: an arm that wins ranks
