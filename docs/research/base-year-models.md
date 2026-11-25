@@ -1,6 +1,6 @@
-﻿# Base-year fold models and the scored UK panel
+﻿# Base-year fold models, the scored UK panel and the Realisation Test
 
-For spec #156, ticket #176, under [ADR 0001](../adr/0001-out-of-fold-uk-training.md), [ADR 0008](../adr/0008-opportunity-ranking-is-the-one-objective.md), [ADR 0009](../adr/0009-test-year-read-once-per-frozen-version.md) and [ADR 0010](../adr/0010-market-reach-in-the-model-form.md). ITC's Realisation Test needs UK Export Potential at base years t = 2015–2019 from models that never saw a year after t. The artefact's fold models trained on 2012–2023, so they cannot provide it. This note records the run that trains those models and builds the panel the test reads.
+For spec #156, ticket #176, under [ADR 0001](../adr/0001-out-of-fold-uk-training.md), [ADR 0008](../adr/0008-opportunity-ranking-is-the-one-objective.md), [ADR 0009](../adr/0009-test-year-read-once-per-frozen-version.md) and [ADR 0010](../adr/0010-market-reach-in-the-model-form.md). ITC's Realisation Test needs UK Export Potential at base years t = 2015–2019 from models that never saw a year after t. The artefact's fold models trained on 2012–2023, so they cannot provide it. This note records the run that trains those models and builds the panel the test reads, then the test's run and results (#178).
 
 **Status: complete.** All five base years are trained and cached, 25 of 25 models, and the panel is written. The run took three starts. Claude Code stopped it twice because the machine was low on memory, both times while other processes used it; the run itself held about 4.5 GB:
 
@@ -59,3 +59,62 @@ Train and score times are from the start that trained each base year (the log); 
   Neither carries a target value: no Flow, Export Potential or Actual Exports from after t enters a base-year model's training rows or its scores. The leak is in which Exporters are in scope and how Products relate, and both move slowly, so it should be small. It still leans the test, if at all, in the model's favour.
 - **The round count** is the served 1,279. The served version scaled it to 2012–2023's rows, and it is not scaled down for fewer years, as the spec's "same round count" asks.
 - `panel.json` records `frozen_settings.training_years` as an empty list: each base year's own training years are under `base_year_models`.
+- **This departs from the spec's "never saw years after the base year"** in those two aggregate inputs only. No target value or trade flow after t, and nothing of 2023, is read.
+
+## The Realisation Test on the panel (#178)
+
+ITC's Realisation Test (`exportspredictor.realisation`; ITC, *Export Potential Assessment methodology*, June 2023, pp. 17–22) was run once on this panel. It reads Actual Exports for 2012–2022, and its report was added to a new version of the newest artefact.
+
+- Command, from the worktree `ep-wt/156-t178` at commit da9ee75, logging to `C:\CodingProjectsC\ep-notes\156\t178-realisation.log`:
+
+  ```
+  powershell -NoProfile -File scripts/wt.ps1 python -m exportspredictor.realisation
+  ```
+
+- **New version: `20261125T171812Z`**, copied from `20261123T232505Z`. The command took 32 s wall-clock; the report itself took 21.2 s (`seconds`), on the CPU.
+- **Nothing else changed.** The new version's evaluation gains one block, `itc_comparison`. Every other block is equal to the source's, and the metadata differs only in `version` and `copied_from`, so the Configuration Fingerprint is unchanged. The other 15 files are the same, by hash, or by size for the fold models.
+- **The test year was not read.** The Test-year Ledger is unchanged, and each base year's training cut-off equals the base year (2015–2019).
+- **The main checkout's older API** (`dc8c3bb`, before spec #156) loads the new version. `/health` names it, and `/evaluation`, `/caveats` and `/opportunities/top` answer 200. Main's `Evaluation` schema allows extra keys, so it passes the raw `itc_comparison` block (all 12 rows) through, and its app ignores it.
+
+### Results
+
+Coefficients, with standard errors clustered by unit in brackets. Fixed effects are Market and year × Sector. ITC's figures are its static test with fixed effects: every exporter pooled, 2006–2018, at 76 sub-sectors (Tables 1, 2 and 4).
+
+| Test | Term | ITC | Model, HS2 | Naive Baseline, HS2 | Model, HS6 | Naive Baseline, HS6 |
+|---|---|---|---|---|---|---|
+| Intensive margin | Unrealised Share | 0.615 | 0.658 (0.028) | 0.715 (0.026) | 1.270 (0.005) | 1.127 (0.004) |
+| Intensive margin | past growth | −0.386 | −0.482 (0.006) | −0.480 (0.006) | −0.382 (0.001) | −0.380 (0.001) |
+| Extensive margin | log Export Potential | 0.023 | 0.008 (0.0015) | 0.014 (0.0017) | 0.035 (0.0001) | 0.027 (0.0001) |
+| New-flow size | log Export Potential | 0.243 | 0.161 (0.020) | 0.154 (0.019) | 0.313 (0.002) | 0.204 (0.002) |
+
+Samples (unit-years, base years 2015–2019):
+
+| Test | Level | Model | Naive Baseline | Left out by the Naive Baseline (score 0) |
+|---|---|---|---|---|
+| Intensive margin | HS2 | 71,823 | 71,708 | 174 of 75,507 trading |
+| Intensive margin | HS6 | 1,489,078 | 1,481,990 | 18,069 of 1,719,360 trading |
+| Extensive margin | HS2 | 32,485 | 29,691 | 2,794 of 32,493 not trading |
+| Extensive margin | HS6 | 4,028,940 | 2,564,874 | 1,464,066 of 4,060,890 not trading |
+| New-flow size | HS2 | 10,325 | 10,128 | starters among the above |
+| New-flow size | HS6 | 619,592 | 584,926 | starters among the above |
+
+The model scores every unit above zero, so its rows leave none out. At HS6, 31,950 not-trading pair-years are left out of both rows because the UK exported their Product nowhere that year.
+
+**Reading, as a rough benchmark of sign and broad size:**
+
+- At HS2, the level set beside ITC, the model agrees with ITC's sign on all three tests.
+- **Intensive margin.** A larger Unrealised Share is associated with faster growth over the next three years: 0.658 against ITC's 0.615. Past growth is associated with slower growth: −0.482 against −0.386.
+- **Extensive margin.** Higher Export Potential is associated with a non-trading Sector–Market starting to trade, but the slope is about a third of ITC's (0.008 against 0.023). A linear probability model's slope also depends on how often units start, which differs between the UK's Sectors and ITC's pooled sub-sectors.
+- **New-flow size.** Higher Export Potential is associated with larger new flows, at about two-thirds of ITC's slope (0.161 against 0.243).
+- **The Naive Baseline column goes beyond ITC's test**, which has no naive comparator. At HS2 its coefficients are similar or larger (0.715, 0.014, 0.154), so at Sector level the link between unrealised potential and later trade owes much to what the market-share rule already sees, and the Blend contains that rule. At HS6 the model's coefficients are the larger on all three tests, but there the Naive Baseline's extensive-margin sample is about two-thirds of the model's.
+- These are associations across many pairs, not forecasts for any one, and not a validation of either tool.
+
+### Further caveats
+
+- **Part (c) was dropped**: the direct comparison with the EPM's own UK figures (#156 step-one comment, 25 Nov 2026).
+  - The public site offers only a chart image (PNG), not a table.
+  - ITC's Market Analysis Tools Terms and Conditions §12 forbid extracting MAT content by browser automation. §10 allows only limited and incidental quotation without ITC's prior written permission.
+  - The EPM is an estimate for 2031, built on 2021–2025 trade data, while this test scores each base year itself.
+  - (c) could be revived if a person obtains the data under a licence or with ITC's permission. Even then, only aggregate statistics should be published.
+- **Each predictor runs on the units it scores above zero**, since a log needs it. The model's row is the ITC-comparable one. The two columns therefore compare different samples wherever the Naive Baseline scores 0, above all on the HS6 extensive margin, where 1,464,066 pair-years are left out.
+- ITC pools every exporter with an exporter fixed effect, and projects about five years ahead with a decomposition. This test covers the UK only, at HS2 Sectors rather than 76 sub-sectors, and has no forward projection.
