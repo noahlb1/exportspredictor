@@ -1,4 +1,4 @@
-"""The detail panel (spec #103, "Detail panel"): one Product–Market pair explained in place, built from its ranking row
+"""The detail panel: one Product–Market pair explained in place, built from its ranking row
 and its explanation read (`/explain/{hs6}/{iso3}`).
 
 The Leaderboard shows the whole panel with `show(row)`, in order:
@@ -40,7 +40,7 @@ from app.tables import (
 from app.ui import fetch, illustrative, labels, show_caveats, term
 
 TOP_FACTORS = 8
-RAISED, LOWERED = "#2a78d6", "#e34948"  # the factor bars (spec #103, "Theme and logo")
+RAISED, LOWERED = "#2a78d6", "#e34948"  # the factor bars that raise and lower the estimate
 TEXT = {"light": "#1b1915", "dark": "#f5f2ec"}  # chart value labels take the mode's text colour
 # The Factor column has a fixed width, so the value and association beside it stay in view in a narrow panel.
 FACTOR_WIDTHS = {"Factor": st.column_config.TextColumn("Factor", width="medium")}
@@ -317,7 +317,7 @@ BEFORE_AFTER_COLOURS = ("#8a8378", RAISED, "#9cc3ee")  # grey; the model's estim
 
 
 def before_after(row: dict, year: int) -> None:
-    """One Blocked Opportunity's before and after as three bars in $ millions (spec #133): its Baseline-year Actual
+    """One Blocked Opportunity's before and after as three bars in $ millions: its Baseline-year Actual
     Exports, Export Potential and Export Potential with a Trade Agreement, each the API's figure."""
     fields = ("baseline_actual_exports_usd", "baseline_export_potential_usd", "potential_with_agreement_usd")
     values = [
