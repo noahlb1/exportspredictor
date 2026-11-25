@@ -39,6 +39,8 @@ import polars as pl
 
 from exportspredictor.paths import REPO_ROOT
 
+# The test year, read once per frozen version; every choice is made on the years before it.
+TEST_YEAR = 2023
 LEDGER_PATH = REPO_ROOT / "docs" / "test-year-ledger.csv"
 COLUMNS = ("date", "version", "fingerprint", "read", "command", "override", "record", "kind", "status")
 EVALUATION, RESCORE = "evaluation", "re-score"  # the kinds of read
@@ -91,6 +93,11 @@ class Ledger:
         return cls(path=path, command=" ".join([command, *argv]), override=OVERRIDE_FLAG in argv)
 
 
+def settings_hash(settings: Mapping) -> str:
+    """A short, order-free hash of `settings` (JSON, keys sorted): the fingerprint's hash, and a model cache's key."""
+    return hashlib.sha256(json.dumps(settings, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
 def fingerprint(metadata: Mapping) -> str:
     """A short hash of the configuration in `metadata` (`FINGERPRINT_KEYS`); version names and timings are left out."""
     seed = (metadata.get("model_params") or {}).get("seed")
@@ -102,13 +109,13 @@ def fingerprint(metadata: Mapping) -> str:
     # through `market_reach` instead.
     if isinstance(config.get("model_form"), Mapping):
         config["model_form"] = {k: v for k, v in config["model_form"].items() if k != "market_reach"}
-    return hashlib.sha256(json.dumps(config, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    return settings_hash(config)
 
 
 def rescore_fingerprint(measure: str, fingerprints: Iterable[str]) -> str:
     """The fingerprint of re-scoring the saved test-year scores of the versions with `fingerprints` under `measure`."""
     config = {"kind": RESCORE, "measure": measure, "versions": sorted(set(fingerprints))}
-    return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:12]
+    return settings_hash(config)
 
 
 def read_ledger(path: Path = LEDGER_PATH) -> pl.DataFrame:

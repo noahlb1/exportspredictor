@@ -41,12 +41,12 @@ Train and score times are from the start that trained each base year (the log); 
 
 ## The panel
 
-`data/derived/base_years/panel.parquet`, read by `base_years.load_panel()`, with the run's record in `panel.json` beside it (artefact version, configuration, each base year's cache key, seconds and rows, and the panel's row and pair counts).
+`data/derived/base_years/panel.parquet`, read by `base_years.load_panel()`, with the run's record in `panel.json` beside it (`base_years.load_panel_info()`: artefact version, the frozen version's settings, each base year's cache key, seconds and rows, and the panel's row and pair counts).
 
 - **12,716,550 rows**: 1,156,050 UK pairs × 11 years (2012–2022).
-- Columns: `hs6`, `iso3`, `year`, `export_potential`, `naive_baseline` and `actual_exports`, all in USD.
+- Columns (`realisation.PANEL_SCHEMA`): `hs6`, `iso3`, `year`, `export_potential_usd`, `naive_baseline_usd` and `actual_exports_usd`. The money columns were renamed to carry their unit after the run, and the panel rescored from the 25 cached models.
 - The pairs are every pair of the base years' UK grids. Excluded Products are left out, as in the served version.
-- `actual_exports` is 0 where there is no Flow.
+- `actual_exports_usd` is 0 where there is no Flow.
 - The two scores are filled only on base-year rows of pairs in that year's grid.
 - The 2022 grid file is the Gap Period's union of pairs, but it only supplies 2022's Actual Exports, never extra pairs.
 
@@ -58,4 +58,4 @@ Train and score times are from the start that trained each base year (the log); 
 
   Neither carries a target value: no Flow, Export Potential or Actual Exports from after t enters a base-year model's training rows or its scores. The leak is in which Exporters are in scope and how Products relate, and both move slowly, so it should be small. It still leans the test, if at all, in the model's favour.
 - **The round count** is the served 1,279. The served version scaled it to 2012–2023's rows, and it is not scaled down for fewer years, as the spec's "same round count" asks.
-- `panel.json` records `configuration.training_years` as an empty list: each base year's own training years are under `base_year_models`.
+- `panel.json` records `frozen_settings.training_years` as an empty list: each base year's own training years are under `base_year_models`.

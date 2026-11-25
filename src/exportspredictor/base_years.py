@@ -1,6 +1,6 @@
 """The base-year fold models and the scored UK panel that ITC's Realisation Test runs on (spec #156).
 
-For each base year t in `BASE_YEARS`, the frozen Configuration's fold models (ADR 0001) are trained again on the
+For each base year t in `BASE_YEARS`, the frozen version's fold models (ADR 0001) are trained again on the
 years up to t only, with the same hyperparameters, round count, non-UK sampling and features, through the
 test-year fold-model trainer (`evaluation.train_test_models`). Each base year's UK grid is then scored out-of-fold in
 the served Model Form: the Blend with the Naive Baseline, then Market Reach learned from the UK grid of t − 1
@@ -10,22 +10,23 @@ artefact's own fold models were trained on 2012–2023 and could not stand in fo
 The **panel** (`build_panel`) holds every UK Product–Market pair of the base years' grids (Excluded Products left
 out, as in the served version) in every year of `PANEL_YEARS`, 2012–2022, with:
 
-- `actual_exports`: the UK's Actual Exports, 0 where there is no Flow;
-- `export_potential` and `naive_baseline`: filled in base-year rows only (null elsewhere, and for a pair not in
+- `actual_exports_usd`: the UK's Actual Exports, 0 where there is no Flow;
+- `export_potential_usd` and `naive_baseline_usd`: filled in base-year rows only (null elsewhere, and for a pair not in
   that year's UK grid).
 
-Product and Market keep the names of the codebase's UK tables, `hs6` and `iso3` (`PANEL_SCHEMA`).
+Product and Market keep the names of the codebase's UK tables, `hs6` and `iso3`. The schema is the Realisation
+Test's input's (`realisation.PANEL_SCHEMA`).
 
 **2023 is never read**: every year the panel needs (the panel years, the base years and Market Reach's reference
 years) must be before the test year, or `build_panel` raises `LeakageError` before reading anything. Nothing goes
 through the Test-year Ledger (ADR 0009).
 
 Models are cached under the data root (`models_dir`), keyed by their settings, so a re-run costs minutes. The real
-run, about 25 models on the GPU, is `python -m exportspredictor.base_years`; it reads the Configuration from the
-newest artefact, writes the panel (`save_panel`) and prints a record of each base year. `load_panel` reads it back.
+run, about 25 models on the GPU, is `python -m exportspredictor.base_years`; it reads the frozen version's settings
+from the newest artefact, writes the panel (`save_panel`) and its record (`load_panel_info`), and prints a record of
+each base year. `load_panel` reads the panel back.
 """
 
-import hashlib
 import json
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -34,7 +35,7 @@ from pathlib import Path
 
 import polars as pl
 
-from exportspredictor import baci, downloads, market_reach
+from exportspredictor import baci, downloads, ledger, market_reach
 from exportspredictor.backtests import LeakageError
 from exportspredictor.evaluation import (
     TEST_MODELS_FILE,
@@ -57,28 +58,19 @@ from exportspredictor.fixture import World
 from exportspredictor.folds import score_out_of_fold
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import ModelForm
+from exportspredictor.realisation import PANEL_SCHEMA
 from exportspredictor.training import Chunk, read_chunk
 
 BASE_YEARS = (2015, 2016, 2017, 2018, 2019)
 # Past growth needs t − 3 ≥ 2012 and the outcomes t + 1..t + 3 end in 2022.
 PANEL_YEARS = tuple(range(2012, 2023))
-TEST_YEAR = 2023  # never read (ADR 0009)
-
-PANEL_SCHEMA = {
-    "hs6": pl.String,
-    "iso3": pl.String,
-    "year": pl.Int16,
-    "export_potential": pl.Float64,
-    "naive_baseline": pl.Float64,
-    "actual_exports": pl.Float64,
-}
 PANEL_FILE = "panel.parquet"
 PANEL_INFO_FILE = "panel.json"
 _TRAINING_FILE = "training.json"
 
 
 @dataclass(frozen=True)
-class Configuration:
+class FrozenSettings:
     """What the base-year models share with the frozen version: its settings, read from the artefact metadata."""
 
     params: dict
@@ -91,7 +83,7 @@ class Configuration:
     model_form: dict = field(default_factory=dict)  # `ModelForm.to_dict()` of the served form
 
     @classmethod
-    def from_metadata(cls, metadata: Mapping) -> "Configuration":
+    def from_metadata(cls, metadata: Mapping) -> "FrozenSettings":
         return cls(
             params=dict(metadata["params"]),
             rounds=int(metadata["rounds"]),
@@ -127,23 +119,22 @@ class Inputs:
     year_flows: Callable[[int], pl.DataFrame]
 
 
-def models_dir(cache: Path, *, base_year: int, configuration: Configuration, training_years: Sequence[int]) -> Path:
+def models_dir(cache: Path, *, base_year: int, frozen: FrozenSettings, training_years: Sequence[int]) -> Path:
     """Where the base-year models of these settings are cached under `cache`: `<base year>_<hash of the settings>`."""
-    settings = configuration.settings(training_years)
-    key = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()[:12]
-    return Path(cache) / f"{base_year}_{key}"
+    settings = frozen.settings(training_years)
+    return Path(cache) / f"{base_year}_{ledger.settings_hash(settings)}"
 
 
 def train_base_year_models(
     training: Mapping[int, Chunk],
     *,
     base_year: int,
-    configuration: Configuration,
+    frozen: FrozenSettings,
     uk: str = baci.UK,
     device: str = "cuda",
     cache: Path | None = None,
 ) -> TestModels:
-    """The Configuration's fold models trained on every year of `training`, all of which must be ≤ `base_year`.
+    """The frozen version's fold models trained on every year of `training`, all of which must be ≤ `base_year`.
 
     Raises `LeakageError` if `training` holds any later year, as the backtest trainer does. With `cache`, the models
     are read from `models_dir` when saved there (no chunk is read), or saved there after training. They are
@@ -156,14 +147,14 @@ def train_base_year_models(
         raise LeakageError(f"Base-year models for {base_year} would train on {years}, not only on years up to it")
     folder = None
     if cache is not None:
-        folder = models_dir(cache, base_year=base_year, configuration=configuration, training_years=years)
+        folder = models_dir(cache, base_year=base_year, frozen=frozen, training_years=years)
         if (folder / TEST_MODELS_FILE).exists():
             return TestModels.load(folder)
     started = time.perf_counter()
     models = train_test_models(
-        {year: training[year] for year in years}, test_year=base_year + 1, uk=uk, params=configuration.params,
-        rounds=configuration.rounds, n_folds=configuration.n_folds, device=device,
-        non_uk_rate=configuration.non_uk_rate, seed=configuration.seed, features=configuration.features,
+        {year: training[year] for year in years}, test_year=base_year + 1, uk=uk, params=frozen.params,
+        rounds=frozen.rounds, n_folds=frozen.n_folds, device=device,
+        non_uk_rate=frozen.non_uk_rate, seed=frozen.seed, features=frozen.features,
     )
     if max(models.training_years) > base_year:
         raise LeakageError(f"Base-year models for {base_year} trained on {models.training_years}")
@@ -176,13 +167,13 @@ def train_base_year_models(
 
 
 def score_base_year(
-    inputs: Inputs, models: TestModels, configuration: Configuration, *, base_year: int, uk: str = baci.UK
+    inputs: Inputs, models: TestModels, frozen: FrozenSettings, *, base_year: int, uk: str = baci.UK
 ) -> pl.DataFrame:
     """The UK grid of `base_year` scored out-of-fold in the served Model Form: hs6, iso3, export_potential_usd,
-    naive_usd. Market Reach is learned from the UK grid of the year before (ADR 0010)."""
+    naive_baseline_usd. Market Reach is learned from the UK grid of the year before (ADR 0010)."""
     grid = naive_potential(read_chunk(inputs.grids[base_year]), inputs.year_flows(base_year))
     transformed = models.transform.apply(grid)
-    form = configuration.form
+    form = frozen.form
     if form.market_reach is not None:
         reference = base_year - market_reach.LAG_YEARS
         source = read_chunk(inputs.grids[reference]).select("year", "hs6", "importer", "value_usd", market_reach.DEMAND)
@@ -192,7 +183,7 @@ def score_base_year(
         )
     scored = score_out_of_fold(transformed, models.models, uk, inputs=models.features, form=form).select(
         pl.col("hs6").cast(pl.String), iso3=pl.col("importer").cast(pl.String),
-        export_potential_usd="export_potential_usd", naive_usd="naive_usd",
+        export_potential_usd="export_potential_usd", naive_baseline_usd="naive_usd",
     )
     if scored.select("hs6", "iso3").is_duplicated().any() or scored.height != grid.height:
         raise ValueError("A scored grid must hold exactly one row per UK Product–Market pair")
@@ -203,11 +194,11 @@ def score_base_year(
 
 def build_panel(
     inputs: Inputs,
-    configuration: Configuration,
+    frozen: FrozenSettings,
     *,
     base_years: Sequence[int] = BASE_YEARS,
     panel_years: Sequence[int] = PANEL_YEARS,
-    test_year: int = TEST_YEAR,
+    test_year: int = ledger.TEST_YEAR,
     uk: str = baci.UK,
     device: str = "cuda",
     cache: Path | None = None,
@@ -228,14 +219,14 @@ def build_panel(
     for t in base_years:
         started = time.perf_counter()
         years = sorted(y for y in inputs.training if y <= t)
-        folder = None if cache is None else models_dir(cache, base_year=t, configuration=configuration, training_years=years)
+        folder = None if cache is None else models_dir(cache, base_year=t, frozen=frozen, training_years=years)
         cached = folder is not None and (folder / TEST_MODELS_FILE).exists()
         models = train_base_year_models(
-            {y: inputs.training[y] for y in years}, base_year=t, configuration=configuration, uk=uk, device=device,
+            {y: inputs.training[y] for y in years}, base_year=t, frozen=frozen, uk=uk, device=device,
             cache=cache,
         )
         trained = time.perf_counter()
-        table = score_base_year(inputs, models, configuration, base_year=t, uk=uk)
+        table = score_base_year(inputs, models, frozen, base_year=t, uk=uk)
         done = time.perf_counter()
         scored.append(table.with_columns(year=pl.lit(t, pl.Int16)))
         record = {
@@ -252,7 +243,7 @@ def build_panel(
         [
             _grid_columns(inputs.grids[y]).filter(pl.col("value_usd") > 0).select(
                 pl.col("hs6").cast(pl.String), iso3=pl.col("importer").cast(pl.String), year=pl.lit(y, pl.Int16),
-                actual_exports=pl.col("value_usd").cast(pl.Float64),
+                actual_exports_usd=pl.col("value_usd").cast(pl.Float64),
             )
             for y in panel_years
         ]
@@ -261,10 +252,10 @@ def build_panel(
         pairs.join(pl.DataFrame({"year": list(panel_years)}, schema={"year": pl.Int16}), how="cross")
         .join(actual, on=["hs6", "iso3", "year"], how="left")
         .join(
-            scores.select("hs6", "iso3", "year", export_potential="export_potential_usd", naive_baseline="naive_usd"),
+            scores,
             on=["hs6", "iso3", "year"], how="left",
         )
-        .with_columns(pl.col("actual_exports").fill_null(0.0))
+        .with_columns(pl.col("actual_exports_usd").fill_null(0.0))
         .select(list(PANEL_SCHEMA))
         .cast(PANEL_SCHEMA)
         .sort("hs6", "iso3", "year")
@@ -341,11 +332,43 @@ def save_panel(panel: pl.DataFrame, root: Path | None = None, *, info: Mapping) 
 
 
 def load_panel(root: Path | None = None) -> pl.DataFrame:
-    """The saved scored UK panel (`PANEL_SCHEMA`): hs6, iso3, year, export_potential, naive_baseline, actual_exports."""
+    """The saved scored UK panel (`PANEL_SCHEMA`): hs6, iso3, year, export_potential_usd,
+    naive_baseline_usd, actual_exports_usd."""
     path = panel_path(root)
     if not path.exists():
         raise FileNotFoundError(f"No base-year panel at {path}; run `python -m exportspredictor.base_years`")
     return pl.read_parquet(path).select(list(PANEL_SCHEMA))
+
+
+def load_panel_info(root: Path | None = None) -> dict:
+    """The saved panel's record (`run`'s `info`): the artefact version whose settings built it, its base-year models."""
+    path = panel_path(root).with_name(PANEL_INFO_FILE)
+    if not path.exists():
+        raise FileNotFoundError(f"No base-year panel record at {path}; run `python -m exportspredictor.base_years`")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def check_panel_version(info: Mapping, artefacts_root: Path, version: str) -> None:
+    """Raise `ValueError` unless the panel was built from artefact `version` or one it was copied from.
+
+    The copies (`copied_from` in each version's metadata under `artefacts_root`) keep their models and settings, so a
+    panel built from any of them is the frozen version's."""
+    lineage = []
+    while version and version not in lineage:
+        lineage.append(version)
+        metadata = Path(artefacts_root) / version / "metadata.json"
+        version = json.loads(metadata.read_text(encoding="utf-8")).get("copied_from") if metadata.exists() else None
+    if info.get("artefact_version") not in lineage:
+        raise ValueError(
+            f"The base-year panel was built from artefact {info.get('artefact_version')!r}, not from {lineage[0]!r} or "
+            f"a version it was copied from ({', '.join(lineage[1:]) or 'none'}); "
+            f"run `python -m exportspredictor.base_years` again"
+        )
+
+
+def training_cut_offs(info: Mapping) -> dict[int, int]:
+    """Each base year's last training year, from the panel's record of its base-year models."""
+    return {int(record["base_year"]): max(record["training_years"]) for record in info["base_year_models"]}
 
 
 def run(
@@ -356,41 +379,41 @@ def run(
     panel_years: Sequence[int] = PANEL_YEARS,
     device: str = "cuda",
 ) -> Path:
-    """Build the panel from the newest artefact's Configuration on the real feature files, and save it."""
+    """Build the panel from the newest artefact's frozen settings on the real feature files, and save it."""
     from exportspredictor import artefacts
     from exportspredictor.paths import artefacts_dir
 
     root = Path(root or data_dir())
     folder = artefacts.latest_folder(Path(artefacts_root or artefacts_dir()))
     metadata = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
-    configuration = Configuration.from_metadata(metadata)
-    if list(configuration.features) != list(FEATURES):
-        raise ValueError(f"The newest artefact was trained on {configuration.features}, not the current features")
-    if configuration.feature_set != feature_set():
+    frozen = FrozenSettings.from_metadata(metadata)
+    if list(frozen.features) != list(FEATURES):
+        raise ValueError(f"The newest artefact was trained on {frozen.features}, not the current features")
+    if frozen.feature_set != feature_set():
         raise ValueError(
-            f"The newest artefact was trained on the feature set {configuration.feature_set!r}, but this run reads "
-            f"{feature_set()!r}; set EXPORTSPREDICTOR_FEATURE_SET={configuration.feature_set}"
+            f"The newest artefact was trained on the feature set {frozen.feature_set!r}, but this run reads "
+            f"{feature_set()!r}; set EXPORTSPREDICTOR_FEATURE_SET={frozen.feature_set}"
         )
     started = time.perf_counter()
     records: list[dict] = []
     panel = build_panel(
-        real_inputs(root, feature_set_name=configuration.feature_set or None), configuration,
+        real_inputs(root, feature_set_name=frozen.feature_set or None), frozen,
         base_years=base_years, panel_years=panel_years, device=device, cache=models_cache(root), records=records,
     )
     info = {
         "artefact_version": metadata["version"],
-        "feature_set": configuration.feature_set,
+        "feature_set": frozen.feature_set,
         "base_years": list(base_years),
         "panel_years": list(panel_years),
         "test_year_read": False,
-        "configuration": configuration.settings([]) | {"model_form": configuration.model_form},
+        "frozen_settings": frozen.settings([]) | {"model_form": frozen.model_form},
         "base_year_models": records,
         "rows": panel.height,
         "pairs": panel.select("hs6", "iso3").n_unique(),
         "seconds": round(time.perf_counter() - started, 1),
     }
     path = save_panel(panel, root, info=info)
-    print(json.dumps({k: v for k, v in info.items() if k not in ("configuration",)}), flush=True)
+    print(json.dumps({k: v for k, v in info.items() if k not in ("frozen_settings",)}), flush=True)
     return path
 
 

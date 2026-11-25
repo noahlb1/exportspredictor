@@ -16,7 +16,7 @@ import io
 import json
 import re
 import textwrap
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +31,7 @@ from exportspredictor import (
     ppml,
     rankings,
     realisation,
+    realisation_wording,
     scenarios,
 )
 from exportspredictor.artefacts import Artefacts
@@ -409,33 +410,26 @@ def lift_by_tenth(bundle: Artefacts) -> Chart | NotRun:
 ITC_COMPARISON = "ITC's realisation test on our model"
 
 
-def _itc_report(bundle: Artefacts) -> dict | None:
-    return (bundle.evaluation or {}).get(realisation.REPORT_KEY)
+def _from_itc_report[T](bundle: Artefacts, make: Callable[[dict], T]) -> T | NotRun:
+    """`make` applied to the saved ITC comparison report, or `NotRun` where this version has none."""
+    report = (bundle.evaluation or {}).get(realisation.REPORT_KEY)
+    return make(report) if report else NotRun(ITC_COMPARISON)
 
 
 def itc_coefficients(bundle: Artefacts) -> pl.DataFrame | NotRun:
     """ITC's realisation test on our model (#156 part b): each coefficient, with its standard error, beside ITC's
-    published static figure (`realisation.coefficient_rows`), read from the saved evaluation report."""
-    report = _itc_report(bundle)
-    if not report:
-        return NotRun(ITC_COMPARISON)
-    return pl.DataFrame(realisation.coefficient_rows(report))
+    published static figure (`realisation_wording.coefficient_rows`), read from the saved evaluation report."""
+    return _from_itc_report(bundle, lambda report: pl.DataFrame(realisation_wording.coefficient_rows(report)))
 
 
 def itc_method(bundle: Artefacts) -> pl.DataFrame | NotRun:
-    """ITC's method and ours side by side (#156 part a, `realisation.method_rows`)."""
-    report = _itc_report(bundle)
-    if not report:
-        return NotRun(ITC_COMPARISON)
-    return pl.DataFrame(realisation.method_rows(report))
+    """ITC's method and ours side by side (#156 part a, `realisation_wording.method_rows`)."""
+    return _from_itc_report(bundle, lambda report: pl.DataFrame(realisation_wording.method_rows(report)))
 
 
 def itc_direct_comparison(bundle: Artefacts) -> str | NotRun:
     """Whether the direct comparison with the EPM's UK figures (#156 part c) ran, and if not, why."""
-    report = _itc_report(bundle)
-    if not report:
-        return NotRun(ITC_COMPARISON)
-    return realisation.direct_comparison_text(report)
+    return _from_itc_report(bundle, realisation_wording.direct_comparison_text)
 
 
 def event_backtests(bundle: Artefacts) -> Chart | NotRun:
