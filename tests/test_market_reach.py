@@ -1,4 +1,4 @@
-"""Market Reach (spec #113, Phase 1, ticket #124): a per-Market offset learned out-of-fold from the year before."""
+"""Market Reach: a per-Market offset learned out-of-fold from the year before."""
 
 import math
 
@@ -123,8 +123,8 @@ def test_a_scenarios_relative_effect_is_unchanged_by_market_reach():
 
 
 def test_the_pre_registered_settings_are_fixed_in_code():
-    """Committed before any 2022 result was read (#124); the note cites the commit."""
-    assert market_reach.FORM == "nested_share"  # #124's "share" was not nested; the fix kept everything else
+    """Committed before any 2022 result was read; the note cites the commit."""
+    assert market_reach.FORM == "nested_share"  # the first run's "share" was not nested; the fix kept everything else
     assert market_reach.BETA_GRID == (0.0, 0.5, 1.0, 2.0, 4.0)
     assert market_reach.PSEUDO_COUNT == 5.0
     assert market_reach.LAG_YEARS == 1

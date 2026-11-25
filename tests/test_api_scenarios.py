@@ -219,7 +219,7 @@ def test_by_product_ranks_by_export_gap_by_default(client):
     assert gaps == sorted(gaps, reverse=True)
 
 
-# --- The Blocked Opportunities read (#109), on the Blocked world (`conftest.blocked_artefacts`) ------------------
+# --- The Blocked Opportunities read, on the Blocked world (`conftest.blocked_artefacts`) ------------------
 
 WHISKY, JEWELLERY, CARS, CRUDE_OIL = "220830", "711319", "870323", "270900"
 # The Blocked world's Blocked Opportunities (see `conftest.blocked_artefacts`): jewellery is the Flagged Product and
@@ -461,7 +461,7 @@ def test_baseline_year_actual_exports_match_the_history_with_0_where_there_is_no
 
 
 def test_the_blocked_read_refuses_a_ranking_order_or_an_unknown_filter(blocked_client):
-    # Rewritten for spec #151: the read now takes `market` (below); a Leaderboard-only filter is still refused.
+    # The read takes `market` (below); a Leaderboard-only filter is refused.
     for params in ({"rank_by": "gap"}, {"opportunity_type": "Expand"}, {"colour": "red"}):
         assert blocked_client.get("/opportunities/blocked", params=params).status_code == 422, params
 
@@ -547,7 +547,7 @@ def test_by_market_unknown_rank_by_returns_422(client):
     ids=["add-india", "cptpp", "tariff"],
 )
 def test_the_scenario_summary_frames_the_result_without_its_figures(client, payload):
-    # #149: the response's fields (and the page's metrics) carry the effect, share and count; the sentence only frames.
+    # The response's fields (and the page's metrics) carry the effect, share and count; the sentence only frames.
     body = client.post("/scenarios", json=payload).json()
 
     assert body["changes_nothing"] is False
@@ -747,7 +747,7 @@ def test_an_invalid_tariff_scenario_returns_422(client, payload):
     assert response.status_code == 422
 
 
-# --- A Scenario's Blocked Opportunities (#148, ADR 0012): one source, the Blocked Opportunities read -------------
+# --- A Scenario's Blocked Opportunities (ADR 0012): one source, the Blocked Opportunities read -------------
 
 
 def _default_hidden(client) -> dict[str, bool]:
@@ -862,7 +862,7 @@ def test_adding_two_markets_lists_both_ranked_by_value_and_limited(blocked_clien
     assert top["blocked_count"] == count == 3
 
 
-# --- The Blocked Opportunity prose a Scenario carries (#142 final review): worded once, in the package -------------
+# --- The Blocked Opportunity prose a Scenario carries: worded once, in the package -------------
 
 
 @pytest.mark.parametrize(

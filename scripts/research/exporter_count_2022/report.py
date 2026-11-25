@@ -1,13 +1,14 @@
-"""Ticket #127: the figures of the Exporter-count experiment beside the loop's own (GPU for prediction; trains nothing).
+"""The figures of the Exporter-count experiment beside the loop's own (GPU for prediction; trains nothing).
 
 The loop (`python -m exportspredictor.loop exporter-count`) decides the experiment and records each
 Arm's measures in `results.json`. This script re-scores the same cached fold-0 models, so the note
 can put beside them what the loop does not record:
 
-- the cached base (the original files) with and without Market Reach, which reproduces #124's
-  0.5771 and 0.6169, so the gravity fill's effect is measured on the same footing;
-- the 10th-90th spread of the log residual above $10m of Actual Exports (#124's dollar spread);
-- the measure on the 30 and 60 largest importing Markets (#123; reported, never selected on);
+- the cached base (the original files) with and without Market Reach, which reproduces the Market
+  Reach experiment's 0.5771 and 0.6169, so the gravity fill's effect is measured on the same footing;
+- the 10th-90th spread of the log residual above $10m of Actual Exports (the Market Reach
+  experiment's dollar spread);
+- the measure on the 30 and 60 largest importing Markets (reported, never selected on);
 - the Exporter-count Arm at the base's blend weight, so its gain is not only a re-chosen weight.
 
 Reads the 2022 validation year and the 2021 UK grid of each feature set, and the 2022 BACI Flows (for

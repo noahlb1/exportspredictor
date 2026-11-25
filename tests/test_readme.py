@@ -104,7 +104,7 @@ def test_checklist_covers_the_market_reach_sentence_in_the_market_view_and_the_p
     assert any("panel" in line for line in lines)
 
 
-def test_checklist_covers_the_evaluation_figures_of_spec_113():
+def test_checklist_covers_the_tie_proof_large_market_and_market_reach_figures():
     checklist = _checklist()
     for figure in ("tie-proof", "old measure", "30 largest", "What Market Reach changes", "by size", "UK pairs"):
         assert figure in checklist, figure

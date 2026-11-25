@@ -11,7 +11,7 @@ from exportspredictor.exclusions import (
 from exportspredictor.fixture import UK, build_world
 
 
-def test_world_has_the_spec_dimensions():
+def test_world_has_four_exporters_six_products_four_markets_and_four_years():
     world = build_world()
 
     assert world.flows["exporter"].n_unique() == 4

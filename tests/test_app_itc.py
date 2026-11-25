@@ -1,4 +1,4 @@
-"""The Model Evaluation page's ITC section, rendered from the API's `itc_comparison` (#175)."""
+"""The Model Evaluation page's ITC section, rendered from the API's `itc_comparison`."""
 
 from dataclasses import replace
 

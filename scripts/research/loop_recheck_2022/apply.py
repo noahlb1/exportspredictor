@@ -1,4 +1,4 @@
-"""Ticket #116, step 2: re-decide the loop's experiments under the tie-proof measure and save the re-check.
+"""Step 2 of the re-check: re-decide the loop's experiments under the tie-proof measure and save the re-check.
 
 Reads rescore.json (from rescore.py), replays the win rule (`loop.decide`) on every experiment with
 the re-scored values and the recomputed Win Threshold, and saves the re-check into the loop's

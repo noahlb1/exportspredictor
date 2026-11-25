@@ -1,6 +1,6 @@
 """Words GLOSSARY.md avoids stay out of the prose an Advisor or a marker reads.
 
-Reviews removed "shortfall" twice in spec #113 before it came back, so the check is a test, not a
+Reviews removed "shortfall" twice before it came back, so the check is a test, not a
 review rule. It reads the `_Avoid_:` lists from GLOSSARY.md and scans the notebook's markdown
 cells, every string literal in `app/` and `api/`, and the package's docstrings.
 

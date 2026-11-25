@@ -1,4 +1,4 @@
-"""The tie-proof Selection Measure (spec #113, ticket #115): ties in Export Potential cannot raise it."""
+"""The tie-proof Selection Measure: ties in Export Potential cannot raise it."""
 
 import polars as pl
 import pytest

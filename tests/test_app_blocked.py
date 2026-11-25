@@ -5,7 +5,7 @@ Blocked Opportunities, whisky and jewellery in India and jewellery in Hong Kong 
 but have no room to grow). Whisky in India has a Tariff part (40% of its value); jewellery in Hong Kong has a 0%
 tariff and Actual Exports above Export Potential. The fixture alone has none.
 
-The page reads as a before and after (spec #133, ADR 0011): each Product's Actual Exports, Export Potential and Export
+The page reads as a before and after (ADR 0011): each Product's Actual Exports, Export Potential and Export
 Potential with a Trade Agreement, the rise, and how much of it the model associates with the tariff.
 """
 
@@ -30,7 +30,7 @@ PAGE = "pages/blocked_opportunities.py"
 WHISKY, JEWELLERY, CARS, CRUDE_OIL = "220830", "711319", "870323", "270900"
 JEWELLERY_NAME = "Articles of jewellery and parts thereof, of precious metal other than silver"
 BLOCKED_PAIRS = [(WHISKY, "IND"), (JEWELLERY, "IND"), (JEWELLERY, "HKG")]
-TOTAL = "Total value, illustrative"  # the left table's total heading: visibly Illustrative (story 19)
+TOTAL = "Total value, illustrative"  # the left table's total heading: visibly Illustrative
 PRODUCT_COLUMNS = [
     "Product",
     "Barrier",
@@ -47,7 +47,7 @@ CAUSAL = re.compile(
     r"(?<!not )\b(causes?|caused|will (raise|add|unlock|increase)|would (raise|add|unlock|increase)|unlocks?)\b",
     re.IGNORECASE,
 )
-# Wording that credits a rise to taking a tariff away (spec #133: never on a 0% or unknown tariff).
+# Wording that credits a rise to taking a tariff away (never on a 0% or unknown tariff).
 REMOVING_THE_TARIFF = re.compile(r"remov\w* (the|a|its|any) \S*\s*tariff", re.IGNORECASE)
 CHART = "vega_lite_chart"
 
@@ -153,7 +153,7 @@ def _charts(page: AppTest) -> list[pd.DataFrame]:
     return [dataframe_util.convert_arrow_bytes_to_pandas_df(chart.proto.data.data) for chart in page.get(CHART)]
 
 
-# --- The shared layout (spec #151): By Market, By Product, Wide table, the panel underneath -----------------------
+# --- The shared layout: By Market, By Product, Wide table, the panel underneath -----------------------
 
 
 def test_markets_are_listed_largest_total_first_with_the_top_markets_products_shown(monkeypatch, blocked_api_url):
@@ -176,7 +176,7 @@ def test_markets_are_listed_largest_total_first_with_the_top_markets_products_sh
 
 
 def test_the_top_markets_top_pair_is_chosen_on_open_with_its_panel_under_the_tables(monkeypatch, blocked_api_url):
-    # Rewritten for spec #151, story 9: a pair is chosen on open (spec #133 waited for a click).
+    # A pair is chosen on open, so its panel shows without a click.
     page = _page(monkeypatch, blocked_api_url)
 
     assert _panel_box(page) == "Whiskies → India"
@@ -211,7 +211,7 @@ def test_by_product_lists_products_with_their_totals_and_the_chosen_products_mar
 
 
 def test_the_right_table_lists_every_pair_of_the_market_when_the_main_read_is_capped(monkeypatch, blocked_api_url):
-    # Story 17. The read limit lowered to 2 caps the main read at whisky and jewellery in India; Hong Kong's
+    # The read limit lowered to 2 caps the main read at whisky and jewellery in India; Hong Kong's
     # jewellery is left out of it, yet listed once Hong Kong is chosen, from the read with Hong Kong's filter.
     monkeypatch.setattr("app.ui.read_limit", lambda: 2)
     page = _page(monkeypatch, blocked_api_url)
@@ -372,7 +372,7 @@ def test_the_active_filters_line_states_the_count_and_the_illustrative_total(mon
     caption = " ".join(element.value for element in page.caption)
     assert "$ millions" in caption and "2024" in caption and "Scenario Builder" in caption
     assert "20%" in caption and "$1M" in caption
-    # Spec #113 "Totals understate": the note beside the summed values, with the share the artefact records.
+    # The note that totals understate, beside the summed values, with the share the artefact records.
     note = httpx.get(f"{blocked_api_url}/labels").json()["totals_note"]["text"]
     assert note in caption and "about 82% of Actual Exports" in note
 
@@ -383,7 +383,7 @@ def test_the_caption_says_with_no_uk_trade_agreement_in_force_and_states_room_to
     caption = next(element.value for element in page.caption if "room to grow" in element.value)
     assert httpx.get(f"{blocked_api_url}/labels").json()["blocked_rule"] in caption  # one wording (ADR 0012)
     assert "with no UK Trade Agreement in force" in caption
-    assert "where none is in force" not in caption  # read as "no tariff" (spec #133, story 13)
+    assert "where none is in force" not in caption  # read as "no tariff"
     assert "room to grow" in caption and "Actual Exports" in caption
     assert not REMOVING_THE_TARIFF.search(caption)
 
@@ -406,7 +406,7 @@ def test_the_markets_table_explains_its_totals_and_links_the_market_to_a_scenari
     note = next(element.value for element in page.caption if "Scenario Effect" in element.value)
     assert "only" in note and "every pair" in note
     [link] = [link for link in page.get("page_link") if link.proto.page == "Scenario_Builder"]
-    assert link.proto.label == "Scenario Builder: a Trade Agreement with India"  # #150: names the page it opens
+    assert link.proto.label == "Scenario Builder: a Trade Agreement with India"  # names the page it opens
     assert link.proto.query_string == "add=IND"  # the Scenario Builder prefills it (`?add=`)
 
     # Under the Markets table: after it, before the chosen Market's Products.
@@ -432,7 +432,7 @@ def test_the_panel_opens_with_a_neutral_box_naming_the_pair_and_its_barrier(monk
     page = _choose(_page(monkeypatch, blocked_api_url), WHISKY, "IND")
 
     assert not page.exception
-    assert not [box for box in page.warning if "Whiskies" in box.value]  # no warning box (spec #133, story 12)
+    assert not [box for box in page.warning if "Whiskies" in box.value]  # no warning box
     [box] = [box for box in page.info if "Whiskies → India" in box.value]
     assert "No agreement, tariff 150%" in box.value
 
@@ -567,7 +567,7 @@ def test_a_filter_chip_removes_only_its_filter(monkeypatch, blocked_api_url):
 
 
 def test_the_page_has_an_order_but_no_market_type_or_agreement_filter(monkeypatch, blocked_api_url):
-    # Rewritten for spec #133: the page gained its order (by the rise or by Tariff part); still no Market filter.
+    # The page has an order (by the rise or by Tariff part), but no Market filter.
     page = _page(monkeypatch, blocked_api_url)
 
     keys = {widget.key for widget in [*page.sidebar.selectbox, *page.sidebar.radio, *page.sidebar.number_input]}
@@ -617,7 +617,7 @@ def test_csv_holds_every_filtered_blocked_opportunity_in_full_dollars(monkeypatc
     assert not [column for column in exported.columns if "Export Gap" in column]
     with_agreement = next(column for column in exported.columns if column.startswith("Export Potential with"))
     assert list(exported[with_agreement]) == pytest.approx([row["potential_with_agreement_usd"] for row in rows])
-    # Spec #133, story 23: the Barrier, both parts, the rise as a share and the mark.
+    # The Barrier, both parts, the rise as a share and the mark.
     assert list(exported["Barrier"]) == [row["barrier"] for row in rows]
     for prefix, field in [("Tariff part", "tariff_part_usd"), ("Agreement part", "agreement_part_usd")]:
         column = next(column for column in exported.columns if column.startswith(prefix))
@@ -694,7 +694,7 @@ def test_with_no_benchmark_or_event_backtests_the_note_keeps_the_label_and_says_
 
 
 def test_the_page_makes_one_read_and_one_for_the_chosen_market_and_states_the_thresholds(monkeypatch, blocked_api_url):
-    # Rewritten for spec #151: the right table is a second read with the chosen Market's filter.
+    # The right table is a second read with the chosen Market's filter.
     from app import client
 
     reads = []
@@ -733,7 +733,7 @@ def test_the_minimum_value_filter_reads_as_a_filter_on_the_list(monkeypatch, blo
 
 
 def test_the_tariff_carried_forward_caveat_is_shown_once_with_a_pair_chosen(monkeypatch, blocked_api_url):
-    # The page states it under the summary; the panel does not repeat it as a warning (spec #133, stories 12 and 14).
+    # The page states it under the summary; the panel does not repeat it as a warning.
     caveat = httpx.get(f"{blocked_api_url}/labels").json()["tariff_carried_forward"]
     explained = httpx.get(f"{blocked_api_url}/explain/{WHISKY}/IND").json()
     assert explained["tariff_caveat"]  # whisky's 2024 tariff is carried forward, so the panel would warn
@@ -753,7 +753,7 @@ def test_the_order_choices_are_the_apis_blocked_orders(monkeypatch, blocked_api_
     assert all(entry["description"] in order.proto.help for entry in orders)
 
 
-# --- The panel as the shared panel module's function (spec #142: the Scenario Builder calls it too) ---------------
+# --- The panel as the shared panel module's function (the Scenario Builder calls it too) ---------------
 
 
 def _render_blocked_panel(hs6: str, iso3: str) -> None:

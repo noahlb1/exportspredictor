@@ -1,4 +1,4 @@
-"""The pre-registered v1/v2 comparison (spec #39, decision #38), on a synthetic frozen-v1 folder.
+"""The pre-registered v1/v2 comparison, on a synthetic frozen-v1 folder.
 
 v2's scores here are a stand-in (Actual Exports with seeded noise), so these tests check the
 protocol (common rows, bootstrap, verdict, manifest), not either model.

@@ -1,4 +1,4 @@
-"""Other model families in the loop (ticket #167): LightGBM and CatBoost Arms behind the trainer seam."""
+"""Other model families in the loop: LightGBM and CatBoost Arms behind the trainer seam."""
 
 from dataclasses import replace
 

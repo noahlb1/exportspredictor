@@ -65,8 +65,7 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
     assert body["last_tariff_year"] == 2021
     assert "carried forward from 2021" in body["tariff_carried_forward"]
-    # What "a Trade Agreement" means in the model, said on the Blocked Opportunities page and the Scenario Builder
-    # (spec #133).
+    # What "a Trade Agreement" means in the model, said on the Blocked Opportunities page and the Scenario Builder.
     meaning = body["trade_agreement_meaning"]
     assert "average agreement" in meaning and "not a specific deal" in meaning and "one yes/no flag" in meaning
     # The Blocked Opportunity rule at the fixed thresholds (ADR 0012), stated once for every page.
@@ -83,7 +82,7 @@ def test_labels_serve_the_caution_line_every_page_shows_under_its_heading(client
 
 @pytest.mark.parametrize(("share", "about"), [(0.7, "about 70%"), (0.7999, "about 80%")])
 def test_labels_serve_the_totals_note_with_the_share_the_artefact_records(fixture_artefacts, tmp_path, share, about):
-    # Spec #113 "Totals understate": the share comes from the artefact, not a constant.
+    # The note that totals understate: the share comes from the artefact, not a constant.
     metadata = {**fixture_artefacts.metadata, "potential_share_of_actual_exports": share}
     store.save(replace(fixture_artefacts, metadata=metadata), tmp_path)
     with TestClient(create_app(tmp_path)) as client:
@@ -503,7 +502,7 @@ def test_explain_describes_relatedness_and_reexports_in_plain_english(client):
     factors = {f["label"]: f["value_text"] for f in client.get(f"/explain/{FIXTURE_HS6}/JPN").json()["factors"]}
 
     assert "How close this Product is to what the UK already exports well" in factors
-    # Market import growth was dropped by the feature ablation (#53), so it is no factor.
+    # Market import growth was dropped by the feature ablation, so it is no factor.
     assert "How fast Japan's imports of this Product are growing" not in factors
     assert "How much of this Product Japan re-exports" in factors
     assert factors["How much of this Product Japan re-exports"] != "Yes"
@@ -917,7 +916,7 @@ def test_every_ranking_row_has_a_potential_range_from_zero_up_and_flags_uncertai
     "path", ["/opportunities/top", f"/opportunities/by-product/{FIXTURE_HS6}", "/opportunities/by-market/JPN"]
 )
 def test_the_ranking_query_no_longer_accepts_a_filter_for_uncertain_opportunities(client, path):
-    # The Uncertain Opportunity is reported as a share on the Model Evaluation page, not filtered per row (spec #66)
+    # The Uncertain Opportunity is reported as a share on the Model Evaluation page, not filtered per row
     assert client.get(path).status_code == 200
     assert client.get(path, params={"hide_uncertain": True}).status_code == 422
 
@@ -971,7 +970,7 @@ def test_evaluation_serves_the_potential_range_coverage_by_size(client, fixture_
     assert served == saved
 
 
-# --- The Scenario note: Illustrative, beside its benchmarks (spec #66) ------------------
+# --- The Scenario note: Illustrative, beside its benchmarks ------------------
 
 SCENARIO = {"add_agreements": ["IND"]}
 
@@ -1027,7 +1026,7 @@ def test_the_note_carries_the_primary_event_backtests_predicted_and_observed_cha
 
 
 def test_the_note_says_the_event_backtest_and_the_models_association_cover_different_populations(client):
-    # Spec #66 story 29: the Blend's association over every UK pair is not to be compared with one agreement's backtest
+    # The Blend's association over every UK pair is not to be compared with one agreement's backtest
     backtest = client.post("/scenarios", json=SCENARIO).json()["note"]["event_backtest"]
 
     assert illustrative.DIFFERENT_POPULATIONS in backtest["text"]
@@ -1115,7 +1114,7 @@ def test_with_no_saved_benchmark_the_blocked_note_says_the_benchmark_was_not_run
     assert note["benchmark"]["run"] is False and "not run for this version" in note["benchmark"]["text"]
 
 
-# --- How the model was chosen, read from the artefact (spec #66 stories 46–49) ----------
+# --- How the model was chosen, read from the artefact ----------
 
 
 def _served(artefacts, tmp_path) -> dict:
@@ -1272,7 +1271,7 @@ def test_the_v1_comparisons_detail_is_still_not_served(client, fixture_artefacts
     assert "ladder" not in str(body["model_choice"]) and "verdict" not in str(body["model_choice"])
 
 
-# --- Sector names, the Sectors read and the Leaderboard's Product filter (spec #103) -----------
+# --- Sector names, the Sectors read and the Leaderboard's Product filter -----------
 
 
 def test_the_sectors_read_lists_each_sector_with_products_by_code_and_name(client):
@@ -1327,7 +1326,7 @@ def test_the_leaderboard_product_filter_answers_404_for_an_unknown_or_excluded_p
     assert "Excluded Product" in excluded.json()["detail"] and "pipelines" in excluded.json()["detail"]
 
 
-# --- Row limit, Applied Tariff on ranking rows, term definitions (#106) ------------------------------
+# --- Row limit, Applied Tariff on ranking rows, term definitions ------------------------------
 
 RANKING_READS = [
     "/opportunities/top",
@@ -1399,7 +1398,7 @@ def test_the_term_definitions_take_the_gap_period_label_from_the_artefact(fixtur
     assert "(2021–2023 average)" in terms["actual_exports"] and "(2021–2023 average)" in terms["export_gap"]
 
 
-# --- One definition of the row cap, one read on Blocked Opportunities, reasons counted (#103 review) ---------------
+# --- One definition of the row cap, one read on Blocked Opportunities, reasons counted ---------------
 
 
 def test_labels_serve_the_most_rows_a_ranking_read_returns(client):
@@ -1413,7 +1412,7 @@ def test_the_blocked_opportunities_read_carries_the_default_thresholds(blocked_c
 
 
 def test_blocked_opportunity_rows_have_the_documented_shape(blocked_client):
-    # Spec #133: the rise in dollars and as a share, its Tariff part and Agreement part, the Barrier and the "above
+    # The rise in dollars and as a share, its Tariff part and Agreement part, the Barrier and the "above
     # Export Potential" mark; the old uplift field is gone, since room to grow keeps a dollar level always meaningful.
     rows = blocked_client.get(BLOCKED_READ).json()["opportunities"]
 
@@ -1554,7 +1553,7 @@ def test_evaluation_serves_the_large_market_measures_beside_earlier_versions(cli
     assert by_name["v1"]["columns"] == {"30 largest Markets": v1[30], "60 largest Markets": v1[60]}
 
 
-# --- `/evaluation`'s `itc_comparison`: ITC's realisation test on our model, worded for Advisors by the API (#175) ---
+# --- `/evaluation`'s `itc_comparison`: ITC's realisation test on our model, worded for Advisors by the API ---
 
 
 def _served_evaluation(bundle, root) -> dict:
@@ -1608,7 +1607,7 @@ def test_evaluation_serves_the_itc_comparison_s_hs2_rows_its_years_and_the_api_s
         assert difference in served["caveat"], difference
     # Each predictor runs on the units it scores above zero, so the caveat says where the samples differ.
     assert "units the Naive Baseline scores above zero" in served["caveat"]
-    # The base-year models' departures from "never saw a year after the base year" are named (#178).
+    # The base-year models' departures from "never saw a year after the base year" are named.
     for departure in ("Relatedness", "training scope", "no later trade", "round count"):
         assert departure in served["caveat"], departure
     # Advisors see only the level compared with ITC.

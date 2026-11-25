@@ -1,4 +1,4 @@
-"""What the spec promises of every artefact, checked on the fixture artefact and, when present, the real one.
+"""What the project promises of every artefact, checked on the fixture artefact and, when present, the real one.
 
 A rule here holds for any artefact a build writes, so a build that breaks one fails here before
 it is served. The real-artefact cases skip without data (point `EXPORTSPREDICTOR_ARTEFACTS_DIR`
@@ -41,7 +41,7 @@ def artefacts(request):
 
 
 def test_adding_a_trade_agreement_never_lowers_export_potential(artefacts):
-    # Spec #39: "a Trade Agreement Scenario yields non-negative Scenario Effects". The monotone
+    # A Trade Agreement Scenario yields non-negative Scenario Effects. The monotone
     # constraints guarantee it only on known values, so an unknown tariff stays unknown (ADR 0006).
     values = artefacts.baseline["blocked_opportunity_value_usd"]
     negative = artefacts.baseline.filter(pl.col("blocked_opportunity_value_usd") < -FLOAT_NOISE_USD)

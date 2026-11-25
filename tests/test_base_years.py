@@ -1,4 +1,4 @@
-"""The base-year fold models and the scored UK panel behind ITC's realisation test (spec #156)."""
+"""The base-year fold models and the scored UK panel behind ITC's realisation test."""
 
 from dataclasses import replace
 

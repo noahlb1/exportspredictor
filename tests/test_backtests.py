@@ -472,7 +472,7 @@ def test_every_event_backtest_model_trained_only_before_its_event(report):
         assert max(event["training_years"]) < event["event_year"]
 
 
-def test_the_real_plan_trains_before_each_event_and_reads_the_years_the_ticket_names():
+def test_the_real_plan_trains_before_each_event_and_reads_its_fixed_gap_event_and_outcome_years():
     plan = backtests.REAL_PLAN
 
     assert plan.lift.training_years == tuple(range(2012, 2018))
@@ -655,7 +655,7 @@ def test_an_event_backtest_refuses_fold_models_trained_after_the_event(fixture_w
 
 def test_backtest_models_on_another_feature_set_are_cached_apart(tmp_path, monkeypatch):
     # The Blend's Lift and Event Backtest models were trained on the original files; a build on the rebuilt
-    # `exporter_count` files with the same settings must not read them (#128).
+    # `exporter_count` files with the same settings must not read them.
     from exportspredictor.features import FEATURE_SET_ENV
 
     monkeypatch.delenv(FEATURE_SET_ENV, raising=False)
