@@ -442,20 +442,124 @@ def fit_ppml(
     )
 
 
+@dataclass(frozen=True)
+class FixedEffectsOlsFit:
+    """Least-squares coefficients with their pair-clustered standard errors (`fit_fixed_effects_ols`).
+
+    A regressor with no variation left once the fixed effects are removed is listed in
+    `absorbed` and has a NaN coefficient and standard error.
+    """
+
+    coefficients: dict[str, float]
+    std_errors: dict[str, float]
+    rows: int
+    dropped_rows: int
+    clusters: int
+    absorbed: tuple[str, ...]
+
+    def as_dict(self) -> dict:
+        return {
+            "coefficients": dict(self.coefficients),
+            "std_errors": dict(self.std_errors),
+            "rows": self.rows,
+            "dropped_rows": self.dropped_rows,
+            "clusters": self.clusters,
+            "absorbed": list(self.absorbed),
+        }
+
+
+def fit_fixed_effects_ols(
+    panel: pl.DataFrame,
+    *,
+    outcome: str,
+    regressors: Sequence[str],
+    fixed_effects: Sequence[tuple[str, ...]],
+    cluster: tuple[str, ...],
+    demean_tol: float = 1e-10,
+    max_sweeps: int = 50_000,
+) -> FixedEffectsOlsFit:
+    """Ordinary least squares of `outcome` on `regressors`, with the `fixed_effects` absorbed.
+
+    The same machinery as `fit_ppml`, unweighted: each fixed effect is a tuple of columns whose
+    groups get their own intercept (e.g. `("market",)` and `("year", "sector")`), swept out by
+    alternating projections; the regressors' coefficients are then the least-squares fit of the
+    demeaned outcome on the demeaned regressors (Frisch–Waugh–Lovell), identical to a fit with
+    one dummy per group. With no fixed effects, a single intercept is absorbed.
+
+    Singleton groups are dropped first, repeatedly until none remain, as `fit_ppml` does: their
+    own effect fits them exactly, so they carry no information about the coefficients. Unlike
+    PPML, a group whose outcomes are all zero is kept. `rows` counts the observations used and
+    `dropped_rows` those dropped. Rows with a null or non-finite outcome or regressor must be
+    removed by the caller.
+
+    Standard errors are clustered by the groups of `cluster` (e.g. a Product–Market pair), with
+    the G/(G-1) small-sample factor of `fit_ppml` and no degrees-of-freedom correction for the
+    absorbed effects, so rows repeated within a cluster do not count as independent evidence.
+    """
+    names = list(regressors)
+    y_all = panel[outcome].to_numpy().astype(np.float64)
+    x_all = np.column_stack([panel[name].to_numpy().astype(np.float64) for name in names])
+    effects = list(fixed_effects)
+    codes_all = (
+        [_codes(panel, tuple(columns)) for columns in effects] if effects else [np.zeros(panel.height, dtype=np.int64)]
+    )
+    cluster_all = _codes(panel, cluster)
+
+    keep = _informative(y_all, codes_all, zero_groups=False)
+    y = y_all[keep]
+    x = x_all[keep]
+    codes = [np.unique(c[keep], return_inverse=True)[1] for c in codes_all]
+    clusters = np.unique(cluster_all[keep], return_inverse=True)[1]
+    weights = np.ones(y.size)
+
+    y_tilde = _demean(y, codes, weights, demean_tol, max_sweeps)
+    x_tilde = np.column_stack([_demean(x[:, j], codes, weights, demean_tol, max_sweeps) for j in range(len(names))])
+
+    # A regressor is absorbed when the fixed effects leave (numerically) none of its variation.
+    spread = np.sqrt(np.sum((x - x.mean(axis=0)) ** 2, axis=0))
+    left = np.sqrt(np.sum(x_tilde**2, axis=0))
+    used = left > 1e-8 * np.maximum(spread, 1.0)
+    xu = x_tilde[:, used]
+
+    coefficients = np.full(len(names), np.nan)
+    std_errors = np.full(len(names), np.nan)
+    n_clusters = int(clusters.max()) + 1 if clusters.size else 0
+    if used.any():
+        bread = np.linalg.inv(xu.T @ xu)
+        beta = bread @ (xu.T @ y_tilde)
+        residuals = y_tilde - xu @ beta
+        scores = np.column_stack([np.bincount(clusters, weights=xu[:, j] * residuals) for j in range(xu.shape[1])])
+        meat = scores.T @ scores * n_clusters / (n_clusters - 1)
+        coefficients[used] = beta
+        std_errors[used] = np.sqrt(np.diag(bread @ meat @ bread))
+    return FixedEffectsOlsFit(
+        coefficients={name: float(value) for name, value in zip(names, coefficients, strict=True)},
+        std_errors={name: float(value) for name, value in zip(names, std_errors, strict=True)},
+        rows=int(keep.sum()),
+        dropped_rows=int((~keep).sum()),
+        clusters=n_clusters,
+        absorbed=tuple(name for name, kept in zip(names, used, strict=True) if not kept),
+    )
+
+
 def _codes(panel: pl.DataFrame, columns: tuple[str, ...]) -> np.ndarray:
     """Dense integer codes 0..G-1 for the groups of `columns`."""
     keys = panel.select(pl.struct(columns).hash(seed=0)).to_series().to_numpy()
     return np.unique(keys, return_inverse=True)[1]
 
 
-def _informative(y: np.ndarray, codes: list[np.ndarray]) -> np.ndarray:
+def _informative(y: np.ndarray, codes: list[np.ndarray], *, zero_groups: bool = True) -> np.ndarray:
+    """Rows left once singleton groups (and, with `zero_groups`, all-zero groups) are dropped, repeatedly."""
     keep = np.ones(y.size, dtype=bool)
     while True:
         before = keep.sum()
         for c in codes:
-            totals = np.bincount(c[keep], weights=y[keep], minlength=c.max() + 1)
             counts = np.bincount(c[keep], minlength=c.max() + 1)
-            keep &= (totals[c] > 0) & (counts[c] > 1)
+            informative = counts[c] > 1
+            if zero_groups:
+                totals = np.bincount(c[keep], weights=y[keep], minlength=c.max() + 1)
+                informative &= totals[c] > 0
+            keep &= informative
         if keep.sum() == before:
             return keep
 
