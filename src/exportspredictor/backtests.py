@@ -70,7 +70,7 @@ from exportspredictor.training import (
     scan_chunks,
     training_matrix,
 )
-from exportspredictor.wording import years_text
+from exportspredictor.wording import percent_text, years_text
 
 if TYPE_CHECKING:
     from exportspredictor.evaluation import TestModels
@@ -811,10 +811,6 @@ def _control_rule(event: Event, high_income: bool) -> str:
     )
 
 
-def _pct(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:+.0%}"
-
-
 def event_text(report: dict) -> str:
     """The plain-English Event Backtest result: predicted against observed, and whether they agree."""
     parts = []
@@ -822,7 +818,7 @@ def event_text(report: dict) -> str:
         pooled = d["pooled"]
         low, high = pooled["observed_ci"]
         predicted = pooled["predicted"]
-        interval = "" if low is None else f" (95% interval {_pct(low)} to {_pct(high)})"
+        interval = "" if low is None else f" (95% interval {percent_text(low)} to {percent_text(high)})"
         if low is None or predicted is None:
             verdict = ""
         elif predicted > high:
@@ -833,8 +829,8 @@ def event_text(report: dict) -> str:
             verdict = " The model's effect is within the observed interval."
         parts.append(
             f"For {d['label']} in {years_text(report['post_years'])}, the model associated the agreement with "
-            f"{_pct(predicted)} in Export Potential; the observed difference-in-differences against "
-            f"{len(d['controls'])} similar Markets without an agreement was {_pct(pooled['observed'])}{interval}.{verdict}"
+            f"{percent_text(predicted)} in Export Potential; the observed difference-in-differences against "
+            f"{len(d['controls'])} similar Markets without an agreement was {percent_text(pooled['observed'])}{interval}.{verdict}"
         )
     return (
         f"{report['title']} (in force {report['in_force']}), with a model trained only on "

@@ -78,3 +78,8 @@ def rate_text(rate: float | None) -> str:
     if rate is None:
         return "an unrecorded rate"
     return f"{rate:.0%}" if round(rate * 100, 1) == round(rate * 100) else f"{rate:.1%}"
+
+
+def percent_text(change: float | None) -> str:
+    """A change as a signed whole percentage ("+12%", "-5%"), or "n/a" where it is missing."""
+    return "n/a" if change is None else f"{change:+.0%}"

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from exportspredictor.evaluation import NOT_RUN, model_form_label
 from exportspredictor.model_choice import event_backtest_note, primary_event_backtest
+from exportspredictor.wording import percent_text
 
 if TYPE_CHECKING:
     from exportspredictor.artefacts import Artefacts
@@ -110,11 +111,7 @@ def _event_backtest(report: dict) -> dict:
         "observed_high": high,
         "text": (
             f"In the primary Event Backtest ({primary['title']}), the model alone associated the agreement with "
-            f"{_share(predicted)} for {direction['label']}; the observed change against Control Markets was "
-            f"{_share(observed)}{interval}. {DIFFERENT_POPULATIONS}"
+            f"{percent_text(predicted)} for {direction['label']}; the observed change against Control Markets was "
+            f"{percent_text(observed)}{interval}. {DIFFERENT_POPULATIONS}"
         ),
     }
-
-
-def _share(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:+.0%}"
