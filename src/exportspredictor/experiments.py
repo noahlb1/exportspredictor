@@ -71,7 +71,7 @@ from exportspredictor.folds import N_FOLDS, assign_folds, outside_fold
 from exportspredictor.ledger import TEST_YEAR
 from exportspredictor.paths import data_dir
 from exportspredictor.prediction import export_potential
-from exportspredictor.sectors import sector_of
+from exportspredictor.sectors import in_sectors
 from exportspredictor.selection_measure import selection_measure
 from exportspredictor.training import (
     SECTOR_SUBSET,
@@ -327,7 +327,7 @@ class _Fitter:
 
     def __init__(self, data: Data, plan: Plan):
         self.data, self.plan = data, plan
-        self.in_sectors = _in_sectors(plan.sectors)
+        self.in_sectors = in_sectors(plan.sectors)
         years = sorted(data.training)
         self.chunks = [data.training[y] for y in years]
         # Fitted on the training years only, as the fold models' transform is.
@@ -422,12 +422,6 @@ def _predict(model: xgb.Booster, table: pl.DataFrame, features: Sequence[str], r
     return export_potential(table, model, features=features, rounds=rounds, device=device)
 
 
-def _in_sectors(sectors: Sequence[str] | None) -> pl.Expr:
-    if not sectors:
-        return pl.lit(True)
-    return sector_of("hs6").is_in(list(sectors))
-
-
 def _plan_dict(plan: Plan) -> dict:
     return {**asdict(plan), "sectors": list(plan.sectors) if plan.sectors else None}
 
@@ -502,17 +496,17 @@ def build(
         raise ValueError(f"No BACI Flows on disk for the proximity years {PROXIMITY_YEARS}")
     proximity = fit_proximity(pl.concat([pl.scan_parquet(_flows_file(root, y)) for y in fitted_on]), fitted_on)
     sources = replace(sources, proximity=proximity)
-    in_sectors = _in_sectors(sectors)
+    chosen = in_sectors(sectors)
     out = experiments_dir(root)
     out.mkdir(parents=True, exist_ok=True)
     for year in years:
         flows = _year_flows(root, year, to_iso3)
         earlier = [_year_flows(root, year - GROWTH_YEARS, to_iso3)] if year - GROWTH_YEARS in on_disk else []
         with_earlier = pl.concat([flows, *earlier])
-        rows = training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters).filter(in_sectors)
+        rows = training_rows(flows, rate=rate, seed=seed, uk=uk, exporters=exporters).filter(chosen)
         write_parquet(build_features(rows, with_earlier, sources), out / f"training_{year}.parquet", compression="zstd")
         if year == validation_year:
-            grid = uk_grid(flows, uk).filter(in_sectors)
+            grid = uk_grid(flows, uk).filter(chosen)
             write_parquet(build_features(grid, with_earlier, sources), out / f"uk_grid_{year}.parquet", compression="zstd")
         _log(f"experiment rows for {year} written")
     settings = {
