@@ -1,4 +1,4 @@
-"""Freezing v1: v1's predictions saved once, as fixed tables that v2 joins to (spec #39).
+"""Freezing v1: v1's predictions saved once, as fixed tables that v2 joins to.
 
 v2 changes the features, so v1's saved models stop loading against the code once v2 lands.
 Before that, this command reads v1's models one last time and writes, into v1's artefact
@@ -243,7 +243,7 @@ def v1_folder(artefacts_root: Path | None = None) -> Path:
 
 # --- The real v1 --------------------------------------------------------------------------------
 
-# v1's run (spec #39): its artefact, its cached 2023 test-year fold models and its cached
+# v1's run: its artefact, its cached 2023 test-year fold models and its cached
 # Lift and EU–Japan Event Backtest models, by folder name.
 V1_IDS = {
     "artefact": "20261117T022550Z",

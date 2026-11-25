@@ -1,4 +1,4 @@
-"""The frame every page shares (spec #103, "Shared page furniture"): what the router sets once, and what each page
+"""The frame every page shares: what the router sets once, and what each page
 puts around its content.
 
 The router (`app/Home.py`) calls `setup()` (page configuration, logo, loading mark, the app's title) and runs the
@@ -20,7 +20,7 @@ from app.ui import fetch, labels
 
 APP_NAME = "UK Exports Predictor"
 ASSETS = Path(__file__).parent / "assets"
-LOGO = ASSETS / "logo.svg"  # the Profile container ship tile (issue #97)
+LOGO = ASSETS / "logo.svg"  # the Profile container ship tile
 LOADING_MARK = ASSETS / "loading.svg"  # the logo's ship riding the wave line
 # Scrollbar (thumb, track) by mode, from the theme's border and secondary background colours (config.toml).
 SCROLLBAR = {"light": ("#a39b88", "#efebe1"), "dark": ("#6b655b", "#2a2825")}

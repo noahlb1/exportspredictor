@@ -1,9 +1,9 @@
 """The Scenario Builder: the Advisor builds a Scenario (a Trading Bloc preset, Trade Agreements added or removed, or
 a tariff change) and sees the change in UK Export Potential the model associates with it.
 
-The page reads top to bottom (spec #103, "Scenarios"): what a Trade Agreement means in the model (spec #133), the
+The page reads top to bottom: what a Trade Agreement means in the model, the
 builder in a box, then, once **Run Scenario** is pressed, the result in the before/after style of the Blocked
-Opportunities page (#149): the summary (framing only; each figure is stated once, in the metrics), the clipped-tariff
+Opportunities page: the summary (framing only; each figure is stated once, in the metrics), the clipped-tariff
 note when it applies, a tariff Scenario's raised/lowered line, the metrics, the Illustrative note closed in the Blocked
 Opportunities page's expander, Change per Market, the pairs most affected in the selected Market, Top Products gaining
 and, last, Blocked Opportunities. Only an invalid Scenario is a warning; "changes nothing" and the clipped-tariff note
@@ -242,7 +242,7 @@ def pair_box(row: dict) -> None:
 
 
 def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
-    """A Scenario's result, in order (#149): summary, clipped-tariff note, raised/lowered line, metrics, the
+    """A Scenario's result, in order: summary, clipped-tariff note, raised/lowered line, metrics, the
     Illustrative expander, Change per Market, the selected Market's pairs, Top Products gaining, then Blocked
     Opportunities or the neutral line. Table keys carry the run, so a new run starts with fresh selections."""
     run_key = hashlib.sha1(shown.encode()).hexdigest()[:12]

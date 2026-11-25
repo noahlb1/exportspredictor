@@ -176,7 +176,7 @@ def _require_served(served: str, base: str, extends: str) -> None:
 
 
 def _print_round_section(section: dict, *extra: str) -> None:
-    """One line for an experiment of the final round (spec #155): the decision and each Arm's measure, best round,
+    """One line for an experiment of the final round: the decision and each Arm's measure, best round,
     seconds and `extra` fields (from the row, else from its settings)."""
     rows = [section["base_arm"], *section["arms"]]
     keys = (SELECTION_MEASURE, "rounds", *extra, "seconds")
@@ -188,7 +188,7 @@ def _print_round_section(section: dict, *extra: str) -> None:
 
 
 def confirm_best(root: Path | None = None) -> dict:
-    """#76: the best arm so far beside v2 (the noise floor's first seed, the model alone) on all five folds."""
+    """The best arm so far beside v2 (the noise floor's first seed, the model alone) on all five folds."""
     results = load(root)
     v2 = Settings.from_dict(results[NOISE_FLOOR]["arms"][0]["settings"])
     winner = Settings.from_dict(results["best"]["settings"])

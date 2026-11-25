@@ -1,4 +1,4 @@
-"""ITC's Realisation Test run on our model (#156): does the Export Gap come true?
+"""ITC's Realisation Test run on our model: does the Export Gap come true?
 
 ITC supports its Export Potential Map (EPM) with a 3-year realisation test (ITC, *Export Potential Assessment
 methodology*, June 2023, pp. 17–22, after Périllat 2018). It regresses later trade on its indicator and reports
@@ -34,7 +34,7 @@ counts the unit-years it left out (`zero_score`), so the two samples differ visi
 
 **The panel** (`realisation_report`'s input, `PANEL_SCHEMA`) holds one row per UK pair and year: `hs6`, `iso3`,
 `year`, `export_potential_usd` and `naive_baseline_usd` (non-null in base years only, each scored by fold models
-trained on years up to that base year, #176), and `actual_exports_usd` (0 where no Flow). Base years are the years
+trained on years up to that base year), and `actual_exports_usd` (0 where no Flow). Base years are the years
 with Export Potential. A panel reaching the test year is refused: the test never reads it, so nothing goes through
 the Test-year Ledger (ADR 0009), and the result feeds no modelling choice.
 
@@ -130,8 +130,8 @@ PUBLISHED = (
     },
 )
 
-# Part (c) of #156, the direct comparison with the EPM's UK figures, was dropped at step one (#174); #178 words the
-# reason in full for the notebook.
+# The direct comparison with the EPM's UK figures was dropped when EPM access and terms of use were checked,
+# before any other work; this is the reason in full, for the notebook.
 DIRECT_COMPARISON_DROPPED = (
     "dropped: the EPM's public site offers no tabular download, ITC's terms forbid extracting its data by "
     "automated means and allow only limited quotation without written permission, and its figures are a 2031 "
@@ -371,7 +371,7 @@ def realisation_report(panel: pl.DataFrame, *, training_cut_offs: Mapping[int, i
     default it is the base year itself, as the panel's contract states. A cut-off after its base year is refused.
 
     `rows` holds one entry per test, level and predictor; `published` ITC's own coefficients, cited;
-    `direct_comparison` whether part (c) of #156 ran, and why not.
+    `direct_comparison` whether the direct comparison with the EPM's UK figures ran, and why not.
     """
     if panel.height and int(panel["year"].max()) >= TEST_YEAR:  # pyright: ignore[reportArgumentType]
         raise ValueError(f"The panel reaches the test year ({TEST_YEAR}); the realisation test never reads it")

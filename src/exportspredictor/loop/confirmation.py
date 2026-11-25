@@ -1,4 +1,4 @@
-"""The five-fold confirmation (#76): the best arm beside v2 on every fold, measured on every held-out UK pair pooled."""
+"""The five-fold confirmation: the best arm beside v2 on every fold, measured on every held-out UK pair pooled."""
 
 import json
 import statistics

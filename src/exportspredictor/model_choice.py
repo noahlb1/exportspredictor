@@ -62,7 +62,7 @@ def round_count(metadata: dict) -> dict:
     `rounds_chosen`, read from `round_scaling`) and the count the next rebuild takes (`next_rounds`, from
     `loop.served_configuration`, None without experiment results), with the model card's sentence.
 
-    The pipeline records `selected_rounds` since #77 (chosen by the Selection Measure). An artefact
+    The pipeline records `selected_rounds` since it serves the loop's chosen form (chosen by the Selection Measure). An artefact
     recording the search's `tuned_rounds` was trained at v2's count, which early stopping on Tweedie
     deviance chose; both are scaled by the ratio of training rows."""
     scaling, rounds = metadata.get("round_scaling") or {}, metadata.get("rounds")

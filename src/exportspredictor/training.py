@@ -58,7 +58,7 @@ def model_params(
     """Full XGBoost parameters: defaults, the given overrides and the monotone constraints.
 
     `features` are the matrix's columns, in order (a feature ablation trains on fewer).
-    `monotone=False` leaves the constraints out (the experiment loop's #75 arm).
+    `monotone=False` leaves the constraints out (the experiment loop's arm that tested them).
     """
     full = {**DEFAULT_PARAMS, **(params or {}), "device": device, "seed": seed}
     if monotone:
@@ -104,13 +104,13 @@ FEATURE_BYTES = 1.5  # per row and feature: the compressed histogram index
 ROW_BYTES = 72.86 - 22 * FEATURE_BYTES  # per row, whatever the features
 RATE_STEP = 1e-4  # the derived non-UK rate is a multiple of this
 SAMPLE_SDS = 4  # headroom for hash sampling: a sample this many standard deviations large still fits
-# Short GPU runs (the row-budget check, and the experiments of ticket #53) train on this
+# Short GPU runs (the row-budget check, and the experiments of `experiments`) train on this
 # Sector subset: the three large UK Sectors of `constraints.REAL_PLAN` (beverages,
 # pharmaceuticals, vehicles) plus fish, plastics, knitted apparel and electrical machinery,
 # so that food, chemicals, textiles and machinery all appear and the subset has tens of
 # millions of rows.
 SECTOR_SUBSET = ("03", "22", "30", "39", "61", "85", "87")
-# The GPU check (ticket #52, `scripts/gpu_check.py`): v1's configuration on a device-built
+# The GPU check (`scripts/gpu_check.py`): v1's configuration on a device-built
 # matrix of the Sector subset's 2012–2021 rows (top-100 scope, every UK Zero Cell, 5% of
 # other Zero Cells) fed four times. Recorded in every artefact's metadata.
 GPU_CHECK = {
@@ -289,7 +289,7 @@ def training_matrix(
 ) -> xgb.QuantileDMatrix:
     """A QuantileDMatrix of `features`, built chunk by chunk on `device`; `prepare` filters or transforms each chunk first.
 
-    With a `cache` folder, an `ExtMemQuantileDMatrix` instead (XGBoost external memory, ticket #170): each chunk
+    With a `cache` folder, an `ExtMemQuantileDMatrix` instead (XGBoost external memory): each chunk
     is one batch, and the compressed pages are kept off the device (in host memory on a CUDA device, in files
     under `cache` on the CPU) and streamed to it as training reads them, so the rows need not fit in VRAM.
     """

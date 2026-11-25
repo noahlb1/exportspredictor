@@ -1,4 +1,4 @@
-# The app's theme: "Warm paper, darker" (resolution of issue #101), accent #2a78d6 (issue #97).
+# The app's theme: "Warm paper, darker", accent #2a78d6.
 #
 # Streamlit reads this file because it sits next to the entry point (app/Home.py), so it ships in the
 # container with the app. Every colour is set under [theme.light] and [theme.dark] and their sidebar

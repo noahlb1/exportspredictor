@@ -1,9 +1,9 @@
-"""The loop's decisions re-checked under the tie-proof Selection Measure (spec #113, ticket #116).
+"""The loop's decisions re-checked under the tie-proof Selection Measure.
 
-The noise floor and every experiment of spec #65 were measured with the old measure. Ticket #116
+The noise floor and every experiment of the first loop were measured with the old measure. The re-check
 re-scored them from the cached models (nothing trained, 2023 never read) and recorded the result
 in `results.json` under `RECHECK`: the noise floor's seeds re-scored, the Win Threshold they give,
-and the best so far re-scored, which is the base later experiments (Phase 2) start from. The
+and the best so far re-scored, which is the base later experiments start from. The
 original sections stay as they were measured, except `best`, which becomes the re-scored one (its
 old value is kept as `legacy_best`), so an experiment compares like with like.
 

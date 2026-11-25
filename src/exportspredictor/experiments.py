@@ -1,4 +1,4 @@
-"""The feature ablation and the learning curve (ticket #53): features and sampling rates decided on evidence.
+"""The feature ablation and the learning curve: features and sampling rates decided on evidence.
 
 Both experiments train v1's configuration on one fold and the Sector subset
 (`training.SECTOR_SUBSET`), on the years before the validation year (2022), and measure
@@ -143,7 +143,7 @@ class Plan:
 
 
 # ADR 0004's starting rates for the ablation (the non-UK rate about what the budget allows,
-# 5% of Zero Cells); the learning curve's grid is decision #32's.
+# 5% of Zero Cells); the learning curve's grid was fixed with the training scope, before it ran.
 REAL_PLAN = Plan(
     params=V1_CONFIG,
     max_rounds=V1_MAX_ROUNDS,
@@ -438,7 +438,7 @@ def fixture_data(
     """The fixture world's experiment rows, built only from Flows up to the validation year.
 
     `keep_excluded` keeps the Excluded Products' training rows (`features.training_rows`), as the
-    `excluded_products` feature set does (#171); the grid leaves them out either way.
+    `excluded_products` feature set does; the grid leaves them out either way.
     """
     _check_years([validation_year])
     flows = world.flows.filter(pl.col("year") <= validation_year)

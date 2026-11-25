@@ -319,7 +319,7 @@ def coverage_text(report: dict) -> str:
     """The Potential Range's held-out coverage and the share of Uncertain Opportunities, in one paragraph.
 
     The Uncertain Opportunity is reported only as this share, never as a badge per row (ADR 0007). A report with
-    `uk_pair_coverage` (built since spec #113's review) also says how many UK pairs' Actual Exports lie inside their
+    `uk_pair_coverage` (in newer reports) also says how many UK pairs' Actual Exports lie inside their
     range, with Market Reach and without it.
     """
     text = (

@@ -1,11 +1,11 @@
-"""The notebook's charts and tables, one per main result, read from a loaded artefact (spec #66).
+"""The notebook's charts and tables, one per main result, read from a loaded artefact.
 
 Each function takes an `Artefacts` and returns a `Chart` (a static image with the rows it draws),
 a small table, or `NotRun` where the artefact does not record that part. Nothing here trains,
 fits or recomputes a result: every figure is read from what the artefact records (its
 evaluation report, the experiment loop's results in `metadata["ranking_experiments"]` and the
 saved PPML benchmark). The one exception is `final_round`, which reads the loop's saved results and the
-round's saved probe directly, because spec #155's final round ran after the served artefact was built and
+round's saved probe directly, because the final round of experiments ran after the served artefact was built and
 kept nothing. The notebook calls these and defines no functions of its own.
 
 Charts are drawn with matplotlib and saved as SVG, which GitHub renders as an image. Text stays
@@ -255,7 +255,7 @@ def experiments_chart(bundle: Artefacts) -> Chart | NotRun:
         axis=f"change in the Selection Measure (* stopped within {EARLY_STOP_ROUNDS} rounds)",
     ))
 
-# Spec #155's final round, one idea per row in the order run (docs/research/final-round-2022.md, "Summary"),
+# The final round of experiments, one idea per row in the order run (docs/research/final-round-2022.md, "Summary"),
 # each with the loop experiments that decided it.
 FINAL_ROUND_IDEAS: dict[str, tuple[str, ...]] = {
     "Cap on Market Reach's upside (#163)": (loop.MARKET_REACH_CAP_EXPERIMENT,),
@@ -281,7 +281,7 @@ def final_round_probe(root: Path | None = None) -> dict | None:
 
 
 def final_round(results: Mapping, probe: Mapping | None = None) -> pl.DataFrame | NotRun:
-    """Spec #155's final round, one row per idea: its experiments and Arms, the best Arm, the best so far as served
+    """The final round of experiments, one row per idea: its experiments and Arms, the best Arm, the best so far as served
     it was paired with (`base`), the best Arm's Selection Measure and gain, the `threshold` it had to beat, what that
     threshold is (`judged_against`) and the decision. Read from the loop's saved results (`loop.load`) and the
     scoring-only probe (`final_round_probe`), which is judged against its pre-registered gate, not the Win Threshold."""
@@ -365,7 +365,7 @@ def caveat_tier_reach(
 
 
 def offset_pair_reach(bundle: Artefacts) -> str:
-    """The Offset Pair tier's reach as the artefact metadata records it (`offsets.METADATA_KEY`, spec #129): how many
+    """The Offset Pair tier's reach as the artefact metadata records it (`offsets.METADATA_KEY`): how many
     Opportunities are Offset Pairs, how many of the top of the Leaderboard, and their share of positive Export Gap."""
     saved = bundle.metadata.get(offsets.METADATA_KEY)
     if not saved:
@@ -388,7 +388,7 @@ _SPLIT_FIGURES = {
 
 def heading_split(bundle: Artefacts, *, products: tuple[str, ...], markets: tuple[str, ...]) -> pl.DataFrame:
     """Some Products of one Heading beside the whole Heading (every scored Product of it) in some Markets, in $m: each
-    Market's Actual Exports, Export Potential and Export Gap from the Baseline (spec #129's worked example)."""
+    Market's Actual Exports, Export Potential and Export Gap from the Baseline, as a worked example of an Offset Pair."""
     [code] = pl.DataFrame({"hs6": list(products)}).select(offsets.heading(pl.col("hs6")))["hs6"].unique()
     rows = bundle.baseline.with_columns(pl.col("hs6").cast(pl.String), pl.col("iso3").cast(pl.String)).filter(
         offsets.heading(pl.col("hs6")) == code, pl.col("iso3").is_in(markets)
@@ -451,18 +451,18 @@ def _from_itc_report[T](bundle: Artefacts, make: Callable[[dict], T]) -> T | Not
 
 
 def itc_coefficients(bundle: Artefacts) -> pl.DataFrame | NotRun:
-    """ITC's realisation test on our model (#156 part b): each coefficient, with its standard error, beside ITC's
+    """ITC's realisation test on our model: each coefficient, with its standard error, beside ITC's
     published static figure (`realisation_wording.coefficient_rows`), read from the saved evaluation report."""
     return _from_itc_report(bundle, lambda report: pl.DataFrame(realisation_wording.coefficient_rows(report)))
 
 
 def itc_method(bundle: Artefacts) -> pl.DataFrame | NotRun:
-    """ITC's method and ours side by side (#156 part a, `realisation_wording.method_rows`)."""
+    """ITC's method and ours side by side (`realisation_wording.method_rows`)."""
     return _from_itc_report(bundle, lambda report: pl.DataFrame(realisation_wording.method_rows(report)))
 
 
 def itc_direct_comparison(bundle: Artefacts) -> str | NotRun:
-    """Whether the direct comparison with the EPM's UK figures (#156 part c) ran, and if not, why."""
+    """Whether the direct comparison with the EPM's UK figures ran, and if not, why."""
     return _from_itc_report(bundle, realisation_wording.direct_comparison_text)
 
 
