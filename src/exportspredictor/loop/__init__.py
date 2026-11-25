@@ -270,7 +270,7 @@ from exportspredictor.loop.arms import (
     two_part_arm,
     wider_scope_arms,
 )
-from exportspredictor.loop.cli import confirm_best, main, time_one_arm
+from exportspredictor.loop.cli import confirm_best, main
 from exportspredictor.loop.confirmation import CONFIRMATION, V2, WINNER, confirm
 from exportspredictor.loop.data import (
     MODELS_DIR,
@@ -485,7 +485,6 @@ __all__ = [
     "served_configuration",
     "sibling_demand_arm",
     "starting_point_arm",
-    "time_one_arm",
     "trainer_for",
     "training_key",
     "two_part_arm",
