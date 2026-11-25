@@ -21,6 +21,7 @@ from exportspredictor.features import (
 from exportspredictor.folds import outside_fold, with_folds
 from exportspredictor.loop.arms import (
     ANY_FLOW,
+    EXCLUDED_PRODUCTS_EXPERIMENT,
     EXPORTER_COUNT_EXPERIMENT,
     EXTERNAL_MEMORY_EXPERIMENT,
     HYPERPARAMETER_STAGES,
@@ -35,6 +36,7 @@ from exportspredictor.loop.arms import (
     Arm,
     LoopPlan,
     Settings,
+    excluded_products_arms,
     exporter_count_arms,
     external_memory_arm,
     hyperparameter_experiment,
@@ -201,6 +203,16 @@ def run_external_memory(lp: "Loop") -> dict:
     lp.noise_floor()
     best = Settings.from_dict(lp.results["best"]["settings"])
     return lp.run_experiment(EXTERNAL_MEMORY_EXPERIMENT, [external_memory_arm()], base_arm=served_base_arm(best))
+
+
+def run_excluded_products(lp: "Loop") -> dict:
+    """#171: the best so far as served trained on the Excluded Products' rows, against it with them dropped, both on
+    this loop's files (`excluded_products`) at one non-UK rate. A dropped Arm leaves the served files unchanged; a
+    kept one becomes the best so far and serves these files."""
+    lp.noise_floor()
+    best = Settings.from_dict(lp.results["best"]["settings"])
+    base, arm = excluded_products_arms(best)
+    return lp.run_experiment(EXCLUDED_PRODUCTS_EXPERIMENT, [arm], base_arm=base, files_kept_if_dropped=False)
 
 
 class Loop:
@@ -572,7 +584,7 @@ class Loop:
         """
         key = (
             settings.features, settings.non_uk_rate, settings.zero_rate, settings.seed, settings.base_margin,
-            settings.uk_zeros_sampled, settings.exporter_scope, part,
+            settings.uk_zeros_sampled, settings.exporter_scope, settings.train_excluded_products, part,
         )
         if self._rows is not None and self._rows.key == key:
             return self._rows
@@ -590,7 +602,9 @@ class Loop:
                 table, built_rate=built, rate=settings.zero_rate, seed=zero_seed, uk=plan.uk,
                 uk_zeros_sampled=settings.uk_zeros_sampled,
             )
-            rows = held_out(drop_excluded(rows)).sort(KEYS)  # a fixed order: the same rows, the same model
+            if not settings.train_excluded_products:  # ADR 0005; only the `excluded_products` files hold them (#171)
+                rows = drop_excluded(rows)
+            rows = held_out(rows).sort(KEYS)  # a fixed order: the same rows, the same model
             rows = self._with_product_detail(rows, settings)
             if part == ANY_FLOW:
                 rows = rows.with_columns(_any_flow(pl.col("value_usd")))

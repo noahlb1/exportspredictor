@@ -438,8 +438,14 @@ def _log(message: str) -> None:
 # --- Data: the fixture world, and the real experiment rows ----------------------------------
 
 
-def fixture_data(world: World, *, validation_year: int = VALIDATION_YEAR, built_zero_rate: float = 1.0) -> Data:
-    """The fixture world's experiment rows, built only from Flows up to the validation year."""
+def fixture_data(
+    world: World, *, validation_year: int = VALIDATION_YEAR, built_zero_rate: float = 1.0, keep_excluded: bool = False
+) -> Data:
+    """The fixture world's experiment rows, built only from Flows up to the validation year.
+
+    `keep_excluded` keeps the Excluded Products' training rows (`features.training_rows`), as the
+    `excluded_products` feature set does (#171); the grid leaves them out either way.
+    """
     _check_years([validation_year])
     flows = world.flows.filter(pl.col("year") <= validation_year)
     sources = world.sources
@@ -447,7 +453,9 @@ def fixture_data(world: World, *, validation_year: int = VALIDATION_YEAR, built_
 
     def rows(year: int) -> pl.DataFrame:
         year_flows = flows.filter(pl.col("year") == year)
-        sampled = training_rows(year_flows, rate=built_zero_rate, uk=baci.UK, exporters=exporters)
+        sampled = training_rows(
+            year_flows, rate=built_zero_rate, uk=baci.UK, exporters=exporters, keep_excluded=keep_excluded
+        )
         return build_features(sampled, flows, sources)
 
     years = sorted(y for y in flows["year"].unique().to_list() if y < validation_year)

@@ -67,6 +67,9 @@ refuses it, and `real_data` refuses it before opening a file.
     # #170, with EXPORTSPREDICTOR_FEATURE_SET set to the served files: the best so far as served (cached) against it
     # with every other Exporter's row (non-UK rate 1.0) through XGBoost external memory (one model, 8.2 h on this GPU)
     uv run python -m exportspredictor.loop external-memory
+    # #171, with EXPORTSPREDICTOR_FEATURE_SET=excluded_products (`exporter_count` plus the Excluded Products' training
+    # rows): the best so far as served with them dropped, then trained on them, both at one non-UK rate (two models)
+    uv run python -m exportspredictor.loop excluded-products
 
 The results are associations measured on one fold and one year: an arm that wins ranks
 the held-out UK Markets better in 2022, which says nothing about why.
@@ -166,7 +169,10 @@ every Exporter, both at `WIDER_SCOPE_NON_UK_RATE`. Every experiment now refuses,
 might not fit the VRAM row budget (`LoopPlan.row_budget`, by default `training.row_budget`), unless the arm trains
 through external memory (#170, `run_external_memory`): the training field `external_memory` (XGBoost only, False by
 default and then left out of the key) builds the rows as an `ExtMemQuantileDMatrix`, one page per year cached in host
-memory and streamed to the GPU each round, so a non-UK rate of 1.0 fits. The round's note is
+memory and streamed to the GPU each round, so a non-UK rate of 1.0 fits. Training on the Excluded Products (#171,
+`run_excluded_products`) runs on `excluded_products` (`exporter_count` plus their training rows) with the training field
+`train_excluded_products` (False by default, left out of the key: the rows are dropped, as ADR 0005 and the loop always
+have); its base drops them and its Arm keeps them, both at the largest non-UK rate those files allow. The round's note is
 `docs/research/final-round-2022.md`.
 
 **Pitfalls.**
@@ -197,6 +203,10 @@ from exportspredictor.loop.arms import (
     BLEND_WEIGHTS,
     CONSTRAINTS_EXPERIMENT,
     EXPORTER_COUNT_EXPERIMENT,
+    EXCLUDED_PRODUCTS,
+    EXCLUDED_PRODUCTS_BASE_SET,
+    EXCLUDED_PRODUCTS_EXPERIMENT,
+    EXCLUDED_PRODUCTS_SET,
     EXTERNAL_MEMORY,
     EXTERNAL_MEMORY_EXPERIMENT,
     FIXTURE_LOOP,
@@ -245,6 +255,7 @@ from exportspredictor.loop.arms import (
     decided_by_stopping_rule,
     experiment_label,
     exporter_count_arms,
+    excluded_products_arms,
     external_memory_arm,
     hyperparameter_experiment,
     market_reach_cap_arm,
@@ -288,6 +299,7 @@ from exportspredictor.loop.runner import (
     log_progress,
     naive_margin,
     run_exporter_count,
+    run_excluded_products,
     run_external_memory,
     run_hyperparameter_stage,
     run_market_reach_cap,
@@ -350,6 +362,10 @@ __all__ = [
     "CONSTRAINTS_EXPERIMENT",
     "DIAGNOSTICS",
     "EXPORTER_COUNT_EXPERIMENT",
+    "EXCLUDED_PRODUCTS",
+    "EXCLUDED_PRODUCTS_BASE_SET",
+    "EXCLUDED_PRODUCTS_EXPERIMENT",
+    "EXCLUDED_PRODUCTS_SET",
     "EXTERNAL_MEMORY",
     "EXTERNAL_MEMORY_EXPERIMENT",
     "FIXTURE_LOOP",
@@ -432,6 +448,7 @@ __all__ = [
     "decided_by_stopping_rule",
     "experiment_label",
     "exporter_count_arms",
+    "excluded_products_arms",
     "external_memory_arm",
     "fixture_data",
     "fixture_ranking",
@@ -454,6 +471,7 @@ __all__ = [
     "real_data",
     "recheck_results",
     "run_exporter_count",
+    "run_excluded_products",
     "run_external_memory",
     "run_hyperparameter_stage",
     "run_market_reach_cap",

@@ -58,6 +58,9 @@ class Settings:
     # cached in host memory and streamed to the GPU each round, so more rows train than fit in VRAM (ADR 0004's
     # "last resort"); such an arm is exempt from the VRAM row budget. False: in-core, as before.
     external_memory: bool = False
+    # Spec #155, ticket #171: True trains on the Excluded Products' rows where the feature files hold them (the
+    # `excluded_products` set); they are still never scored or ranked. False drops them, as ADR 0005 does.
+    train_excluded_products: bool = False
     # Scoring only: Export Potential = exp((1 − w) · log model + w · log naive). 0 is the model alone.
     naive_weight: float = 0.0
     # Scoring only: Market Reach's beta (`market_reach`, spec #113, ticket #127). 0 scores without it;
@@ -81,6 +84,8 @@ class Settings:
             del data["exporter_scope"]
         if not self.external_memory:
             del data["external_memory"]
+        if not self.train_excluded_products:
+            del data["train_excluded_products"]
         return data
 
     @classmethod
@@ -406,6 +411,23 @@ def external_memory_arm() -> Arm:
     return Arm(EXTERNAL_MEMORY, {"external_memory": True, "non_uk_rate": 1.0}, BLEND_GRID)
 
 
+# #171: training on the Excluded Products' rows (ADR 0005 drops them from training). On the `excluded_products`
+# files (`exporter_count` plus those rows), the best so far as served with them dropped is the paired base, and the
+# Arm keeps them; both at the largest non-UK rate these files allow (`non_uk_rate` None), so only the field differs.
+# A dropped Arm leaves the served files unchanged.
+EXCLUDED_PRODUCTS_EXPERIMENT = "excluded products"
+EXCLUDED_PRODUCTS_SET = "excluded_products"
+EXCLUDED_PRODUCTS_BASE_SET = "exporter_count"  # the served files `excluded_products` adds rows to
+EXCLUDED_PRODUCTS = "train on the Excluded Products"
+
+
+def excluded_products_arms(best: Settings) -> tuple[Arm, Arm]:
+    """The paired base (the best so far as served, Excluded Products dropped) and the Arm (trained on them)."""
+    served = served_base_arm(best)
+    base = Arm(f"{SERVED_BASE}, Excluded Products dropped", {**served.changes, "non_uk_rate": None})
+    return base, Arm(EXCLUDED_PRODUCTS, {"train_excluded_products": True, "non_uk_rate": None}, BLEND_GRID)
+
+
 def decided_by_stopping_rule(rows: Sequence[Mapping]) -> list[str]:
     """The Arms whose best round (or a two-part model's either part's) is below `STOPPING_RULE_ROUNDS`."""
 
@@ -430,6 +452,7 @@ EXPERIMENT_DISPLAY_NAMES = {
     SIBLING_DEMAND_EXPERIMENT: "Sibling Demand",
     WIDER_SCOPE_EXPERIMENT: "Wider Exporter scope",
     EXTERNAL_MEMORY_EXPERIMENT: "More rows through external memory",
+    EXCLUDED_PRODUCTS_EXPERIMENT: "Training on the Excluded Products",
 }
 
 
