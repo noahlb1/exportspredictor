@@ -4,10 +4,12 @@ Read in review. "Shape" and "Modelling guardrails" are the project's rules; the 
 
 ## Shape
 
-- `notebooks/`: the write-up, an argument a marker reads top to bottom. In real mode it reads the newest artefact and saved results, and trains, fits and builds nothing; charts and tables come from `exportspredictor.reporting`. Notebooks import logic from the package and define no functions.
+The README's [repo map](README.md#repo-map) says what each folder holds. The rules for them:
+
+- `notebooks/`: an argument a marker reads top to bottom. In real mode the notebook reads the newest artefact and saved results, and trains, fits and builds nothing; charts and tables come from `exportspredictor.reporting`. Notebooks import logic from the package and define no functions.
 - `src/exportspredictor/`: the single source of truth for data loading, features, Scenario application and prediction. Both the notebook and the API import it, so training and serving compute features identically.
-- `api/`: FastAPI. It loads saved model artefacts and precomputed tables, and holds no training code.
-- `app/`: Streamlit. It talks to the model only through the API over HTTP.
+- `api/`: loads saved model artefacts and precomputed tables, and holds no training code.
+- `app/`: talks to the model only through the API over HTTP.
 - `data/`: raw downloads and derived Parquet, kept out of git. Every derived file is reproducible from a script.
 
 ## Modelling guardrails
