@@ -25,3 +25,6 @@ ML_AI_Concept_Notes.html
 /docs/runs
 /skills-lock.json
 /scripts/add-dep.ps1
+
+# Crash dumps from Git Bash tools
+*.stackdump
