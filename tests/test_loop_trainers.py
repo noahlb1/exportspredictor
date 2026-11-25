@@ -1,5 +1,6 @@
 """The loop's trainer seam (ticket #165): the model family is a training field, XGBoost by default."""
 
+import numpy as np
 import pytest
 import xgboost as xgb
 
@@ -59,3 +60,28 @@ def test_an_unknown_family_is_refused_before_training_anything(data, monkeypatch
 
     with pytest.raises(ValueError, match="no trainer for family 'unknown'"):
         lp.run_experiment("family", arms)
+
+
+def _xgboost_model(x, y):
+    return xgb.train({"objective": "reg:squarederror", "device": "cpu"}, xgb.DMatrix(x, label=y), num_boost_round=3)
+
+
+def _catboost_model(x, y):
+    import catboost as cb
+
+    return cb.CatBoost({"iterations": 3, "verbose": False, "thread_count": 1, "allow_writing_files": False}).fit(x, y)
+
+
+@pytest.mark.parametrize(("family", "fit"), [(loop.XGBOOST, _xgboost_model), (loop.CATBOOST, _catboost_model)])
+def test_a_saved_model_loads_back_predicting_the_same(family, fit, tmp_path):
+    x = np.arange(40, dtype=float).reshape(20, 2)
+    y = x[:, 0] * 2.0
+    trainer = loop.trainer_for(family)
+    model = fit(x, y)
+    path = tmp_path / f"model{trainer.suffix}"
+
+    trainer.save(model, path)
+    loaded = trainer.load(path)
+
+    matrix = xgb.DMatrix(x) if family == loop.XGBOOST else x
+    assert np.allclose(loaded.predict(matrix), model.predict(matrix))
