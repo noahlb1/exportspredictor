@@ -40,7 +40,6 @@ BACI_VERSION = "V202601"
 BACI_URL = f"https://www.cepii.fr/DATA_DOWNLOAD/baci/data/BACI_HS12_{BACI_VERSION}.zip"
 COUNTRIES_URL = "https://api.worldbank.org/v2/country?format=json&per_page=400"
 UK = "GBR"
-PROVISIONAL_YEAR = 2024  # BACI's latest year is revised in the next release
 
 _ZIP_NAME = f"BACI_HS12_{BACI_VERSION}.zip"
 _COUNTRY_CODES = f"country_codes_{BACI_VERSION}.csv"

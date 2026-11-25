@@ -14,7 +14,6 @@ USD_UNIT = "USD, nominal"  # the unit in column headers, e.g. "Export Gap (USD, 
 
 GBP_RATE_SERIES = "XUAAUSS"
 GBP_RATE_DOWNLOADED = "2026-11-17"  # when the table below was copied from the Bank of England database
-GBP_RATE_SOURCE = "Bank of England, series XUAAUSS: annual average spot exchange rate, US$ into sterling"
 
 # US dollars per pound sterling, annual average.
 USD_PER_GBP = {

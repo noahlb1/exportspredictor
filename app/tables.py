@@ -156,8 +156,8 @@ def tariff_column(baseline_year: int, label: str = "Applied Tariff %", help: str
     )
 
 
-# The Leaderboard's wide table: the columns shown by default, in order, then those hidden by default (offered by the
-# table's own Show/hide columns menu). No column is pinned.
+# The Leaderboard's wide table: the columns shown by default, in order. The others are hidden by default and offered
+# by the table's own Show/hide columns menu. No column is pinned.
 LEADERBOARD_SHOWN = [
     "Product",
     "Market",
@@ -171,7 +171,6 @@ LEADERBOARD_SHOWN = [
     "Blocked Opportunity",
     "Caveats",
 ]
-LEADERBOARD_HIDDEN = ["Opportunity Type", "Potential Range", "HS6", "Sector", "Region"]
 # The right table of By Market and By Product (`app.views`): the figures that matter for a pair; the grouping's own
 # column (Market or Product) is left out.
 LEADERBOARD_RIGHT = [
