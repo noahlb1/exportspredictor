@@ -11,7 +11,7 @@ import pytest
 from nbclient import NotebookClient
 
 from exportspredictor import artefacts as store
-from exportspredictor import illustrative, pipeline, reporting
+from exportspredictor import illustrative, pipeline, realisation, reporting
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "exports_predictor.ipynb"
 
@@ -70,7 +70,7 @@ SECTIONS = [
 # No prose cell runs over about this many words (spec #66, "Length"); longer detail is linked.
 WORD_LIMIT = 300
 # The whole notebook's prose comes to about this many words, within 10% (spec #66, "Length").
-TOTAL_WORDS = 10_000
+TOTAL_WORDS = 10_200  # 10,000 in spec #66; spec #156 adds the ITC comparison to §7
 # The parts that no longer decide anything, each one appendix entry (spec #66, "Freezing").
 FROZEN_PARTS = (
     "hyperparameter search", "feature ablation", "learning curve", "v1 comparison", "gain ladder",
@@ -161,7 +161,8 @@ def test_the_write_up_names_the_gap_period():
 BUILDS = {
     "baci.prepare", "gravity.build", "hmrc.build", "policy.build", "features.build", "features.build_features",
     "pipeline.build_artefacts", "experiments.run", "ppml.fit_ppml", "ppml.real_sector_flows", "ppml.sector_flows",
-    "ppml.add_benchmark", "artefacts.save", "governance.write_model_card",
+    "ppml.add_benchmark", "artefacts.save", "governance.write_model_card", "realisation.realisation_report",
+    "realisation.add_to_latest", "realisation.with_itc_comparison",
 }
 
 
@@ -204,7 +205,8 @@ def test_the_notebook_shows_each_main_result_from_the_reporting_module():
     for result in (
         "provenance", "ranking_by_version", "experiments", "experiments_chart", "confirmation", "lift_by_tenth",
         "event_backtests", "round_count", "ppml_benchmark", "gain_ladder", "blocked_opportunity_split",
-        "agreement_part_variation", "agreement_part_variation_chart",
+        "agreement_part_variation", "agreement_part_variation_chart", "itc_method", "itc_coefficients",
+        "itc_direct_comparison",
     ):
         assert f"reporting.{result}(bundle)" in source, result
     # The preset table reads the presets the notebook runs (spec #157).
@@ -248,6 +250,13 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
     for part in ("benchmark", "model_association", "event_backtest"):
         assert note[part]["text"] in printed, part
     assert note["text"] in printed
+    # The ITC comparison runs on a synthetic base-year panel and says why part (c) was dropped.
+    assert realisation.direct_comparison_text(loaded.evaluation[realisation.REPORT_KEY]) in printed
+    # Its coefficient table shows both levels, ITC's figures on HS2 only, and the Naive Baseline column.
+    [coefficients] = [cell for cell in notebook.cells if cell.source.strip() == "reporting.itc_coefficients(bundle)"]
+    table = " ".join(o.get("data", {}).get("text/html", "") for o in coefficients.outputs)
+    for shown in ("HS2", "HS6", "not compared", "Naive Baseline", "Extensive margin", "New-flow size"):
+        assert shown in table, shown
     # The pre-registered v1 comparison section runs on the fixture's synthetic frozen v1.
     assert loaded.evaluation["v1_comparison"]["verdict"]["text"] in printed
     # The outputs name the artefact version they come from.

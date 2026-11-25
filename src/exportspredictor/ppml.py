@@ -497,6 +497,11 @@ def fit_fixed_effects_ols(
     absorbed effects, so rows repeated within a cluster do not count as independent evidence.
     """
     names = list(regressors)
+    if panel.height == 0:  # nothing to fit, as when singleton dropping leaves nothing (below)
+        nan = {name: float("nan") for name in names}
+        return FixedEffectsOlsFit(
+            coefficients=dict(nan), std_errors=dict(nan), rows=0, dropped_rows=0, clusters=0, absorbed=tuple(names)
+        )
     y_all = panel[outcome].to_numpy().astype(np.float64)
     x_all = np.column_stack([panel[name].to_numpy().astype(np.float64) for name in names])
     effects = list(fixed_effects)
@@ -506,6 +511,12 @@ def fit_fixed_effects_ols(
     cluster_all = _codes(panel, cluster)
 
     keep = _informative(y_all, codes_all, zero_groups=False)
+    if not keep.any():  # nothing left to fit: every row sat in a singleton group
+        nan = {name: float("nan") for name in names}
+        return FixedEffectsOlsFit(
+            coefficients=dict(nan), std_errors=dict(nan), rows=0, dropped_rows=int(keep.size), clusters=0,
+            absorbed=tuple(names),
+        )
     y = y_all[keep]
     x = x_all[keep]
     codes = [np.unique(c[keep], return_inverse=True)[1] for c in codes_all]
