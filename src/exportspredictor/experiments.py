@@ -141,9 +141,6 @@ class Plan:
     seed: int = 0
     uk: str = baci.UK
 
-    def with_validation_year(self, year: int) -> "Plan":
-        return replace(self, validation_year=year)
-
 
 # ADR 0004's starting rates for the ablation (the non-UK rate about what the budget allows,
 # 5% of Zero Cells); the learning curve's grid is decision #32's.

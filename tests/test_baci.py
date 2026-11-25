@@ -119,7 +119,7 @@ def test_rerunning_prepare_skips_work_already_done(tmp_path, sources, data_root)
 
     assert sorted(p for p in data_root.rglob("*") if p.is_file()) == written
     assert {p: p.stat().st_mtime_ns for p in written} == stamps
-    assert report.did_nothing
+    assert report == baci.PrepareReport(downloaded=[], extracted=[], converted_years=[], built_lookups=False)
 
 
 def test_prepare_finishes_a_partial_conversion(sources, data_root):

@@ -64,10 +64,6 @@ class PrepareReport:
     converted_years: list[int] = field(default_factory=list)
     built_lookups: bool = False
 
-    @property
-    def did_nothing(self) -> bool:
-        return not (self.downloaded or self.extracted or self.converted_years or self.built_lookups)
-
 
 def raw_dir(root: Path | None = None) -> Path:
     return Path(root or data_dir()) / "raw" / "baci"
