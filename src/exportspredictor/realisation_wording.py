@@ -106,7 +106,9 @@ def caveat(report: dict) -> str:
         f"HS6 rows are not compared with it. ITC's indicator is a decomposition that projects about five years ahead; "
         f"ours is a learned model scoring the base year itself, with no forward projection. The Naive Baseline column "
         f"runs on the units the Naive Baseline scores above zero, so where it scores a unit 0 its sample and the "
-        f"model's differ. The coefficients describe "
+        f"model's differ. The base-year models reuse the served feature files, so two slowly moving inputs, "
+        f"Relatedness and the Exporter scope, draw on a few later years, though no later trade, and they keep the "
+        f"served round count, not scaled down for fewer training years. The coefficients describe "
         f"a tendency across many pairs, not a forecast for any one."
     )
 
