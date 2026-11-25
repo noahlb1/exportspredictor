@@ -74,6 +74,13 @@ def read_chunk(chunk: Chunk) -> pl.DataFrame:
     return pl.read_parquet(chunk)
 
 
+def read_rows(chunk: Chunk, condition: pl.Expr) -> pl.DataFrame:
+    """The rows of one chunk that match `condition`; a Parquet path is filtered as it is scanned, not read whole."""
+    if isinstance(chunk, (str, Path)):
+        return pl.scan_parquet(chunk).filter(condition).collect()
+    return read_chunk(chunk).filter(condition)
+
+
 def scan_chunks(chunks: Sequence[Chunk]) -> pl.LazyFrame:
     """All chunks as one lazy frame (e.g. to fit a `FeatureTransform` without loading them)."""
     frames = [

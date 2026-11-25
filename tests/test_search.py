@@ -76,7 +76,7 @@ def test_killing_and_rerunning_the_search_resumes_the_study(data, tmp_path):
     retry = next(t for t in trials if t["retry_of"] == killed.number)
     assert retry["params"] == killed_params
     assert sum(t["state"] in {"COMPLETE", "PRUNED"} for t in trials) == 5
-    assert search.load_results(tmp_path)["trials"] == trials
+    assert experiments.read_results(tmp_path)["trials"] == trials
 
 
 def test_the_search_never_reads_the_test_year(fixture_world):

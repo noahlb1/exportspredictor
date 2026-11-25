@@ -114,6 +114,11 @@ TWEEDIE_ONLY = ("tweedie_variance_power",)
 ANY_FLOW_PARAMS = {"objective": "binary:logistic"}
 
 
+def _save_model_file(model: Model, path: Path) -> None:
+    """Save a model in its library's own file format (XGBoost's and CatBoost's `save_model`)."""
+    model.save_model(str(path))
+
+
 class XGBoostTrainer:
     """XGBoost on `QuantileDMatrix`es built chunk by chunk on the device; the matrices are reused
     while the rows' key stays the same.
@@ -179,8 +184,7 @@ class XGBoostTrainer:
             self._key, self._matrices = key, (train, grid)
         return self._matrices
 
-    def save(self, model: Model, path: Path) -> None:
-        model.save_model(str(path))
+    save = staticmethod(_save_model_file)
 
     def load(self, path: Path) -> Model:
         return xgb.Booster(model_file=str(path))
@@ -418,8 +422,7 @@ class CatBoostTrainer:
             "train_seconds": round(time.perf_counter() - started, 1),  # rows included
         }
 
-    def save(self, model: Model, path: Path) -> None:
-        model.save_model(str(path))
+    save = staticmethod(_save_model_file)
 
     def load(self, path: Path) -> Model:
         import catboost as cb

@@ -195,7 +195,7 @@ have); its base drops them and its Arm keeps them, both at the largest non-UK ra
   `min_win_threshold=0.0` on the plan.
 """
 
-from exportspredictor.experiments import TestYearRead
+from exportspredictor.experiments import TestYearRead, log_progress, read_results
 from exportspredictor.features import EXCLUDED_PRODUCTS_SET, SIBLING_DEMAND_SET
 from exportspredictor.loop.arms import (
     ANY_FLOW,
@@ -280,7 +280,6 @@ from exportspredictor.loop.data import (
     load,
     loop_dir,
     naive_from_features,
-    read_results,
     real_data,
     save_results,
     world_products,
@@ -295,7 +294,6 @@ from exportspredictor.loop.runner import (
     NO_MEASURE,
     Loop,
     TwoPart,
-    log_progress,
     naive_margin,
     run_excluded_products,
     run_exporter_count,

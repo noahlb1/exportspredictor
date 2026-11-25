@@ -26,7 +26,6 @@ leaves nothing behind. Re-running is a no-op once a manifest exists (it is verif
 `uv run python -m exportspredictor.freeze` freezes the real v1 artefact on the CPU.
 """
 
-import hashlib
 import json
 import shutil
 import subprocess
@@ -44,7 +43,7 @@ from exportspredictor.evaluation import TestModels, score_rows, test_models_dir
 from exportspredictor.features import features_dir
 from exportspredictor.folds import score_out_of_fold
 from exportspredictor.paths import REPO_ROOT, artefacts_dir, data_dir
-from exportspredictor.training import Chunk, read_chunk
+from exportspredictor.training import Chunk, read_chunk, read_rows
 
 FOLDER = "v1_predictions"
 MANIFEST_FILE = "manifest.json"
@@ -116,7 +115,7 @@ def _lift(v1: V1) -> pl.DataFrame:
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
     frames = []
     for year in v1.lift_years:
-        rows = _read(v1.rows[year], is_held)
+        rows = read_rows(v1.rows[year], is_held)
         frames.append(
             _keyed(rows.with_columns(export_potential_usd=pl.Series(model.predict(rows), dtype=pl.Float64)))
             .select(*_ROW_KEYS, "year", "value_usd", "weight", "export_potential_usd")
@@ -134,7 +133,7 @@ def _event_backtest(v1: V1) -> pl.DataFrame:
             pl.String
         ).is_in(list(d.importers))
         for year in event.post_years:
-            rows = _read(v1.rows[year], condition)
+            rows = read_rows(v1.rows[year], condition)
             flag = rows.schema["trade_agreement"]
             on = model.predict(rows.with_columns(trade_agreement=pl.lit(1, flag)))
             off = model.predict(rows.with_columns(trade_agreement=pl.lit(0, flag)))
@@ -148,12 +147,6 @@ def _event_backtest(v1: V1) -> pl.DataFrame:
                 .select(pl.lit(d.label).alias("direction"), pl.all())
             )
     return pl.concat(frames).sort("direction", "year", *_ROW_KEYS)
-
-
-def _read(chunk: Chunk, condition: pl.Expr) -> pl.DataFrame:
-    if isinstance(chunk, (str, Path)):
-        return pl.scan_parquet(chunk).filter(condition).collect()
-    return read_chunk(chunk).filter(condition)
 
 
 def _keyed(frame: pl.DataFrame) -> pl.DataFrame:
@@ -201,7 +194,7 @@ def write(artefact_folder: Path, built: Mapping[str, pl.DataFrame], fields: dict
         entries = {}
         for name, frame in built.items():
             path = downloads.write_parquet(frame, staging / TABLES[name])
-            entries[name] = {"file": TABLES[name], "rows": frame.height, "sha256": _sha256(path)}
+            entries[name] = {"file": TABLES[name], "rows": frame.height, "sha256": downloads.sha256(path)}
         manifest = {
             **fields,
             "tables": entries,
@@ -224,7 +217,7 @@ def verify(folder: Path) -> dict:
     manifest = json.loads((folder / MANIFEST_FILE).read_text(encoding="utf-8"))
     for name, entry in manifest["tables"].items():
         path = folder / entry["file"]
-        if _sha256(path) != entry["sha256"] or pl.scan_parquet(path).select(pl.len()).collect().item() != entry["rows"]:
+        if downloads.sha256(path) != entry["sha256"] or pl.scan_parquet(path).select(pl.len()).collect().item() != entry["rows"]:
             raise ValueError(f"The frozen table {name} does not match its manifest")
     return manifest
 
@@ -238,7 +231,7 @@ def lift_held_out_exporters(folder: Path) -> list[str]:
     entry = json.loads((folder / MANIFEST_FILE).read_text(encoding="utf-8"))["tables"]["lift_held_out_exporters"]
     path = folder / entry["file"]
     table = pl.read_parquet(path)
-    if _sha256(path) != entry["sha256"] or table.height != entry["rows"]:
+    if downloads.sha256(path) != entry["sha256"] or table.height != entry["rows"]:
         raise ValueError("The frozen table lift_held_out_exporters does not match its manifest")
     return sorted(table["exporter"].cast(pl.String).to_list())
 
@@ -246,14 +239,6 @@ def lift_held_out_exporters(folder: Path) -> list[str]:
 def v1_folder(artefacts_root: Path | None = None) -> Path:
     """The frozen v1 tables of the real v1 artefact."""
     return Path(artefacts_root or artefacts_dir()) / V1_IDS["artefact"] / FOLDER
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as file:
-        for block in iter(lambda: file.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 # --- The real v1 --------------------------------------------------------------------------------

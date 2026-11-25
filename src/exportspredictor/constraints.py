@@ -23,7 +23,7 @@ The effects are associations the model has learned, not causal estimates.
 """
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -34,7 +34,7 @@ from exportspredictor.features import FeatureTransform
 from exportspredictor.folds import N_FOLDS, outside_fold
 from exportspredictor.prediction import export_potential
 from exportspredictor.scenarios import check_only_policy_changed
-from exportspredictor.sectors import sector_of
+from exportspredictor.sectors import in_sectors
 from exportspredictor.training import Chunk, model_params, preparer, training_matrix
 
 WRONG_SIGN_TOLERANCE = 1e-9  # effect shares smaller than this are treated as no change
@@ -76,13 +76,13 @@ def compare(
     started = time.perf_counter()
     rounds = min(rounds, plan.max_rounds) if plan.max_rounds else rounds
     years = sorted(chunks)
-    in_sectors = _in_sectors(plan.sectors)
+    chosen = in_sectors(plan.sectors)
     scored = []
     for k in plan.folds:
         held_out = outside_fold(uk, n_folds, k)
         prepare = preparer(
             uk=uk, transform=transform, non_uk_rate=non_uk_rate, seed=seed,
-            keep=lambda table, held_out=held_out: held_out(table.filter(in_sectors)),
+            keep=lambda table, held_out=held_out: held_out(table.filter(chosen)),
         )
         matrix = training_matrix([chunks[y] for y in years], prepare, device=device)
         constrained = model_params(params, device=device, seed=seed)
@@ -92,7 +92,7 @@ def compare(
             for name, config in (("constrained", constrained), ("unconstrained", unconstrained))
         }
         del matrix
-        pairs = baseline_features.filter((pl.col("fold") == k) & in_sectors)
+        pairs = baseline_features.filter((pl.col("fold") == k) & chosen)
         for name, model in models.items():
             model.set_param({"device": "cpu"})
             scored.append(_effects(pairs, model).with_columns(model=pl.lit(name), fold=pl.lit(k)))
@@ -109,12 +109,6 @@ def compare(
     }
     report["text"] = _text(report)
     return report
-
-
-def _in_sectors(sectors: Sequence[str] | None) -> pl.Expr:
-    if not sectors:
-        return pl.lit(True)
-    return sector_of("hs6").is_in(list(sectors))
 
 
 def _effects(pairs: pl.DataFrame, model: xgb.Booster) -> pl.DataFrame:

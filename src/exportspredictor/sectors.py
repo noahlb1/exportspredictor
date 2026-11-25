@@ -6,6 +6,8 @@ Product lookup, and its name is looked up here. `with_sector_names` adds a `sect
 reserved in the Harmonized System and has no Products.
 """
 
+from collections.abc import Sequence
+
 import polars as pl
 
 SECTOR_NAMES: dict[str, str] = {
@@ -123,3 +125,10 @@ def with_sector_names[T: (pl.DataFrame, pl.LazyFrame)](table: T) -> T:
 def sectors(products: pl.DataFrame) -> pl.DataFrame:
     """Each Sector that has Products in a Product lookup, by code (`sector`) and name (`sector_name`), in code order."""
     return with_sector_names(products.select("sector").unique().sort("sector"))
+
+
+def in_sectors(codes: Sequence[str] | None) -> pl.Expr:
+    """True where column `hs6`'s Product is in one of the Sectors `codes`; True everywhere if none are named."""
+    if not codes:
+        return pl.lit(True)
+    return sector_of("hs6").is_in(list(codes))

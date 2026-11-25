@@ -12,6 +12,7 @@ import polars as pl
 from exportspredictor import experiments, market_reach, scope, search
 from exportspredictor.evaluation import naive_potential
 from exportspredictor.exclusions import drop_excluded
+from exportspredictor.experiments import log_progress, read_results
 from exportspredictor.features import (
     KEYS,
     PRODUCT_DETAIL_FEATURES,
@@ -54,7 +55,6 @@ from exportspredictor.loop.data import (
     MODELS_DIR,
     LoopData,
     naive_from_features,
-    read_results,
     save_results,
 )
 from exportspredictor.loop.recheck import current_win_threshold
@@ -714,7 +714,3 @@ def _best(experiment: str, row: Mapping) -> dict:
         "settings": row["settings"],
         SELECTION_MEASURE: row[SELECTION_MEASURE],
     }
-
-
-def log_progress(message: str) -> None:
-    print(message, flush=True)

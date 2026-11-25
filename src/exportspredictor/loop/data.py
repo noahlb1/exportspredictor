@@ -88,12 +88,6 @@ def world_products(flows: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def read_results(folder: Path | None) -> dict | None:
-    if folder is None or not (folder / RESULTS_FILE).exists():
-        return None
-    return json.loads((folder / RESULTS_FILE).read_text(encoding="utf-8"))
-
-
 def save_results(folder: Path, results: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / RESULTS_FILE

@@ -66,11 +66,11 @@ from exportspredictor.training import (
     Chunk,
     model_params,
     preparer,
-    read_chunk,
+    read_rows,
     scan_chunks,
     training_matrix,
 )
-from exportspredictor.wording import years_text
+from exportspredictor.wording import percent_text, years_text
 
 if TYPE_CHECKING:
     from exportspredictor.evaluation import TestModels
@@ -169,15 +169,15 @@ def lift(pairs: pl.DataFrame, *, resamples: int = RESAMPLES, seed: int = 0, leve
         "exporters": len(exporters),
         "top_rate": top_rate,
         "base_rate": total_g / total_w if total_w else None,
-        "lift": _finite(plain[0]),
-        "ci": _interval(boot_plain, level),
+        "lift": finite(plain[0]),
+        "ci": interval(boot_plain, level),
         "ci_level": level,
         "bootstrap_unit": "Exporter",
         "resamples": resamples,
         "size_matched": {
-            "expected_rate": _finite(top_rate / matched[0]) if top_rate is not None and matched[0] else None,
-            "lift": _finite(matched[0]),
-            "ci": _interval(boot_matched, level),
+            "expected_rate": finite(top_rate / matched[0]) if top_rate is not None and matched[0] else None,
+            "lift": finite(matched[0]),
+            "ci": interval(boot_matched, level),
         },
         "by_decile": [
             {"decile": row["gap_decile"], "rate": row["rate"], "pairs": row["pairs"]} for row in rates.iter_rows(named=True)
@@ -185,17 +185,21 @@ def lift(pairs: pl.DataFrame, *, resamples: int = RESAMPLES, seed: int = 0, leve
     }
 
 
-def _finite(value) -> float | None:
+def finite(value) -> float | None:
+    """`value` as a plain float for a saved report, or None where it is missing, NaN or infinite."""
+    if value is None:
+        return None
     value = float(value)
     return value if math.isfinite(value) else None
 
 
-def _interval(values: np.ndarray, level: float) -> list[float | None]:
-    finite = values[np.isfinite(values)]
-    if not finite.size:
+def interval(values: np.ndarray, level: float) -> list[float | None]:
+    """The central `level` percentile interval of the finite `values` (bootstrap resamples); [None, None] if none."""
+    kept = values[np.isfinite(values)]
+    if not kept.size:
         return [None, None]
     tail = (1 - level) / 2 * 100
-    low, high = np.percentile(finite, [tail, 100 - tail])
+    low, high = np.percentile(kept, [tail, 100 - tail])
     return [float(low), float(high)]
 
 
@@ -316,10 +320,10 @@ def compare(
 
     def entry(j: int) -> dict:
         return {
-            "observed": _finite(observed[0, j]),
-            "observed_ci": _interval(boot_observed[:, j], level),
-            "predicted": _finite(model_effect[0, j]),
-            "predicted_ci": _interval(boot_model[:, j], level),
+            "observed": finite(observed[0, j]),
+            "observed_ci": interval(boot_observed[:, j], level),
+            "predicted": finite(model_effect[0, j]),
+            "predicted_ci": interval(boot_model[:, j], level),
         }
 
     return {
@@ -441,13 +445,6 @@ def train_backtest_model(
     return BacktestModel(name, years, held, model, transform)
 
 
-def _rows(chunk: Chunk, condition: pl.Expr) -> pl.DataFrame:
-    """The rows of one chunk that match `condition`, read lazily from a Parquet path."""
-    if isinstance(chunk, (str, Path)):
-        return pl.scan_parquet(chunk).filter(condition).collect()
-    return read_chunk(chunk).filter(condition)
-
-
 # --- Lift on held-out Exporters ----------------------------------------------------------
 
 
@@ -566,7 +563,7 @@ def lift_rows(
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
     frames = []
     for year in settings.gap_years:
-        rows = _rows(training[year], is_held)
+        rows = read_rows(training[year], is_held)
         potential = model.predict(rows)
         kept = [pl.col(_PAIR).cast(pl.String), pl.col("year").cast(pl.Int16), "value_usd", "weight"]
         if form.naive_weight:
@@ -574,7 +571,7 @@ def lift_rows(
             potential = blend(potential, rows[NAIVE_COLUMN].to_numpy(), form.naive_weight)
             kept.append(NAIVE_COLUMN)
         if reach is not None:
-            source = _rows(training[year - reach.lag_years], is_held).select(
+            source = read_rows(training[year - reach.lag_years], is_held).select(
                 "exporter", "hs6", "importer", "value_usd", market_reach.DEMAND, "weight",
                 year=pl.lit(year - reach.lag_years),
             )
@@ -609,7 +606,7 @@ def lift_backtest(
     """
     yearly = lift_rows(training, settings, model, form=form, year_flows=year_flows)
     is_held = pl.col("exporter").cast(pl.String).is_in(model.held_out_exporters)
-    later = _rows(training[settings.outcome_year], is_held & (pl.col("value_usd") > 0)).select(*_PAIR, "value_usd")
+    later = read_rows(training[settings.outcome_year], is_held & (pl.col("value_usd") > 0)).select(*_PAIR, "value_usd")
     result = lift(gap_period_pairs(yearly, later, settings), resamples=resamples, seed=seed)
     result.update(
         held_out_exporters=model.held_out_exporters,
@@ -713,7 +710,7 @@ def event_backtest(
     window = [*event.pre_years, *event.post_years]
     exporters = sorted({c for d in event.directions for c in d.exporters})
     rows = pl.concat(
-        [_rows(training[y], pl.col("exporter").cast(pl.String).is_in(exporters)) for y in window],
+        [read_rows(training[y], pl.col("exporter").cast(pl.String).is_in(exporters)) for y in window],
         how="vertical_relaxed",
     ).with_columns(pl.col("exporter", "importer").cast(pl.String))
     directions = []
@@ -807,10 +804,6 @@ def _control_rule(event: Event, high_income: bool) -> str:
     )
 
 
-def _pct(value: float | None) -> str:
-    return "n/a" if value is None else f"{value:+.0%}"
-
-
 def event_text(report: dict) -> str:
     """The plain-English Event Backtest result: predicted against observed, and whether they agree."""
     parts = []
@@ -818,7 +811,7 @@ def event_text(report: dict) -> str:
         pooled = d["pooled"]
         low, high = pooled["observed_ci"]
         predicted = pooled["predicted"]
-        interval = "" if low is None else f" (95% interval {_pct(low)} to {_pct(high)})"
+        interval = "" if low is None else f" (95% interval {percent_text(low)} to {percent_text(high)})"
         if low is None or predicted is None:
             verdict = ""
         elif predicted > high:
@@ -829,8 +822,8 @@ def event_text(report: dict) -> str:
             verdict = " The model's effect is within the observed interval."
         parts.append(
             f"For {d['label']} in {years_text(report['post_years'])}, the model associated the agreement with "
-            f"{_pct(predicted)} in Export Potential; the observed difference-in-differences against "
-            f"{len(d['controls'])} similar Markets without an agreement was {_pct(pooled['observed'])}{interval}.{verdict}"
+            f"{percent_text(predicted)} in Export Potential; the observed difference-in-differences against "
+            f"{len(d['controls'])} similar Markets without an agreement was {percent_text(pooled['observed'])}{interval}.{verdict}"
         )
     return (
         f"{report['title']} (in force {report['in_force']}), with a model trained only on "
