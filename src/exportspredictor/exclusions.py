@@ -53,7 +53,8 @@ EXCLUSIONS = (
 )
 
 
-def _code(column: str) -> pl.Expr:
+def as_code(column: str) -> pl.Expr:
+    """Column `column` as text, so a code compares the same whether it is stored as a string, a category or a number."""
     return pl.col(column).cast(pl.String)
 
 
@@ -66,7 +67,7 @@ def _matches(exclusion: Exclusion, code: pl.Expr) -> pl.Expr:
 
 def reason_expr(column: str = "hs6") -> pl.Expr:
     """The exclusion reason of each row's Product, null where the Product is not excluded."""
-    code = _code(column)
+    code = as_code(column)
     expr = pl.lit(None, pl.String)
     for exclusion in reversed(EXCLUSIONS):
         expr = pl.when(_matches(exclusion, code)).then(pl.lit(exclusion.reason)).otherwise(expr)
@@ -75,7 +76,7 @@ def reason_expr(column: str = "hs6") -> pl.Expr:
 
 def is_excluded(column: str = "hs6") -> pl.Expr:
     """True where the row's Product is an Excluded Product."""
-    code = _code(column)
+    code = as_code(column)
     return pl.any_horizontal(_matches(exclusion, code) for exclusion in EXCLUSIONS)
 
 
@@ -135,13 +136,13 @@ REEXPORT_HUB_CAVEAT = (
 
 def flagged_product_expr(column: str = "hs6") -> pl.Expr:
     """True where the row's Product is a Sector 71 Flagged Product (the volatility rule's are in `volatility`)."""
-    code = _code(column)
+    code = as_code(column)
     return pl.any_horizontal(code.str.starts_with(p) for p in FLAGGED_PRODUCT_PREFIXES)
 
 
 def flagged_product_reason_expr(reasons: Mapping[str, str], column: str = "hs6") -> pl.Expr:
     """Each row's Flagged Product reason: Sector 71's, else the Product's in `reasons` (hs6 -> reason), else null."""
-    code = _code(column)
+    code = as_code(column)
     other = (
         code.replace_strict(dict(reasons), default=None, return_dtype=pl.String) if reasons
         else pl.lit(None, pl.String)
