@@ -1,4 +1,4 @@
-"""The notebook's ITC comparison tables (#156 parts a and b), read from the saved evaluation report."""
+"""The notebook's ITC comparison tables, read from the saved evaluation report."""
 
 from dataclasses import replace
 

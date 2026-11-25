@@ -1,4 +1,4 @@
-"""Sibling Demand tried as a model feature by the experiment loop (spec #155, ticket #164)."""
+"""Sibling Demand tried as a model feature by the experiment loop."""
 
 from dataclasses import replace
 
@@ -63,7 +63,7 @@ def test_a_kept_experiment_on_files_kept_only_if_it_wins_serves_its_files():
         return {"feature_set": feature_set, "kept": kept, **extra}
 
     dropped = {"experiments": {
-        "exporter count": section("exporter_count", None),  # #127: the gravity fill kept whatever the decision
+        "exporter count": section("exporter_count", None),  # the gravity fill kept whatever the decision
         "sibling demand": section("sibling_demand", None, files_kept_if_dropped=False),
     }}
     kept = {"experiments": {**dropped["experiments"], "sibling demand": section(

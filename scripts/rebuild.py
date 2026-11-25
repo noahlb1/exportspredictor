@@ -37,20 +37,20 @@ class Step:
 
 
 STEPS = [
-    # Downloads and derived tables (#12 BACI Flows and lookups, #14 gravity and WDI, #13
-    # Trade Agreements and Trading Blocs, #15 the feature table) go here, one Step per line, in this order.
+    # Downloads and derived tables (BACI Flows and lookups, gravity and WDI, Trade Agreements and
+    # Trading Blocs, the feature table) go here, one Step per line, in this order.
     Step("BACI Flows and lookups (download, convert to Parquet)", [PY, "-m", "exportspredictor.baci"]),
     Step("Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet)", [PY, "-m", "exportspredictor.gravity"]),
     Step("Trade Agreement and Trading Bloc features (WTO RTA-IS download, build)", [PY, "-m", "exportspredictor.policy"]),
     Step("Applied Tariffs (TRAINS download via WITS, HS17/HS07 -> HS12, EU schedule, gap fill)", [PY, "-m", "exportspredictor.tariffs"]),
     Step("Feature table (training rows with sampled zeros, UK grid; per year)", [PY, "-m", "exportspredictor.features"]),
     Step("HMRC OTS 2023 exports for the BACI cross-check (download, HS 2022 -> 2012)", [PY, "-m", "exportspredictor.hmrc"]),
-    # Every choice is made on 2022: the feature ablation and learning curve (#53), then the search (#54).
+    # Every choice is made on 2022: the feature ablation and learning curve, then the hyperparameter search.
     Step("Experiment rows (Sector subset, 2012–2022)", [PY, "-m", "exportspredictor.experiments", "build"]),
     Step("Feature ablation on 2022 (GPU)", [PY, "-m", "exportspredictor.experiments", "ablation"]),
     Step("Learning curve on 2022 (GPU)", [PY, "-m", "exportspredictor.experiments", "curve"]),
     Step("Hyperparameter search on 2022 (GPU, resumable, about 3 h)", [PY, "-m", "exportspredictor.search"]),
-    # The experiment loop (spec #65) chooses the model form on the Selection Measure, on 2022 only;
+    # The experiment loop chooses the model form on the Selection Measure, on 2022 only;
     # the pipeline serves the form it chose and records its results. Each step resumes from its cache.
     *(
         Step(f"Experiment loop on 2022: {command} (GPU, resumable)", [PY, "-m", "exportspredictor.loop", command])

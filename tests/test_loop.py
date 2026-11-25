@@ -1,4 +1,4 @@
-"""The experiment loop (ticket #67): arms chosen on the selection measure, on the validation year only."""
+"""The experiment loop: arms chosen on the selection measure, on the validation year only."""
 
 import json
 from dataclasses import replace
@@ -107,7 +107,7 @@ def test_after_the_recheck_the_loop_decides_on_the_recomputed_win_threshold(data
     lp = loop.Loop(data, plan, tmp_path)
     lp.noise_floor()
     rescored_best = {**lp.results["best"], "selection_measure": 0.25}
-    # #116: the noise floor's seeds re-scored under the tie-proof measure. Their SD is 1, so the
+    # The noise floor's seeds re-scored under the tie-proof measure. Their SD is 1, so the
     # recomputed threshold is 2: no change of a correlation can clear it.
     loop.save_recheck(tmp_path, loop.recheck_results(lp.results, [-0.5, 0.5, 1.5], best=rescored_best))
     _no_training(monkeypatch)
@@ -146,7 +146,7 @@ def test_a_scoring_only_arm_trains_no_model(data, tmp_path, monkeypatch):
 
 
 def test_a_model_cached_on_one_feature_set_is_never_reused_on_another(data, tmp_path):
-    """Rebuilt feature files (#126) share the loop's folder: an arm on them trains its own model."""
+    """Rebuilt feature files share the loop's folder: an arm on them trains its own model."""
     original = loop.Loop(data, loop.FIXTURE_LOOP, tmp_path).noise_floor()["arms"][0]
     rebuilt = replace(data, feature_set="exporter_count")
 
@@ -213,7 +213,7 @@ def test_the_loop_refuses_the_test_year_on_the_fixture(fixture_world):
         loop.fixture_data(fixture_world, validation_year=2023)
 
 
-@pytest.mark.parametrize("feature_set", ["", "all_exporters"])  # #168: the wider Exporter scope's files too
+@pytest.mark.parametrize("feature_set", ["", "all_exporters"])  # the wider Exporter scope's files too
 def test_the_real_path_refuses_the_test_year_and_never_reads_its_files(derived_data_root, monkeypatch, feature_set):
     derived = derived_data_root / "derived"
     (derived / "country_year_filled.parquet").write_bytes((derived / "country_year.parquet").read_bytes())
@@ -242,7 +242,7 @@ def test_the_real_path_refuses_the_test_year_and_never_reads_its_files(derived_d
     assert any(Path(path).parent == built for path in read)
 
 
-# --- #70: the naive baseline as a blend and as the starting point -------------------------------
+# --- The naive baseline as a blend and as the starting point -------------------------------
 
 
 def test_the_blend_arm_chooses_its_weight_from_the_fixed_grid_by_the_selection_measure(data):
@@ -300,7 +300,7 @@ def test_the_training_rows_naive_baseline_from_their_features_is_the_naive_basel
     assert from_features.to_list() == pytest.approx(expected.to_list(), rel=1e-5, abs=1e-3)
 
 
-# --- #71: select on ranking ----------------------------------------------------------------------
+# --- Select on ranking ----------------------------------------------------------------------
 
 # The shape of the saved search results (`search.load()`): three confirmed configurations.
 SAVED_SEARCH = {
@@ -351,7 +351,7 @@ def test_select_on_ranking_trains_at_most_one_model_per_new_configuration_and_re
     assert rows["depth 6"]["settings"]["params"] == {"max_depth": 6, "eta": 0.3}
 
 
-# --- #72: the two-part model ---------------------------------------------------------------------
+# --- The two-part model ---------------------------------------------------------------------
 
 
 def test_the_two_part_arm_runs_through_the_loop_and_returns_a_result_row(data):
@@ -526,7 +526,7 @@ def test_the_product_detail_experiments_add_one_feature_each_in_order_from_the_b
         assert row["status"] in {"kept", "dropped"}
 
 
-# --- #75: the monotone constraints on and off ----------------------------------------------------
+# --- The monotone constraints on and off ----------------------------------------------------
 
 
 def test_the_constraints_experiment_reuses_the_best_so_fars_model_and_trains_one_without_constraints(data, monkeypatch):
@@ -568,7 +568,7 @@ def test_the_constrained_model_never_lowers_export_potential_for_an_added_trade_
     assert (on >= off * (1 - 1e-6)).all()
 
 
-# --- #76: the five-fold confirmation -------------------------------------------------------------
+# --- The five-fold confirmation -------------------------------------------------------------
 
 # Two folds on the fixture: each fold's grid is too small to rank, but pooled they hold every UK pair.
 TWO_FOLDS = replace(loop.FIXTURE_LOOP, n_folds=2)

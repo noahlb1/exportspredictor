@@ -1,4 +1,4 @@
-"""Volatile Flagged Products (ADR 0005, spec #113): Products whose UK exports swing most from year to year over the
+"""Volatile Flagged Products (ADR 0005): Products whose UK exports swing most from year to year over the
 training years, plus the one-off Products the open review named."""
 
 import polars as pl

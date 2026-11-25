@@ -1,4 +1,4 @@
-"""The wider Exporter scope tried by the experiment loop (spec #155, ticket #169)."""
+"""The wider Exporter scope tried by the experiment loop."""
 
 from dataclasses import replace
 

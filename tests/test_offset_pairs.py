@@ -1,4 +1,4 @@
-"""Offset Pairs (spec #129): an Opportunity whose Export Gap is at least half offset by the other Products of its
+"""Offset Pairs: an Opportunity whose Export Gap is at least half offset by the other Products of its
 Heading in the same Market, shown with a caveat and scored, ranked and measured as normal.
 
 Most tests use the Offset world (`conftest.offset_world`): Heading 8703 holds three Products in every Market, and
@@ -265,7 +265,7 @@ def test_the_scenarios_page_shows_the_badge_on_an_offset_pair(monkeypatch, offse
 
 # --- Written up: the known limitation and the notebook's tables -------------------------------------------------------
 
-# The reach the served artefact 20261120T221726Z records (spec #129, docs/research/offset-pairs.md).
+# The reach the served artefact 20261120T221726Z records (docs/research/offset-pairs.md).
 SERVED_REACH = {
     "threshold": 0.5, "offset_pair_count": 246_790, "opportunities": 898_686,
     "in_top": {"100": 21, "1000": 159, "10000": 1_709},
@@ -348,7 +348,7 @@ def served_bundle():
 
 
 def test_on_the_served_version_the_two_largest_errors_are_offset_pairs_naming_heading_8411(served_bundle):
-    # The worked example of spec #129: turbine parts to France and turbo-jets to Germany, each offset by the other.
+    # The worked example: turbine parts to France and turbo-jets to Germany, each offset by the other.
     reasons = _reasons(served_bundle)
 
     france, germany = reasons[("841191", "FRA")], reasons[("841112", "DEU")]

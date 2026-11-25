@@ -1,4 +1,4 @@
-"""Adding a Caveat Tier needs only its declaration (#118): throwaway tiers declared here reach the API and the app.
+"""Adding a Caveat Tier needs only its declaration: throwaway tiers declared here reach the API and the app.
 
 The fixture artefact's Baseline is marked with the declared tiers (`with_caveat_columns`), and the API is created with
 them (`create_app(tiers=...)`); no API or app code names them.

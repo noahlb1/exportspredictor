@@ -1,4 +1,4 @@
-"""The feature ablation and the learning curve (ticket #53): measured on the validation year, never the test year."""
+"""The feature ablation and the learning curve: measured on the validation year, never the test year."""
 
 import json
 from dataclasses import replace

@@ -1,4 +1,4 @@
-"""Freezing v1: v1's predictions saved as fixed tables that v2 joins to (spec #39, *Freezing v1*)."""
+"""Freezing v1: v1's predictions saved as fixed tables that v2 joins to."""
 
 import hashlib
 import json

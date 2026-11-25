@@ -1,4 +1,4 @@
-"""Ticket #124: the Market Reach experiment on the 2022 validation year (CPU; trains nothing, reads no 2023 data).
+"""The Market Reach experiment on the 2022 validation year (CPU; trains nothing, reads no 2023 data).
 
 Pre-registered before any result was read (the commit that adds this script and
 `exportspredictor.market_reach`):
@@ -6,11 +6,11 @@ Pre-registered before any result was read (the commit that adds this script and
 - **Form**: `market_reach.FORM` ("share"), pseudo-count `market_reach.PSEUDO_COUNT` (5), lag
   `market_reach.LAG_YEARS` (1): fold k's offsets for 2022 come from the UK pairs outside fold k in 2021.
 - **Base**: the served Blend (`winner` in the loop's five-fold confirmation, w = 0.3), whose
-  tie-proof pooled measure is 0.5635 (#116).
+  tie-proof pooled measure is 0.5635 (re-scored in `scripts/research/loop_recheck_2022`).
 - **Choice of β**: the β of `market_reach.BETA_GRID` with the highest tie-proof Selection Measure on
   the pooled rows of folds 0–2 (each pair with its own fold's offsets); a tie goes to the smaller β.
 - **Gate**: adopt only if the chosen β's tie-proof measure on the pooled five-fold 2022 grid beats the
-  Blend's by more than `loop.current_win_threshold(loop.load())` (0.008869 after #116).
+  Blend's by more than `loop.current_win_threshold(loop.load())` (0.008869 after the tie-proof re-check).
 - **Reported whatever happens**: folds 3–4 pooled and each alone, the loop's diagnostics, the 10th–90th
   spread of the log residual on pairs with Actual Exports above $10m, the measure on the 30 and 60
   largest importing Markets (never selected on), the old measure for continuity, and example Markets.
@@ -46,7 +46,7 @@ FIT_FOLDS, CHECK_FOLDS = (0, 1, 2), (3, 4)
 DOLLAR_FLOOR = 1e7
 EXAMPLES = ["USA", "DEU", "FRA", "CHN", "NLD", "IRL", "JPN", "IND", "KOR", "MEX", "BRA", "VNM", "COL", "BGR",
             "RUS", "IRN", "SAU", "MLT", "CYP", "FLK"]
-# #124 wrote the "share" form to the folder itself; later forms write to a subfolder named after the form.
+# The first run wrote the "share" form to the folder itself; later forms write to a subfolder named after the form.
 OUT = data_dir() / "derived" / "market_reach_2022" / market_reach.FORM
 
 

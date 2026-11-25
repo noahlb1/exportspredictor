@@ -1,9 +1,9 @@
-"""Ticket #116: the experiment loop's 2022 decisions re-scored under the tie-proof Selection Measure.
+"""Step 1 of the re-check: the experiment loop's 2022 decisions re-scored under the tie-proof Selection Measure.
 
 Nothing is trained and nothing reads 2023. Every model is read from the loop's cache
 (`data/derived/loop_V202601/models`) and predicts on the CPU; the script stops if one is missing.
 
-For each cached model (the fold-0 Arms of spec #65 and the four other folds' models of the
+For each cached model (the loop's first fold-0 Arms and the four other folds' models of the
 five-fold confirmation) the held-out UK grid of 2022 is scored tree by tree, so the Selection
 Measure of the model alone is known at every saved round. Early stopping does not change the
 trees, only where they are cut, so replaying the loop's rule (stop `patience` rounds after the
@@ -136,7 +136,7 @@ def main() -> None:
     curves: list[pl.DataFrame] = []
     out: dict = {"models": {}, "arms": {}, "folds": {}}
 
-    # --- Fold 0: every Arm of spec #65 -------------------------------------------------------
+    # --- Fold 0: every Arm of the loop's first experiments --------------------------------------
     lp = fold_loop(0)
     grid = lp.grid.select("hs6", "importer", "value_usd", "naive_usd")
     keys = with_tie_key(grid)

@@ -67,7 +67,7 @@ def test_the_notebook_step_runs_on_real_data():
 
 
 def test_the_notebook_step_keeps_non_ascii_prose_intact(tmp_path):
-    # #92's run read the notebook in the Windows code page and saved it as UTF-8, so an en dash
+    # An earlier run read the notebook in the Windows code page and saved it as UTF-8, so an en dash
     # came back as mojibake. The step must round-trip the prose byte for byte.
     rebuild = _load_script()
     step = _notebook_step(rebuild)
@@ -83,7 +83,7 @@ def test_the_notebook_step_keeps_non_ascii_prose_intact(tmp_path):
 
 
 def test_the_real_build_trains_once_before_the_notebook_reads_it():
-    # The notebook reads the saved artefact on real data (#58), so the pipeline runs as its own step,
+    # The notebook reads the saved artefact on real data, so the pipeline runs as its own step,
     # after the ablation, the learning curve and the search it reads.
     rebuild = _load_script()
     modules = [step.command[2] for step in rebuild.STEPS if step.command[1:2] == ["-m"]]
@@ -98,7 +98,7 @@ def test_the_real_build_trains_once_before_the_notebook_reads_it():
 
 
 def test_the_notebook_step_saves_its_outputs_in_place():
-    # The committed notebook carries real-data outputs (#92); this step is how they are refreshed.
+    # The committed notebook carries real-data outputs; this step is how they are refreshed.
     rebuild = _load_script()
     command = _notebook_step(rebuild).command
 

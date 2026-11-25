@@ -1,4 +1,4 @@
-"""Unrecorded preferences (spec #155, ticket #171): a Trade Agreement in force while TRAINS records no preference."""
+"""Unrecorded preferences: a Trade Agreement in force while TRAINS records no preference."""
 
 import math
 
