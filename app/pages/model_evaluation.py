@@ -152,7 +152,9 @@ def _show_itc_comparison(itc: dict) -> None:
     st.markdown(itc["text"])
     st.dataframe(pd.DataFrame(itc["table"]), hide_index=True)
     st.caption(
-        f"Each coefficient comes with its standard error in brackets. Base years {years_text(itc['base_years'])}, "
+        "Each coefficient comes with its standard error in brackets, at HS2, the level nearest ITC's sub-sectors. "
+        "In the Naive Baseline column, the Naive Baseline takes Export Potential's place in the same tests. "
+        f"Base years {years_text(itc['base_years'])}, "
         f"each scored by fold models trained only on years up to it; {' and '.join(itc['fixed_effects'])} fixed "
         f"effects, errors clustered by {itc['cluster']}."
     )

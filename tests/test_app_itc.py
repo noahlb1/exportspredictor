@@ -33,8 +33,12 @@ def test_the_section_follows_lift_folded_with_the_api_s_text_its_table_and_cavea
     assert served["caveat"] in " ".join(c.value for c in section.caption)
     [table] = section.dataframe
     frame = table.value
-    assert list(frame.columns) == ["Test", "Term", "ITC (76 sub-sectors)", "Model, HS6"]
-    assert list(frame["ITC (76 sub-sectors)"]) == ["0.615", "-0.386"]
+    # The HS2 rows only, the level compared with ITC, with the model and the Naive Baseline beside ITC's figures.
+    assert list(frame.columns) == ["Test", "Level", "Term", "ITC (76 sub-sectors)", "Model", "Naive Baseline"]
+    assert set(frame["Level"]) == {"HS2"}
+    assert list(frame["ITC (76 sub-sectors)"]) == ["0.615", "-0.386", "0.023", "0.243"]
+    captions = " ".join(c.value for c in section.caption)
+    assert "Naive Baseline" in captions and "HS2" in captions
     assert "dropped" in " ".join(c.value for c in section.caption)
 
 
