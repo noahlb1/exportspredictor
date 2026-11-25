@@ -20,6 +20,13 @@ $env:PYTHONUTF8 = '1'
 # Data and artefacts are gitignored, so a worktree has none: share the main checkout's.
 if (-not $env:EXPORTSPREDICTOR_DATA_DIR) { $env:EXPORTSPREDICTOR_DATA_DIR = Join-Path $main 'data' }
 if (-not $env:EXPORTSPREDICTOR_ARTEFACTS_DIR) { $env:EXPORTSPREDICTOR_ARTEFACTS_DIR = Join-Path $main 'artefacts' }
+# The agent files (instructions and skills) are not in git. The owner keeps them in a private repo beside the main
+# checkout, whose link.ps1 links them into this checkout; it is quick, and a no-op once linked. Absent for anyone else.
+$agentRepo = if ($env:EXPORTSPREDICTOR_AGENT_DIR) { $env:EXPORTSPREDICTOR_AGENT_DIR } else { "$main-agent" }
+$linkAgentFiles = Join-Path $agentRepo 'link.ps1'
+if (Test-Path $linkAgentFiles) {
+    try { & $linkAgentFiles $checkout -Quiet } catch { Write-Warning "Linking the agent files failed: $_" }
+}
 
 $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
 if (-not $uv) {
