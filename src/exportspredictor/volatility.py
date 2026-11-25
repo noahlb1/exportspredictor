@@ -1,4 +1,4 @@
-"""Volatile Flagged Products (ADR 0005, amended by spec #113): Products whose UK exports swing most from year to year.
+"""Volatile Flagged Products (ADR 0005, amended): Products whose UK exports swing most from year to year.
 
 A Product's volatility is the standard deviation of the year-to-year log change of the UK's total exports of it over
 the training years: the years before the validation year (`training_years`), so neither the validation year, the test

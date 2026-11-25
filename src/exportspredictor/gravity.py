@@ -8,7 +8,7 @@ These derived tables feed the feature table:
 - **Country-year features**: GDP (current USD) and population for every year 2012–2024.
   World Bank WDI is the main source. Missing values follow one documented rule
   (`fill_country_year`), and every value records the source it came from.
-- **Gravity gaps** (#126): about 20 small Markets have no GDP or population in any of those
+- **Gravity gaps**: about 20 small Markets have no GDP or population in any of those
   sources. `country_year_filled.parquet` fills them from secondary sources (UN AMA, Statistics
   Netherlands, the CIA World Factbook; `fill_gaps`), never overriding a primary value, and the
   feature set `exporter_count` reads it. Markets no source covers stay missing (`GDP_GAPS`).
@@ -355,7 +355,7 @@ IMF_URL = "https://www.imf.org/external/datamapper/api/v1/{indicator}"
 # CEPII Gravity reports GDP in thousand USD and population in thousands.
 GRAVITY_UNITS = {"gdp_o": ("gdp_usd", 1e3), "pop_o": ("population", 1e3)}
 
-# Secondary sources (#126), read only for a variable that WDI, the IMF and CEPII Gravity all lack
+# Secondary sources, read only for a variable that WDI, the IMF and CEPII Gravity all lack
 # for a country (`fill_gaps`); in order of preference.
 # UN Statistics Division, National Accounts Analysis of Main Aggregates (AMA), from
 # https://unstats.un.org/unsd/snaama/Downloads: GDP at current prices in US dollars (file 2), and

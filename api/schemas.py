@@ -105,8 +105,8 @@ class Labels(BaseModel):
     # those that name the Gap Period take its label from the artefact (`wording.term_definitions`)
     terms: dict[str, str]
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
-    totals_note: TotalsNote  # beside every summed figure (spec #113, "Totals understate")
-    trade_agreement_meaning: str  # what "a Trade Agreement" means in the model (spec #133, ADR 0011)
+    totals_note: TotalsNote  # beside every summed figure: Export Potential is median-type, so totals understate
+    trade_agreement_meaning: str  # what "a Trade Agreement" means in the model (ADR 0011)
     blocked_rule: str  # the Blocked Opportunity rule at the fixed thresholds, in one sentence (ADR 0012)
 
 
@@ -483,7 +483,7 @@ class LiftDecile(BaseModel):
 
 
 class Lift(BaseModel):
-    """How much more often the top tenth of pairs by Gap Period Export Gap grew materially than random pairs (#21, #57)."""
+    """How much more often the top tenth of pairs by Gap Period Export Gap grew materially than random pairs."""
 
     lift: float | None
     ci: list[float | None]
@@ -579,12 +579,12 @@ class TrainingCutOff(BaseModel):
 
 
 class DirectComparison(BaseModel):
-    run: bool  # part (c) of #156: the EPM's UK figures set beside ours
+    run: bool  # whether the direct comparison ran: the EPM's UK figures set beside ours
     reason: str = ""
 
 
 class ItcComparison(BaseModel):
-    """How the model compares with ITC's Export Potential Map: ITC's realisation test run on the model (#156)."""
+    """How the model compares with ITC's Export Potential Map: ITC's realisation test run on the model."""
 
     rows: list[RealisationRow]  # the HS2 rows, the level compared with ITC; HS6 stays in the notebook
     published: list[PublishedRealisation]
@@ -733,8 +733,8 @@ class Evaluation(BaseModel):
     naive_baseline: str
     accuracy: dict[str, ScopeAccuracy]  # "all_exporters" and "uk_out_of_fold"
     headline: Headline
-    large_markets: LargeMarkets | None = None  # None for a version evaluated before #123
-    # This version beside the earlier versions re-scored from their saved scores (#128); None before.
+    large_markets: LargeMarkets | None = None  # None for a version evaluated before the largest Markets were reported
+    # This version beside the earlier versions re-scored from their saved scores; None for a version built before this table.
     large_markets_by_version: list[LargeMarketsByVersion] | None = None
     market_reach_effect: MarketReachEffect | None = None  # None for a version without Market Reach
     tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs

@@ -1,4 +1,4 @@
-"""The tables and Advisor wording of ITC's Realisation Test report (#156), made from the saved report.
+"""The tables and Advisor wording of ITC's Realisation Test report, made from the saved report.
 
 `realisation` estimates and saves the report; this module turns it into the coefficient table, the method table,
 the caveat and the plain-language text, for the notebook (through `reporting`) and the API (`served`). Nothing here
@@ -66,7 +66,7 @@ def coefficient_rows(report: dict, *, levels: tuple[str, ...] = tuple(realisatio
 
 
 def method_rows(report: dict) -> list[dict]:
-    """Part (a) of #156: ITC's method and ours side by side, one row per aspect."""
+    """ITC's method and ours side by side, one row per aspect."""
     years = years_text(report["base_years"])
     levels = " and ".join(dict.fromkeys(row["level"] for row in report["rows"]))
     rows = [
@@ -100,7 +100,7 @@ def method_rows(report: dict) -> list[dict]:
 
 
 def direct_comparison_text(report: dict) -> str:
-    """Part (c) of #156 in one line: whether the direct comparison with the EPM's UK figures ran, and why not."""
+    """In one line: whether the direct comparison with the EPM's UK figures ran, and why not."""
     part = report["direct_comparison"]
     return "Direct comparison with the EPM's UK figures: " + ("run." if part["run"] else f"{part['reason']}.")
 

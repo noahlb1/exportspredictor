@@ -19,7 +19,7 @@ Layout under the data root (`EXPORTSPREDICTOR_DATA_DIR`):
 
 Flows Parquet columns: `year` Int16, `exporter` and `importer` Enum of ISO3 codes,
 `hs6` Enum of zero-padded HS6 codes, `value_usd` Float64 (BACI's `v` is thousand USD;
-we store USD). BACI's quantity `q` is unused (spec #10) and dropped. Only strictly
+we store USD). BACI's quantity `q` is unused and dropped. Only strictly
 positive Flows exist in BACI: a missing row means zero or unreported.
 """
 

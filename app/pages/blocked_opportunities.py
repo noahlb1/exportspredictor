@@ -1,5 +1,5 @@
-"""Blocked Opportunities: only the Blocked Opportunities, as a before and after in Baseline-year figures (spec #103,
-spec #133, ADR 0011), By Market, By Product or in a Wide table (spec #151).
+"""Blocked Opportunities: only the Blocked Opportunities, as a before and after in Baseline-year figures (ADR 0011),
+By Market, By Product or in a Wide table.
 
 A page of its own, apart from the Leaderboard, because a Blocked Opportunity is measured apart from the Export Gap:
 the missing Trade Agreement already holds its Export Potential down. The Export Gap does not appear here; every

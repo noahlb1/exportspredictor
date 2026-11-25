@@ -164,7 +164,7 @@ with page(
             f"Ranked by {order['title']}, Baseline year {body['baseline_year']}. {order['description']} "
             f"{filters.hidden_note}"
         )
-        st.caption(labels()["totals_note"]["text"])  # beside the summed Export Gap (spec #113)
+        st.caption(labels()["totals_note"]["text"])  # beside the summed Export Gap
         if not rows:
             st.info("No Opportunities match these filters.")
         else:

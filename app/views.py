@@ -1,4 +1,4 @@
-"""One layout for the ranking pages (spec #151): the Leaderboard and Blocked Opportunities show their UK
+"""One layout for the ranking pages: the Leaderboard and Blocked Opportunities show their UK
 Product–Market pairs By Market, By Product or in a Wide table, with the chosen pair's detail panel underneath at full
 page width.
 

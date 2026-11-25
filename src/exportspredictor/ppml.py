@@ -1,4 +1,4 @@
-"""A PPML gravity benchmark of the Trade Agreement Scenario Effect (decision #33), saved with the artefact.
+"""A PPML gravity benchmark of the Trade Agreement Scenario Effect, saved with the artefact.
 
 The model's Scenario Effects are associations learned by a Tweedie XGBoost. This module
 checks their *size* against the econometric standard for Trade Agreement effects: Poisson
@@ -289,7 +289,7 @@ def _percent_change(log_points: float) -> float:
     return float(np.expm1(log_points) * 100)
 
 
-# --- The saved benchmark: fitted once and carried with the artefact (spec #66) -----------------
+# --- The saved benchmark: fitted once and carried with the artefact --------------------------
 
 LEVEL = "Sector"  # the frozen specification: Sector-level Flows, the fit above
 

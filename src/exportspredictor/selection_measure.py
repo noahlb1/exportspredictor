@@ -57,7 +57,7 @@ def selection_measure(
 
 
 def legacy_selection_measure(rows: pl.DataFrame, prediction: str, *, target: str = "value_usd") -> float | None:
-    """The measure before ticket #115, with average ranks for ties on both sides: for continuity tables only."""
+    """The measure before it was made tie-proof, with average ranks for ties on both sides: for continuity tables only."""
     within = within_product_correlations(rows, prediction, target=target, tie_proof=False)
     return _mean(within["rho"])
 

@@ -1,4 +1,4 @@
-"""The hyperparameter search (ticket #54): Optuna TPE with a Median pruner, then confirmation on every Product.
+"""The hyperparameter search: Optuna TPE with a Median pruner, then confirmation on every Product.
 
 v1 tried five hand-picked configurations. v2 searches the space below in two stages, on
 the validation year (2022) only, with one fold of UK pairs held out (ADR 0001):
@@ -52,7 +52,7 @@ from exportspredictor.training import (
     row_budget,
 )
 
-# The searched space (spec #39, decision #36). eta is fixed: the round count absorbs it.
+# The searched space. eta is fixed: the round count absorbs it.
 SPACE = {
     "max_depth": (4, 12),
     "min_child_weight": (1.0, 1000.0),  # log scale
@@ -358,7 +358,7 @@ def _winner(results: dict) -> dict:
 
 
 def _recheck(subset: Data, plan: SearchPlan, params: Mapping) -> dict:
-    """One learning-curve point of ticket #53 again, with the tuned configuration instead of v1's."""
+    """One point of the learning curve (`experiments`) again, with the tuned configuration instead of v1's."""
     non_uk_rate, zero_rate = plan.recheck_rates
     zero_rate = zero_rate or subset.built_zero_rate
     curve_plan = replace(
