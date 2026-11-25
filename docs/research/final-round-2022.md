@@ -477,3 +477,7 @@ Neither Arm is decided by the stopping rule. 2023 was not read.
 | g | Gravity for 20 small Markets; group the Overseas Territories | open review, idea 8 | Skipped | GDP and population already filled (#126, #127); distance needs new data; grouping is not a model change |
 | h | Early stopping flattening the bottom | open review, section 2 | Skipped | Answered by #115 and #116 |
 | i | UK-free demand proxy as a feature | open review, idea 9 | Already run | Section 3 (#164): +0.0003, dropped |
+
+## Outcome of the round (#172)
+
+**Nothing was kept, so the shipped version stands.** Every idea of #155 was tried or skipped with a reason (sections 1 to 8): the Market Reach cap (idea 1), Sibling Demand (2), the hyperparameter search (3), LightGBM and CatBoost (4), the wider Exporter scope (5) and more rows through external memory (6) all fell inside the noise, and of the leftover leads (section 8) two were run and dropped and the rest skipped. No new frozen version is built, 2023 is not read again, and the Test-year Ledger gets no new entry. The served artefact is unchanged, and the notebook's section 6 reads this round's table from the loop's `results.json` and the probe's saved file (`reporting.final_round`). Agreement depth (#138) and non-tariff market access (open review, idea 6) need new data and are listed as further work in the notebook's section 11.
