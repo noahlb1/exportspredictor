@@ -84,6 +84,7 @@ def test_the_agent_paths_are_ignored_so_they_cannot_be_committed_back():
         cwd=ROOT,
         input="\0".join(probes).encode(),
         capture_output=True,
+        check=False,  # exits 1 when a probe is not ignored, which the assertion reports
     ).stdout.decode().split("\0")[:-1]
     assert sorted(ignored) == sorted(probes), f"Add these to .gitignore: {sorted(set(probes) - set(ignored))}"
 
