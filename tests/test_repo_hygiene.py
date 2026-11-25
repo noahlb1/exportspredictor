@@ -64,6 +64,30 @@ def _resolves(source: str, target: str, tracked: set[str]) -> bool:
     return resolved in tracked or any(name.startswith(resolved + "/") for name in tracked)
 
 
+# The agent files: instructions, settings, skills, agent docs and run notes, kept in a private repo and linked in.
+AGENT_PATHS = ("CLAUDE.md", ".claude/", ".agents/", "docs/agents/", "docs/runs/", "skills-lock.json", "scripts/add-dep.ps1")
+
+
+def _is_agent_path(name: str) -> bool:
+    return PurePosixPath(name).name in {"CLAUDE.md", "AGENTS.md"} or name.startswith(AGENT_PATHS)
+
+
+def test_no_agent_or_claude_path_is_tracked():
+    tracked = sorted(name for name in tracked_paths() if _is_agent_path(name))
+    assert not tracked, f"Agent files belong in the private agent repo, not here: {tracked}"
+
+
+def test_the_agent_paths_are_ignored_so_they_cannot_be_committed_back():
+    probes = [path + "x" if path.endswith("/") else path for path in AGENT_PATHS]
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin", "-z"],
+        cwd=ROOT,
+        input="\0".join(probes).encode(),
+        capture_output=True,
+    ).stdout.decode().split("\0")[:-1]
+    assert sorted(ignored) == sorted(probes), f"Add these to .gitignore: {sorted(set(probes) - set(ignored))}"
+
+
 def test_every_relative_link_in_the_docs_and_notebook_points_at_a_tracked_file():
     tracked = tracked_paths()
     broken = [
