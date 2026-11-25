@@ -65,7 +65,10 @@ def test_the_probe_is_a_row_decided_against_its_gate_not_the_win_threshold():
     assert row["idea"] == "Tariff 0 where an agreement's preference is unrecorded (#171)"
     assert row["gain"] == pytest.approx(-0.0001)
     assert row["threshold"] == pytest.approx(0.0044)
-    assert row["decision"] == "skipped (gate)"
+    # The row says which bar it is judged against, so its threshold is not read as the Win Threshold.
+    assert row["judged_against"] == "its pre-registered gate"
+    assert row["decision"] == "not retrained (missed its gate)"
+    assert {r["judged_against"] for r in table.head(-1).iter_rows(named=True)} == {"Win Threshold"}
 
 
 def test_without_any_idea_of_the_round_it_is_not_run():

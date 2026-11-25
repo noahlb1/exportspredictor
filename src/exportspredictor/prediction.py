@@ -340,13 +340,21 @@ def _blend_contributions(
     return blended, (1 - w) * floored + naive_share
 
 
-def _fold_masks(rows: pl.DataFrame, models: Sequence[xgb.Booster]):
-    """(k, mask) for each fold model k that holds rows, after checking every row has its fold model."""
+def _fold_masks(rows: pl.DataFrame, models: Sequence[Model]):
+    """(k, mask) for each fold model k that holds rows, after checking every row has its fold model.
+
+    Only an XGBoost Booster records the fold it held out (`held_out_fold`, ADR 0001), so a model of another family
+    is refused as a fold model rather than scoring by fold unchecked."""
     fold = rows["fold"].to_numpy()
     if rows.height and (fold.min() < 0 or fold.max() >= len(models)):
         raise ValueError(f"A row's fold has no fold model: folds run from 0 to {len(models) - 1}")
     for k, model in enumerate(models):
-        held_out = model.attr("held_out_fold") if isinstance(model, xgb.Booster) else None
+        if not isinstance(model, xgb.Booster):
+            raise TypeError(
+                f"Fold model {k} is a {type(model).__name__}, which records no held-out fold; only XGBoost fold "
+                "models score by fold (ADR 0001)"
+            )
+        held_out = model.attr("held_out_fold")
         if held_out not in (None, str(k)):
             raise ValueError(f"Model {k} held out fold {held_out}, not {k}")
         mask = fold == k

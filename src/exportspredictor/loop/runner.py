@@ -67,11 +67,11 @@ from exportspredictor.loop.selection import (
     win_threshold,
 )
 from exportspredictor.loop.trainers import (
-    XGBOOST,
     Model,
     Trainer,
     TrainingJob,
     TrainingRows,
+    refuse_external_memory,
     trainer_for,
 )
 from exportspredictor.prediction import (
@@ -109,19 +109,23 @@ class TwoPart:
     size: Model
 
 
+def best_so_far(lp: "Loop") -> Settings:
+    """The settings of the loop's best Arm so far, after the noise floor (run first if it is not yet saved)."""
+    lp.noise_floor()
+    return Settings.from_dict(lp.results["best"]["settings"])
+
+
 def run_product_detail(lp: "Loop") -> dict:
     """Run the three Product detail experiments in order, each from the best so far."""
     for feature in PRODUCT_DETAIL_FEATURES:
-        lp.noise_floor()
-        best = Settings.from_dict(lp.results["best"]["settings"])
+        best = best_so_far(lp)
         lp.run_experiment(product_detail_experiment(feature), [product_detail_arm(feature, best)])
     return lp.results
 
 
 def run_exporter_count(lp: "Loop") -> dict:
     """#127: the Exporter count against the best so far retrained on this loop's files, both with Market Reach."""
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     base, arms = exporter_count_arms(best)
     return lp.run_experiment(EXPORTER_COUNT_EXPERIMENT, arms, base_arm=base)
 
@@ -132,8 +136,7 @@ def run_market_reach_cap(lp: "Loop") -> dict:
     Both are scored from the best so far's cached model on this loop's files, so nothing is trained once that
     model exists. A kept cap becomes the best so far, with Market Reach and the cap in its settings.
     """
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     return lp.run_experiment(MARKET_REACH_CAP_EXPERIMENT, [market_reach_cap_arm()], base_arm=served_base_arm(best))
 
 
@@ -143,8 +146,7 @@ def run_sibling_demand(lp: "Loop") -> dict:
     The files (`sibling_demand`) are the served ones with the feature stored, so the pair differs by one feature.
     A dropped Arm leaves the served files unchanged; a kept one serves these files.
     """
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     return lp.run_experiment(
         SIBLING_DEMAND_EXPERIMENT, [sibling_demand_arm(best)], base_arm=served_base_arm(best),
         files_kept_if_dropped=False,
@@ -166,8 +168,7 @@ def run_hyperparameter_stage(
         section = lp.results.get("experiments", {}).get(hyperparameter_experiment(earlier), {})
         if not section.get("decided"):
             raise ValueError(f"Run the stage {earlier!r} before {stage!r}: winners stack in order")
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     return lp.run_experiment(hyperparameter_experiment(stage), stages[stage], base_arm=served_base_arm(best))
 
 
@@ -178,8 +179,7 @@ def run_model_family(lp: "Loop", family: str, arms: Mapping[str, Arm] = MODEL_FA
     """
     if family not in arms:
         raise ValueError(f"{family!r} has no pre-registered Arm; families: {list(arms)}")
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     return lp.run_experiment(model_family_experiment(family), [arms[family]], base_arm=served_base_arm(best))
 
 
@@ -191,8 +191,7 @@ def run_wider_scope(
     Both train at `non_uk_rate`, so the pair differs only by the training scope. A dropped Arm leaves the served
     files unchanged; a kept one becomes the best so far (every Exporter, this rate) and serves these files.
     """
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     base, arm = wider_scope_arms(best, top=top, non_uk_rate=non_uk_rate)
     return lp.run_experiment(WIDER_SCOPE_EXPERIMENT, [arm], base_arm=base, files_kept_if_dropped=False)
 
@@ -200,8 +199,7 @@ def run_wider_scope(
 def run_external_memory(lp: "Loop") -> dict:
     """#170: every other Exporter's row (non-UK rate 1.0) through XGBoost external memory, against the best so far as
     served (`served_base_arm`) on this loop's files. A kept Arm becomes the best so far, with Market Reach."""
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     return lp.run_experiment(EXTERNAL_MEMORY_EXPERIMENT, [external_memory_arm()], base_arm=served_base_arm(best))
 
 
@@ -209,8 +207,7 @@ def run_excluded_products(lp: "Loop") -> dict:
     """#171: the best so far as served trained on the Excluded Products' rows, against it with them dropped, both on
     this loop's files (`excluded_products`) at one non-UK rate. A dropped Arm leaves the served files unchanged; a
     kept one becomes the best so far and serves these files."""
-    lp.noise_floor()
-    best = Settings.from_dict(lp.results["best"]["settings"])
+    best = best_so_far(lp)
     base, arm = excluded_products_arms(best)
     return lp.run_experiment(EXCLUDED_PRODUCTS_EXPERIMENT, [arm], base_arm=base, files_kept_if_dropped=False)
 
@@ -464,8 +461,7 @@ class Loop:
 
     def _resolved(self, settings: Settings) -> Settings:
         trainer_for(settings.family)  # refuses a family with no trainer before anything trains
-        if settings.external_memory and settings.family != XGBOOST:
-            raise ValueError(f"The {settings.family} trainer has no external memory; only XGBoost's does")
+        refuse_external_memory(settings.family, settings.external_memory)
         zero_rate = settings.zero_rate if settings.zero_rate is not None else self.data.data.built_zero_rate
         non_uk_rate = settings.non_uk_rate
         if non_uk_rate is None:

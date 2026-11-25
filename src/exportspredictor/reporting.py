@@ -225,6 +225,9 @@ FINAL_ROUND_IDEAS: dict[str, tuple[str, ...]] = {
 }
 FINAL_ROUND_PROBE_IDEA = "Tariff 0 where an agreement's preference is unrecorded (#171)"
 FINAL_ROUND_PROBE_FILE = Path("derived") / "final_round_2022" / "unrecorded_preferences.json"
+# What each row's `threshold` is: the loop's ideas had to beat the Win Threshold; the probe, its own gate
+# (half the Win Threshold, pre-registered in docs/research/final-round-2022.md) before a retrained Arm would run.
+WIN_THRESHOLD_BAR, PROBE_GATE_BAR = "Win Threshold", "its pre-registered gate"
 
 
 def final_round_probe(root: Path | None = None) -> dict | None:
@@ -236,9 +239,9 @@ def final_round_probe(root: Path | None = None) -> dict | None:
 
 def final_round(results: Mapping, probe: Mapping | None = None) -> pl.DataFrame | NotRun:
     """Spec #155's final round, one row per idea: its experiments and Arms, the best Arm, the best so far as served
-    it was paired with (`base`), the best Arm's Selection Measure and gain, the Win Threshold it had to beat and the
-    decision. Read from the loop's saved results (`loop.load`) and the scoring-only probe (`final_round_probe`),
-    which is decided against its own gate."""
+    it was paired with (`base`), the best Arm's Selection Measure and gain, the `threshold` it had to beat, what that
+    threshold is (`judged_against`) and the decision. Read from the loop's saved results (`loop.load`) and the
+    scoring-only probe (`final_round_probe`), which is judged against its pre-registered gate, not the Win Threshold."""
     recorded = results.get("experiments", {})
     rows = []
     for idea, names in FINAL_ROUND_IDEAS.items():
@@ -249,7 +252,7 @@ def final_round(results: Mapping, probe: Mapping | None = None) -> pl.DataFrame 
         rows.append({
             "idea": idea, "experiments": len(sections), "arms": sum(len(s["arms"]) for s in sections),
             "best_arm": arm["arm"], "base": section["base"]["selection_measure"], "best": arm["selection_measure"],
-            "gain": arm["change"], "threshold": section["win_threshold"],
+            "gain": arm["change"], "threshold": section["win_threshold"], "judged_against": WIN_THRESHOLD_BAR,
             "decision": "kept" if any(s.get("kept") for s in sections) else "dropped",
         })
     if not rows:
@@ -258,12 +261,14 @@ def final_round(results: Mapping, probe: Mapping | None = None) -> pl.DataFrame 
         rows.append({
             "idea": FINAL_ROUND_PROBE_IDEA, "experiments": 0, "arms": 0, "best_arm": "scoring-only probe",
             "base": probe["base"]["selection_measure"], "best": probe["probe"]["selection_measure"],
-            "gain": probe["gain"], "threshold": probe["gate"],
-            "decision": "retrained Arm run" if probe["retrained_arm_runs"] else "skipped (gate)",
+            "gain": probe["gain"], "threshold": probe["gate"], "judged_against": PROBE_GATE_BAR,
+            "decision": "retrained Arm run (passed its gate)" if probe["retrained_arm_runs"]
+            else "not retrained (missed its gate)",
         })
     return pl.DataFrame(rows, schema={
         "idea": pl.String, "experiments": pl.Int64, "arms": pl.Int64, "best_arm": pl.String, "base": pl.Float64,
-        "best": pl.Float64, "gain": pl.Float64, "threshold": pl.Float64, "decision": pl.String,
+        "best": pl.Float64, "gain": pl.Float64, "threshold": pl.Float64, "judged_against": pl.String,
+        "decision": pl.String,
     })
 
 

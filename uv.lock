@@ -351,11 +351,9 @@ name = "exportspredictor"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "catboost" },
     { name = "fastapi" },
     { name = "fastexcel" },
     { name = "httpx" },
-    { name = "lightgbm" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas" },
@@ -369,9 +367,11 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "altair" },
+    { name = "catboost" },
     { name = "cupy-cuda13x", extra = ["ctk"] },
     { name = "hypothesis" },
     { name = "ipykernel" },
+    { name = "lightgbm" },
     { name = "nbclient" },
     { name = "nbformat" },
     { name = "optuna" },
@@ -384,11 +384,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "catboost", specifier = ">=1.2.10" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fastexcel", specifier = ">=0.21.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "lightgbm", specifier = ">=4.7.0" },
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pandas", specifier = ">=2.2" },
@@ -402,9 +400,11 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "altair", specifier = ">=5.4" },
+    { name = "catboost", specifier = ">=1.2.10" },
     { name = "cupy-cuda13x", extras = ["ctk"], specifier = ">=14.2.0" },
     { name = "hypothesis", specifier = ">=6.170.15" },
     { name = "ipykernel", specifier = ">=6.29" },
+    { name = "lightgbm", specifier = ">=4.7.0" },
     { name = "nbclient", specifier = ">=0.10" },
     { name = "nbformat", specifier = ">=5.10" },
     { name = "optuna", specifier = ">=5.1.0" },

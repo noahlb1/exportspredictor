@@ -130,3 +130,20 @@ def test_a_kept_family_becomes_the_best_so_far_with_market_reach_and_the_next_id
     best = loop.Settings.from_dict(lp.results["best"]["settings"])
     assert best.family == family and best.market_reach_beta == market_reach.CHOSEN_BETA
     assert loop.served_base_arm(best).changes == {}  # the next idea runs against the kept family as it is
+
+
+def test_the_pre_registered_family_arms_translate_the_best_so_far_their_experiments_ran_against():
+    # The Arms copy the best so far's parameters by hand (pre-registration); a mistyped copy shows here.
+    from exportspredictor.loop.arms import PRE_REGISTERED_BEST_PARAMS
+    from exportspredictor.paths import data_dir
+
+    results_file = loop.loop_dir(data_dir()) / loop.RESULTS_FILE
+    if not results_file.exists():
+        pytest.skip("the real loop's results are not on disk")
+    sections = loop.load(data_dir()).get("experiments", {})
+    recorded = [sections[name] for name in map(loop.model_family_experiment, loop.MODEL_FAMILY_ARMS) if name in sections]
+    if not recorded:
+        pytest.skip("no model family experiment is recorded yet")
+    for section in recorded:
+        base = section["base_arm"]["settings"]["params"]
+        assert {k: base[k] for k in PRE_REGISTERED_BEST_PARAMS} == PRE_REGISTERED_BEST_PARAMS
