@@ -1,4 +1,4 @@
-"""Sibling Demand, the UK-free demand proxy (spec #155, ticket #164; idea 9 of the open review).
+"""Sibling Demand, the UK-free demand proxy (idea 9 of the open review).
 
 Built through `build_features` on the fixture world, with Flows of a whisky sibling added (the fixture's
 Products are each alone in their HS4 heading), then perturbed to show what the feature never sees.

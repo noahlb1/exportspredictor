@@ -1,4 +1,4 @@
-"""More training rows through XGBoost external memory, tried by the experiment loop (spec #155, ticket #170)."""
+"""More training rows through XGBoost external memory, tried by the experiment loop."""
 
 from dataclasses import replace
 

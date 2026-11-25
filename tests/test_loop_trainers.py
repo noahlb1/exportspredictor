@@ -1,4 +1,4 @@
-"""The loop's trainer seam (ticket #165): the model family is a training field, XGBoost by default."""
+"""The loop's trainer seam: the model family is a training field, XGBoost by default."""
 
 import numpy as np
 import pytest

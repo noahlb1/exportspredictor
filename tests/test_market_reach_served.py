@@ -1,4 +1,4 @@
-"""Market Reach served (spec #113, Phase 1, ticket #125): the fixture pipeline's Model Form applies it."""
+"""Market Reach served: the fixture pipeline's Model Form applies it."""
 
 import json
 from dataclasses import replace

@@ -39,7 +39,7 @@ def test_an_older_folder_is_read_under_the_glossary_column_names(fixture_artefac
 
 
 def test_a_version_from_before_the_share_was_stored_reads_it_from_its_baseline(fixture_artefacts, tmp_path):
-    # Spec #113 "Totals understate": versions saved before the figure was stored still serve it.
+    # The note that totals understate: versions saved before the figure was stored still serve it.
     metadata = {key: value for key, value in fixture_artefacts.metadata.items()
                 if key != "potential_share_of_actual_exports"}
     two_pairs = fixture_artefacts.baseline.head(2).with_columns(

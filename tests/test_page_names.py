@@ -1,4 +1,4 @@
-"""The app page where an Advisor builds a Scenario is the Scenario Builder (#150, finding F13 on #139).
+"""The app page where an Advisor builds a Scenario is the Scenario Builder.
 
 Its old name read as a list of ready-made Scenarios. No tracked text file uses it, in any case or across a line break,
 except the past spec run logs under `docs/runs/`, which are history. The pattern is built in pieces so this file does
@@ -23,7 +23,7 @@ def test_no_tracked_file_uses_the_old_page_name():
     assert not found, f"Call the page the Scenario Builder: {found}"
 
 
-# The page once called "Why?" became each pair's detail panel; the model card and the notebook still named it (#162).
+# The page once called "Why?" became each pair's detail panel; the model card and the notebook still named it.
 # Research notes, like the run logs, are dated history.
 WHY_PAGE = re.compile(r"\bWhy\?" + r"(?:\s|\\n)*page\b", re.IGNORECASE)
 

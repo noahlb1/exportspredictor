@@ -214,7 +214,7 @@ def test_page_shows_the_event_backtest_predicted_against_observed_with_its_contr
 
 
 def test_page_states_the_share_of_opportunities_inside_their_potential_range(page, fixture_artefacts):
-    # Read from the evaluation report through the API (spec #66): the share replaces a badge on almost every row
+    # Read from the evaluation report through the API: the share replaces a badge on almost every row
     coverage = fixture_artefacts.evaluation["potential_range"]
     share = f"{coverage['uncertain_opportunities']:,} of the {coverage['opportunities']:,} Opportunities"
 

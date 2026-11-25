@@ -1,4 +1,4 @@
-"""The hyperparameter search (ticket #54): a tiny search on the fixture, end to end and resumable."""
+"""The hyperparameter search: a tiny search on the fixture, end to end and resumable."""
 
 from dataclasses import replace
 

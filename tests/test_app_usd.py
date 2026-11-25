@@ -1,4 +1,4 @@
-"""Every Streamlit page is in nominal US dollars only: one USD caption, no £ and no currency switch (#41).
+"""Every Streamlit page is in nominal US dollars only: one USD caption, no £ and no currency switch.
 
 Each page is opened through the router with AppTest against the session's live fixture API, with its
 main content on screen (a ranking, an explanation, a Scenario result), so the check covers the values too.

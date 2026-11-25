@@ -2,8 +2,8 @@
 
 On this machine a tool that opens a file without naming an encoding reads cp1252, so an en
 dash comes back as three characters starting U+00E2 U+20AC, a minus sign as U+00E2 U+02C6, "£"
-as U+00C2 U+00A3 and "é" as U+00C3 U+00A9. Spec #66's notebook refresh garbled the prose this
-way and every other check passed; spec #113 left garbled minus signs the first pattern missed.
+as U+00C2 U+00A3 and "é" as U+00C3 U+00A9. A notebook refresh once garbled the prose this
+way and every other check passed; a later change left garbled minus signs the first pattern missed.
 `scripts/wt.ps1` sets PYTHONUTF8; this test catches a tool that runs without it. The patterns
 are written as escapes so this file does not match itself.
 """

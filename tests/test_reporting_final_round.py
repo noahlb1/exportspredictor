@@ -1,4 +1,4 @@
-"""The final round's account (spec #155, #172): one row per idea, read from the loop's saved results and the
+"""The final round's account: one row per idea, read from the loop's saved results and the
 unrecorded-preferences probe, so the notebook's table cannot drift from what the loop recorded."""
 
 import pytest

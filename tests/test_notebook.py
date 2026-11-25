@@ -58,7 +58,7 @@ def _sections():
     return [(heading, cells) for heading, cells in sections if heading != "## Parameters"]
 
 
-# The argument's sections, in order (spec #66, "Section order"): the whole notebook after the parameters.
+# The argument's sections, in order: the whole notebook after the parameters.
 SECTIONS = [
     "## 1. The question and the headline",
     "## 2. The data: Flows, Zero Cells and policy features",
@@ -73,11 +73,11 @@ SECTIONS = [
     "## 11. Conclusions",
     "## Appendix: frozen results",
 ]
-# No prose cell runs over about this many words (spec #66, "Length"); longer detail is linked.
+# No prose cell runs over about this many words; longer detail is linked.
 WORD_LIMIT = 300
-# The whole notebook's prose comes to about this many words, within 10% (spec #66, "Length").
-TOTAL_WORDS = 10_200  # 10,000 in spec #66; spec #156 adds the ITC comparison to §7
-# The parts that no longer decide anything, each one appendix entry (spec #66, "Freezing").
+# The whole notebook's prose comes to about this many words, within 10%.
+TOTAL_WORDS = 10_200  # 10,000 at first, plus the ITC comparison in §7
+# The parts that no longer decide anything, each one appendix entry.
 FROZEN_PARTS = (
     "hyperparameter search", "feature ablation", "learning curve", "v1 comparison", "gain ladder",
     "constraint comparison",
@@ -163,7 +163,7 @@ def test_the_write_up_names_the_gap_period():
 
 
 # Calls that train, fit or rebuild a derived table. In real mode the notebook reads what these
-# wrote (spec #66, #88), so each may appear only where it runs in fixture mode.
+# wrote, so each may appear only where it runs in fixture mode.
 BUILDS = {
     "baci.prepare", "gravity.build", "hmrc.build", "policy.build", "features.build", "features.build_features",
     "pipeline.build_artefacts", "experiments.run", "ppml.fit_ppml", "ppml.real_sector_flows", "ppml.sector_flows",
@@ -215,7 +215,7 @@ def test_the_notebook_shows_each_main_result_from_the_reporting_module():
         "itc_direct_comparison",
     ):
         assert f"reporting.{result}(bundle)" in source, result
-    # The preset table reads the presets the notebook runs (spec #157).
+    # The preset table reads the presets the notebook runs.
     assert "reporting.preset_scenarios(bundle, preset_results)" in source
 
 
@@ -282,7 +282,7 @@ def _provenance_versions(notebook) -> list[tuple[str, str]]:
 
 
 def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
-    # Read as saved; never executed here. `scripts/rebuild.py --only notebook` refreshes these outputs (#92).
+    # Read as saved; never executed here. `scripts/rebuild.py --only notebook` refreshes these outputs.
     notebook = nbformat.read(NOTEBOOK, as_version=4)
     code = [cell for cell in notebook.cells if cell.cell_type == "code"]
 
@@ -299,7 +299,7 @@ def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
         assert source != pipeline.FIXTURE_SOURCE, "the committed outputs come from the fixture, not real data"
 
 
-# "Outputs stay small" (spec #66): the largest printed output or table stays under this; a chart
+# "Outputs stay small": the largest printed output or table stays under this; a chart
 # image under `reporting.CHART_LIMIT_BYTES`.
 OUTPUT_LIMIT_BYTES = 15_000
 

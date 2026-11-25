@@ -204,7 +204,7 @@ def unscenario_artefacts_dir(fixture_artefacts, tmp_path_factory):
     return root
 
 
-# The Offset world (spec #129): the Blocked world with a Heading of three Products. Telephones and medicaments are
+# The Offset world: the Blocked world with a Heading of three Products. Telephones and medicaments are
 # recoded as two more Products of Heading 8703, beside cars (870323), so Heading 8703 holds three Products in every
 # Market. Its twelve pairs get round Gap Period figures, so their Export Gaps are exact.
 CARS, BIG_CARS, SMALL_CARS = "870323", "870324", "870322"

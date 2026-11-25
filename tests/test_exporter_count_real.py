@@ -1,4 +1,4 @@
-"""The real `exporter_count` feature set (#126): the Exporter count and the gravity fill on real data.
+"""The real `exporter_count` feature set: the Exporter count and the gravity fill on real data.
 
 Skips unless `python -m exportspredictor.features --set exporter_count` has been run.
 """
@@ -11,8 +11,8 @@ import pytest
 from exportspredictor import baci, features, gravity
 
 SET = "exporter_count"
-YEAR = 2022  # the validation year, which #126 checked the set on
-BASELINE_YEAR = 2024  # #128 rebuilt the set up to the Baseline year, to serve it
+YEAR = 2022  # the validation year, which the set was checked on
+BASELINE_YEAR = 2024  # the set was rebuilt up to the Baseline year, to serve it
 
 
 @pytest.fixture(scope="module")

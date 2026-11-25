@@ -1,4 +1,4 @@
-"""The experiment loop with Market Reach and a base retrained on rebuilt files (spec #113, ticket #127)."""
+"""The experiment loop with Market Reach and a base retrained on rebuilt files."""
 
 from dataclasses import replace
 

@@ -1,4 +1,4 @@
-"""The reporting module: one chart or table per main result, read from a loaded artefact (spec #66, #88).
+"""The reporting module: one chart or table per main result, read from a loaded artefact.
 
 Tested on the fixture artefact for what each function returns (the rows behind a chart, the
 table's rows, "not run" where a part is absent), not for how a chart looks.
@@ -263,7 +263,7 @@ def test_the_model_card_excerpt_is_its_headline_and_its_contents_with_a_link_to_
     excerpt = reporting.model_card_excerpt(path)
 
     headings = [line for line in card.splitlines() if line.startswith("## ")]
-    assert len(excerpt) < 4_000 < len(card)  # "Outputs stay small" (spec #66)
+    assert len(excerpt) < 4_000 < len(card)  # "Outputs stay small"
     assert "## Headline" in excerpt and card.split("## Headline", 1)[1].split("\n## ", 1)[0].strip() in excerpt
     for heading in headings:
         assert heading[3:] in excerpt, heading
@@ -340,7 +340,7 @@ def test_what_market_reach_changes_is_the_saved_sentence_or_a_not_run_line(fixtu
 
 
 def test_what_market_reach_changes_states_the_served_uk_pair_coverage(fixture_artefacts):
-    # The notebook prints what the model card and the API state (#162).
+    # The notebook prints what the model card and the API state.
     report = fixture_artefacts.evaluation
     effect = {**report["market_reach_effect"], "uk_pair_coverage": {"with": 0.7351, "without": 0.8072}}
     served = {**report["potential_range"], "uk_pair_coverage": {"with_market_reach": 0.7346, "without_market_reach": 0.8068}}
@@ -350,7 +350,7 @@ def test_what_market_reach_changes_states_the_served_uk_pair_coverage(fixture_ar
         replace(fixture_artefacts, evaluation=stale))
 
 
-# --- Blocked Opportunities: the split of the value and how Product-specific its Agreement part is (spec #133) -----
+# --- Blocked Opportunities: the split of the value and how Product-specific its Agreement part is -----
 
 
 def test_the_blocked_opportunity_split_counts_each_kind_of_tariff_and_parts_sum_to_the_value(blocked_artefacts):
@@ -447,7 +447,7 @@ def test_an_artefact_without_blocked_opportunities_has_an_empty_split_and_variat
     assert reporting.agreement_part_variation_chart(fixture_artefacts).data.is_empty()
 
 
-# --- The Trading Bloc presets: the Markets each adds a Trade Agreement with and their Blocked Opportunities (#157) --
+# --- The Trading Bloc presets: the Markets each adds a Trade Agreement with and their Blocked Opportunities --
 
 
 @pytest.fixture(scope="module")

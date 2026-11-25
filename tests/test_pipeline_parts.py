@@ -1,4 +1,4 @@
-"""Opt-in pipeline parts (spec #65, story 23): a default run trains only what the headline needs.
+"""Opt-in pipeline parts: a default run trains only what the headline needs.
 
 The Event Backtests (Lift included), the monotone-constraint comparison and the gain ladder
 each run only when asked for; the v1 comparison's primary metric is computed by default.

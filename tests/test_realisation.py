@@ -1,4 +1,4 @@
-"""ITC's realisation test run on our model (#156, #175): the report of the pure function, and the step that adds
+"""ITC's realisation test run on our model: the report of the pure function, and the step that adds
 it to the newest artefact's evaluation."""
 
 import hashlib

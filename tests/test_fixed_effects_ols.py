@@ -1,4 +1,4 @@
-"""Least squares with high-dimensional fixed effects and pair-clustered errors (#173), from the PPML benchmark's code."""
+"""Least squares with high-dimensional fixed effects and pair-clustered errors, from the PPML benchmark's code."""
 
 import numpy as np
 import polars as pl

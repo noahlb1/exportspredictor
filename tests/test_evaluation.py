@@ -363,7 +363,7 @@ def test_the_new_version_is_shown_beside_the_blend_v2_and_v1_on_both_measures():
     assert rows["Blend"]["uk_ranking"] == 0.5552 and rows["Blend"]["size_matched_lift"] == 0.761
     assert rows["v2"]["uk_ranking"] == 0.5115 and rows["v2"]["size_matched_lift"] == 0.788
     assert rows["v1"]["uk_ranking"] == 0.5397
-    # Earlier versions' tie-proof figures come from re-scoring their saved scores (#128), not yet done here.
+    # Earlier versions' tie-proof figures come from re-scoring their saved scores, not yet done here.
     assert all(rows[name]["uk_ranking_tie_proof"] is None for name in ("Blend", "v2", "v1"))
     naive = {row["name"]: (row["uk_ranking"], row.get("uk_ranking_tie_proof")) for row in block["naive"]}
     assert naive == {"Naive Baseline, every Exporter's Flows (this run)": (0.53, 0.52),
@@ -462,7 +462,7 @@ def test_the_served_report_leaves_out_the_v1_comparison_and_words_the_potential_
     assert saved["potential_range"]["text"] == "Worded when saved."  # the saved report is not changed
 
 
-# --- Known limitations, worded for the served Model Form (spec #66 stories 41 and 48) ---------
+# --- Known limitations, worded for the served Model Form ---------
 
 
 def _headline_report(model=0.555, naive=0.523):
@@ -504,7 +504,7 @@ def test_the_potential_range_limitation_refers_to_no_badge():
 
     (limit,) = evaluation.range_limitations(bands)
 
-    assert "badge" not in limit["text"]  # the ranking pages carry none since spec #66 story 41
+    assert "badge" not in limit["text"]  # the ranking pages carry no badge
     assert "a small gap for its size" in limit["text"]
 
 
@@ -519,7 +519,7 @@ def test_log_scale_bands_have_no_fixed_width_limitation():
 
 def test_bands_whose_upper_offset_is_negative_say_the_range_lies_below_export_potential_up_to_their_top_edge():
     # Bands 0 and 2 have a negative upper offset, band 1 and band 3 a positive one: the limitation runs up to the
-    # edge above the last negative band ($8,000), whatever happens in between (#161, review flag M4).
+    # edge above the last negative band ($8,000), whatever happens in between.
     bands = pl.DataFrame({
         "band": [0, 1, 2, 3], "min_export_potential_usd": [0.0, 400.0, 900.0, 8_000.0], "rows": [10] * 4,
         "low_offset_log": [-1.5, -6.7, -7.4, -9.3], "high_offset_log": [-0.7, 0.2, -1.8, 0.2],
@@ -559,7 +559,8 @@ def test_the_range_below_potential_limitation_is_served_and_in_the_model_card(fi
 
 
 def test_the_fixed_limitations_say_a_tariff_part_is_a_step_not_a_priced_tariff_cut_and_name_missing_preferences():
-    # Review flags H1 and H3 (#161).
+    # Without these, an Advisor could read a Tariff part as the effect of a priced tariff cut, and a missing
+    # preference schedule as no preference.
     titles = {item["title"]: item["text"] for item in evaluation.LIMITATIONS}
 
     step = titles["A Tariff part is not a tariff elasticity"]
@@ -604,7 +605,7 @@ def test_no_size_limitation_when_every_size_group_is_near_the_target_or_has_no_r
     assert evaluation.size_coverage_limitations(None) == []
 
 
-# --- UK pairs inside the Potential Range under Market Reach (spec #113 story 13) -----------------------------------
+# --- UK pairs inside the Potential Range under Market Reach -----------------------------------
 
 
 def _uk_pairs(with_reach, without):
@@ -667,7 +668,7 @@ def test_the_kept_change_s_effect_on_the_ranking_is_reported_beside_the_served_f
 
 def test_test_year_models_on_another_feature_set_are_cached_apart(tmp_path):
     # The Blend's settings (artefact 20261118T185910Z) cached its test-year models under this key; a build with the
-    # same settings on the rebuilt `exporter_count` files must not read them (#128).
+    # same settings on the rebuilt `exporter_count` files must not read them.
     metadata = {
         "validation_year": 2022, "tuning_years": [2012], "params": {"max_depth": 12}, "rounds": 1453, "n_folds": 5,
         "non_uk_sampling_rate": 0.5894, "zero_sampling_rate": 0.05, "model_params": {"seed": 0}, "baseline_year": 2024,
@@ -727,7 +728,7 @@ def test_a_market_reach_effect_saved_with_flat_size_matched_lift_reads_nested(re
 
 def test_a_version_upgraded_by_rereach_states_one_uk_pair_coverage_in_its_market_reach_effect(report):
     # `rereach` rewrote the Potential Range's UK-pair coverage (73.5%) but not the saved Market Reach block (73.5% under
-    # the first form, printed 74%), so one card said both (#162). The block reads the served figure.
+    # the first form, printed 74%), so one card said both. The block reads the served figure.
     effect = report["market_reach_effect"]
     saved = {
         **report,
@@ -743,7 +744,7 @@ def test_a_version_upgraded_by_rereach_states_one_uk_pair_coverage_in_its_market
     assert read["selection_measure"] == effect["selection_measure"]
 
 
-# --- Which configuration the test-year figures were read on (ADR 0009, #160) -------------
+# --- Which configuration the test-year figures were read on (ADR 0009) -------------
 
 READ_ON_EARLIER = "The test-year figures were read on an earlier configuration"
 

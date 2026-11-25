@@ -68,7 +68,7 @@ def with_heading_sums(rows: pl.DataFrame, columns: list[str]) -> pl.DataFrame:
 
 
 def mark_offset_pairs(baseline: pl.DataFrame) -> pl.DataFrame:
-    """The spec's rule, applied to the Baseline's own Export Gaps."""
+    """The tier's rule, applied to the Baseline's own Export Gaps."""
     rows = with_heading_sums(baseline, ["export_gap_usd"])
     return rows.with_columns(
         offset_pair=(pl.col("export_gap_usd") > 0)

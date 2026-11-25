@@ -1,4 +1,4 @@
-"""A cap on Market Reach's upside, scored by the experiment loop (spec #155, ticket #163)."""
+"""A cap on Market Reach's upside, scored by the experiment loop."""
 
 from dataclasses import replace
 

@@ -1,4 +1,4 @@
-"""Relatedness, Market import growth and the re-export ratio (ADR 0006, spec #39): worked
+"""Relatedness, Market import growth and the re-export ratio (ADR 0006): worked
 examples on hand-built Flows, and the leakage guards on the fixture world.
 """
 
@@ -47,7 +47,7 @@ def world():
 
 def test_the_three_features_are_built_and_those_the_ablation_kept_are_model_inputs():
     assert set(NEW_FEATURES) <= set(ALL_FEATURES)
-    # The ablation (#53) dropped Market import growth: still built, no longer a model input.
+    # The ablation dropped Market import growth: still built, no longer a model input.
     assert set(NEW_FEATURES) & set(FEATURES) == {"relatedness", "reexport_ratio"}
 
 

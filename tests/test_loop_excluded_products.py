@@ -1,4 +1,4 @@
-"""Training on the Excluded Products' rows, tried by the experiment loop (spec #155, ticket #171)."""
+"""Training on the Excluded Products' rows, tried by the experiment loop."""
 
 from dataclasses import replace
 

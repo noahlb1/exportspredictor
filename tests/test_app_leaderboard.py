@@ -411,7 +411,7 @@ def test_a_filter_chip_removes_its_filter_and_clear_all_removes_every_one(monkey
 
 
 def test_the_summed_export_gap_carries_the_totals_note_with_the_artefacts_share(monkeypatch, fixture_api_url):
-    # Spec #113 "Totals understate": the note sits beside the summary, its share read from the artefact.
+    # The note that totals understate sits beside the summary, its share read from the artefact.
     note = httpx.get(f"{fixture_api_url}/labels").json()["totals_note"]
 
     page = _home(monkeypatch, fixture_api_url)
