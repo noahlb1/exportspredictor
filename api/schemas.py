@@ -101,8 +101,8 @@ class Labels(BaseModel):
     # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
     illustrative: Caveat
     caution: str  # the grey line under every page heading: figures are associations, not causes or forecasts
-    # What Export Potential, Actual Exports, Export Gap and Opportunity Type mean, by row field, for tooltips;
-    # those that name the Gap Period take its label from the artefact (`wording.term_definitions`)
+    # What each key term means, by key, for every page's tooltips and `?` help; those that name the Gap Period or
+    # the Baseline year take them from the artefact (`wording.term_definitions`)
     terms: dict[str, str]
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
     totals_note: TotalsNote  # beside every summed figure: Export Potential is median-type, so totals understate

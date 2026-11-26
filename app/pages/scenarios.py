@@ -40,6 +40,7 @@ from app.frame import page
 from app.tables import (
     ONE_DECIMAL,
     caveats_column,
+    market_column,
     millions,
     millions_unit,
     money_column,
@@ -57,6 +58,7 @@ from app.ui import (
     run_scenario,
     scenario_note,
     show_caveats,
+    term,
 )
 
 PRESET = "Trading Bloc preset"
@@ -148,12 +150,8 @@ def columns(year: int) -> dict:
     word = illustrative().capitalize()
     return {
         "Product": product_column(),
-        "Market": st.column_config.TextColumn("Market", help="The Market the UK exports to."),
-        "Scenario Effect": money_column(
-            "Scenario Effect",
-            f"Scenario Export Potential minus Baseline Export Potential, {year}: the change the model associates "
-            f"with the Scenario, holding everything else at the Baseline. {word}.",
-        ),
+        "Market": market_column(width=None),
+        "Scenario Effect": money_column("Scenario Effect", term("scenario_effect")),
         "Effect, % of Baseline": st.column_config.NumberColumn(
             "Effect, % of Baseline",
             help=f"The Scenario Effect as a share of Baseline Export Potential. {word}.",
@@ -164,9 +162,8 @@ def columns(year: int) -> dict:
         "Pairs changed": st.column_config.NumberColumn(
             "Pairs changed", help="Product–Market pairs whose Export Potential the Scenario changes."
         ),
-        "Tariff, Baseline %": tariff_column(year, label="Tariff, Baseline %"),
+        "Tariff, Baseline %": tariff_column(label="Tariff, Baseline %"),
         "Tariff, Scenario %": tariff_column(
-            year,
             label="Tariff, Scenario %",
             help="The Applied Tariff under the Scenario, in percent, held within the range the model was trained on. "
             "Blank where it is not known.",

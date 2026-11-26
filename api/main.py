@@ -163,8 +163,8 @@ def create_app(
     @app.get("/labels", response_model=Labels)
     def labels(artefacts: store.Artefacts = Depends(loaded)):
         """The wording and options the app shows: unit, Opportunity Types, caveats, the last tariff year, the
-        caution line under every page heading, the term definitions (with the artefact's Gap Period) and the note beside
-        every summed figure, with the share of Actual Exports the artefact records."""
+        caution line under every page heading, the term definitions (with the artefact's Gap Period and Baseline
+        year) and the note beside every summed figure, with the share of Actual Exports the artefact records."""
         share = artefacts.potential_share_of_actual_exports
         return Labels(
             usd_caption=USD_CAPTION,
@@ -174,7 +174,7 @@ def create_app(
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
             caution=CAUTION,
-            terms=term_definitions(gap_period_label(artefacts.gap_years)),
+            terms=term_definitions(gap_period_label(artefacts.gap_years), artefacts.baseline_year),
             max_rows=MAX_ROWS,
             totals_note=TotalsNote(
                 potential_share_of_actual_exports=share,

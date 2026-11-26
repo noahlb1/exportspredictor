@@ -26,7 +26,6 @@ from app import client, panel
 from app.filters import Filters, leaderboard_filters, show_all, show_chips
 from app.format import format_usd
 from app.frame import page
-from app.panel import MARKET_REACH_HELP
 from app.tables import (
     LEADERBOARD_FORMATS,
     LEADERBOARD_RIGHT,
@@ -44,6 +43,7 @@ from app.ui import (
     labels,
     rank_orders,
     read_limit,
+    term,
 )
 from app.views import BY_MARKET, Grouping, Layout, show
 
@@ -96,7 +96,7 @@ def _left_helps(body: dict) -> tuple[str, str]:
 def _market_reach(grouping: Grouping, body: dict) -> None:
     """Above the chosen Market's Products: its Market Reach sentence (ADR 0010)."""
     if grouping.view == BY_MARKET and body.get("market_reach"):
-        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
+        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=term("market_reach"))
 
 
 def _layout(filters: Filters) -> Layout:
