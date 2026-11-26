@@ -45,6 +45,10 @@ Every model and tuning choice is planned around this machine. Training uses XGBo
 - **Money carries its unit**: `_usd` or `_gbp` on every parameter, column and field. A bare `min_gap` hides which.
 - **Domain names come from GLOSSARY.md**, including for derived columns (a column holding the Blocked Opportunity value says so). Vocabulary from a source's own format (BACI's or HMRC's "partner") is fine where the code describes that source.
 
+## Writing
+
+- **Concise and tight, everywhere**: app text and help, model-evaluation text, the How the model works page, the notebook's prose, docs, docstrings and ticket comments. Say it once, in as few words as carry the meaning. Cut preamble, restated headings, stacked hedges and lists of everything considered. A rewrite is no longer than what it replaces unless it adds a missing unit, period or explanation. Agents tend to over-write: draft, then cut by about a third.
+
 ## Leakage
 
 - **Check indirect paths.** Beyond the explicit leave-one-out features, ask whether an aggregate built from other rows (Market demand, income shares, RCA) still contains the held-out UK Flow. Note any such path in ADR 0001 or the notebook rather than leaving it implicit.
