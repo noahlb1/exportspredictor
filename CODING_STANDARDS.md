@@ -47,7 +47,7 @@ Every model and tuning choice is planned around this machine. Training uses XGBo
 
 ## Writing
 
-- **Concise and tight, everywhere**: app text and help, model-evaluation text, the How the model works page, the notebook's prose, docs, docstrings and ticket comments. Say it once, in as few words as carry the meaning. Cut preamble, restated headings, stacked hedges and lists of everything considered. A rewrite is no longer than what it replaces unless it adds a missing unit, period or explanation. Agents tend to over-write: draft, then cut by about a third.
+- **Concise and tight, everywhere**: app text and help, model-evaluation text, the How the Model Works page, the notebook's prose, docs, docstrings and ticket comments. Say it once, in as few words as carry the meaning. Cut preamble, restated headings, stacked hedges and lists of everything considered. A rewrite is no longer than what it replaces unless it adds a missing unit, period or explanation. Agents tend to over-write: draft, then cut by about a third.
 
 ## Leakage
 

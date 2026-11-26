@@ -66,7 +66,7 @@ def prose() -> list[tuple[str, str]]:
 
 
 def how_it_works_text() -> list[str]:
-    """The How the model works page's text, as the API serves it to the app."""
+    """The How the Model Works page's text, as the API serves it to the app."""
     return [
         getattr(idea, field)
         for section in how_it_works.sections(ModelForm(naive_weight=0.3), non_uk_rate=None)
@@ -138,7 +138,7 @@ GAP_YEARS, BASELINE_YEAR = (2022, 2024), 2024
 
 def app_text() -> str:
     """Every string literal in `app/` (f-strings' fixed parts included), every term explanation the app shows, and the
-    package text it shows as served: the Caveat Tiers' caveats and the How the model works page."""
+    package text it shows as served: the Caveat Tiers' caveats and the How the Model Works page."""
     texts = list(term_definitions(GAP_YEARS, BASELINE_YEAR).values())
     texts += [tier.text for tier in TIERS]
     texts += how_it_works_text()

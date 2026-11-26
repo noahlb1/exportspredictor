@@ -85,7 +85,7 @@ class CaveatTierOut(BaseModel):
 
 
 class HowItWorks(BaseModel):
-    """The How the model works page (`exportspredictor.how_it_works`), worded for the served artefact."""
+    """The How the Model Works page (`exportspredictor.how_it_works`), worded for the served artefact."""
 
     intro: str  # under the page heading
     layers: dict[str, str]  # each layer's field on an idea and its expander label, in the order a reader opens them
@@ -106,7 +106,7 @@ class Labels(BaseModel):
     usd_caption: str  # every value's unit, said once per page
     usd_unit: str  # the unit in column headings, e.g. "Export Gap (USD, nominal)"
     opportunity_types: list[str]  # Expand, New Market, New Product (GLOSSARY.md)
-    last_tariff_year: int  # tariff data end here; later years carry it forward, and Scenarios restore its MFN rate
+    last_tariff_year: int  # the tariff data ends here; later years carry it forward, and Scenarios restore its MFN rate
     tariff_carried_forward: str  # the caveat of a carried-forward Applied Tariff (ADR 0006)
     # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
     illustrative: Caveat

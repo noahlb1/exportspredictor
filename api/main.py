@@ -187,7 +187,7 @@ def create_app(
 
     @app.get("/how-it-works", response_model=HowItWorks)
     def how_the_model_works(artefacts: store.Artefacts = Depends(loaded)):
-        """The How the model works page's text, worded for the served Model Form and the artefact's sampling rate."""
+        """The How the Model Works page's text, worded for the served Model Form and the artefact's sampling rate."""
         return HowItWorks(
             intro=how_it_works.INTRO,
             layers=how_it_works.LAYERS,

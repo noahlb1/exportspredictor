@@ -1650,7 +1650,7 @@ def test_evaluation_without_the_itc_comparison_omits_it_and_lists_the_part_as_no
     assert "python -m exportspredictor.realisation" in part["text"]
 
 
-# --- How the model works -------------------------------------------------------------------------------------------
+# --- How the Model Works -------------------------------------------------------------------------------------------
 
 
 def test_how_the_model_works_serves_its_outline_of_ideas_and_layers(client):

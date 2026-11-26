@@ -1,10 +1,10 @@
-"""The How the model works page, as a visitor sees it through the router: last in the menu, the full outline of
+"""The How the Model Works page, as a visitor sees it through the router: last in the menu, the full outline of
 ideas with a one-line summary each, and the layers beneath each written idea."""
 
 from streamlit.testing.v1 import AppTest
 
 PAGE = "pages/how_the_model_works.py"
-TITLE = "How the model works"
+TITLE = "How the Model Works"
 
 
 def test_the_page_is_last_in_the_menu_and_renders_under_its_title(open_page, fixture_api_url, menu):

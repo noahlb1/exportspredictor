@@ -644,8 +644,8 @@ def tariff_split_text(accuracy_by_scope: Mapping[str, dict], test_year: int) -> 
     observed, imputed = split["observed"]["rows"], split["imputed"]["rows"]
     if observed == 0:
         return (
-            f"Every {test_year} UK pair uses an Applied Tariff carried forward from {LAST_TRAINS_YEAR}, because tariff "
-            f"data end in {LAST_TRAINS_YEAR}, so no test row has an observed tariff to compare with: all the accuracy "
+            f"Every {test_year} UK pair uses an Applied Tariff carried forward from {LAST_TRAINS_YEAR}, because the tariff "
+            f"data ends in {LAST_TRAINS_YEAR}, so no test row has an observed tariff to compare with: all the accuracy "
             f"above is measured on carried-forward tariffs."
         )
     return (

@@ -1,4 +1,4 @@
-"""The text of the How the model works page: its outline of ideas, each with a one-sentence summary and up to three
+"""The text of the How the Model Works page: its outline of ideas, each with a one-sentence summary and up to three
 layers (what it is, why this project uses it, how it is done here).
 
 `sections(form, non_uk_rate)` words it for a served artefact: its settings come from the package's constants and the

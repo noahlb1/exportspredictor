@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 
 from exportspredictor import artefacts as store
 
-MENU = ["Leaderboard", "Blocked Opportunities", "Scenario Builder", "Model Evaluation", "How the model works"]
+MENU = ["Leaderboard", "Blocked Opportunities", "Scenario Builder", "Model Evaluation", "How the Model Works"]
 # Every page that shows figures, by the path the router declares it with (None: the default page).
 PAGES = {
     "Leaderboard": None,

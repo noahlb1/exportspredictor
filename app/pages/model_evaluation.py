@@ -195,7 +195,7 @@ def _show_tariff_split(report: dict) -> None:
             st.markdown(f"**{label}**")
             st.dataframe(_tariff_table(split, year), hide_index=True)
     st.caption(
-        f"Tariff data end in {year}, so later years reuse each pair's {year} Applied Tariff, or 0 where a Trade "
+        f"The tariff data ends in {year}, so later years reuse each pair's {year} Applied Tariff, or 0 where a Trade "
         f"Agreement entered force after {year}. Splitting the test rows this way shows what carrying {year} forward costs."
     )
 
