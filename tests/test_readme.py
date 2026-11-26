@@ -1,16 +1,19 @@
-"""The README's manual UI checklist keeps up with the app: every page, a Scenario run and a CSV export."""
+"""The README and the manual UI checklist (docs/ui-checklist.md) keep up with the app and the rebuild script."""
 
 import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 README = REPO / "README.md"
+CHECKLIST = REPO / "docs" / "ui-checklist.md"
 
 
 def _checklist() -> str:
-    text = README.read_text(encoding="utf-8")
-    section = text.split("## Manual UI checklist", 1)[1]
-    return section.split("\n## ", 1)[0]
+    return CHECKLIST.read_text(encoding="utf-8")
+
+
+def test_the_readme_links_to_the_checklist():
+    assert "(docs/ui-checklist.md)" in README.read_text(encoding="utf-8")
 
 
 def _page_titles() -> list[str]:
@@ -22,7 +25,7 @@ def _page_titles() -> list[str]:
 def test_checklist_names_every_app_page():
     checklist = _checklist()
     missing = [title for title in _page_titles() if title not in checklist]
-    assert not missing, f"Add these pages to the README's manual UI checklist: {missing}"
+    assert not missing, f"Add these pages to docs/ui-checklist.md: {missing}"
 
 
 def test_checklist_covers_a_scenario_run_and_a_csv_export():
@@ -95,7 +98,7 @@ def test_checklist_mentions_no_removed_page():
     checklist = _checklist()
     removed = ["Why?", "Product to Markets", "Product → Markets", "Market to Products", "Market → Products"]
     named = [title for title in removed if title in checklist]
-    assert not named, f"The README checklist still names removed pages: {named}"
+    assert not named, f"docs/ui-checklist.md still names removed pages: {named}"
 
 
 def test_checklist_covers_the_market_reach_sentence_in_the_market_view_and_the_panel():

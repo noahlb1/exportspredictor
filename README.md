@@ -4,49 +4,68 @@ A model that learns from global HS6 goods trade to estimate the UK's **Export Po
 
 Results are associations the model has learned, not causes.
 
-The served model is the **Blend** with **Market Reach**: Export Potential blends an XGBoost model (weight 0.7) with the Naive Baseline (weight 0.3) on the log scale, then scales every UK pair in a Market by how widely the UK already sells there (ADR 0010). It was chosen on one measure, the **Selection Measure** (how well it ranks Markets for each Product on held-out UK pairs in 2022), by an experiment loop in which a change was kept only if it beat the Win Threshold (ADR 0008, [research note](docs/research/opportunity-ranking-experiments.md)). On 2023, read once, it ranks UK Markets at 0.600 on the tie-proof measure, above the Naive Baseline (0.514), the Blend served before it (0.555), v1 (0.540) and v2 (0.511). The cost is accuracy on size: its Tweedie deviance is higher than the Blend's and v2's, so dollar values deserve more caution than rankings. Scenario Effects and Blocked Opportunity values are **Illustrative**: upper-end associations shown beside a PPML gravity benchmark and the Event Backtests, never forecasts.
+**The served model** is the **Blend** with **Market Reach**. Export Potential blends an XGBoost model (weight 0.7) with the Naive Baseline (weight 0.3) on the log scale, then scales every UK pair in a Market by how widely the UK already sells there (ADR 0010). An experiment loop chose it on the **Selection Measure**, how well it ranks Markets for each Product on held-out UK pairs in 2022, keeping a change only if it beat the Win Threshold (ADR 0008, [research note](docs/research/opportunity-ranking-experiments.md)).
 
-**Known limitation: which form the 2023 figures were read on.** The 2023 figures above were read once (Test-year Ledger, fingerprint `a748777eac4b`) on Market Reach's first form, which let a Market's share exceed 1. The served version carries the corrected form (sent nested in imported, chosen again on 2022: ADR 0010, Amendment), a new Configuration Fingerprint that has not read 2023 itself (ADR 0009). Its own 2023 figures come from the next frozen version's one read. The model card and the Model Evaluation page's limitations say the same.
+**Results on 2023, read once**: how well each version ranks UK Markets, on the tie-proof measure.
 
-**Known limitations from the output review.** A reviewer who had not seen the code read the served outputs before release. Three limitations it found are now in the model card and the Model Evaluation page:
+| Version | UK ranking |
+| --- | --- |
+| Blend with Market Reach (served) | 0.600 |
+| Blend | 0.555 |
+| v1 | 0.540 |
+| Naive Baseline | 0.514 |
+| v2 | 0.511 |
+
+The cost is accuracy on size: its Tweedie deviance is higher than the Blend's and v2's, so trust rankings more than dollar values. Scenario Effects and Blocked Opportunity values are **Illustrative**: upper-end associations shown beside a PPML gravity benchmark and the Event Backtests, never forecasts.
+
+**Known limitations**, also in the model card and on the Model Evaluation page:
+
+- **The 2023 figures were read on Market Reach's first form**, which let a Market's share exceed 1 (Test-year Ledger, fingerprint `a748777eac4b`). The served version carries the corrected form, chosen again on 2022 (ADR 0010, Amendment). That is a new Configuration Fingerprint, which has not read 2023 (ADR 0009); its figures come from the next frozen version's one read.
 - **The Potential Range lies below Export Potential for small pairs** (under about $8k). Most comparable pairs of that size trade nothing, and Export Potential is an average that the few which do trade pull up.
-- **A Tariff part is not a tariff elasticity.** The model's response to a tariff is more a step than a slope, so removing a tariff of 1% or less can be associated with a rise of tens of percent (turbo-jets to China: +37%). Read it as Illustrative.
+- **A Tariff part is not a tariff elasticity.** The model's response to a tariff is more a step than a slope, so removing a tariff of 1% or less can be associated with a rise of tens of percent (turbo-jets to China: +37%).
 - **Some Trade Agreements carry most-favoured-nation tariffs.** TRAINS records no preferential rates for some agreements in force, among them Canada's and Israel's, and none for UK goods under the UK–Türkiye agreement, so those pairs read as dutiable.
 
-The model underneath is v2's: it trains on the top 100 Exporters into every Market, leaves out Excluded Products, uses the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. Its feature files fill GDP and population for small Markets that lacked them; an Exporter count feature was tried on 2022 and dropped. The notebook and the model card (`model_card.md` in the artefact folder) give the detail.
+The last three come from a review of the served outputs by a reader who had not seen the code.
 
-## Run the app (one command)
+The model underneath is v2's: it trains on the top 100 Exporters into every Market, leaves out Excluded Products, uses the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. The notebook and the model card (`model_card.md` in the artefact folder) give the detail.
 
-You need [podman](https://podman.io/) with `podman compose`, and a trained artefact folder in `./artefacts` (see [Rebuild the data](#rebuild-the-data-and-artefacts); a fixture run takes seconds).
+## Run the app
+
+You need [podman](https://podman.io/) with `podman compose`, and a trained artefact folder in `./artefacts` (see [Rebuild the data and artefacts](#rebuild-the-data-and-artefacts)).
 
 ```powershell
 podman compose up --build
 ```
 
-Then open <http://localhost:8501>.
+Then open <http://localhost:8501>. Stop with `Ctrl+C` or `podman compose down`.
 
-- The API starts first, on <http://localhost:8000>. It reports healthy only once it has loaded the artefacts: up to a minute for the real artefact, whose five fold models take 1.7 GB. `/health` names the artefact version, its format (4) and the Gap Period.
-- The app starts only after the API is healthy.
-- `./artefacts` is mounted read-only into the API container, so a new artefact version needs only `podman compose restart api`, not a rebuild.
-- Stop with `Ctrl+C`, or run `podman compose down`.
-- On Windows, podman runs in a virtual machine: if `podman compose` cannot connect after a reboot, run `podman machine start`.
+- The API (<http://localhost:8000>) reports healthy once it has loaded the artefacts: up to a minute for the real artefact, whose five fold models take 1.7 GB. The app starts after it.
+- `./artefacts` is mounted read-only, so a new artefact version needs only `podman compose restart api`.
+- On Windows, if `podman compose` cannot connect after a reboot, run `podman machine start`.
 
-If the app says the API is unavailable, check `podman compose logs api` and <http://localhost:8000/health>. The usual causes are an empty `./artefacts` folder, or a newest folder that is not artefact format 4 (such as a v1 folder, a format-2 folder from before the served Model Form was recorded, or a format-3 folder from before Market Reach, which `python -m exportspredictor.pipeline rereach` upgrades): the API serves only the lexically newest folder, and `/health` gives the reason it refused it.
+**If the app says the API is unavailable**, check `podman compose logs api` and <http://localhost:8000/health>, which gives the reason. The API serves only the lexically newest folder in `./artefacts`, and only artefact format 4. The usual causes are an empty folder or an older format; `python -m exportspredictor.pipeline rereach` upgrades format 3.
 
 ## Repo map
 
 **Start reading here:** the notebook, [`notebooks/exports_predictor.ipynb`](notebooks/exports_predictor.ipynb), argues the project from the data to the results; then the package, [`src/exportspredictor/`](src/exportspredictor/), holds the logic it calls.
 
-- `notebooks/`: the write-up.
-- `src/`: the package, `exportspredictor`: data loading, features, training, evaluation, Scenarios and prediction; its experiment loop is in `loop/`.
-- `api/`: the FastAPI service over the saved artefacts.
-- `app/`: the Streamlit app Advisors use.
-- `tests/`: the pytest suite, on a small fixture world.
-- `scripts/`: `rebuild.py` rebuilds every derived file and artefact the model, the app and the notebook depend on (below); `research/` holds the scripts behind the research notes; `gpu_check.py` measured the GPU row budget (ADR 0004); `wt.ps1` runs a command in a git worktree against the main checkout's environment.
-- `docs/`: the decision records in [`adr/`](docs/adr/), the research notes in [`research/`](docs/research/README.md) and the Test-year Ledger, `test-year-ledger.csv`.
-- `.githooks/`: the pre-push hook (ruff, pyright and the suite).
-- Top-level files: [GLOSSARY.md](GLOSSARY.md) (the project's terms), [CODING_STANDARDS.md](CODING_STANDARDS.md) (the modelling guardrails, the rules for each folder and the hardware budget), `Containerfile` and `compose.yaml` (the containers), `pyproject.toml` and `uv.lock` (the environment) and the presentation.
-- `data/` and `artefacts/` are not tracked: the rebuild makes them.
+| Path | What it holds |
+| --- | --- |
+| `notebooks/` | The write-up. |
+| `src/` | The package, `exportspredictor`: data loading, features, training, evaluation, Scenarios and prediction. Its experiment loop is in `loop/`. |
+| `api/` | The FastAPI service over the saved artefacts. |
+| `app/` | The Streamlit app Advisors use. |
+| `tests/` | The pytest suite, on a small fixture world. |
+| `scripts/` | `rebuild.py` rebuilds every derived file and artefact (below). `research/` holds the scripts behind the research notes, `gpu_check.py` measured the GPU row budget (ADR 0004), and `wt.ps1` runs a command in a git worktree against the main checkout's environment. |
+| `docs/` | The decision records in [`adr/`](docs/adr/), the research notes in [`research/`](docs/research/README.md) and the Test-year Ledger, `test-year-ledger.csv`. |
+| `.githooks/` | The pre-push hook: ruff, pyright and the suite. |
+| [GLOSSARY.md](GLOSSARY.md) | The project's terms. |
+| [CODING_STANDARDS.md](CODING_STANDARDS.md) | The modelling guardrails, the rules for each folder and the hardware budget. |
+| `Containerfile`, `compose.yaml` | The containers. |
+| `pyproject.toml`, `uv.lock` | The environment. |
+| `UK_Exports_Predictor_presentation.pptx` | The presentation. |
+
+`data/` and `artefacts/` are not tracked: the rebuild makes them.
 
 ## Development with uv
 
@@ -59,165 +78,91 @@ uv run uvicorn api.main:app --reload   # API on http://localhost:8000
 uv run streamlit run app/Home.py       # app on http://localhost:8501
 ```
 
-While the API runs, http://localhost:8000/docs lists every endpoint with its parameters and response fields, and lets you call each one from the browser to see the JSON the app reads. FastAPI generates the page itself.
+While the API runs, <http://localhost:8000/docs> lists every endpoint and lets you call each one from the browser.
 
 Settings are environment variables:
 
 | Variable | Default | Used by |
 | --- | --- | --- |
 | `EXPORTSPREDICTOR_DATA_DIR` | `<repo>/data` | data download and build steps, notebook |
-| `EXPORTSPREDICTOR_ARTEFACTS_DIR` | `<repo>/artefacts` | pipeline (writes the artefacts and the model card), notebook (reads; writes only its own fixture artefacts), API (reads) |
+| `EXPORTSPREDICTOR_ARTEFACTS_DIR` | `<repo>/artefacts` | pipeline (writes), API (reads), notebook (reads; writes only its fixture artefacts) |
 | `EXPORTSPREDICTOR_API_URL` | `http://localhost:8000` | app |
 
-Once per clone, enable the pre-push hook: `git config core.hooksPath .githooks`. It runs ruff, pyright and the full suite before every push (about 6 to 10 minutes).
-
-On Windows, set `PYTHONUTF8=1` before running Python. The default cp1252 encoding crashes on printing `£` or an accented Market name, and garbles UTF-8 files a tool opens without naming an encoding; subprocesses such as the notebook kernel inherit the setting, which `-X utf8` alone does not reach.
+- **Once per clone**, enable the pre-push hook: `git config core.hooksPath .githooks`. It runs ruff, pyright and the full suite before every push (6 to 10 minutes).
+- **On Windows**, set `PYTHONUTF8=1` before running Python. The default cp1252 encoding crashes on printing an accented Market name and garbles UTF-8 files. Subprocesses such as the notebook kernel inherit the variable, which `-X utf8` does not reach.
 
 ## Rebuild the data and artefacts
 
 ```powershell
-uv run python scripts/rebuild.py --list   # show the steps
-uv run python scripts/rebuild.py          # run them all, in order
+uv run python scripts/rebuild.py --list            # show the steps
+uv run python scripts/rebuild.py                   # run them all, in order
 uv run python scripts/rebuild.py --only notebook   # refresh the committed notebook's outputs only
 ```
 
-The script downloads every source and builds the derived Parquet in `EXPORTSPREDICTOR_DATA_DIR`. It then makes every modelling choice on the 2022 validation year (the feature ablation, the learning curve and the hyperparameter search), and `python -m exportspredictor.pipeline` trains the v2 fold models, evaluates them on 2023 and saves a new artefact version (format 4) in `EXPORTSPREDICTOR_ARTEFACTS_DIR`. That version serves the Model Form the experiment loop chose (`python -m exportspredictor.loop`, whose saved results the pipeline reads and records), and the pipeline writes `model_card.md` into its folder. To add the PPML gravity benchmark, which the script does not run, `python -m exportspredictor.ppml` derives a new version from the newest one with the benchmark saved beside it and its model card rewritten (about 25 minutes on the CPU, no training, the 2023 Flows not read). Last, it runs the notebook on the real data and saves the outputs into the committed file. `--only notebook` runs that step alone, and it is the one way to refresh the committed outputs; rerun it after any edit to the notebook. The script stops at the first step that fails. Long steps cache their results under `data/derived/`, so a re-run resumes rather than starting again.
+The script runs the steps below in order and stops at the first that fails. Long steps cache their results under `data/derived/`, so a re-run resumes. A full rebuild takes hours on the GPU; times are from the machine in [the hardware budget](CODING_STANDARDS.md#hardware-budget).
 
-The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild.py). The final round's experiments are not among them: they were run once, every idea was dropped, and the served model does not depend on them. The notebook reads their saved results, and [docs/research/final-round-2022.md](docs/research/final-round-2022.md) records the command behind each one. The times are from the machine in [CODING_STANDARDS.md's hardware budget](CODING_STANDARDS.md#hardware-budget).
+Every step runs as `python -m exportspredictor.<command>`. The steps are the list `STEPS` in [scripts/rebuild.py](scripts/rebuild.py).
 
-| Step | What it runs and what it costs |
-| --- | --- |
-| BACI Flows and lookups (download, convert to Parquet) | `python -m exportspredictor.baci`; idempotent, about 1.3 GB download, 30 s convert, 2.5 GB peak memory |
-| Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet) | `python -m exportspredictor.gravity`; needs the BACI step first (country codes); about 210 MB download, 40 s build |
-| Trade Agreement and Trading Bloc features (WTO RTA-IS download, build) | `python -m exportspredictor.policy`; skips the download if `raw/wto/AllRTAs.xlsx` exists; about 200 KB download, 2 s build |
-| Applied Tariffs (TRAINS download via WITS, HS17/HS07 -> HS12, EU schedule, gap fill) | `python -m exportspredictor.tariffs`; downloads UNCTAD TRAINS for 2012–2021 (about 1,300 files, 62 MB, resumable) and the UN HS 2017 and HS 2007 -> HS 2012 tables into `raw/trains/` and `raw/unsd/`, then writes `derived/tariffs/` (ADR 0006) |
-| Feature table (training rows with sampled zeros, UK grid; per year) | `python -m exportspredictor.features`; needs the four steps above; writes `derived/features_V202601/` (top-100 Exporter scope, every UK Zero Cell, 5% of other Zero Cells; about 5.7 GB), about 15 minutes, 14 GB peak memory |
-| HMRC OTS 2023 exports for the BACI cross-check (download, HS 2022 -> 2012) | `python -m exportspredictor.hmrc`; downloads HMRC's 2023 bulk export archive (36 MB) and the UN HS 2022 -> HS 2012 table into `raw/hmrc/` once, then writes `derived/hmrc_ots_2023.parquet` in a few seconds; used only by the notebook's cross-check, never by the model |
-| Experiment rows (Sector subset, 2012–2022) | `python -m exportspredictor.experiments build`; the rows the ablation and the learning curve share |
-| Feature ablation on 2022 (GPU) | `python -m exportspredictor.experiments ablation`; 2–4 minutes a model; results in `derived/experiments_V202601/results.json` |
-| Learning curve on 2022 (GPU) | `python -m exportspredictor.experiments curve`; nine models, about half an hour |
-| Hyperparameter search on 2022 (GPU, resumable, about 3 h) | `python -m exportspredictor.search`; Optuna TPE, the study in `derived/search_V202601/study.sqlite3`, so a killed run resumes |
-| Experiment loop on 2022: noise (GPU, resumable) | `python -m exportspredictor.loop noise`; trains v2's configuration with three seeds on fold 0; the Noise Floor and the Win Threshold every later Arm must beat; every Arm is judged on the Selection Measure, results in `derived/loop_V202601/results.json`, models cached |
-| Experiment loop on 2022: naive (GPU, resumable) | `python -m exportspredictor.loop naive`; the blend with the Naive Baseline (weight chosen from 0.1 to 0.9) and the starting-point model; scoring the blend trains nothing; every Arm is judged on the Selection Measure, results in `derived/loop_V202601/results.json`, models cached |
-| Experiment loop on 2022: select (GPU, resumable) | `python -m exportspredictor.loop select`; five configurations from the saved search and v1, each with its own blend weight; every Arm is judged on the Selection Measure, results in `derived/loop_V202601/results.json`, models cached |
-| Experiment loop on 2022: two-part (GPU, resumable) | `python -m exportspredictor.loop two-part`; a binary model of any Flow times a size model on non-zero Flows (two models); every Arm is judged on the Selection Measure, results in `derived/loop_V202601/results.json`, models cached |
-| Experiment loop on 2022: scope (GPU, resumable) | `python -m exportspredictor.loop scope`; UK Zero Cells sampled like other Exporters', then a 2% zero rate (two models); every Arm is judged on the Selection Measure, results in `derived/loop_V202601/results.json`, models cached |
-| Experiment loop on 2022: product-detail (GPU, resumable) | `python -m exportspredictor.loop product-detail`; three Product-level features, each added on its own (three models); every Arm is judged on the Selection Measure, results in `derived/loop_V202601/results.json`, models cached |
-| Experiment loop on 2022: constraints (GPU, resumable) | `python -m exportspredictor.loop constraints`; the best Arm without the monotone constraints (one model); every Arm is judged on the Selection Measure, results in `derived/loop_V202601/results.json`, models cached |
-| Five-fold confirmation of the loop's best form on 2022 (GPU, resumable, about 1 h) | `python -m exportspredictor.loop confirm`; the best Arm against v2 on every held-out UK pair of five folds; the pipeline serves the form the loop chose and records these results in the artefact |
-| Train the fold and test-year models, evaluate and save the artefacts (GPU, about 2.5 h) | `python -m exportspredictor.pipeline`; trains the five fold models (about 75 minutes), scores the 2022–2024 Gap Period and the Potential Range, trains and evaluates the 2023 test-year models (about 75 minutes), reads the v1 comparison's primary metric from the frozen v1 tables (no training), and saves a new artefact version. Before it evaluates, it records the 2023 read in the Test-year Ledger, which may refuse it (the test-year rule in [CODING_STANDARDS.md](CODING_STANDARDS.md#modelling-guardrails)); commit the ledger with the run. The Event Backtests (Lift included), the monotone-constraint comparison and the gain ladder each run only when asked for: `--event-backtests`, `--constraint-comparison`, `--gain-ladder`, or `--every-part` for all three (together about two more hours). The evaluation, the Model Evaluation page and the model card show a skipped part as not run for this version. Fold, test-year, backtest and ladder models are cached under `data/derived/`, so a re-run only scores. `python -m exportspredictor.pipeline compare` adds the v1 comparison with its gain ladder to a copy of the newest version, which must hold the Event Backtests |
-| The notebook (reads the saved artefact) | runs `notebooks/exports_predictor.ipynb` with `EXPORTSPREDICTOR_FIXTURE_MODE=0` and saves its outputs in place (`--only notebook` runs this step alone). It reads saved results only (the newest artefact, its model card and PPML benchmark, and the experiment loop's results) and trains nothing; about 2 minutes on the CPU |
+**1. Download the sources and build the features**
 
-A full rebuild of the artefacts takes hours on the GPU. To change the newest artefact without retraining, derive a new version from its saved fold models. An artefact missing a table that `artefacts.load` expects fails to load, so derive a new version after adding a table:
-- `python -m exportspredictor.pipeline refresh` copies the newest version with fresh metadata, in seconds.
-- `python -m exportspredictor.pipeline rerange` copies it with its Potential Range recomputed from the Baseline year's feature file (a few minutes on the CPU).
-- `python -m exportspredictor.pipeline recaveat` copies it with its Baseline marked again with the declared Caveat Tiers (seconds; run it after adding a tier or changing a tier's table).
-- `python -m exportspredictor.pipeline rereach` upgrades a format-3 version to format 4 with Market Reach.
+| Step | Command | Notes |
+| --- | --- | --- |
+| BACI Flows and lookups (download, convert to Parquet) | `baci` | Idempotent. 1.3 GB download, 30 s convert, 2.5 GB peak memory. |
+| Gravity and WDI features (download CEPII Gravity, WDI, IMF WEO; build Parquet) | `gravity` | Needs BACI's country codes. 210 MB download, 40 s build. |
+| Trade Agreement and Trading Bloc features (WTO RTA-IS download, build) | `policy` | Skips the download if `raw/wto/AllRTAs.xlsx` exists. 2 s build. |
+| Applied Tariffs (TRAINS download via WITS, HS17/HS07 -> HS12, EU schedule, gap fill) | `tariffs` | UNCTAD TRAINS for 2012–2021 (about 1,300 files, 62 MB, resumable); writes `derived/tariffs/` (ADR 0006). |
+| Feature table (training rows with sampled zeros, UK grid; per year) | `features` | Needs the four steps above. Writes `derived/features_V202601/` (5.7 GB): top-100 Exporter scope, every UK Zero Cell, 5% of other Zero Cells. 15 minutes, 14 GB peak memory. |
+| HMRC OTS 2023 exports for the BACI cross-check (download, HS 2022 -> 2012) | `hmrc` | 36 MB download. Used only by the notebook's cross-check, never by the model. |
 
-The experiment loop (`python -m exportspredictor.loop`) caches its models in `data/derived/loop_V202601/models` (about 9.5 GB), so a re-run trains only what it misses. Its `results.json` and `confirmation/` beside them must stay: the notebook and the pipeline read them. The loop's package docstring says how to add an Arm.
+**2. Make every modelling choice on 2022**
+
+| Step | Command | Notes |
+| --- | --- | --- |
+| Experiment rows (Sector subset, 2012–2022) | `experiments build` | The rows the ablation and the learning curve share. |
+| Feature ablation on 2022 (GPU) | `experiments ablation` | 2–4 minutes a model. Results in `derived/experiments_V202601/results.json`. |
+| Learning curve on 2022 (GPU) | `experiments curve` | Nine models, about half an hour. |
+| Hyperparameter search on 2022 (GPU, resumable, about 3 h) | `search` | Optuna TPE. The study is in `derived/search_V202601/study.sqlite3`. |
+| Experiment loop on 2022: noise (GPU, resumable) | `loop noise` | v2's configuration with three seeds on fold 0: the Noise Floor and the Win Threshold every later Arm must beat. |
+| Experiment loop on 2022: naive (GPU, resumable) | `loop naive` | The blend with the Naive Baseline (weight chosen from 0.1 to 0.9) and the starting-point model. |
+| Experiment loop on 2022: select (GPU, resumable) | `loop select` | Five configurations from the saved search and v1, each with its own blend weight. |
+| Experiment loop on 2022: two-part (GPU, resumable) | `loop two-part` | A binary model of any Flow times a size model on non-zero Flows. |
+| Experiment loop on 2022: scope (GPU, resumable) | `loop scope` | UK Zero Cells sampled like other Exporters', then a 2% zero rate. |
+| Experiment loop on 2022: product-detail (GPU, resumable) | `loop product-detail` | Three Product-level features, each added on its own. |
+| Experiment loop on 2022: constraints (GPU, resumable) | `loop constraints` | The best Arm without the monotone constraints. |
+| Five-fold confirmation of the loop's best form on 2022 (GPU, resumable, about 1 h) | `loop confirm` | The best Arm against v2 on every held-out UK pair of five folds. |
+
+Every Arm of the loop is judged on the Selection Measure. Its results are in `derived/loop_V202601/results.json` and its models are cached beside them in `models` (about 9.5 GB). Keep `results.json` and `confirmation/`: the notebook and the pipeline read them. The loop's package docstring says how to add an Arm.
+
+**3. Train, evaluate on 2023 and write up**
+
+| Step | Command | Notes |
+| --- | --- | --- |
+| Train the fold and test-year models, evaluate and save the artefacts (GPU, about 2.5 h) | `pipeline` | Trains the five fold models and the 2023 test-year models (about 75 minutes each), serves the Model Form the loop chose, and saves a new artefact version (format 4) with its `model_card.md`. |
+| The notebook (reads the saved artefact) | | Runs `notebooks/exports_predictor.ipynb` on the real data and saves its outputs into the committed file. It reads saved results only and trains nothing; about 2 minutes on the CPU. |
+
+### The pipeline step
+
+- **It reads 2023.** Before evaluating, it records the read in the Test-year Ledger, which may refuse it (the test-year rule in the [modelling guardrails](CODING_STANDARDS.md#modelling-guardrails)). Commit the ledger with the run.
+- **Three parts run only when asked for**: `--event-backtests` (Lift included), `--constraint-comparison` and `--gain-ladder`, or `--every-part` for all three (about two more hours). The Model Evaluation page and the model card show a skipped part as not run.
+- `python -m exportspredictor.pipeline compare` adds the v1 comparison with its gain ladder to a copy of the newest version, which must hold the Event Backtests.
+
+### Outside the script
+
+- **The notebook's outputs**: `uv run python scripts/rebuild.py --only notebook` is the one way to refresh them. Rerun it after any edit to the notebook.
+- **The PPML gravity benchmark**: `python -m exportspredictor.ppml` derives a new version from the newest one, with the benchmark saved beside it and the model card rewritten (about 25 minutes on the CPU; no training, and the 2023 Flows are not read).
+- **The final round's experiments** were run once and every idea was dropped, so the served model does not depend on them. The notebook reads their saved results; [docs/research/final-round-2022.md](docs/research/final-round-2022.md) records each command.
+
+### Change an artefact without retraining
+
+Each command copies the newest version into a new one, from its saved fold models. An artefact missing a table that `artefacts.load` expects fails to load, so derive a new version after adding a table.
+
+| Command | What changes | Cost |
+| --- | --- | --- |
+| `python -m exportspredictor.pipeline refresh` | Fresh metadata. | Seconds |
+| `python -m exportspredictor.pipeline rerange` | The Potential Range, recomputed from the Baseline year's feature file. | A few minutes, CPU |
+| `python -m exportspredictor.pipeline recaveat` | The Caveat Tiers on the Baseline. Run it after adding a tier or changing a tier's table. | Seconds |
+| `python -m exportspredictor.pipeline rereach` | Format 3 becomes format 4, with Market Reach. | |
 
 ## Manual UI checklist
 
-Run this before a release, against `podman compose up` with real artefacts, in a browser window 1280 px wide or wider (the app is designed for 1280 px and wider; phones are unsupported). Each item names its page and what to click. Tick each item.
-
-**UK Exports Predictor (every page)**
-- [ ] The menu lists five pages, Leaderboard, Blocked Opportunities, Scenario Builder, Model Evaluation and How the Model Works, with no group headings, and the app opens on the Leaderboard.
-- [ ] The logo tile (a white container ship on a blue square) sits alone at the top of the sidebar, shows in a collapsed sidebar, and is the browser-tab icon.
-- [ ] The app follows the computer's light or dark mode: in light mode, near-black text on a light page with a sidebar that stands apart; in dark mode, light text on a warm near-black page. Check captions, charts and the info, warning and error boxes in both.
-- [ ] Click something slow (e.g. a filter on the real Leaderboard): after a short delay the logo's ship rides the waves in the middle of the page until the app is done.
-- [ ] Every page shows, under its heading and introduction, the grey line "Figures are associations the model has learned, not causes or forecasts.", and, after a divider at the foot of the page, a grey footer stating the Baseline year (provisional data), that Export Gaps are 2022–2024 averages, "Values are nominal US dollars, as reported by BACI", and the model version. There is no blue banner, and no page shows a pound sign or a currency switch.
-- [ ] Stop the API (`podman compose stop api`) and reload: within a few seconds, every page shows a clear "API is unavailable" message instead of an error or a spinner. Start it again with `podman compose start api` and wait for <http://localhost:8000/health> to answer before reloading.
-- [ ] Narrow the browser window to about 700 px (half a laptop screen) and open each page: no page shows an error, though columns may stack or cut long names.
-
-**Leaderboard**
-- [ ] The Leaderboard opens without searching, listing UK Product–Market pairs by Export Gap, largest first, with no Excluded Product (e.g. no crude oil or gold) among them.
-- [ ] On the real artefact (about 1.16 M pairs), the Leaderboard loads, and responds to each filter change, within about a second.
-- [ ] The filters sit in the sidebar: Product search, Market, Sector (by name, e.g. "Beverages, spirits and vinegar"), Market region, Opportunity Type, UK Trade Agreement in force, minimum Export Gap, Hide Flagged Products, Hide Re-export Hubs, Hide Sanctioned Markets, Hide Restricted Pairs, Hide Offset Pairs and Rank by, then **Reset filters**.
-- [ ] One line above the table names the filters in force (or says there are none), "N pairs shown of M" and the total positive Export Gap ("2022–2024 average"); it changes with the filters. There is no row of summary metrics. A caption under it says Export Potential is a median-type estimate that sums to about N% of Actual Exports (N from the served artefact: about 80% before the rebuild that added Market Reach), so totals are relative sizes, not dollars the UK could add.
-- [ ] Each row shows its Opportunity Type (Expand, New Market or New Product), its Relative Export Gap, whether a UK Trade Agreement is in force (e.g. whisky: Japan Yes, India No), and any Flagged Product, Re-export Hub, Sanctioned Market, Restricted Pair or Offset Pair badge.
-- [ ] Export Potential, Actual Exports and Export Gap appear side by side, each headed "2022–2024 average"; values are in USD: column headers say "(USD, nominal)".
-- [ ] Switch "Rank by" to Relative Export Gap: a minimum Export Potential selector appears ($0, $100.0k, $1.0m, $10.0m, $100.0m; default $1.0m), pairs below it disappear, and pairs tied at 100% are ordered by Export Gap.
-- [ ] Search for a known HS6 code (e.g. `220830`, whisky) and for words (e.g. `smartphone` finds `851712`): the Product is chosen, and the table ranks its Markets by Export Gap, largest first. A prefix matching several Products (e.g. `8703`) offers each to choose from.
-- [ ] Search text that matches nothing (e.g. `zzz`) shows a clear "No Product matches" warning.
-- [ ] Search an Excluded Product (e.g. `gold`): it is marked "(Excluded Product)", and choosing it shows why it is not ranked and points to the Excluded Products section of Model Evaluation, instead of a ranking.
-- [ ] Choose a Market (e.g. Japan): the Markets table keeps only Japan, and its Products are ranked by Export Gap on the right. The region filter narrows the Market list. Above the chosen Market's Products, one **Market Reach** sentence says how many Products that Market imported from other Exporters in 2023, how many of them the UK sent too, and about how many were expected, with a tooltip saying it applies to every Product of the Market alike.
-- [ ] The Sector, region, Market, Opportunity Type, Trade Agreement, minimum-Gap and hide filters each narrow the rows; a filter matching nothing says so.
-- [ ] Search an aircraft Product (e.g. `880230`): every row carries the "Flagged Product" badge, and its detail panel's warning says "volatile: UK exports swing widely from year to year"; banknotes and stamps (`490700`) say "one-off: few, large contracts".
-- [ ] Search a jewellery Product (e.g. `711319`): every row carries the "Flagged Product" caveat badge, and the Netherlands, Hong Kong and other Re-export Hubs carry "Re-export Hub". "Hide Flagged Products" and "Hide Re-export Hubs" are off by default; ticking one removes exactly those rows.
-- [ ] Search whisky (`220830`): Saudi Arabia, Kuwait, Libya and Iran carry the "Restricted Pair" badge, and Russia, Belarus, North Korea and Syria carry "Sanctioned Market". "Hide Sanctioned Markets" and "Hide Restricted Pairs" are off by default; ticking one removes exactly those rows. The Blocked Opportunities page has the same two hide filters.
-- [ ] The top two rows, turbine parts (`841191`) to France and turbo-jets (`841112`) to Germany, carry the "Offset Pair" badge. "Hide Offset Pairs" is off by default; ticking it removes exactly the Offset Pairs (on the real artefact 21 of the top 100), keeps every other row's order, and the line above the table says "Offset Pairs hidden". The Blocked Opportunities page has the same filter.
-- [ ] Each filter you set appears in the page's URL (Product as its HS6 code, Market as its ISO3 code; defaults left out). Copy the URL into a fresh browser tab: the same filters and rows appear. A link naming one Product and one Market (e.g. `?product=220830&market=JPN`) leaves that one pair.
-- [ ] Set some filters, open another page from the menu and come back: the filters are still set.
-- [ ] **Reset filters** restores the full ranking and clears the filters from the URL (the view stays).
-- [ ] Each Leaderboard row shows its Potential Range as "low–high". No ranking page (Leaderboard, Blocked Opportunities) shows an "Uncertain Opportunity" badge or a filter for it; the Flagged Product and Re-export Hub badges and their hide filters are unchanged.
-- [ ] Export the Leaderboard to CSV and open it, unfiltered and with one Product or one Market chosen: the columns and rows match the table on screen.
-- [ ] The page opens **By Market**: Markets on the left, each with its number of pairs and total positive Export Gap, largest first (the totals add up to the line above), with the top Market chosen; its Products on the right (Export Gap, Export Potential, Actual Exports, Applied Tariff %, Relative Export Gap, UK Trade Agreement, Blocked Opportunity, Caveats), under a line naming the Market and its number of Products; and, under both tables at full page width, a detail panel already explaining that Market's top pair. Click any value of another Market: its row is tinted and its Products replace the first. Click any value of a Product: its row is tinted, and the panel explains that pair and starts from its top.
-- [ ] Choose the Market USA with no other filter: its Products table lists all its pairs, even though the page shows only the top 500 of the whole ranking.
-- [ ] Above the tables, a switch offers three views: **By Market** (the default), **By Product** and **Wide table**. In each, the chosen pair's detail panel sits under the tables at full page width.
-- [ ] Switch to **By Product**: Products on the left, each with its number of pairs and total positive Export Gap, largest first, with the top Product chosen; its Markets on the right (Market in place of Product, the other columns as By Market), under a line naming the Product and its number of Markets. Click any value of another Product: its Markets replace the first. With no filter, choose whisky (`220830`): every one of its Markets is listed, even though the page shows only the top 500 of the whole ranking.
-- [ ] Search a Product (e.g. `220830`) and switch to **By Product**: the Products table keeps only that Product. Choose a Market and switch back to **By Market**: the Markets table keeps only that Market.
-- [ ] Switch to **Wide table**: every shown pair (the top 500, or all with **Show all**) in one table across the page, with the wide columns (Applied Tariff % among them) and the others offered by Show/hide columns; the same pair stays selected and tinted, and its detail sits under the table. Switch back to **By Market**: still the same pair. In **By Product**, the pair stays chosen when the chosen Product is its Product; otherwise that Product's top pair is. Each of By Market and By Product keeps its own chosen Market or Product.
-- [ ] The view is in the URL: `?view=product` for By Product, `?view=wide` for Wide table, nothing for By Market. Copy a URL with `view=product` into a fresh tab: the page opens By Product. Open another page and come back: the view is kept. **Reset filters** leaves the view as it is.
-- [ ] Open `?product=902214&market=JPN` and switch to **Wide table**: Actual Exports of $18,882 show as `0.0` (a value under $50,000 rounds to 0.0 in $ millions), and the column still sorts as numbers.
-- [ ] Choose the Market USA (5,138 pairs) and turn on **Show all**: a row click answers in about a second.
-- [ ] The first visit shows three steps (Read the ranking, Open a pair, Narrow it down) above the tables, the second saying the panel is below the tables; **Got it** closes them, and **What is this?** beside the heading brings them back.
-
-**Blocked Opportunities**
-- [ ] Open Blocked Opportunities from the sidebar: it lists only Blocked Opportunities (2,128 on the served artefact, not every pair), with no "Rank by" toggle; the Leaderboard does not offer that order.
-- [ ] The line above the tables gives the filters in force, the number of Blocked Opportunities and their total value, labelled illustrative; one caption gives the unit ($ millions), the Baseline year, the fixed thresholds (20% and $1M), then the same median-type note as the Leaderboard's, with its N%.
-- [ ] A switch above the tables offers "By Market" (the default), "By Product" and "Wide table", as on the Leaderboard. By Market, the Markets table (Market, Blocked Opportunities, "Total value, illustrative"; its tooltip says illustrative too) is on the left, largest total first, with the top Market and its top Blocked Opportunity chosen. Above its Products table on the right, a line names the Market and its number of Products, then a line gives its total value, labelled illustrative. Click any value of another Market: its row is tinted, and the lines naming it and its Products table on the right follow.
-- [ ] Under the Markets table, a note says why a Market's total differs from a Scenario, with a link "Scenario Builder: a Trade Agreement with <Market>" for the chosen Market.
-- [ ] The right table (Product, Barrier, Actual Exports, Export Potential, With a Trade Agreement, Rise with agreement, Rise %, Tariff part, Above Export Potential) lists every Blocked Opportunity of the chosen Market, in the sidebar's order. By Product swaps the tables: Products on the left with their totals, and the chosen Product's Markets on the right, with Market in place of Product. The Wide table lists every Blocked Opportunity with both Product and Market.
-- [ ] Under the tables, across the full page width, the chosen pair's panel opens with a box naming the pair and its Barrier, then the before-and-after chart (Actual Exports, Export Potential, Export Potential with a Trade Agreement), the sentence splitting the rise into its Tariff part and Agreement part, the caveats, then the facts, factors and years. A pair chosen in one view stays chosen in another that shows it.
-- [ ] Choose By Product: the URL gains `?view=product`; opening that link opens By Product. The Leaderboard's view is kept apart.
-- [ ] The Export Gap appears nowhere on the page, apart from the footer every page shares.
-- [ ] The Sector, region, "Show only pairs worth at least…" and hide filters, and a Product search, each narrow the tables, the line and the CSV; Reset filters restores them, and they are kept apart from the Leaderboard's filters. There is no Market, Opportunity Type or Trade Agreement filter.
-- [ ] The Illustrative note sits in an expander ("Illustrative: what these figures are read against") under the tables, with the PPML gravity benchmark, the model's association and the Event Backtest, or says one was not run for this version.
-- [ ] Every caption describes the value as what the model associates with adding a Trade Agreement, not as a cause or a forecast.
-- [ ] Export the CSV and open it: every filtered Blocked Opportunity, across all Markets, in full dollars.
-
-**Scenario Builder**
-- [ ] The menu item reads "Scenario Builder" and opens the page at `/Scenario_Builder`; the subtitle starts with "Build a Scenario". On the Blocked Opportunities page, choose India and click "Scenario Builder: a Trade Agreement with India": the builder opens with Custom Trade Agreements adding India, not yet run.
-- [ ] Run a Trading Bloc preset Scenario (e.g. EU re-join). It returns within a few seconds. The summary sentence frames the result as an association and states no figure; the metrics beside it state the Scenario Effect and its share of Baseline once each, then come the change per Market and the top Products gaining. No caption under the summary repeats the association caveat.
-- [ ] Run the CPTPP preset: it shows a non-zero Scenario Effect (the 2024 Baseline has no UK CPTPP membership).
-- [ ] Add a Trade Agreement with the USA: the Blocked Opportunities metric and section show the same count and figures as the Blocked Opportunities page for the USA, in that page's Products table with a Market column, under the fixed rule (20% and $1M) the caption states. The caption says Sanctioned Markets, Restricted Pairs and Offset Pairs are hidden, links to the Blocked Opportunities page with them shown, and explains why the Scenario Effect (+$18.2bn) differs from the Market's Blocked Opportunity total ($13.1bn). Clicking a pair opens the Blocked Opportunities page's before/after panel. The builder has no threshold inputs.
-- [ ] Run a tariff change or EU re-join (which adds no Trade Agreement where none is in force): there is no Blocked Opportunities metric or section, only a line saying this Scenario adds none and stating the fixed rule (20% of Baseline Export Potential and $1M), with a link to the Blocked Opportunities page.
-- [ ] The builder sits in a box at the top and the page shows no result until **Run Scenario** is pressed. Change a control after a run: a line says the controls differ from the result shown.
-- [ ] Click any value of a Market row in Change per Market: that row is tinted, and the pairs most affected in that Market are listed under it, largest effect first; the top Market is selected on open.
-- [ ] Click any value of a pair in the drill-down (no pair is tinted before): that row is tinted, and a box under that table shows its caveats, its Baseline and Scenario Export Potential, the Scenario Effect and both Applied Tariffs. Its link opens the Leaderboard on that Product and Market.
-- [ ] The tables are in $ millions with the unit stated once above them. The caption above the tables says a Market or a pair can be clicked (not "any value": Top Products gaining cannot) and ends with the median-type note on summed Export Potential, with its N%.
-- [ ] The drill-down table has a Caveats column: add a Trade Agreement with Saudi Arabia, and its alcoholic beverages read "Restricted Pair" in the drill-down for Saudi Arabia; an Offset Pair's row reads "Offset Pair" there too.
-- [ ] A Scenario that changes nothing (e.g. adding an agreement with Japan, which already exists) says so in a neutral info box, not a warning; an invalid Scenario (Custom Trade Agreements with nothing chosen) is still a warning. The preset list leaves out a preset that changes nothing in the Baseline year (Leave, in 2024).
-- [ ] In tariff mode, set a tariff above the highest one in training for one Market (e.g. 5000% for the USA; on the real artefact the training range ends at 3,000%): the Scenario Effect is never a rise, and a neutral info box (not a warning) says the effect flattens beyond the training range. Removing a Trade Agreement (e.g. with Japan) shows the restored 2021 MFN tariff in the pair tables.
-- [ ] Set the USA's tariff to 10%: a line under the result says how many pairs it sets to 10%, how many it raises and how many it lowers (vehicles at 25% are lowered). Set a tariff of 5000%: the line names the rate the model reads, the edge of the training range, and counts against it.
-- [ ] After a run, the Illustrative note sits closed under the metrics, in the same expander as on the Blocked Opportunities page; opened, it states the EU–Japan Event Backtest result (predicted against observed).
-
-**Leaderboard: the detail panel**
-- [ ] The panel opens with the pair, its HS6, Sector and region, and its caveats: for a Flagged Product (naming its reason: Sector 71, volatile or one-off) or a Re-export Hub (e.g. `711319` to Hong Kong) a warning each, for a Sanctioned Market (e.g. any Product to Russia) a warning naming the regime and the year it became broad, for a Restricted Pair (e.g. whisky to Saudi Arabia) a warning naming what the Market prohibits, for an Offset Pair (e.g. turbine parts `841191` to France) a warning giving how far the UK sells above Export Potential in the other Products of the Heading, the four-digit Heading (8411) and the Product carrying most of it (turbo-jets), and saying the Export Gap may be trade recorded under a neighbouring Product, and for a pair whose Applied Tariff is carried forward (e.g. `300490` to India) that warning.
-- [ ] Export Potential, Actual Exports and Export Gap show as three figures ("2022–2024 average"), each with a tooltip in the API's wording.
-- [ ] The facts start with the Applied Tariff, then UK Trade Agreement in force and the Blocked Opportunity value (illustrative), then the Opportunity Type with its meaning, the Relative Export Gap and the Potential Range; the Potential Range's tooltip describes it in plain words (comparable pairs, never a confidence interval). There is no Potential Range bar and no Uncertain Opportunity warning.
-- [ ] Under the facts, the panel shows the pair's Market as one **Market Reach** sentence, the same as the Leaderboard's Market filter shows for that Market.
-- [ ] A pair with no UK Trade Agreement (e.g. whisky to India) shows **The Barrier**: its Applied Tariff and the amount the model associates with adding an agreement, marked Illustrative, as a warning when the pair is a Blocked Opportunity. A pair with an agreement (e.g. whisky to Japan) shows none.
-- [ ] The factors are described in plain words (no raw feature names), as a bar chart (raised in blue, lowered in red, values readable in light and dark mode) and a table, each marked as raising or lowering Export Potential, phrased as associations; **All factors** lists every one.
-- [ ] The year-by-year chart shows Actual Exports against Export Potential; **Figures by year** shows the last six years in $ millions with each year's Applied Tariff mark, and the three 2022–2024 yearly gaps average to the Export Gap.
-- [ ] Open a link naming one Product and one Market (e.g. `?product=220830&market=JPN`) in a fresh browser tab: the panel explains that pair.
-
-**Model Evaluation**
-- [ ] Four figures open the page: the rank correlation for UK pairs with the Naive Baseline's beside it, the share of Actual Exports inside the Potential Range against its 80% target, size-matched Lift, and ranking stability. Every section below is folded except "How accurate is the model?" and "Known limitations".
-- [ ] The "Excluded Products" section, just above "Known limitations", says how many Products are left out and why, lists each reason with its number of Products, and holds the full list (HS6, Product, Sector by name, reason) in an expander. No ranking page (Leaderboard, Blocked Opportunities) shows an Excluded Products list.
-- [ ] The plain-English accuracy headline renders, green if the model beats the naive baseline and amber with a plain warning if it does not, with the test year and the non-UK training sample stated below it.
-- [ ] Under the headline, a table sets every Market against the 30 largest and 60 largest importers, model against Naive Baseline, and a second table, "The same tie-proof measure on the largest Markets, beside earlier versions", lists this version, the Blend, v2, v1 and the Naive Baseline with a figure for the 30 largest Markets and the 60 largest Markets.
-- [ ] "How the model was chosen" ends with the UK ranking in 2023 beside the Naive Baseline and earlier versions: one row each for this version (Blend with Market Reach), the Blend, v2 and v1, with a column "UK ranking, old measure" and a column "UK ranking, tie-proof", both filled for every version.
-- [ ] "What Market Reach changes" states, with it and without it, the tie-proof and old measure, the 30 largest and 60 largest Markets, Lift and size-matched Lift, and the share of UK pairs inside their Potential Range, and says Scenario Effects are unchanged by it.
-- [ ] The metric tables (model against naive baseline) render for UK pairs and for all Exporters.
-- [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
-- [ ] "Observed against carried-forward tariffs" splits the test rows by Applied Tariff (observed, carried forward from 2021) for both scopes, with a sentence saying how they split (on 2023 every row is carried forward).
-- [ ] The stability sentence renders, followed by the Potential Range's held-out coverage against its 80% target, the share of Opportunities whose Actual Exports lie inside their Potential Range (92% on the served version), a coverage table by size of Export Potential (under $2m, $2m–10m, $10m–100m, over $100m), the share of UK pairs whose Actual Exports lie inside their Potential Range, and a coverage table per Exporter.
-- [ ] The known-limitations panel (the result limitations such as "Does not beat a naive ranking for UK pairs" when it does not, goods only, tariffs carried forward from 2021, Excluded Products, the top-100 Exporter scope, nominal US dollars, what the Potential Range assumes, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) renders, with no "no tariffs" entry.
-- [ ] The Lift section states how many times more often the largest Export Gaps grew, with a 95% interval, worded as a tendency, shows size-matched Lift next to raw Lift with the explanation that raw Lift mostly reflects pair size, and shows the growth share for each tenth of Export Gaps.
-- [ ] The Event Backtest shows, for EU exports to Japan and Japan's exports to the EU, a table of predicted against observed change per year, names the control Markets, says the Applied Tariff is 0 with the agreement on and the MFN rate with it off, and states the COVID caveat; the UK–Australia/New Zealand secondary check follows.
-
-**How the Model Works**
-- [ ] The page is last in the menu. Three headings (How the model is built, How the model is checked, What it produces and how it is served) each list their ideas in bold, with a one-sentence summary.
-- [ ] Under every idea of all three headings, three folded layers open: What it is, Why this project uses it, How it is done here. The boosting, Selection Measure, blend, Potential Range, Market Reach and gravity formulas render as maths. The page names no course notes and no ADR file.
-- [ ] The figures match the served model: "The data" states the 100 largest economies and the sampling rates (5% of Zero Cells, then about 59% of other Exporters' rows); "The blend with the Naive Baseline" the weights 0.7 and 0.3; "Market Reach" the strength 4; "The Potential Range" 80% and 20 bands.
+Run [docs/ui-checklist.md](docs/ui-checklist.md) before a release: it says what to click on every page of the app.

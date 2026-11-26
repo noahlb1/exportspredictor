@@ -56,4 +56,4 @@ Every model and tuning choice is planned around this machine. Training uses XGBo
 ## Tests
 
 - **Tests run on the fixture, on the CPU.** A test on real data or artefacts skips when they are absent (as `tests/test_policy.py` does) and stays fast; anything needing the GPU, the network or a retrain is a run evidenced in the ticket, not a test. The suite stays within about ten minutes; a test in pytest's `--durations` list that takes more than 10 s needs a reason.
-- **A schema change ships with a contract test** in `tests/test_api.py`, and a new page with its README checklist entry (enforced by `tests/test_readme.py`).
+- **A schema change ships with a contract test** in `tests/test_api.py`, and a new page with its entry in `docs/ui-checklist.md` (enforced by `tests/test_readme.py`).
