@@ -462,6 +462,70 @@ def test_the_served_report_leaves_out_the_v1_comparison_and_words_the_potential_
     assert saved["potential_range"]["text"] == "Worded when saved."  # the saved report is not changed
 
 
+SAVED = "Worded when saved."
+
+
+def _saved_prose(report: dict) -> dict:
+    """`report` with its Lift, Event Backtest and Market Reach prose as an older version saved it."""
+    block = report["event_backtest"]
+    events = [{**event, "text": SAVED} for event in block["events"]]
+    return {
+        **report,
+        "lift": {**report["lift"], "text": SAVED},
+        "event_backtest": {**block, "events": events, "text": SAVED},
+        "market_reach_effect": {**report["market_reach_effect"], "text": SAVED},
+    }
+
+
+def test_the_served_report_words_lift_the_event_backtests_and_market_reach_now(fixture_artefacts):
+    saved = _saved_prose(fixture_artefacts.evaluation)
+
+    served = evaluation.served_report(saved)
+
+    lift = served["lift"]
+    assert lift["text"] != SAVED and f"{lift['lift']:.1f} times as often" in lift["text"]
+    events = served["event_backtest"]["events"]
+    assert all(event["text"].startswith(f"{event['title']} (in force") for event in events)
+    assert served["event_backtest"]["text"] == events[0]["text"]  # the block says its primary event's result
+    reach = served["market_reach_effect"]
+    assert reach["text"].startswith("Market Reach is the change this version keeps.")
+    assert saved["lift"]["text"] == SAVED and saved["event_backtest"]["text"] == SAVED  # the saved report stands
+
+
+def test_an_older_report_without_a_figure_the_wording_reads_is_served_with_its_saved_text(fixture_artefacts):
+    saved = _saved_prose(fixture_artefacts.evaluation)
+    older = {
+        **saved,
+        "lift": {key: value for key, value in saved["lift"].items() if key != "size_matched"},
+        "event_backtest": {
+            **saved["event_backtest"],
+            "events": [{key: value for key, value in event.items() if key != "directions"}
+                       for event in saved["event_backtest"]["events"]],
+        },
+        "market_reach_effect": {key: value for key, value in saved["market_reach_effect"].items()
+                                if key != "selection_measure"},
+    }
+
+    served = evaluation.served_report(older)
+
+    assert served["lift"]["text"] == SAVED
+    assert served["event_backtest"]["text"] == SAVED
+    assert {event["text"] for event in served["event_backtest"]["events"]} == {SAVED}
+    assert served["market_reach_effect"]["text"] == SAVED
+
+
+def test_the_served_report_keeps_each_event_s_saved_states_without_their_adr_citation(fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    block = report["event_backtest"]
+    states = ["The states compared then (ADR 0006).", "The states compared later."]
+    events = [{**event, "states": state} for event, state in zip(block["events"], states, strict=False)]
+
+    served = evaluation.served_report({**report, "event_backtest": {**block, "events": events}})
+
+    expected = ["The states compared then.", "The states compared later."][: len(events)]
+    assert [event["states"] for event in served["event_backtest"]["events"]] == expected
+
+
 # --- Known limitations, worded for the served Model Form ---------
 
 

@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 from exportspredictor import realisation, scenarios
 from exportspredictor.caveats import TIERS, CaveatTier, caveat_texts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from exportspredictor.how_it_works import Section
 from exportspredictor.rankings import (
     BLOCKED,
     BLOCKED_ORDERS,
@@ -80,6 +81,15 @@ class CaveatTierOut(BaseModel):
     reason_column: str | None  # the row field holding each flagged row's reason, if the tier declares reasons
     row_text: str | None  # a flagged row's caveat text, with "{reason}" for its reason; `text` when absent
     hidden_by_default: bool  # whether the app's hide filter starts on (the query parameter itself defaults to off)
+    terms: dict[str, str]  # key terms `text` names that have their own explanation: name -> `/labels` `terms` key
+
+
+class HowItWorks(BaseModel):
+    """The How the model works page (`exportspredictor.how_it_works`), worded for the served artefact."""
+
+    intro: str  # under the page heading
+    layers: dict[str, str]  # each layer's field on an idea and its expander label, in the order a reader opens them
+    sections: list[Section]  # each a title and its ideas: name, one-sentence summary and Markdown layers
 
 
 class TotalsNote(BaseModel):

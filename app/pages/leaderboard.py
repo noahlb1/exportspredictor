@@ -115,7 +115,7 @@ def _layout(filters: Filters) -> Layout:
         total_heading="Total positive Export Gap",
         left_helps=_left_helps,
         frame=leaderboard_frame,
-        columns=leaderboard_columns,
+        columns=lambda body: leaderboard_columns(),
         formats=LEADERBOARD_FORMATS,
         right_columns=LEADERBOARD_RIGHT,
         wide_columns=LEADERBOARD_SHOWN,

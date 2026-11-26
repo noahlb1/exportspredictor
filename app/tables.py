@@ -230,9 +230,9 @@ def caveats_column() -> "st.column_config.TextColumn":
     )
 
 
-def leaderboard_columns(body: dict) -> dict:
-    """The column config of `leaderboard_frame`: a tooltip on every heading, each key term's from `term`."""
-    del body  # the terms carry the artefact's Baseline year and Gap Period
+def leaderboard_columns() -> dict:
+    """The column config of `leaderboard_frame`: a tooltip on every heading, each key term's from `term` (which carries
+    the artefact's Baseline year and Gap Period)."""
     return {
         "Product": product_column(),
         "Market": market_column(width=None),

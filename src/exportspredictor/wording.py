@@ -53,12 +53,9 @@ def term_definitions(gap_years: Sequence[int], baseline_year: int) -> dict[str, 
     `gap_years` are the artefact's first and last Gap Period years; `baseline_year` is its Baseline year.
     """
     from exportspredictor.illustrative import ILLUSTRATIVE  # it imports this module
-    from exportspredictor.scenarios import (  # it imports this module
-        BLOCKED_MIN_SHARE_TEXT,
-        BLOCKED_MIN_USD_TEXT,
-    )
+    from exportspredictor.scenarios import BLOCKED_RULE  # it imports this module
 
-    year, word, averaged = baseline_year, ILLUSTRATIVE.capitalize(), gap_period.label(gap_years)
+    year, word, averaged = baseline_year, ILLUSTRATIVE, gap_period.label(gap_years)
     product = (
         "One of about 5,000 goods categories in the Harmonized System, the international customs classification, at "
         "its six-digit level (HS6, 2012 edition)."
@@ -106,10 +103,7 @@ def term_definitions(gap_years: Sequence[int], baseline_year: int) -> dict[str, 
             "A named group of countries, such as the EU or CPTPP, whose members have Trade Agreements with each other."
         ),
         "customs_union": "A Trading Bloc whose members also charge the same tariffs on goods from outside.",
-        "blocked_opportunity": (
-            "The model associates adding a Trade Agreement with a rise in Export Potential of at least "
-            f"{BLOCKED_MIN_SHARE_TEXT} and {BLOCKED_MIN_USD_TEXT}, and Actual Exports are below that level."
-        ),
+        "blocked_opportunity": BLOCKED_RULE,
         "blocked_opportunity_value": (
             f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement where none is "
             f"in force (a known Applied Tariff goes to 0 with it); 0 where one is. {word}."
@@ -161,7 +155,8 @@ def term_definitions(gap_years: Sequence[int], baseline_year: int) -> dict[str, 
             "form; the old measure let tied predictions share a rank."
         ),
         "model_form": (
-            "How Export Potential is made: the model blended with the Naive Baseline, then scaled by Market Reach."
+            "How Export Potential is made from the model: alone or blended with the Naive Baseline, with or without "
+            "Market Reach."
         ),
         "lift": (
             "How many times more often pairs with the largest Export Gaps later grew than pairs picked at random. "

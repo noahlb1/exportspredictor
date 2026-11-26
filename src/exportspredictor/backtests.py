@@ -42,6 +42,7 @@ evaluation report as a new version. Trained models are cached under the data roo
 import hashlib
 import json
 import math
+import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -828,6 +829,25 @@ def event_text(report: dict) -> str:
     )
 
 
+def with_primary_text(block: dict) -> dict:
+    """An `event_backtest` block whose text is its primary event's (the first)."""
+    return {**block, "text": block["events"][0]["text"]}
+
+
+_ADR_CITATION = re.compile(r" \(ADR \d{4}\)")  # a visitor to the app cannot follow one
+
+
+def worded_now(block: dict) -> dict:
+    """A saved `event_backtest` block as served: each event's text worded now from its saved figures (`event_text`),
+    its saved `states` kept but for any ADR citation. Raises KeyError when an event lacks a figure the wording reads."""
+    events = [
+        {**event, "text": event_text(event)}
+        | ({"states": _ADR_CITATION.sub("", event["states"])} if "states" in event else {})
+        for event in block["events"]
+    ]
+    return with_primary_text({**block, "events": events})
+
+
 # --- Running every backtest ---------------------------------------------------------------------
 
 
@@ -923,12 +943,9 @@ def run(
     return {
         "lift": lift_result,
         **without,
-        "event_backtest": {
-            "events": events,
-            "text": events[0]["text"],
-            "caveat": events[0]["caveat"],
-            "seconds": round(time.perf_counter() - started, 2),
-        },
+        "event_backtest": with_primary_text(
+            {"events": events, "caveat": events[0]["caveat"], "seconds": round(time.perf_counter() - started, 2)}
+        ),
     }
 
 

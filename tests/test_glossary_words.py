@@ -16,6 +16,9 @@ import json
 import re
 from pathlib import Path
 
+from exportspredictor import how_it_works
+from exportspredictor.caveats import TIERS
+from exportspredictor.prediction import ModelForm
 from exportspredictor.wording import term_definitions
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,7 +61,18 @@ def prose() -> list[tuple[str, str]]:
                 docstring = ast.get_docstring(node)
                 if docstring:
                     texts.append((path.relative_to(ROOT).as_posix(), docstring))
+    texts += [("src/exportspredictor/how_it_works.py", text) for text in how_it_works_text()]
     return texts
+
+
+def how_it_works_text() -> list[str]:
+    """The How the model works page's text, as the API serves it to the app."""
+    return [
+        getattr(idea, field)
+        for section in how_it_works.sections(ModelForm(naive_weight=0.3), non_uk_rate=None)
+        for idea in section.ideas
+        for field in ("name", "summary", "what", "why", "how")
+    ]
 
 
 def test_prose_uses_glossary_terms_not_the_words_it_avoids():
@@ -123,8 +137,11 @@ GAP_YEARS, BASELINE_YEAR = (2022, 2024), 2024
 
 
 def app_text() -> str:
-    """Every string literal in `app/` (f-strings' fixed parts included) and every term explanation the app shows."""
+    """Every string literal in `app/` (f-strings' fixed parts included), every term explanation the app shows, and the
+    package text it shows as served: the Caveat Tiers' caveats and the How the model works page."""
     texts = list(term_definitions(GAP_YEARS, BASELINE_YEAR).values())
+    texts += [tier.text for tier in TIERS]
+    texts += how_it_works_text()
     for path in sorted((ROOT / "app").rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):

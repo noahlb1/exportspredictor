@@ -614,7 +614,8 @@ def test_the_blocked_opportunities_line_states_the_fixed_rule_in_the_adaptive_fo
 
     line = _blocked_heading_help(page)
     assert "20%" in line and "$1M" in line and "$1,000,000" not in line
-    assert "Actual Exports are below that level" in line  # a Blocked Opportunity needs room to grow
+    assert "no UK Trade Agreement in force" in line and "of Baseline" in line  # the full rule
+    assert "Actual Exports are below the level with the agreement" in line  # a Blocked Opportunity needs room to grow
 
 
 def test_the_page_says_what_a_trade_agreement_means_before_a_run(monkeypatch, api_url):

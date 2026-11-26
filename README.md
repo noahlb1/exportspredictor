@@ -219,4 +219,5 @@ Run this before a release, against `podman compose up` with real artefacts, in a
 
 **How the model works**
 - [ ] The page is last in the menu. Three headings (How the model is built, How the model is checked, What it produces and how it is served) each list their ideas in bold, with a one-sentence summary.
-- [ ] Under each idea of "How the model is built", three folded layers open: What it is, Why this project uses it, How it is done here. The boosting formula renders as maths. The page names no course notes and no ADR file.
+- [ ] Under every idea of all three headings, three folded layers open: What it is, Why this project uses it, How it is done here. The boosting, Selection Measure, blend, Potential Range, Market Reach and gravity formulas render as maths. The page names no course notes and no ADR file.
+- [ ] The figures match the served model: "The data" states the 100 largest economies and the sampling rates (5% of Zero Cells, then about 59% of other Exporters' rows); "The blend with the Naive Baseline" the weights 0.7 and 0.3; "Market Reach" the strength 4; "The Potential Range" 80% and 20 bands.

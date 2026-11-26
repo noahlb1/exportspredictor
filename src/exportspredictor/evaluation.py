@@ -46,7 +46,7 @@ import hashlib
 import json
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -129,23 +129,33 @@ def served_report(report: dict) -> dict:
     """An evaluation report as the API serves it: without the parts in `NOT_SERVED`, with today's names
     (`relabelled`) and with its prose worded now from the saved figures, not when saved: the Potential Range
     (`conformal.coverage_text`), Lift (`backtests.lift_text`), each Event Backtest (`backtests.event_text`) and
-    what Market Reach changes. The saved report is not changed."""
+    what Market Reach changes; a block saved without a figure that wording reads keeps its saved text. The saved
+    report is not changed."""
     served = {key: value for key, value in relabelled(report).items() if key not in NOT_SERVED}
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
     for key in ("lift", "lift_without_market_reach"):
-        if served.get(key) and "ci" in served[key]:  # a full Lift result, not a test's stub
-            served[key] = {**served[key], "text": backtests.lift_text(served[key])}
+        if served.get(key):
+            served[key] = _worded_now(served[key], lambda lift: {**lift, "text": backtests.lift_text(lift)})
     if (served.get("event_backtest") or {}).get("events"):
-        events = [{**event, "states": backtests.AGREEMENT_STATES, "text": backtests.event_text(event)}
-                  for event in served["event_backtest"]["events"]]
-        served["event_backtest"] = {**served["event_backtest"], "events": events, "text": events[0]["text"]}
+        served["event_backtest"] = _worded_now(served["event_backtest"], backtests.worded_now)
     if served.get("market_reach_effect"):
-        effect = {**served["market_reach_effect"], "scenario_effects": SCENARIO_EFFECTS_UNCHANGED}
-        served["market_reach_effect"] = {**effect, "text": market_reach_effect_text(effect, served["test_year"])}
+        served["market_reach_effect"] = _worded_now(
+            {**served["market_reach_effect"], "scenario_effects": SCENARIO_EFFECTS_UNCHANGED},
+            lambda effect: {**effect, "text": market_reach_effect_text(effect, served["test_year"])},
+        )
     if served.get(realisation.REPORT_KEY):
         served[realisation.REPORT_KEY] = realisation_wording.served(served[realisation.REPORT_KEY])
     return served
+
+
+def _worded_now(block: dict, word: Callable[[dict], dict]) -> dict:
+    """`word(block)`, or `block` with its saved text where an older version saved too few figures for today's wording."""
+    try:
+        return word(block)
+    except KeyError:
+        return block
+
 
 # The opt-in parts of a pipeline run (`pipeline.Parts`): title, the report
 # block that holds its result, and the switch that runs it. A part whose block is absent was skipped.
@@ -992,8 +1002,11 @@ def _with_served_uk_pair_coverage(report: dict) -> dict:
     coverage = {"with": served["with_market_reach"], "without": served["without_market_reach"]}
     if coverage["without"] is None:
         coverage["without"] = effect["uk_pair_coverage"]["without"]
-    block = {key: value for key, value in effect.items() if key != "text"} | {"uk_pair_coverage": coverage}
-    return {**report, "market_reach_effect": {**block, "text": market_reach_effect_text(block, report["test_year"])}}
+    block = _worded_now(
+        {**effect, "uk_pair_coverage": coverage},
+        lambda block: {**block, "text": market_reach_effect_text(block, report["test_year"])},
+    )
+    return {**report, "market_reach_effect": block}
 
 
 def stability(current: pl.DataFrame, previous: pl.DataFrame, *, top_n: int = STABILITY_TOP_N) -> dict:
@@ -1234,10 +1247,11 @@ def _ranking_figures(scored_grid: pl.DataFrame, flows: pl.DataFrame, year: int) 
     }
 
 
-# Why the Scenario Effect comparisons measure the model without Market Reach (ADR 0010).
-SCENARIO_EFFECTS_UNCHANGED = (
-    "It leaves Scenario Effects unchanged, as it scales a pair's Export Potential with and without a Scenario alike."
+# Why the Scenario Effect comparisons measure the model without Market Reach (ADR 0010), after its subject.
+_LEAVES_SCENARIO_EFFECTS = (
+    "leaves Scenario Effects unchanged, as it scales a pair's Export Potential with and without a Scenario alike."
 )
+SCENARIO_EFFECTS_UNCHANGED = f"It {_LEAVES_SCENARIO_EFFECTS}"
 
 
 def market_reach_effect(report: dict) -> dict | None:
@@ -1300,8 +1314,7 @@ def market_reach_effect_text(block: dict, test_year: int, *, figures: bool = Fal
         parts.append(
             f"The Potential Range holds {pair(block['uk_pair_coverage'], '.0%')} of UK pairs' Gap Period Actual Exports."
         )
-    unchanged = SCENARIO_EFFECTS_UNCHANGED.replace("It leaves", "Market Reach leaves", 1)
-    return " ".join([*parts, unchanged, ending])
+    return " ".join([*parts, f"Market Reach {_LEAVES_SCENARIO_EFFECTS}", ending])
 
 
 def _stability_text(result: dict, year: int, baseline_year: int) -> str:

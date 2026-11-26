@@ -86,6 +86,9 @@ class CaveatTier:
     # Whether the app's hide filter starts on: for pairs the UK cannot or should not pursue as ranked. The API's
     # query parameter still defaults to off, so a read shows every pair unless it asks otherwise.
     hidden_by_default: bool = False
+    # The key terms `text` names that have their own explanation, each (name, `wording.term_definitions` key): the
+    # hide filter's `?` explains them after the caveat.
+    terms: tuple[tuple[str, str], ...] = ()
 
     @property
     def reason_column(self) -> str | None:
@@ -227,6 +230,7 @@ OFFSET_PAIR = CaveatTier(
     ),
     row_text="Offset Pair: {reason}. " + _NEIGHBOURING_PRODUCT,
     hidden_by_default=True,
+    terms=(("Heading", "heading"),),
 )
 
 SANCTIONED_MARKET = sanctioned_market_tier()

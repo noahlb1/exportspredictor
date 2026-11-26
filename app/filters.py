@@ -459,11 +459,11 @@ def _sector(prefix: str = "") -> tuple[str | None, dict[str, str]]:
 
 def _hide(prefix: str = "") -> dict[str, bool]:
     """One checkbox per Caveat Tier, e.g. Hide Re-export Hubs: whether each is on, by its hide parameter. Its `?` is
-    the tier's caveat, with what a Heading is where the caveat names one."""
+    the tier's caveat, then what each key term it names means (the tier's `terms`)."""
     return {
         tier["hide_param"]: st.checkbox(
             f"Hide {tier['plural']}", key=f"{prefix}{tier['hide_param']}", persist_state="session",
-            help=tier["text"] + ("\n\n" + terms_help(("Heading", "heading")) if "Heading" in tier["text"] else ""),
+            help="\n\n".join([tier["text"], *(terms_help(term) for term in tier["terms"].items())]),
         )
         for tier in caveat_tiers()
     }

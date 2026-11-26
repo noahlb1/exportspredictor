@@ -43,6 +43,7 @@ from api.schemas import (
     FactorOut,
     Health,
     HistoryOut,
+    HowItWorks,
     Labels,
     LeaderboardQuery,
     LeaderboardSummary,
@@ -67,7 +68,7 @@ from api.schemas import (
     tiered,
 )
 from exportspredictor import artefacts as store
-from exportspredictor import market_reach, scenarios
+from exportspredictor import how_it_works, market_reach, scenarios
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
@@ -184,6 +185,15 @@ def create_app(
             blocked_rule=scenarios.BLOCKED_RULE,
         )
 
+    @app.get("/how-it-works", response_model=HowItWorks)
+    def how_the_model_works(artefacts: store.Artefacts = Depends(loaded)):
+        """The How the model works page's text, worded for the served Model Form and the artefact's sampling rate."""
+        return HowItWorks(
+            intro=how_it_works.INTRO,
+            layers=how_it_works.LAYERS,
+            sections=list(how_it_works.sections(artefacts.model_form, artefacts.metadata.get("non_uk_sampling_rate"))),
+        )
+
     @app.get("/caveats", response_model=list[CaveatTierOut])
     def caveats():
         """The Caveat Tiers (ADR 0005), in display order: each one's row field, badge, caveat text, key, hide filter
@@ -199,6 +209,7 @@ def create_app(
                 reason_column=tier.reason_column,
                 row_text=tier.row_text,
                 hidden_by_default=tier.hidden_by_default,
+                terms=dict(tier.terms),
             )
             for tier in tiers
         ]

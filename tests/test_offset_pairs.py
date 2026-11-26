@@ -211,6 +211,8 @@ def test_the_leaderboard_hides_offset_pairs_by_default_and_shows_their_badge_on_
     assert any("Offset Pairs are hidden by default" in element.value for element in page.main.caption)
     hide = page.sidebar.checkbox(key="hide_offset")
     assert hide.label == "Hide Offset Pairs" and hide.value is True
+    assert hide.help.startswith("Offset Pair: ") and "\n\n**Heading**: A four-digit Harmonized System group" in hide.help
+    assert "**Heading**" not in page.sidebar.checkbox(key="hide_hubs").help  # only a caveat naming one explains it
 
     hide.uncheck().run()
 
