@@ -1,6 +1,6 @@
 # Exclude Products whose Flows the model cannot explain; flag the rest of Sector 71 and Re-export Hubs
 
-In v1, the largest Export Gaps were dominated by crude oil, pipeline gas and gold. These Flows follow bullion-market and pipeline geography that the model cannot see, and gold's recorded values are the least reliable in the data: BACI and HMRC disagree badly on UK gold. ITC's Export Potential Map, the closest published analogue, excludes almost the same Products ([research note](https://github.com/noahlb1/exportspredictor/blob/research/misleading-products/docs/research/misleading-products.md)).
+In v1, the largest Export Gaps were dominated by crude oil, pipeline gas and gold. These Flows follow bullion-market and pipeline geography that the model cannot see, and gold's recorded values are the least reliable in the data: BACI and HMRC disagree badly on UK gold. ITC's Export Potential Map, the closest published analogue, excludes almost the same Products ([research note](../research/misleading-products.md)).
 
 v2 therefore has two tiers of Product treatment and one Market flag:
 
