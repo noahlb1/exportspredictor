@@ -59,6 +59,7 @@ from app.ui import (
     scenario_note,
     show_caveats,
     term,
+    terms_help,
 )
 
 PRESET = "Trading Bloc preset"
@@ -102,7 +103,7 @@ def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str
         st.caption(
             "Set the tariff chosen Markets charge on UK goods, in every Sector or only in chosen ones. "
             "Adding or removing a Trade Agreement changes the tariff too: adding one removes it, and removing one "
-            f"restores the Market's {labels()['last_tariff_year']} MFN rate."
+            f"restores the Market's {labels()['last_tariff_year']} standard (most-favoured-nation, MFN) rate."
         )
         tariff_markets = st.multiselect(
             "Markets that charge the tariff", list(market_names), format_func=market_names.get, key="tariff_markets"
@@ -248,17 +249,19 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     st.markdown(result["summary"])
     if result["clipped_pairs"]:
         st.info(
-            f"{result['clipped_pairs']:,} pairs were given a tariff beyond the training range, the "
-            "tariffs the model has seen. It is held at the edge of that range, so the Scenario Effect "
-            "flattens beyond it: the model associates no further change with a higher tariff."
+            f"{result['clipped_pairs']:,} pairs were given a tariff higher than any the model was trained on. It is "
+            "read as the highest one, so the model associates no further change with a higher tariff."
         )
     if result["tariff_directions"] is not None:
         st.markdown(result["tariff_directions"])
     total = result["total"]
     figures = st.columns([1, 1])[0]  # the metrics keep to half the width, as before the note moved under them
     metrics = figures.columns(3 if result["adds_agreement"] else 2)
-    metrics[0].metric(f"Scenario Effect, {word}", format_change(total["effect_usd"]))
-    metrics[1].metric("Share of Baseline", f"{total['effect_share']:+.1%}")
+    metrics[0].metric(
+        f"Scenario Effect, {word}", format_change(total["effect_usd"]),
+        help=terms_help(("Scenario Effect", "scenario_effect"), ("Illustrative", "illustrative")),
+    )
+    metrics[1].metric("Share of Baseline", f"{total['effect_share']:+.1%}", help=term("baseline"))
     if result["adds_agreement"]:
         metrics[2].metric("Blocked Opportunities", f"{result['blocked_count']:,}")
     scenario_note(result["note"])
@@ -284,7 +287,7 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     try:
         drilled = run_scenario(json.dumps(drill_body, sort_keys=True), client.api_url())
     except (client.InvalidRequest, client.ApiUnavailable) as error:
-        st.error(f"The drill-down failed: {error}")
+        st.error(f"This Market's pairs did not load: {error}")
     else:
         drill_key = f"drill_{run_key}_{iso3}"
         pair_table(drilled["top_pairs"], DRILL_PAIR, drill_key, year)
@@ -297,7 +300,7 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
     if result["adds_agreement"]:
         blocked_section(result, run_key)
     else:
-        st.markdown(result["blocked_note"])  # this Scenario adds none, then the fixed rule
+        st.markdown(result["blocked_note"])  # this Scenario adds none
         st.page_link(BLOCKED_PAGE, label="Open the Blocked Opportunities page", icon=":material/arrow_forward:")
 
 
@@ -307,7 +310,7 @@ def blocked_section(result: dict, run_key: str) -> None:
     Caveat Tiers shown, its Products table with a Market column and, once a pair is clicked, its shared panel."""
     rows = result["blocked_opportunities"]
     hidden = [tier for tier in caveat_tiers() if tier["hidden_by_default"]]
-    st.subheader("Blocked Opportunities")
+    st.subheader("Blocked Opportunities", help=term("blocked_opportunity"))
     st.caption(result["blocked_note"])
     if hidden:
         st.page_link(
@@ -328,6 +331,7 @@ with page(
     "Scenario Builder",
     "Build a Scenario (a Trading Bloc preset, Trade Agreements added or removed, or a tariff change) and see the "
     "change in UK Export Potential the model associates with it.",
+    intro_help=terms_help(("Scenario", "scenario"), ("Trading Bloc", "trading_bloc"), ("Customs Union", "customs_union")),
 ):
     try:
         presets = fetch("/scenarios/presets", client.api_url())

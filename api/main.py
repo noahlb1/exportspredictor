@@ -174,7 +174,7 @@ def create_app(
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
             caution=CAUTION,
-            terms=term_definitions(gap_period_label(artefacts.gap_years), artefacts.baseline_year),
+            terms=term_definitions(artefacts.gap_years, artefacts.baseline_year),
             max_rows=MAX_ROWS,
             totals_note=TotalsNote(
                 potential_share_of_actual_exports=share,

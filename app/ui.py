@@ -38,6 +38,11 @@ def term(name: str) -> str:
     return labels()["terms"][name]
 
 
+def terms_help(*terms: tuple[str, str]) -> str:
+    """One `?` explaining several key terms, each (its name, its `term` key): "**Name**: explanation", a paragraph each."""
+    return "\n\n".join(f"**{name}**: {term(key)}" for name, key in terms)
+
+
 def usd_unit() -> str:
     """The unit in column headings, e.g. "USD, nominal"."""
     return labels()["usd_unit"]

@@ -113,7 +113,7 @@ FLAGGED_PRODUCT_PREFIXES = (
     "7113", "7114", "7115", "7116", "7117",
 )
 FLAGGED_PRODUCT_CAVEAT = (
-    "Flagged Product: UK exports of this Product are volatile, one-off or entrepôt-driven (precious stones and "
+    "Flagged Product: UK exports of this Product are volatile, one-off or re-export-led (precious stones and "
     "jewellery of Sector 71, Products whose UK exports swing widely from year to year, and Products sold in a few "
     "large contracts), so treat the Export Potential with caution: what looks unmet may be timing rather than "
     "lasting potential."
@@ -123,7 +123,7 @@ FLAGGED_PRODUCT_ROW_CAVEAT = (
     "Flagged Product ({reason}): treat the Export Potential with caution, as what looks unmet may be timing rather "
     "than lasting potential."
 )
-SECTOR_71_REASON = "Sector 71: precious stones and jewellery, whose recorded values are volatile and entrepôt-driven"
+SECTOR_71_REASON = "Sector 71: precious stones and jewellery, whose recorded values are volatile and re-export-led"
 REEXPORT_HUBS = frozenset({"NLD", "BEL", "IRL", "HKG", "SGP", "ARE", "CHE", "LUX"})
 REEXPORT_HUB_CAVEAT = (
     "Re-export Hub: this Market re-exports much of what it imports, so part of its demand belongs "

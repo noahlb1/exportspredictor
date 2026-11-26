@@ -329,11 +329,13 @@ def test_a_version_without_large_market_measures_shows_not_run(fixture_artefacts
     assert isinstance(reporting.large_markets_by_version(replace(fixture_artefacts, evaluation=older)), reporting.NotRun)
 
 
-def test_what_market_reach_changes_is_the_saved_sentence_or_a_not_run_line(fixture_artefacts):
-    saved = fixture_artefacts.evaluation["market_reach_effect"]["text"]
+def test_what_market_reach_changes_states_every_figure_or_a_not_run_line(fixture_artefacts):
+    # The notebook has no table beside it, so the sentence states every figure, as the model card does.
     without = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "market_reach_effect"}
 
-    assert reporting.market_reach_effect(fixture_artefacts) == saved
+    text = reporting.market_reach_effect(fixture_artefacts)
+    assert text.startswith("Market Reach is the change this version keeps. On 2023, the UK ranking is ")
+    assert "old measure" in text and "Lift is" in text and "Market Reach leaves Scenario Effects unchanged" in text
     assert reporting.market_reach_effect(replace(fixture_artefacts, evaluation=without)) == (
         "Market Reach: not run for this version."
     )

@@ -631,33 +631,30 @@ def _lift_form(form: ModelForm) -> dict:
 
 
 def lift_text(result: dict) -> str:
-    """The plain-English Lift result, with what the size-matched comparison adds, worded as a tendency."""
+    """The plain-English Lift result and the size-matched comparison; what size means, and that Lift is a tendency,
+    is said under the page's table."""
     lift_value, (low, high) = result["lift"], result["ci"]
     if lift_value is None:
         return "Lift could not be measured: no held-out pair grew materially."
-    interval = "" if low is None else f" (95% confidence interval {low:.1f} to {high:.1f})"
-    growth = f"rose by at least {result['min_growth_share']:.0%} and ${result['min_growth_usd']:,.0f}"
+    interval = "" if low is None else f" (95% interval {low:.1f} to {high:.1f})"
+    gap = years_text(result["gap_years"])
     matched, (m_low, m_high) = result["size_matched"]["lift"], result["size_matched"]["ci"]
     if matched is None:
         size = ""
     else:
         if m_low is not None and m_high < 1:
-            verdict = "less often than pairs of similar Export Potential"
-            meaning = "Much of the Lift comes from size: large gaps sit on large pairs, which grow by $100,000 more easily."
+            verdict = "less often than"
         elif m_low is not None and m_low > 1:
-            verdict = "more often than pairs of similar Export Potential"
-            meaning = "So the Export Gap points at growth beyond what size alone explains."
+            verdict = "more often than"
         else:
-            verdict = "about as often as pairs of similar Export Potential"
-            meaning = "So the Export Gap adds little beyond size."
+            verdict = "about as often as"
         m_interval = "" if m_low is None else f", 95% interval {m_low:.2f} to {m_high:.2f}"
-        size = f" They grew {verdict} (ratio {matched:.2f}{m_interval}). {meaning}"
+        size = f" They grew {verdict} pairs of similar Export Potential (ratio {matched:.2f}{m_interval})."
     return (
-        f"For countries the model never trained on, the tenth of Product–Market pairs with the largest Export Gaps "
-        f"averaged over {years_text(result['gap_years'])} {growth} from their {years_text(result['gap_years'])} mean by "
-        f"{result['outcome_year']} {lift_value:.1f} times as often as pairs "
-        f"picked at random{interval}: {result['top_rate']:.0%} of them against {result['base_rate']:.0%}.{size} "
-        f"This is a tendency across many pairs, not a promise that any one Opportunity will grow."
+        f"For countries the model never trained on, take the tenth of Product–Market pairs with the largest Export "
+        f"Gaps ({gap} average). By {result['outcome_year']}, {result['top_rate']:.0%} of them had grown by at least "
+        f"{result['min_growth_share']:.0%} and ${result['min_growth_usd']:,.0f} from their {gap} mean, against "
+        f"{result['base_rate']:.0%} of pairs picked at random: {lift_value:.1f} times as often{interval}.{size}"
     )
 
 
@@ -764,7 +761,7 @@ def event_backtest(
 AGREEMENT_STATES = (
     "With the agreement on, the Trade Agreement flag is set and a known Applied Tariff is 0 (an unknown one stays unknown); with it off, the flag is "
     "cleared and the Importer's MFN tariff is restored (the pair's own tariff where no MFN rate is known). These are "
-    "the states a Trade Agreement Scenario compares (ADR 0006)."
+    "the states a Trade Agreement Scenario compares."
 )
 
 
@@ -822,8 +819,8 @@ def event_text(report: dict) -> str:
             verdict = " The model's effect is within the observed interval."
         parts.append(
             f"For {d['label']} in {years_text(report['post_years'])}, the model associated the agreement with "
-            f"{percent_text(predicted)} in Export Potential; the observed difference-in-differences against "
-            f"{len(d['controls'])} similar Markets without an agreement was {percent_text(pooled['observed'])}{interval}.{verdict}"
+            f"{percent_text(predicted)} in Export Potential; the observed change, relative to "
+            f"{len(d['controls'])} similar Markets without an agreement, was {percent_text(pooled['observed'])}{interval}.{verdict}"
         )
     return (
         f"{report['title']} (in force {report['in_force']}), with a model trained only on "

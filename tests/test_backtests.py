@@ -432,7 +432,7 @@ def test_lift_is_reported_with_a_confidence_interval_as_a_tendency(report):
     low, high = lift["ci"]
     assert low <= lift["lift"] <= high
     assert lift["ci_level"] == 0.95
-    assert "tendency" in lift["text"] and "not a promise" in lift["text"]
+    assert "times as often (95% interval" in lift["text"] and "pairs picked at random" in lift["text"]
     assert lift["training_years"] == [2021, 2022] and lift["outcome_year"] == 2023
     assert lift["gap_years"] == [2022]
 
@@ -463,7 +463,7 @@ def test_the_event_backtest_reports_predicted_and_observed_effects_and_its_contr
     for year in direction["by_year"]:
         assert year["predicted"] is not None and year["observed"] is not None
     assert direction["pooled"]["predicted"] >= 0  # monotone: switching the agreement on never lowers it
-    assert "difference-in-differences" in report["event_backtest"]["text"]
+    assert "the observed change, relative to" in report["event_backtest"]["text"]
     assert report["event_backtest"]["caveat"]
 
 
@@ -506,8 +506,8 @@ def test_lift_text_says_when_large_gaps_do_no_better_than_pairs_of_similar_size(
 
     text = backtests.lift_text(result)
 
-    assert "less often than pairs of similar Export Potential" in text
-    assert "tendency" in text
+    assert "less often than pairs of similar Export Potential (ratio 0.83, 95% interval 0.80 to 0.87)" in text
+    assert "By 2023, 4% of them had grown by at least 50% and $100,000" in text
 
 
 def test_control_markets_leave_out_excluded_markets():

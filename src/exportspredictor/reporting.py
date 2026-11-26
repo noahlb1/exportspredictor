@@ -45,6 +45,7 @@ from exportspredictor.currency import format_usd
 from exportspredictor.evaluation import (
     NOT_RUN,
     large_markets_beside_earlier,
+    market_reach_effect_text,
     relabelled,
 )
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
@@ -198,8 +199,10 @@ def market_reach_effect(bundle: Artefacts) -> str:
     """What Market Reach changes on the test year (`evaluation.market_reach_effect`), as saved and read by
     `evaluation.relabelled` (the served UK-pair coverage), or the line saying it was not run for a version without
     Market Reach."""
-    effect = relabelled(bundle.evaluation or {}).get("market_reach_effect")
-    return repr(NotRun("Market Reach")) if effect is None else effect["text"]
+    report = relabelled(bundle.evaluation or {})
+    effect = report.get("market_reach_effect")
+    return repr(NotRun("Market Reach")) if effect is None else market_reach_effect_text(
+        effect, report["test_year"], figures=True)
 
 
 # A best round under this means the stopping rule, not the configuration, decided the Arm

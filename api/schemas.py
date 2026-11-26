@@ -83,7 +83,7 @@ class CaveatTierOut(BaseModel):
 
 
 class TotalsNote(BaseModel):
-    """Export Potential is a median-type estimate: summed, it falls short of Actual Exports."""
+    """Export Potential is a typical value, not an average: summed, it falls short of Actual Exports."""
 
     # Summed Export Potential over summed Actual Exports, every UK pair, Gap Period means; from the artefact
     potential_share_of_actual_exports: float | None
@@ -105,7 +105,7 @@ class Labels(BaseModel):
     # the Baseline year take them from the artefact (`wording.term_definitions`)
     terms: dict[str, str]
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
-    totals_note: TotalsNote  # beside every summed figure: Export Potential is median-type, so totals understate
+    totals_note: TotalsNote  # beside every summed figure: Export Potential is a typical value, so totals understate
     trade_agreement_meaning: str  # what "a Trade Agreement" means in the model (ADR 0011)
     blocked_rule: str  # the Blocked Opportunity rule at the fixed thresholds, in one sentence (ADR 0012)
 
@@ -915,7 +915,7 @@ class ScenarioResponse(BaseModel):
     # was clipped; None for every other kind of Scenario (`ScenarioResult.tariff_directions_text`).
     tariff_directions: str | None = None
     # The Blocked Opportunity prose (`ScenarioResult.blocked_note`): the Blocked Opportunities section's caption when
-    # `adds_agreement`, otherwise the line saying this Scenario adds none; each states the fixed rule.
+    # `adds_agreement`, otherwise the line saying this Scenario adds none.
     blocked_note: str
     note: ScenarioNote  # Scenario Effects are Illustrative: the label and the benchmarks beside them
 

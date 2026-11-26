@@ -39,7 +39,15 @@ from app.tables import (
     blocked_products_frame,
     millions_unit,
 )
-from app.ui import caveat_tiers, fetch, illustrative, labels, read_limit, scenario_note
+from app.ui import (
+    caveat_tiers,
+    fetch,
+    illustrative,
+    labels,
+    read_limit,
+    scenario_note,
+    terms_help,
+)
 from app.views import BY_MARKET, Grouping, Layout, show
 
 SCENARIOS = "pages/scenarios.py"
@@ -109,6 +117,7 @@ with page(
     "Blocked Opportunities",
     "UK Product–Market pairs with no UK Trade Agreement in force where the model associates adding one with a "
     "material rise in Export Potential, by Market or by Product.",
+    intro_help=terms_help(("Blocked Opportunity", "blocked_opportunity"), ("Trade Agreement", "trade_agreement")),
 ):
     st.markdown(
         "A missing Trade Agreement is a Barrier the model has learned to associate with lower Export Potential. These "

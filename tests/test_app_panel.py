@@ -196,7 +196,7 @@ def test_the_panel_shows_the_factors_and_both_expanders(monkeypatch, fixture_api
         assert shown == sorted(shown, reverse=True)
     assert set(top["Factor"]) == {factor["label"] for factor in body["factors"][: len(top)]}
     text = _texts(page)
-    assert "×1.50 means" in text and f"fold model {body['fold']}" in text
+    assert "×1.50 means" in text and "the model that scored this pair's Baseline" in text
     assert "associat" in text and "not causes" in text
 
 

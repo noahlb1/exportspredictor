@@ -44,6 +44,7 @@ from app.ui import (
     rank_orders,
     read_limit,
     term,
+    terms_help,
 )
 from app.views import BY_MARKET, Grouping, Layout, show
 
@@ -130,6 +131,7 @@ with page(
     "Every UK Product–Market pair, ranked by how far UK goods exports fall short of what the UK's fundamentals "
     "suggest.",
     beside=_what_is_this,
+    intro_help=terms_help(("Product–Market pair", "pair"), ("Opportunity", "opportunity")),
 ):
     _three_steps()
     try:

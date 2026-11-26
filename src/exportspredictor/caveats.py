@@ -123,7 +123,7 @@ FLAGGED_PRODUCT = CaveatTier(
     text=FLAGGED_PRODUCT_CAVEAT,
     key="product",
     hide_param="hide_flagged",
-    hide_description="Leave out Flagged Products (volatile, one-off or entrepôt-driven values)",
+    hide_description="Leave out Flagged Products (volatile, one-off or re-export-led values)",
     flags=lambda context: flagged_product_expr() | pl.col("hs6").cast(pl.String).is_in(
         list(context.flagged_product_reasons)
     ),

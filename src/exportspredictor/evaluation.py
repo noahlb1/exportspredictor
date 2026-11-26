@@ -56,6 +56,7 @@ import xgboost as xgb
 from exportspredictor import artefacts as store
 from exportspredictor import (
     baci,
+    backtests,
     ledger,
     market_reach,
     offsets,
@@ -126,11 +127,22 @@ NOT_RUN = "not run for this version"
 
 def served_report(report: dict) -> dict:
     """An evaluation report as the API serves it: without the parts in `NOT_SERVED`, with today's names
-    (`relabelled`) and with the Potential Range worded now (`conformal.coverage_text`), not when saved, so
-    older versions state the share of Uncertain Opportunities the same way. The saved report is not changed."""
+    (`relabelled`) and with its prose worded now from the saved figures, not when saved: the Potential Range
+    (`conformal.coverage_text`), Lift (`backtests.lift_text`), each Event Backtest (`backtests.event_text`) and
+    what Market Reach changes. The saved report is not changed."""
     served = {key: value for key, value in relabelled(report).items() if key not in NOT_SERVED}
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
+    for key in ("lift", "lift_without_market_reach"):
+        if served.get(key) and "ci" in served[key]:  # a full Lift result, not a test's stub
+            served[key] = {**served[key], "text": backtests.lift_text(served[key])}
+    if (served.get("event_backtest") or {}).get("events"):
+        events = [{**event, "states": backtests.AGREEMENT_STATES, "text": backtests.event_text(event)}
+                  for event in served["event_backtest"]["events"]]
+        served["event_backtest"] = {**served["event_backtest"], "events": events, "text": events[0]["text"]}
+    if served.get("market_reach_effect"):
+        effect = {**served["market_reach_effect"], "scenario_effects": SCENARIO_EFFECTS_UNCHANGED}
+        served["market_reach_effect"] = {**effect, "text": market_reach_effect_text(effect, served["test_year"])}
     if served.get(realisation.REPORT_KEY):
         served[realisation.REPORT_KEY] = realisation_wording.served(served[realisation.REPORT_KEY])
     return served
@@ -339,7 +351,7 @@ def read_configuration_limitations(metadata: dict, report: dict) -> list[dict]:
         "text": f"Every {year} figure shown (the headline, Lift and the comparison with earlier versions) was read on "
         f"the Model Form served before a correction chosen on the validation year ({changes}). This "
         f"version has not read {year} itself: its own figures come from the next frozen version's one read through "
-        "the Test-year Ledger (ADR 0009).",
+        "the Test-year Ledger.",
     }]
 
 
@@ -387,8 +399,8 @@ def uk_pair_coverage_limitations(metadata: dict, potential_range: dict | None) -
         "text": f"Only {coverage:.1%} of UK pairs have their Gap Period Actual Exports inside their Potential Range"
         + ("" if without is None else f" ({without:.1%} without Market Reach)")
         + f", against a target of {target:.0%}. The range is "
-        "calibrated on other Exporters' pairs (ADR 0007), and Market Reach moves UK Export Potential by a Market-wide "
-        "factor those pairs do not take (ADR 0010), so for UK pairs the range understates how far Actual Exports "
+        "calibrated on other Exporters' pairs, and Market Reach moves UK Export Potential by a Market-wide "
+        "factor those pairs do not take, so for UK pairs the range understates how far Actual Exports "
         "vary around Export Potential.",
     }]
 
@@ -450,7 +462,7 @@ def range_limitations(bands: pl.DataFrame) -> list[dict]:
     width = top["high_offset_usd"] - top["low_offset_usd"]
     return [{
         "title": "The Potential Range is a fixed width in dollars",
-        "text": f"Its offsets are fixed amounts of dollars within each band of Export Potential (ADR 0007), so every "
+        "text": f"Its offsets are fixed amounts of dollars within each band of Export Potential, so every "
         f"pair in the top band, from {format_usd(top['min_export_potential_usd'])} of Export Potential upwards, gets "
         f"the same range, {format_usd(width)} wide, whatever its size. For a large pair that range is a sliver, and "
         f"it is an Uncertain Opportunity only when its Export Gap is under the band's lower offset, "
@@ -902,25 +914,17 @@ def _earlier_versions_text(block: dict) -> str:
     this, *others = block["rows"]
     if "uk_ranking_tie_proof" not in this:
         return _saved_earlier_versions_text(block)
-    naive = {row["name"]: row for row in block["naive"]}
-    verdict = "beats the Naive Baseline" if block["beats_naive"] else "does not beat the Naive Baseline"
-    reported = naive.get(NAIVE_AS_REPORTED_FOR_V2)
-    this_run = naive[NAIVE_THIS_RUN]
+    naive = {row["name"]: row for row in block["naive"]}[NAIVE_THIS_RUN]
 
     def figure(value: float | None) -> str:
         return "not yet re-scored" if value is None else f"{value:.3f}"
 
-    old = ", ".join(f"{row['name']} {figure(row['uk_ranking'])}" for row in others)
-    tie_proof = ", ".join(f"{row['name']} {figure(row['uk_ranking_tie_proof'])}" for row in others)
     return (
-        f"On {block['test_year']}, read once, the UK ranking of this version is {figure(this['uk_ranking_tie_proof'])} "
-        f"on the tie-proof Selection Measure and {figure(this['uk_ranking'])} on the old measure (where tied "
-        f"predictions share their average rank): it {verdict} ({figure(this_run['uk_ranking_tie_proof'])} tie-proof "
-        f"and {figure(this_run['uk_ranking'])} old, from every Exporter's Flows"
-        + (f"; {reported['uk_ranking']:.3f} old, as reported for v2" if reported is not None else "")
-        + ")."
-        + (f" Earlier versions on the old measure: {old}; on the tie-proof measure, from their saved scores: "
-           f"{tie_proof}." if others else "")
+        f"On {block['test_year']}, read once, this version's UK ranking is {figure(this['uk_ranking_tie_proof'])} on "
+        f"the tie-proof Selection Measure, against {figure(naive['uk_ranking_tie_proof'])} for the Naive Baseline"
+        + ("." if block["beats_naive"] else ", which it does not beat.")
+        + (" The table sets it beside earlier versions, on that measure and the old one (where tied predictions share "
+           "their average rank)." if others else "")
         + " These are associations on one test year, not a forecast."
     )
 
@@ -1232,8 +1236,7 @@ def _ranking_figures(scored_grid: pl.DataFrame, flows: pl.DataFrame, year: int) 
 
 # Why the Scenario Effect comparisons measure the model without Market Reach (ADR 0010).
 SCENARIO_EFFECTS_UNCHANGED = (
-    "Market Reach leaves Scenario Effects unchanged: it scales a pair's Export Potential with and without a Scenario "
-    "alike, so the Event Backtests and the PPML benchmark compare the model's Scenario Effects without it (ADR 0010)."
+    "It leaves Scenario Effects unchanged, as it scales a pair's Export Potential with and without a Scenario alike."
 )
 
 
@@ -1267,15 +1270,23 @@ def market_reach_effect(report: dict) -> dict | None:
     return {**block, "text": market_reach_effect_text(block, report["test_year"])}
 
 
-def market_reach_effect_text(block: dict, test_year: int) -> str:
-    """The `market_reach_effect` sentences, worded from its figures."""
+def market_reach_effect_text(block: dict, test_year: int, *, figures: bool = False) -> str:
+    """The `market_reach_effect` sentences, worded from its figures. The app sets every figure in a table beside
+    them; `figures=True` states them all in the text, for the model card and the notebook, which have no table."""
 
     def pair(figures: dict, fmt: str = ".3f") -> str:
         return f"{number_text(figures['with'], fmt)} with it against {number_text(figures['without'], fmt)} without"
 
+    ending = "These are associations on one test year, not a forecast."
+    if not figures:
+        return (
+            f"Market Reach is the change this version keeps. On {test_year}, the UK ranking is "
+            f"{pair(block['selection_measure'])} (tie-proof Selection Measure); the table gives every figure both "
+            f"ways. {SCENARIO_EFFECTS_UNCHANGED} {ending}"
+        )
     large = "; ".join(f"on the {row['markets']} largest Markets {pair(row)}" for row in block["large_markets"])
     parts = [
-        f"Market Reach is the change this version keeps (ADR 0010). On {test_year}, the UK ranking is "
+        f"Market Reach is the change this version keeps. On {test_year}, the UK ranking is "
         f"{pair(block['selection_measure'])} on the tie-proof Selection Measure ({pair(block['old_measure'])} on the "
         f"old measure)" + (f"; {large}" if large else "") + ".",
     ]
@@ -1289,9 +1300,8 @@ def market_reach_effect_text(block: dict, test_year: int) -> str:
         parts.append(
             f"The Potential Range holds {pair(block['uk_pair_coverage'], '.0%')} of UK pairs' Gap Period Actual Exports."
         )
-    parts.append(block["scenario_effects"])
-    parts.append("These are associations on one test year, not a forecast.")
-    return " ".join(parts)
+    unchanged = SCENARIO_EFFECTS_UNCHANGED.replace("It leaves", "Market Reach leaves", 1)
+    return " ".join([*parts, unchanged, ending])
 
 
 def _stability_text(result: dict, year: int, baseline_year: int) -> str:

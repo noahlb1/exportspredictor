@@ -712,7 +712,7 @@ def test_a_scenario_that_is_no_tariff_change_has_no_raised_or_lowered_counts(cli
 def test_a_tariff_scenario_words_the_pairs_it_raises_and_lowers(client):
     body = _post(client, {"tariff": {"markets": ["IND"], "rate_pct": 30}})
 
-    assert body["tariff_directions"] == "This sets 5 pairs to 30%: it raises 2 and lowers 2."
+    assert body["tariff_directions"] == "This sets the Applied Tariff of 5 pairs to 30%: a rise for 2, a cut for 2."
 
 
 def test_a_clipped_tariff_rate_is_worded_as_the_rate_the_model_reads(client):
@@ -723,9 +723,9 @@ def test_a_clipped_tariff_rate_is_worded_as_the_rate_the_model_reads(client):
     line = body["tariff_directions"]
     assert body["clipped_pairs"] > 0 and edge < 5000
     # The edge is whisky's 150%, so whisky is unchanged and left out; the other four rise or are unknown.
-    assert line.startswith("This sets 4 pairs to 5000%")
-    assert f"{edge:,.1f}%" in line and "edge of the training range" in line
-    assert f"it raises {body['pairs_raised']} and lowers {body['pairs_lowered']}" in line
+    assert line.startswith("This sets the Applied Tariff of 4 pairs to 5000%")
+    assert f"{edge:,.1f}%, the highest it was trained on" in line
+    assert f"a rise for {body['pairs_raised']}, a cut for {body['pairs_lowered']}" in line
     assert "remov" not in line
 
 
@@ -868,26 +868,24 @@ def test_adding_two_markets_lists_both_ranked_by_value_and_limited(blocked_clien
 @pytest.mark.parametrize(
     "payload", [{"tariff": {"markets": ["IND"], "rate_pct": 30}}, {"preset": "cptpp"}, {"remove_agreements": ["JPN"]}]
 )
-def test_a_scenario_adding_no_agreement_carries_the_neutral_line_with_the_rule(blocked_client, payload):
-    rule = blocked_client.get("/labels").json()["blocked_rule"]
-
+def test_a_scenario_adding_no_agreement_carries_the_neutral_line_alone(blocked_client, payload):
     note = _post(blocked_client, payload)["blocked_note"]
 
-    assert note.startswith(
+    assert note == (
         "Blocked Opportunities are measured by adding a Trade Agreement where none is in force, and this Scenario "
         "adds none."
     )
-    assert rule in note
 
 
-def test_a_scenario_adding_an_agreement_carries_the_rule_the_hidden_tiers_and_why_the_totals_differ(blocked_client):
-    rule = blocked_client.get("/labels").json()["blocked_rule"]
+def test_a_scenario_adding_an_agreement_names_the_pages_rule_the_hidden_tiers_and_why_the_totals_differ(
+    blocked_client,
+):
     hidden = [tier["plural"] for tier in blocked_client.get("/caveats").json() if tier["hidden_by_default"]]
 
     note = _post(blocked_client, {"add_agreements": ["IND"]})["blocked_note"]
 
-    assert rule in note and "fixed" in note
+    assert "the same rule and figures (Illustrative) as the Blocked Opportunities page" in note
     assert hidden and all(plural in note for plural in hidden)
-    assert "covers every pair" in note and "only its Blocked Opportunities" in note
+    assert "covers every pair" in note and "sums only these" in note
     assert "Illustrative" in note
     assert "preset" not in note and "adds none" not in note

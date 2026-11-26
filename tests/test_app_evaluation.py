@@ -71,7 +71,7 @@ def test_page_shows_metrics_and_the_weakest_sectors_and_regions(page, fixture_ar
     region_table = next(t for t in tables if "Region" in t.columns)
     weakest = fixture_artefacts.evaluation["accuracy"]["uk_out_of_fold"]["by_sector"][0]["group"]
 
-    assert any("Naive baseline" in t.columns for t in tables)
+    assert any("Naive Baseline" in t.columns for t in tables)
     assert sector_table["Sector"].iloc[0] == weakest
     assert set(region_table["Region"]) == {"East Asia & Pacific", "North America", "South Asia"}
     assert "Weakest Sectors" in _text(page) and "Weakest regions" in _text(page)
@@ -205,7 +205,7 @@ def test_page_shows_size_matched_lift_next_to_raw_lift_and_explains_the_differen
 def test_page_shows_the_event_backtest_predicted_against_observed_with_its_control_group(page, fixture_artefacts):
     backtest = fixture_artefacts.evaluation["event_backtest"]
     tables = [element.value for element in page.dataframe]
-    effects = next(t for t in tables if "Observed (difference-in-differences)" in t.columns)
+    effects = next(t for t in tables if "Observed, relative to Control Markets" in t.columns)
 
     assert "Predicted by the model" in effects.columns
     assert list(effects["Year"]) == ["2022", "2023", "2022–2023"]

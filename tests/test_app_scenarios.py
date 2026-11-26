@@ -278,7 +278,12 @@ def _blocked_metrics(page: AppTest) -> list[str]:
 
 
 def _blocked_caption(page: AppTest) -> str:
-    return next(element.value for element in page.caption if "room to grow" in element.value)
+    return next(element.value for element in page.caption if "the same rule and figures" in element.value)
+
+
+def _blocked_heading_help(page: AppTest) -> str:
+    [heading] = [element for element in page.subheader if element.value == "Blocked Opportunities"]
+    return heading.proto.help
 
 
 def test_adding_india_shows_the_blocked_opportunities_pages_rows_in_its_products_table(
@@ -320,8 +325,10 @@ def test_a_scenario_adding_no_trade_agreement_shows_one_neutral_line_instead(mon
     assert len(page.dataframe) == BLOCKED  # Change per Market, the drill-down and Top Products gaining only
     [line] = [element.value for element in page.markdown if "this Scenario adds none" in element.value]
     assert "Blocked Opportunities are measured by adding a Trade Agreement" in line
-    assert httpx.get(f"{blocked_api_url}/labels").json()["blocked_rule"] in line  # the rule as the API words it
-    assert "20%" in line and "$1M" in line
+    assert line == (
+        "Blocked Opportunities are measured by adding a Trade Agreement where none is in force, and this Scenario "
+        "adds none."
+    )  # the rule is not needed for an empty case
     [link] = [link for link in page.page_link if "Blocked Opportunities" in link.proto.label]
     assert link.proto.page.endswith(BLOCKED_PAGE) or "Blocked_Opportunities" in link.proto.page
 
@@ -334,12 +341,13 @@ def test_the_blocked_opportunities_caption_states_the_rule_the_hidden_tiers_and_
     page = _run_india(monkeypatch, blocked_api_url)
 
     caption = _blocked_caption(page)
-    assert "20%" in caption and "$1M" in caption and "fixed" in caption
-    assert "Export Potential with a Trade Agreement" in caption and "Scenario Export Potential" not in caption
+    assert "Blocked Opportunities page" in caption and "Scenario Export Potential" not in caption
     assert hidden and all(tier["plural"] in caption for tier in hidden)
-    assert "covers every pair" in caption and "only its Blocked Opportunities" in caption
+    assert "covers every pair" in caption and "sums only these" in caption
     assert "preset" not in caption  # a custom addition: its Scenario Effects are the pairs' values
-    assert "associates" in caption and "illustrative" in caption.lower()
+    assert "illustrative" in caption.lower()
+    rule = _blocked_heading_help(page)  # the rule moves to the term's `?`
+    assert "20%" in rule and "$1M" in rule and "associates" in rule
     [link] = [link for link in page.page_link if "hidden" in link.proto.label]
     assert {f"{tier['hide_param']}=false" for tier in hidden} == set(link.proto.query_string.split("&"))
 
@@ -433,11 +441,11 @@ def _result_order(node) -> list[str]:
         return [value]
     if kind == "Markdown" and value.startswith("The model associates this Scenario"):
         return ["summary"]
-    if kind == "Markdown" and "it raises" in value:
+    if kind == "Markdown" and "a rise for" in value:
         return ["raised and lowered"]
     if kind == "Markdown" and "this Scenario adds none" in value:
         return ["neutral line"]
-    if kind == "Info" and "training range" in value:
+    if kind == "Info" and "trained on" in value:
         return ["clipped-tariff note"]
     children = getattr(node, "children", {})
     return [part for index in sorted(children) for part in _result_order(children[index])]
@@ -535,7 +543,7 @@ def test_the_tariff_mode_runs_and_says_when_the_effect_flattens_beyond_the_train
     assert not page.exception
     assert "associates" in " ".join(element.value for element in page.markdown)
     # A neutral box, information about the model rather than an error.
-    clip = [element.value for element in page.info if "training range" in element.value]
+    clip = [element.value for element in page.info if "higher than any the model was trained on" in element.value]
     assert clip and "5" in clip[0]  # the clipped pairs, counted by the API
     assert not page.warning
     assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan"}
@@ -551,7 +559,7 @@ def test_a_tariff_within_the_training_range_shows_no_clip_message(monkeypatch, a
     page.button(key="run").click().run()
 
     assert not page.exception
-    assert "training range" not in _page_text(page)
+    assert "higher than any the model was trained on" not in _page_text(page)
     assert set(page.dataframe[MARKETS].value["Market"]) == {"Japan"}
 
 
@@ -565,7 +573,9 @@ def test_a_tariff_result_says_how_many_pairs_it_raises_and_lowers(monkeypatch, a
     page.button(key="run").click().run()
 
     assert not page.exception
-    assert "This sets 5 pairs to 30%: it raises 2 and lowers 2." in [element.value for element in page.markdown]
+    assert "This sets the Applied Tariff of 5 pairs to 30%: a rise for 2, a cut for 2." in [
+        element.value for element in page.markdown
+    ]
 
 
 def test_a_scenario_that_is_no_tariff_change_has_no_raised_and_lowered_line(monkeypatch, api_url):
@@ -602,11 +612,9 @@ def test_choosing_a_pair_keeps_the_market_and_the_other_table_unchanged(monkeypa
 def test_the_blocked_opportunities_line_states_the_fixed_rule_in_the_adaptive_form(monkeypatch, api_url):
     page = _run_india(monkeypatch, api_url)
 
-    line = next(element.value for element in page.caption if "room to grow" in element.value)
+    line = _blocked_heading_help(page)
     assert "20%" in line and "$1M" in line and "$1,000,000" not in line
-    assert "fixed" in line  # the rule is stated, not offered for tuning (ADR 0012)
-    assert "whatever their Actual Exports" not in line  # a Blocked Opportunity needs room to grow
-    assert "Actual Exports" in line and "Export Potential with a Trade Agreement" in line  # as on that page
+    assert "Actual Exports are below that level" in line  # a Blocked Opportunity needs room to grow
 
 
 def test_the_page_says_what_a_trade_agreement_means_before_a_run(monkeypatch, api_url):

@@ -12,12 +12,10 @@ def test_rank_orders_name_a_column_a_title_and_a_description():
     assert rankings.RANK_BY["relative"].title == "Relative Export Gap"
     assert rankings.RANK_BY["gap"].title == "Export Gap"
     assert rankings.BLOCKED.title == "Rise with agreement"
-    # The description states the default Blocked Opportunity thresholds (20% and $1M).
-    assert "20%" in rankings.BLOCKED.description
-    assert "$1M" in rankings.BLOCKED.description
-    # It never speaks of removing a tariff, which a 0% row has none of, and states room to grow (ADR 0011).
-    assert "removing the tariff" not in rankings.BLOCKED.description
-    assert "Actual Exports are below its Export Potential with a Trade Agreement" in rankings.BLOCKED.description
+    # The rule is stated above the table, so the description does not repeat it; it never speaks of removing a
+    # tariff, which a 0% row has none of (ADR 0011).
+    assert "20%" not in rankings.BLOCKED.description and "largest first" in rankings.BLOCKED.description
+    assert "remov" not in rankings.BLOCKED.description and "remov" not in rankings.TARIFF_PART.description
 
 
 def test_ranks_by_export_gap_by_default(fixture_artefacts):
