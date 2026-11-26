@@ -446,7 +446,7 @@ def test_a_report_saved_with_the_old_names_is_read_with_the_glossary_s(fixture_a
     saved_headline = {"model": 0.555, "naive": 0.523, "beats_naive": True, "text": "... than the naive baseline ..."}
     headline = evaluation.relabelled({**report, "headline": saved_headline})["headline"]
     assert "only slightly better than the Naive Baseline" in headline["text"] and "0.56" in headline["text"]
-    assert evaluation.served_report(report)["earlier_versions"] == block
+    assert "earlier_versions" not in evaluation.served_report(report)  # kept for the record, not served
     assert report["earlier_versions"] is saved and saved["rows"][0]["name"] == "This version (blend)"
 
 

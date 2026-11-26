@@ -36,14 +36,14 @@ def _record(recorded=RECORDED) -> dict:
 
 
 def test_the_lead_sentence_counts_the_research_note_s_seven_experiments_not_the_nine_decisions():
-    text = model_choice.how_chosen({"ranking_experiments": _record()}, {})["text"]
+    text = model_choice.how_chosen({"ranking_experiments": _record()})["text"]
 
     assert "Of 7 experiments" in text
     assert "9 experiments" not in text
 
 
 def test_a_loop_that_ran_only_the_blend_counts_one_experiment():
-    text = model_choice.how_chosen({"ranking_experiments": _record({"naive baseline": (["blend"], "blend")})}, {})["text"]
+    text = model_choice.how_chosen({"ranking_experiments": _record({"naive baseline": (["blend"], "blend")})})["text"]
 
     assert "Of 1 experiments" not in text and "Of 1 experiment," in text
 

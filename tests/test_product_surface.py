@@ -7,10 +7,66 @@ surface's text as a reader or client sees it, built on the fixture.
 
 from collections.abc import Callable
 
+import httpx
+import pytest
+from streamlit.testing.v1 import AppTest
+
 from exportspredictor.product_surface import banned_terms
 
+_requests: list[pytest.FixtureRequest] = []
+
+
+@pytest.fixture(autouse=True)
+def _collectors_see_fixtures(request):
+    """Lets a collector take a pytest fixture (`fixture("fixture_api_url")`) and stay a plain zero-argument call."""
+    _requests.append(request)
+    yield
+    _requests.pop()
+
+
+def fixture(name: str):
+    return _requests[-1].getfixturevalue(name)
+
+
+def _api(path: str) -> Callable[[], str]:
+    """A response of the API serving the fixture artefact, as a client receives it (keys and values)."""
+    return lambda: httpx.get(f"{fixture('fixture_api_url')}{path}").text
+
+
+def page_text(app: AppTest) -> str:
+    """Every text a visitor sees on a page run: headings, prose, notices, metrics, expander labels and tables."""
+    kinds = ("title", "header", "subheader", "markdown", "caption", "success", "warning", "info", "error")
+    texts = [element.value for kind in kinds for element in getattr(app, kind)]
+    texts += [f"{metric.label} {metric.value} {metric.proto.delta}" for metric in app.metric]
+    texts += [expander.label for expander in app.expander]
+    texts += [table.value.to_csv() for table in app.dataframe]
+    return "\n".join(map(str, texts))
+
+
+def _page(path: str | None) -> Callable[[], str]:
+    def collect() -> str:
+        app = fixture("open_page")(fixture("fixture_api_url"), path)
+        assert not app.exception, app.exception
+        return page_text(app)
+
+    return collect
+
+
+APP_PAGES = {
+    "Leaderboard": None,
+    "Blocked Opportunities": "pages/blocked_opportunities.py",
+    "Scenario Builder": "pages/scenarios.py",
+    "Model Evaluation": "pages/model_evaluation.py",
+    "How the Model Works": "pages/how_the_model_works.py",
+}
+
 # Enrolment point: (surface name, collector returning its text).
-SURFACES: list[tuple[str, Callable[[], str]]] = []
+SURFACES: list[tuple[str, Callable[[], str]]] = [
+    ("API /evaluation", _api("/evaluation")),
+    ("API /health", _api("/health")),
+    ("API /how-it-works", _api("/how-it-works")),
+    *((f"app page {name}", _page(path)) for name, path in APP_PAGES.items()),
+]
 
 
 def history_terms_on(surfaces: list[tuple[str, Callable[[], str]]]) -> dict[str, list[str]]:

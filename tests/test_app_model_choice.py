@@ -32,8 +32,8 @@ def _tables(page: AppTest) -> list:
 
 @pytest.fixture
 def served(monkeypatch, live_api, fixture_artefacts, tmp_path):
-    """The page and the API's evaluation for the fixture artefact, with v2's figures beside it and a
-    v2 whose Tweedie deviance is lower, so the Blend has traded something away."""
+    """The page and the API's evaluation for the fixture artefact, which keeps earlier configurations' test-year
+    figures for the record, one with a lower Tweedie deviance."""
     report = {**fixture_artefacts.evaluation}
     deviance = report["accuracy"]["all_exporters"]["overall"]["model_tweedie_deviance"]
     v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
@@ -70,28 +70,19 @@ def test_page_shows_every_experiment_and_whether_it_was_kept(served):
     assert list(table["Kept"]) == [e["kept"] or "no" for e in experiments]
 
 
-def test_page_shows_the_test_year_ranking_beside_the_naive_baseline_and_earlier_versions(served):
+def test_page_shows_no_history_though_the_artefact_keeps_it(served):
+    page, _ = served
+    labels = [column for table in _tables(page) for column in table.columns]
+
+    assert "Version" not in labels and "UK ranking, old measure" not in labels
+    assert "traded away" not in _text(page)
+
+
+def test_page_names_the_alternatives_considered_and_the_artefact_id(served):
     page, body = served
-    block = body["model_choice"]["test_year_ranking"]
-    table = next(t for t in _tables(page) if "UK ranking, old measure" in t.columns and "Version" in t.columns)
 
-    expected = [*block["rows"], *block["naive"]]
-    assert list(table["Version"]) == [row["name"] for row in expected]
-    assert list(table["UK ranking, old measure"]) == pytest.approx([row["uk_ranking"] for row in expected])
-    # This version's tie-proof figure is its headline; earlier versions' wait for re-scoring their saved scores.
-    assert table["UK ranking, tie-proof"][0] == pytest.approx(body["headline"]["model"])
-    assert block["rows"][0]["uk_ranking_tie_proof"] == pytest.approx(body["headline"]["model"])
-    assert block["naive"][0]["uk_ranking_tie_proof"] == pytest.approx(body["headline"]["naive"])
-    assert block["text"] in _text(page)
-    assert str(block["test_year"]) in _text(page)
-
-
-def test_page_says_what_the_blend_traded_away(served):
-    page, body = served
-    traded = body["model_choice"]["traded_away"]
-
-    assert traded["text"] in _text(page)
-    assert f"{traded['deviance']:,.1f}" in _text(page)
+    assert f"Alternatives considered on {body['model_choice']['validation_year']}" in _text(page)
+    assert f"Artefact ID {body['artefact_version']}" in _text(page)
 
 
 def test_the_event_backtest_section_says_it_measured_the_model_alone(served):
@@ -121,7 +112,9 @@ def test_page_shows_the_five_fold_confirmation_fold_by_fold(monkeypatch, live_ap
     table = next(t for t in _tables(page) if "Fold" in t.columns)
     assert list(table["Fold"]) == [str(fold["fold"]) for fold in served["folds"]] + ["All folds"]
     assert list(table["Chosen Model Form"]) == pytest.approx([f["winner"] for f in served["folds"]] + [served["winner"]])
-    assert list(table["v2 (the model alone)"]) == pytest.approx([f["v2"] for f in served["folds"]] + [served["v2"]])
+    assert list(table["The model alone"]) == pytest.approx(
+        [f["model_alone"] for f in served["folds"]] + [served["model_alone"]]
+    )
 
 
 def test_an_artefact_without_experiment_results_still_renders_the_section_saying_so(

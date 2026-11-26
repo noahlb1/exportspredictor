@@ -1,13 +1,9 @@
 """The router (`app/Home.py`) and the frame every page shares (pages, navigation and shared page furniture), run
 with AppTest through the router against the session's live fixture API."""
 
-from dataclasses import replace
 
 import httpx
 import pytest
-from streamlit.testing.v1 import AppTest
-
-from exportspredictor import artefacts as store
 
 MENU = ["Leaderboard", "Blocked Opportunities", "Scenario Builder", "Model Evaluation", "How the Model Works"]
 # Every page that shows figures, by the path the router declares it with (None: the default page).
@@ -52,8 +48,8 @@ def test_every_page_has_the_caution_line_under_its_heading_and_the_footer_last(o
     footer = captions[-1]
     assert f"Baseline year {health['baseline_year']} (provisional data)." in footer
     assert health["gap_period_label"] in footer
-    assert _labels(fixture_api_url)["usd_caption"].rstrip(".") + ". Model version" in footer  # a sentence each
-    assert f"Model version {health['artefact_version']}." in footer
+    assert footer.endswith(_labels(fixture_api_url)["usd_caption"].rstrip(".") + ".")  # a sentence each
+    assert health["artefact_version"] not in footer  # the Artefact ID is on Model Evaluation, not on every page
 
 
 @pytest.mark.parametrize("heading", list(PAGES))
@@ -61,12 +57,3 @@ def test_no_page_shows_the_old_blue_banner(open_page, fixture_api_url, heading):
     app = open_page(fixture_api_url, PAGES[heading])
 
     assert not [box.value for box in app.info if "provisional data" in box.value]
-
-
-def test_the_footer_reads_the_model_version_from_the_api(open_page, live_api, fixture_artefacts, tmp_path):
-    metadata = {**fixture_artefacts.metadata, "version": "another-version"}
-    store.save(replace(fixture_artefacts, metadata=metadata), tmp_path)
-    with live_api(tmp_path) as url:
-        app: AppTest = open_page(url, "pages/scenarios.py")
-
-    assert "Model version another-version." in app.main.caption[-1].value

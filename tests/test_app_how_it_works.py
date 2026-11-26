@@ -85,16 +85,26 @@ def test_what_it_produces_and_how_it_is_served_is_written_at_every_layer(open_pa
         assert fact in text, fact
 
 
+# Ideas stated in their summary alone, with no layers beneath.
+SUMMARY_ONLY = {"The test year, read once"}
+
+
+def test_the_test_once_rule_is_one_sentence(open_page, fixture_api_url):
+    summary = _summaries(_open(open_page, fixture_api_url))["The test year, read once"]
+
+    assert summary == "Every choice was made on 2022, and the model was tested once on 2023."
+
+
 def test_how_the_model_is_checked_is_written_at_every_layer(open_page, fixture_api_url):
     app = _open(open_page, fixture_api_url)
-    checked = len(OUTLINE["How the model is checked"])
+    checked = len([idea for idea in OUTLINE["How the model is checked"] if idea not in SUMMARY_ONLY])
     start = len(OUTLINE["How the model is built"]) * len(LAYERS)
     end = start + checked * len(LAYERS)
 
     labels = [expander.label for expander in app.expander]
     assert labels[start:end] == LAYERS * checked
     text = " ".join(m.value for expander in app.expander[start:end] for m in expander.markdown)
-    for fact in ("five", "all its years", "validation year", "Test-year Ledger", "Spearman", "ties",
+    for fact in ("five", "all its years", "validation year", "Spearman", "ties",
                  "Naive Baseline", "monotone", "training range"):
         assert fact in text, fact
 

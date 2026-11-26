@@ -7,7 +7,7 @@ Run this before a release, against `podman compose up` with real artefacts, in a
 - [ ] The logo tile (a white container ship on a blue square) sits alone at the top of the sidebar, shows in a collapsed sidebar, and is the browser-tab icon.
 - [ ] The app follows the computer's light or dark mode: near-black text on a light page with a sidebar that stands apart, or light text on a warm near-black page. Check captions, charts and the info, warning and error boxes in both.
 - [ ] Click something slow (e.g. a filter on the real Leaderboard): after a short delay the logo's ship rides the waves in the middle of the page until the app is done.
-- [ ] Under its introduction, every page shows the grey line "Figures are associations the model has learned, not causes or forecasts." After a divider at its foot, a grey footer states the Baseline year (provisional data), that Export Gaps are 2022–2024 averages, "Values are nominal US dollars, as reported by BACI", and the model version. No page shows a blue banner, a pound sign or a currency switch.
+- [ ] Under its introduction, every page shows the grey line "Figures are associations the model has learned, not causes or forecasts." After a divider at its foot, a grey footer states the Baseline year (provisional data), that Export Gaps are 2022–2024 averages and "Values are nominal US dollars, as reported by BACI". No page shows a blue banner, a pound sign or a currency switch.
 - [ ] Stop the API (`podman compose stop api`) and reload: within a few seconds every page shows a clear "API is unavailable" message, not an error or a spinner. Start it again (`podman compose start api`) and wait for <http://localhost:8000/health> before reloading.
 - [ ] Narrow the window to about 700 px and open each page: none shows an error, though columns may stack or cut long names.
 
@@ -98,10 +98,10 @@ Every hide filter is off by default, and ticking one removes exactly its rows. N
 - [ ] After a run, the Illustrative note sits closed under the metrics, in the same expander as on the Blocked Opportunities page; opened, it states the EU–Japan Event Backtest result (predicted against observed).
 
 **Model Evaluation**
-- [ ] Four figures open the page: the rank correlation for UK pairs with the Naive Baseline's beside it, the share of Actual Exports inside the Potential Range against its 80% target, size-matched Lift, and ranking stability. Every section below is folded except "How accurate is the model?" and "Known limitations".
+- [ ] Four figures open the page: the rank correlation for UK pairs with the Naive Baseline's beside it, the share of Actual Exports inside the Potential Range against its 80% target, size-matched Lift, and ranking stability. Under them, "Artefact ID" names the served artefact folder. Every section below is folded except "How accurate is the model?" and "Known limitations".
 - [ ] The plain-English accuracy headline renders, green if the model beats the Naive Baseline and amber with a plain warning if not, with the test year and the non-UK training sample stated below it.
-- [ ] Under the headline, one table sets every Market against the 30 largest and 60 largest importers, model against Naive Baseline. A second, "The same tie-proof measure on the largest Markets, beside earlier versions", lists this version, the Blend, v2, v1 and the Naive Baseline for the 30 largest and the 60 largest Markets.
-- [ ] "How the model was chosen" ends with the UK ranking in 2023: one row each for this version (Blend with Market Reach), the Blend, v2 and v1, with the columns "UK ranking, old measure" and "UK ranking, tie-proof" filled for every version.
+- [ ] Under the headline, one table sets every Market against the 30 largest and 60 largest importers, model against Naive Baseline.
+- [ ] "How the model was chosen" shows the "Alternatives considered on 2022" table, then the confirmation on all five folds with columns "Chosen Model Form" and "The model alone". The page shows no version names, no table of earlier versions and nothing "traded away".
 - [ ] "What Market Reach changes" states, with it and without it, the tie-proof and old measure, the 30 largest and 60 largest Markets, Lift and size-matched Lift, and the share of UK pairs inside their Potential Range, and says Scenario Effects are unchanged by it.
 - [ ] The metric tables (model against Naive Baseline) render for UK pairs and for all Exporters.
 - [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
@@ -114,5 +114,5 @@ Every hide filter is off by default, and ticking one removes exactly its rows. N
 
 **How the Model Works**
 - [ ] The page is last in the menu. Three headings (How the model is built, How the model is checked, What it produces and how it is served) each list their ideas in bold, with a one-sentence summary.
-- [ ] Under every idea, three folded layers open: What it is, Why this project uses it, How it is done here. The boosting, Selection Measure, blend, Potential Range, Market Reach and gravity formulas render as maths. The page names no course notes and no ADR file.
+- [ ] "The test year, read once" is one sentence: every choice was made on 2022, and the model was tested once on 2023. Under every other idea, three folded layers open: What it is, Why this project uses it, How it is done here. The boosting, Selection Measure, blend, Potential Range, Market Reach and gravity formulas render as maths. The page names no course notes and no ADR file.
 - [ ] The figures match the served model: "The data" states the 100 largest economies and the sampling rates (5% of Zero Cells, then about 59% of other Exporters' rows); "The blend with the Naive Baseline" the weights 0.7 and 0.3; "Market Reach" the strength 4; "The Potential Range" 80% and 20 bands.
