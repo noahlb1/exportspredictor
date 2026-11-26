@@ -147,6 +147,7 @@ Every Arm of the loop is judged on the Selection Measure. Its results are in `de
 | Step | Command | Notes |
 | --- | --- | --- |
 | Train the fold and test-year models, evaluate and save the artefacts (GPU, about 2.5 h) | `pipeline` | Trains the five fold models and the 2023 test-year models (about 75 minutes each), serves the Model Form the loop chose, and saves a new artefact version (format 4) with its `model_card.md`. |
+| The Model History (reads the saved artefact, the Test-year Ledger and the loop's results) | | Runs `notebooks/model_history.ipynb`, the record of how the model was reached, on the real data and saves its outputs into the committed file. It trains nothing and reads no older artefact folder; under a minute on the CPU. |
 | The notebook (reads the saved artefact) | | Runs `notebooks/exports_predictor.ipynb` on the real data and saves its outputs into the committed file. It reads saved results only and trains nothing; about 2 minutes on the CPU. |
 
 ### The pipeline step
@@ -157,7 +158,7 @@ Every Arm of the loop is judged on the Selection Measure. Its results are in `de
 
 ### Outside the script
 
-- **The notebook's outputs**: `uv run python scripts/rebuild.py --only notebook` is the one way to refresh them. Rerun it after any edit to the notebook.
+- **The notebooks' outputs**: `uv run python scripts/rebuild.py --only notebook` (or `--only history` for the Model History) is the one way to refresh them. Rerun it after any edit to the notebook.
 - **The PPML gravity benchmark**: `python -m exportspredictor.ppml` derives a new version from the newest one, with the benchmark saved beside it and the model card rewritten (about 25 minutes on the CPU; no training, and the 2023 Flows are not read).
 - **The final round's experiments** were run once and every idea was dropped, so the served model does not depend on them. The notebook reads their saved results; [docs/research/final-round-2022.md](docs/research/final-round-2022.md) records each command.
 

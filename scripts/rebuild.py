@@ -4,12 +4,13 @@ Run from the repo root:
     uv run python scripts/rebuild.py          # run every step in order
     uv run python scripts/rebuild.py --list   # show the steps without running them
     uv run python scripts/rebuild.py --only notebook   # refresh the committed notebook's outputs only
+    uv run python scripts/rebuild.py --only history    # refresh the Model History notebook's outputs only
 
 Data lands in `EXPORTSPREDICTOR_DATA_DIR` (default `<repo>/data`) and artefacts in
 `EXPORTSPREDICTOR_ARTEFACTS_DIR` (default `<repo>/artefacts`). Steps run in order and the
 script stops at the first one that fails. `--only TEXT` runs only the steps whose name contains
 TEXT (case-insensitive); `--only notebook` executes the notebook on the real artefact and saves its
-outputs into the committed file, training nothing.
+outputs into the committed file, training nothing. `--only history` does the same for the Model History notebook.
 
 To add a step, add ONE line to `STEPS` in its place in the order: downloads first, then
 derived tables, then the pipeline, which trains, evaluates and saves the artefacts, then the
@@ -27,6 +28,10 @@ REPO = Path(__file__).resolve().parents[1]
 PY = sys.executable
 NOTEBOOK = "notebooks/exports_predictor.ipynb"
 NOTEBOOK_STEP = "The notebook (reads the saved artefact)"
+HISTORY_NOTEBOOK = "notebooks/model_history.ipynb"
+# PYTHONUTF8: `jupyter execute` opens a notebook in the locale's encoding (cp1252 on Windows) and saves it as UTF-8,
+# which garbles every non-ASCII character of the prose.
+REAL_NOTEBOOK_ENV = {"EXPORTSPREDICTOR_FIXTURE_MODE": "0", "PYTHONUTF8": "1"}
 
 
 @dataclass(frozen=True)
@@ -63,15 +68,15 @@ STEPS = [
     # The default run: the Event Backtests, the constraint comparison and the gain ladder are opt-in
     # (`--every-part` for all three, about two more hours).
     Step("Train the fold and test-year models, evaluate and save the artefacts (GPU, about 2.5 h)", [PY, "-m", "exportspredictor.pipeline"]),
-    # The notebook runs on real data here (it defaults to fixture mode, as the tests run it), reads
-    # the newest artefact and saves its outputs into the committed file: the one way to refresh them.
+    # The notebooks run on real data here (each defaults to fixture mode, as the tests run it), read
+    # the newest artefact and save their outputs into the committed files: the one way to refresh them.
+    # The Model History also reads the Test-year Ledger and the experiment loop's saved results.
     Step(
-        NOTEBOOK_STEP,
-        [PY, "-m", "jupyter", "execute", "--inplace", NOTEBOOK],
-        # PYTHONUTF8: `jupyter execute` opens the notebook in the locale's encoding (cp1252 on
-        # Windows) and saves it as UTF-8, which garbles every non-ASCII character of the prose.
-        env={"EXPORTSPREDICTOR_FIXTURE_MODE": "0", "PYTHONUTF8": "1"},
+        "The Model History (reads the saved artefact, the Test-year Ledger and the loop's results)",
+        [PY, "-m", "jupyter", "execute", "--inplace", HISTORY_NOTEBOOK],
+        env=REAL_NOTEBOOK_ENV,
     ),
+    Step(NOTEBOOK_STEP, [PY, "-m", "jupyter", "execute", "--inplace", NOTEBOOK], env=REAL_NOTEBOOK_ENV),
 ]
 
 

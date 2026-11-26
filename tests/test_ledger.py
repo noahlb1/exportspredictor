@@ -5,10 +5,11 @@ import json
 import polars as pl
 import pytest
 
-from exportspredictor import ledger, reporting
+from exportspredictor import ledger
 from exportspredictor.ledger import Ledger, TestYearAlreadyRead
 from exportspredictor.paths import artefacts_dir
 from exportspredictor.pipeline import build_artefacts, save_version
+from exportspredictor.reporting import history
 
 METADATA = {
     "version": "v-a",
@@ -151,10 +152,10 @@ def test_each_earlier_read_carries_its_version_s_fingerprint(name, served):
 def test_the_notebook_shows_the_ledger_from_the_ledger_file_alone(tmp_path):
     book = _book(tmp_path)
     ledger.record_read(book, METADATA, read="test-year evaluation")
-    shown = reporting.test_year_ledger(book.path)
+    shown = history.test_year_ledger(book.path)
     assert shown.columns == ["date", "version", "fingerprint", "read", "command", "override", "kind", "status"]
     assert shown.row(0, named=True)["version"] == "v-a"
-    assert reporting.test_year_ledger().height == ledger.read_ledger().height
+    assert history.test_year_ledger().height == ledger.read_ledger().height
 
 REACH = {"form": "share", "beta": 4.0, "pseudo_count": 5.0, "lag_years": 1}
 FITTED = {**REACH, "reference_year": 2023, "constant": 0.81}
