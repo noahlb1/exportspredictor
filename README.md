@@ -4,7 +4,30 @@ A model that learns from global HS6 goods trade to estimate the UK's **Export Po
 
 Results are associations the model has learned, not causes.
 
-**The served model** is the **Blend** with **Market Reach**. Export Potential blends an XGBoost model (weight 0.7) with the Naive Baseline (weight 0.3) on the log scale, then scales every UK pair in a Market by how widely the UK already sells there (ADR 0010). An experiment loop chose it on the **Selection Measure**, how well it ranks Markets for each Product on held-out UK pairs in 2022, keeping a change only if it beat the Win Threshold (ADR 0008, [research note](docs/research/opportunity-ranking-experiments.md)).
+## Run the app
+
+No GPU and no Python needed. You need [podman](https://podman.io/) with `podman compose`, or Docker; about 5 GB of free RAM; and 2.5 GB of disk while fetching the trained artefact (a 0.9 GB download that unpacks to 1.6 GB).
+
+```powershell
+git clone https://github.com/noahlb1/exportspredictor.git
+cd exportspredictor
+podman compose run --rm fetch   # or: docker compose run --rm fetch
+podman compose up               # or: docker compose up
+```
+
+Then open <http://localhost:8501>. Stop with `Ctrl+C` or `podman compose down`.
+
+- **The fetch** downloads the artefact from the [`v1.0` release](https://github.com/noahlb1/exportspredictor/releases/tag/v1.0), checks its SHA-256 and unpacks it into `./artefacts`. It skips a version already there.
+- **By hand**, if the fetch fails: download `20261125T171812Z.zip` and `20261125T171812Z.zip.sha256` from the release page, run `sha256sum -c 20261125T171812Z.zip.sha256` (in PowerShell, compare `Get-FileHash 20261125T171812Z.zip` with the hash in the file), then unzip into `artefacts/`, which gives `artefacts/20261125T171812Z/`.
+- **Timings**: `compose up` is ready in about 20 s once the image is built. On two cores of a Ryzen 5800X the API loads the artefact in 3.5 s, a Trading Bloc preset takes 2.4–3.6 s and a custom Scenario about 1 s.
+- **If the app says the API is unavailable**, check `podman compose logs api` and <http://localhost:8000/health>, which gives the reason. The API serves only the lexically newest folder in `./artefacts`, and only artefact format 4.
+- On Windows, if `podman compose` cannot connect after a reboot, run `podman machine start`.
+
+**Read the argument** in the notebook, [`notebooks/exports_predictor.ipynb`](notebooks/exports_predictor.ipynb), or on the app's [How the Model Works](http://localhost:8501/How_the_Model_Works) page.
+
+## The served model
+
+It is the **Blend** with **Market Reach**. Export Potential blends an XGBoost model (weight 0.7) with the Naive Baseline (weight 0.3) on the log scale, then scales every UK pair in a Market by how widely the UK already sells there (ADR 0010). An experiment loop chose it on the **Selection Measure**, how well it ranks Markets for each Product on held-out UK pairs in 2022, keeping a change only if it beat the Win Threshold (ADR 0008, [research note](docs/research/opportunity-ranking-experiments.md)).
 
 **Results on 2023, read once**: how well each version ranks UK Markets, on the tie-proof measure.
 
@@ -29,22 +52,6 @@ The last three come from a review of the served outputs by a reader who had not 
 
 The model underneath is v2's: it trains on the top 100 Exporters into every Market, leaves out Excluded Products, uses the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. The notebook and the model card (`model_card.md` in the artefact folder) give the detail.
 
-## Run the app
-
-You need [podman](https://podman.io/) with `podman compose`, and a trained artefact folder in `./artefacts` (see [Rebuild the data and artefacts](#rebuild-the-data-and-artefacts)).
-
-```powershell
-podman compose up --build
-```
-
-Then open <http://localhost:8501>. Stop with `Ctrl+C` or `podman compose down`.
-
-- The API (<http://localhost:8000>) reports healthy once it has loaded the artefacts: up to a minute for the real artefact, whose five fold models take 1.7 GB. The app starts after it.
-- `./artefacts` is mounted read-only, so a new artefact version needs only `podman compose restart api`.
-- On Windows, if `podman compose` cannot connect after a reboot, run `podman machine start`.
-
-**If the app says the API is unavailable**, check `podman compose logs api` and <http://localhost:8000/health>, which gives the reason. The API serves only the lexically newest folder in `./artefacts`, and only artefact format 4. The usual causes are an empty folder or an older format; `python -m exportspredictor.pipeline rereach` upgrades format 3.
-
 ## Repo map
 
 **Start reading here:** the notebook, [`notebooks/exports_predictor.ipynb`](notebooks/exports_predictor.ipynb), argues the project from the data to the results; then the package, [`src/exportspredictor/`](src/exportspredictor/), holds the logic it calls.
@@ -65,7 +72,7 @@ Then open <http://localhost:8501>. Stop with `Ctrl+C` or `podman compose down`.
 | `pyproject.toml`, `uv.lock` | The environment. |
 | `UK_Exports_Predictor_presentation.pptx` | The presentation. |
 
-`data/` and `artefacts/` are not tracked: the rebuild makes them.
+`data/` is not tracked, and `artefacts/` holds only a placeholder: the fetch fills `artefacts/`, and the rebuild makes both.
 
 ## Development with uv
 
@@ -92,6 +99,8 @@ Settings are environment variables:
 - **On Windows**, set `PYTHONUTF8=1` before running Python. The default cp1252 encoding crashes on printing an accented Market name and garbles UTF-8 files. Subprocesses such as the notebook kernel inherit the variable, which `-X utf8` does not reach.
 
 ## Rebuild the data and artefacts
+
+The rebuild needs an NVIDIA GPU, about 31 GB of data and hours of compute. It is not needed to run the app: [Run the app](#run-the-app) fetches the trained artefact.
 
 ```powershell
 uv run python scripts/rebuild.py --list            # show the steps
@@ -162,6 +171,10 @@ Each command copies the newest version into a new one, from its saved fold model
 | `python -m exportspredictor.pipeline rerange` | The Potential Range, recomputed from the Baseline year's feature file. | A few minutes, CPU |
 | `python -m exportspredictor.pipeline recaveat` | The Caveat Tiers on the Baseline. Run it after adding a tier or changing a tier's table. | Seconds |
 | `python -m exportspredictor.pipeline rereach` | Format 3 becomes format 4, with Market Reach. | |
+
+### Serve a new version in the containers
+
+The API container mounts `./artefacts` read-only, so a new version needs only `podman compose restart api`. The API refuses a format-3 artefact: `python -m exportspredictor.pipeline rereach` upgrades it. After a code change, `podman compose up --build` rebuilds the image.
 
 ## Manual UI checklist
 

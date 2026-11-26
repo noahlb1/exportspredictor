@@ -1,6 +1,20 @@
 # One-command run for Advisors:  podman compose up   then open http://localhost:8501
-# Needs a trained artefact folder in ./artefacts (see README.md).
+# Needs a trained artefact folder in ./artefacts: fetch the released one first with
+#   podman compose run --rm fetch        (or docker compose; add --url URL for another release)
 services:
+  # Under a profile, so `compose up` never starts it; `compose run fetch` still does.
+  fetch:
+    profiles: ["fetch"]
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: exportspredictor:latest
+    entrypoint: ["python", "-m", "exportspredictor.release", "fetch"]
+    environment:
+      EXPORTSPREDICTOR_ARTEFACTS_DIR: /artefacts
+    volumes:
+      - ./artefacts:/artefacts
+
   api:
     build:
       context: .

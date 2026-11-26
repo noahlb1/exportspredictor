@@ -68,14 +68,50 @@ def test_rebuild_section_gives_the_pipeline_command():
     assert "python -m exportspredictor.pipeline" in _rebuild_section()
 
 
-def _opening() -> str:
-    return README.read_text(encoding="utf-8").split("\n## ", 1)[0]
+def _sections() -> list[str]:
+    """The README's `## ` sections in order, each starting at its heading text."""
+    return README.read_text(encoding="utf-8").split("\n## ")[1:]
 
 
-def test_the_opening_describes_the_served_blend_chosen_on_the_selection_measure():
-    opening = _opening()
-    assert "Blend" in opening and "Selection Measure" in opening
-    assert "This is **v2**" not in opening
+def _section(heading: str) -> str:
+    return next(section for section in _sections() if section.startswith(heading + "\n"))
+
+
+def test_the_run_section_leads_the_readme_and_names_the_fetch_command():
+    first = _sections()[0]
+    assert first.startswith("Run the app\n")
+    assert "podman compose run --rm fetch" in first
+    assert "docker compose run --rm fetch" in first
+    assert first.index("compose run --rm fetch") < first.index("podman compose up")
+    assert "localhost:8501" in first
+
+
+def test_the_manual_route_names_the_released_asset_and_its_checksum_file():
+    from exportspredictor import release
+
+    asset = release.asset_name(release.RELEASED_VERSION)
+    manual = next(line for line in _sections()[0].splitlines() if "By hand" in line)
+    assert asset in manual and asset + release.CHECKSUM_SUFFIX in manual
+    assert f"releases/tag/{release.TAG}" in _sections()[0]
+
+
+def test_the_rebuild_section_says_it_needs_an_nvidia_gpu_and_is_not_needed_to_run_the_app():
+    start = _rebuild_section().split("```", 1)[0]
+    assert "NVIDIA GPU" in start
+    assert "not needed to run the app" in start
+
+
+def test_the_rebuild_section_says_how_the_containers_pick_up_a_new_version_or_new_code():
+    section = _rebuild_section()
+    assert "read-only" in section and "podman compose restart api" in section
+    assert "pipeline rereach" in section and "format-3" in section
+    assert "podman compose up --build" in section
+
+
+def test_the_served_model_section_describes_the_blend_chosen_on_the_selection_measure():
+    section = _section("The served model")
+    assert "Blend" in section and "Selection Measure" in section
+    assert "This is **v2**" not in section
 
 
 def test_the_rebuild_table_says_the_notebook_reads_saved_results_and_how_long_it_takes():
