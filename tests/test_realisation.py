@@ -262,6 +262,9 @@ def test_the_report_is_added_to_a_new_version_whose_evaluation_is_otherwise_unch
     rest = {key: value for key, value in bundle.evaluation.items() if key != "itc_comparison"}
     assert rest == {key: value for key, value in fixture_artefacts.evaluation.items() if key != "itc_comparison"}
     assert bundle.metadata["copied_from"] == fixture_artefacts.version
+    # The model card is written again, titled with the new folder's Artefact ID and stating the test.
+    card = (folder / "model_card.md").read_text(encoding="utf-8")
+    assert card.splitlines()[0].endswith("Artefact ID fixture-itc")
     assert bundle.baseline.equals(fixture_artefacts.baseline)
     assert bundle.ppml_benchmark == fixture_artefacts.ppml_benchmark
     # 2023 is never read, so the Test-year Ledger is untouched (ADR 0009).
