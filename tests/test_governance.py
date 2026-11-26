@@ -3,7 +3,8 @@
 import polars as pl
 import pytest
 
-from exportspredictor import evaluation, governance, reporting, tariffs
+from exportspredictor import evaluation, governance, tariffs
+from exportspredictor.reporting import history
 
 # --- Model card --------------------------------------------------------------------------
 
@@ -437,7 +438,7 @@ def test_the_model_card_and_the_notebook_state_the_same_round_counts(fixture_art
     artefacts = fixture_artefacts if shape == "selection measure" else _deviance_rounds(fixture_artefacts)
 
     stated = governance.model_card(artefacts)["round_count"]
-    served, next_rebuild = reporting.round_count(artefacts).to_dicts()
+    served, next_rebuild = history.round_count(artefacts).to_dicts()
 
     assert (stated["rounds_chosen"], stated["rounds"]) == (served["rounds_chosen"], served["rounds_trained"])
     assert stated["next_rounds"] == next_rebuild["rounds_chosen"]
