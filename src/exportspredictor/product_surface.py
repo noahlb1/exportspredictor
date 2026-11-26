@@ -7,9 +7,13 @@ configuration"), never by version name. `banned_terms` finds the history terms i
   `beats_v2`, but not inside a word (`prev2`); only the release tags in `RELEASE_TAGS` and data sources'
   own release names (`V202601`, "Licence v3.0") pass;
 - a phrase in `HISTORY_PHRASES`, in any case, plural, or across a line break.
+
+`notebook_text` is a notebook as its reader sees it: the prose and what the outputs show.
 """
 
 import re
+from collections.abc import Mapping
+from html import unescape
 
 from exportspredictor.release import TAG
 
@@ -40,3 +44,28 @@ def banned_terms(text: str) -> list[str]:
         m.group() for m in _PATTERN.finditer(text)
         if m.group().lower() not in RELEASE_TAGS and not _SOURCE.fullmatch(m.group())
     ]
+
+
+def notebook_text(notebook: Mapping) -> str:
+    """What a reader of a saved notebook (its JSON) sees outside the code: every markdown cell, and each output's
+    printed text, table (tags stripped), Markdown and the labels of its chart. Code, and what an SVG carries
+    unseen (its metadata names the drawing library and its version), are left out."""
+    texts = []
+    for cell in notebook["cells"]:
+        if cell["cell_type"] == "markdown":
+            texts.append(_joined(cell["source"]))
+        for output in cell.get("outputs", []):
+            texts.append(_joined(output.get("text", "")))
+            for kind, value in output.get("data", {}).items():
+                value = _joined(value)
+                if kind == "image/svg+xml":
+                    texts += re.findall(r"<text[^>]*>(.*?)</text>", value, flags=re.DOTALL)
+                elif kind == "text/html":
+                    texts.append(re.sub(r"<style.*?</style>|<[^>]+>", " ", value, flags=re.DOTALL))
+                elif kind.startswith("text/"):
+                    texts.append(value)
+    return unescape("\n".join(text for text in texts if text))
+
+
+def _joined(value: str | list[str]) -> str:
+    return value if isinstance(value, str) else "".join(value)

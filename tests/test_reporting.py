@@ -16,6 +16,7 @@ from exportspredictor import artefacts as store
 from exportspredictor import reporting, scenarios
 from exportspredictor.caveats import CaveatContext, with_caveat_columns
 from exportspredictor.exclusions import SECTOR_71_REASON
+from exportspredictor.product_surface import banned_terms
 from exportspredictor.volatility import ONE_OFF_REASON, VOLATILE_REASON
 
 
@@ -49,6 +50,73 @@ def test_the_experiments_table_has_every_arm_and_whether_it_was_kept(fixture_art
     for row in table.iter_rows(named=True):
         assert row["kept"] == (row["arm"] in kept)
         assert row["stopped_early"] == (row["rounds"] < reporting.EARLY_STOP_ROUNDS)
+
+
+def test_the_experiments_table_names_the_starting_configuration_by_role(fixture_artefacts):
+    # The loop's record calls the Arm that reruns the search's starting configuration by its version name.
+    record = fixture_artefacts.metadata["ranking_experiments"]
+    [(name, section)] = record["experiments"].items()
+    planted = {**record, "experiments": {name: {**section, "arms": [*section["arms"], {**section["arms"][0], "arm": "v1"}]}}}
+    bundle = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": planted})
+
+    assert reporting.experiments(bundle)["arm"][-1] == "starting configuration"
+    assert banned_terms(reporting.experiments(bundle).write_csv()) == []
+    # The record's own names are still there for the Model History.
+    assert reporting.experiments(bundle, by_role=False)["arm"][-1] == "v1"
+
+
+CONFIRMATION = {
+    "n_folds": 2,
+    "difference": 0.04,
+    "win_threshold": 0.009,
+    "beats_v2": True,
+    "winner": {"selection_measure": 0.56},
+    "v2": {"selection_measure": 0.52},
+    "naive": {"selection_measure": 0.50},
+    "folds": [
+        {"fold": 0, "winner": {"selection_measure": 0.57}, "v2": {"selection_measure": 0.53}},
+        {"fold": 1, "winner": {"selection_measure": 0.55}, "v2": {"selection_measure": 0.52}},
+    ],
+}
+
+
+def test_the_confirmation_sets_the_blend_beside_the_model_alone_fold_by_fold(fixture_artefacts):
+    record = {**fixture_artefacts.metadata["ranking_experiments"], "confirmation": CONFIRMATION}
+    bundle = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": record})
+
+    table = reporting.five_fold_confirmation(bundle)
+
+    assert table.columns == ["fold", "blend", "model_alone", "difference", "win_threshold"]
+    assert table["fold"].to_list() == ["0", "1", "all"]
+    assert table["blend"].to_list() == [0.57, 0.55, 0.56]
+    assert table["model_alone"].to_list() == [0.53, 0.52, 0.52]
+    assert table["difference"].to_list() == pytest.approx([0.04, 0.03, 0.04])
+    assert set(table["win_threshold"]) == {0.009}
+
+
+def test_a_version_without_the_confirmation_says_it_was_not_run(fixture_artefacts):
+    assert isinstance(reporting.five_fold_confirmation(fixture_artefacts), reporting.NotRun)
+
+
+def test_the_headline_ranking_is_drawn_beside_the_naive_baseline_on_every_market_and_the_largest(fixture_artefacts):
+    report = fixture_artefacts.evaluation
+
+    chart = reporting.ranking_beside_naive(fixture_artefacts)
+
+    rows = chart.data.to_dicts()
+    assert rows[0] == {"markets": "every Market", "model": report["headline"]["model"], "naive": report["headline"]["naive"]}
+    assert [(row["model"], row["naive"]) for row in rows[1:]] == [
+        (row["model"], row["naive"]) for row in report["large_markets"]["rows"]
+    ]
+    assert str(report["test_year"]) in chart.title
+    svg = chart._repr_svg_()
+    assert "the model, every Market" in svg and "Naive Baseline, every Market" in svg
+
+
+def test_without_a_headline_the_ranking_beside_the_naive_baseline_is_not_run(fixture_artefacts):
+    bare = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "headline"}
+
+    assert isinstance(reporting.ranking_beside_naive(replace(fixture_artefacts, evaluation=bare)), reporting.NotRun)
 
 
 def test_without_experiment_results_the_experiments_are_not_run(fixture_artefacts):

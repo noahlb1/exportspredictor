@@ -26,6 +26,7 @@ import polars as pl
 from matplotlib.figure import Figure
 
 from exportspredictor import (
+    model_choice,
     offsets,
     ppml,
     rankings,
@@ -170,19 +171,22 @@ def market_reach_effect(bundle: Artefacts) -> str:
 # A best round under this means the stopping rule, not the configuration, decided the Arm
 # (`exportspredictor.loop`, "Pitfalls").
 EARLY_STOP_ROUNDS = 50
+# Arms the loop's record names by version, as product text names them: by role (ADR 0013).
+ARM_ROLES = {"v1": "starting configuration"}
 
 
-def experiments(bundle: Artefacts) -> pl.DataFrame | NotRun:
+def experiments(bundle: Artefacts, *, by_role: bool = True) -> pl.DataFrame | NotRun:
     """Every Arm of every experiment the loop ran: its experiment (`loop.experiment_label`), its Selection
     Measure, its change on the best so far, its best round, whether it was kept, and whether it stopped
-    within its first `EARLY_STOP_ROUNDS` rounds."""
+    within its first `EARLY_STOP_ROUNDS` rounds. Arms are named by role (`ARM_ROLES`); the Model History passes
+    `by_role=False` for the record's own names."""
     record = bundle.metadata.get("ranking_experiments")
     if not record or not record.get("experiments"):
         return NotRun("The experiment loop")
     rows = [
         {
             "experiment": experiment_label(name, [arm["arm"] for arm in section.get("arms", [])]),
-            "arm": row["arm"],
+            "arm": ARM_ROLES.get(row["arm"], row["arm"]) if by_role else row["arm"],
             "selection_measure": row.get("selection_measure"),
             "change": row.get("change"),
             "rounds": row.get("rounds"),
@@ -196,6 +200,43 @@ def experiments(bundle: Artefacts) -> pl.DataFrame | NotRun:
         "experiment": pl.String, "arm": pl.String, "selection_measure": pl.Float64, "change": pl.Float64,
         "rounds": pl.Int64, "kept": pl.Boolean, "stopped_early": pl.Boolean,
     })
+
+
+def five_fold_confirmation(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """The five-fold confirmation, fold by fold: the Blend's Selection Measure beside the model alone's on each
+    held-out fold, then over every pair (`fold` "all"), with the Blend's margin and the Win Threshold
+    (`model_choice.how_chosen`)."""
+    confirmed = model_choice.how_chosen(bundle.metadata)["confirmation"]
+    if not confirmed:
+        return NotRun("The five-fold confirmation")
+    rows = [{"fold": str(fold["fold"]), "blend": fold["winner"], "model_alone": fold["model_alone"]}
+            for fold in confirmed["folds"]]
+    rows.append({"fold": "all", "blend": confirmed["winner"], "model_alone": confirmed["model_alone"]})
+    return pl.DataFrame(rows, schema={"fold": pl.String, "blend": pl.Float64, "model_alone": pl.Float64}).with_columns(
+        difference=pl.col("blend") - pl.col("model_alone"),
+        win_threshold=pl.lit(confirmed["win_threshold"], dtype=pl.Float64),
+    )
+
+
+def ranking_beside_naive(bundle: Artefacts) -> Chart | NotRun:
+    """The headline: the model's UK ranking on the test year beside the Naive Baseline's, on every Market and on the
+    Markets that import the most (the report's `headline` and `large_markets`)."""
+    report = bundle.evaluation or {}
+    headline = report.get("headline")
+    if not headline:
+        return NotRun("The UK ranking beside the Naive Baseline")
+    rows = [{"markets": "every Market", "model": headline["model"], "naive": headline["naive"]}] + [
+        {"markets": f"{row['markets']} largest Markets", "model": row["model"], "naive": row["naive"]}
+        for row in (report.get("large_markets") or {}).get("rows", [])
+    ]
+    data = pl.DataFrame(rows, schema={"markets": pl.String, "model": pl.Float64, "naive": pl.Float64})
+    title = f"UK within-Product rank correlation on {report.get('test_year')}, read once (higher is better)"
+    bars = [
+        Bar(f"{name}, {row['markets']}", 0.0, row[column], colour, f"{row[column]:.3f}")
+        for row in rows
+        for name, column, colour in (("the model", "model", ACCENT), ("Naive Baseline", "naive", NEUTRAL))
+    ]
+    return Chart(title, data, bar_svg(title, bars))
 
 
 def caveat_tier_reach(

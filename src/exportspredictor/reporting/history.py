@@ -1,8 +1,7 @@
 """The Model History's charts and tables: how the served model was reached (ADR 0013).
 
 Every version on 2023, v2's weakness, the gain ladder, every Arm, the confirmation against v2, the round count, the final
-round and every read of 2023. Product surfaces show none of this; `notebooks/model_history.ipynb` does, and until #214
-so does the main notebook.
+round and every read of 2023. Product surfaces show none of this; `notebooks/model_history.ipynb` does.
 
 Each function reads what is already saved, as product reporting does: the artefact's evaluation report (its
 `earlier_versions`, `rescored_earlier_versions` and `v1_comparison` blocks) and metadata (`ranking_experiments`,
@@ -137,7 +136,7 @@ def gain_ladder(bundle: Artefacts) -> Chart | NotRun:
 def experiments_chart(bundle: Artefacts) -> Chart | NotRun:
     """Each Arm's change in the Selection Measure on the best so far (`reporting.experiments`), against the Win
     Threshold. The final round's Arms are left to `final_round`, its own table."""
-    table = experiments(bundle)
+    table = experiments(bundle, by_role=False)
     if isinstance(table, NotRun):
         return table
     record = bundle.metadata["ranking_experiments"]
