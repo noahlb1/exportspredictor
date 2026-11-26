@@ -167,10 +167,6 @@ _RAW_SOURCES = {
 # --- Model card ----------------------------------------------------------------------------
 
 
-# Parts not run that belong to the Model History, not the served model (ADR 0013).
-HISTORY_PARTS = frozenset({"Gain ladder"})
-
-
 def model_card(artefacts: Artefacts, *, artefact_id: str | None = None) -> dict:
     """The model card of one artefact version, built from its metadata, evaluation report and
     saved PPML benchmark (`Artefacts.ppml_benchmark`; listed under the parts not run where absent).
@@ -195,8 +191,7 @@ def model_card(artefacts: Artefacts, *, artefact_id: str | None = None) -> dict:
         "dropped_features": _dropped_features(metadata),
         "excluded_products": _excluded_products(artefacts.excluded_products),
         "metrics": _metrics(report),
-        "not_run": [part for part in parts_not_run(report, artefacts.ppml_benchmark) if part["title"] not in HISTORY_PARTS]
-        if report else [],
+        "not_run": parts_not_run(report, artefacts.ppml_benchmark) if report else [],
         "large_market_ranking": (report.get("large_markets") or {}).get("text"),
         "market_reach_effect": _market_reach_effect(report),
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
