@@ -36,12 +36,12 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
    tables. The report is saved in the artefact as `evaluation.json`.
 6. **Opt-in parts** (`Parts`), each run only when asked for: the Event Backtests (Lift
    included), the monotone-constraint comparison and the gain ladder. A skipped part is
-   absent from the report, which then shows it as "not run for this version".
+   absent from the report, which then shows it as "not run".
 
 `build_artefacts(world)` runs this on the fixture world (CPU, seconds).
 `build_real_artefacts()` runs it on the per-year feature files of `features.build()`
 (GPU); `uv run python -m exportspredictor.pipeline` runs it and saves the artefact folder.
-`... pipeline refresh` copies the newest version with fresh metadata (`refresh`), `... pipeline rerange`
+`... pipeline refresh` copies the newest version with fresh metadata and model card (`save_refreshed`), `... pipeline rerange`
 copies it with its Potential Range recomputed (`rerange`), and `--help` lists both.
 """
 
@@ -1326,7 +1326,6 @@ def _v1_comparison(
                 n_folds=metadata["n_folds"], device=device, non_uk_rate=non_uk_rate, seed=seed, cache=ladder_cache,
             )
             ladder[name] = evaluation.score_rows(v1.rows["uk"], rung.models, rung.transform, UK, features=rung.features)
-    started = time.perf_counter()
     served = ModelForm.from_dict(metadata["model_form"])
     form = served.without_market_reach()  # pre-registered on the Blend
     test_flows = v1.flows.filter(pl.col("year") == test_year) if "year" in v1.flows.columns else v1.flows
@@ -1353,7 +1352,6 @@ def _v1_comparison(
     if served.market_reach is not None:  # labelled: the served form adds Market Reach, which this does not score
         block["model_form"], block["scored_without_market_reach"] = form.to_dict(), True
         block["verdict"]["text"] = comparison.WITHOUT_MARKET_REACH_NOTE + block["verdict"]["text"]
-    print(f"v1 comparison in {time.perf_counter() - started:.0f} s: {block['verdict']['text']}", flush=True)
     return block
 
 
@@ -1520,6 +1518,17 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
         "potential_share_of_actual_exports": potential_share_of_actual_exports(bundle.baseline),
     }
     return replace(bundle, metadata=metadata)
+
+
+def save_refreshed(source: Path, root: Path, *, data_root: Path | None = None) -> Path:
+    """Save `refresh` of the version in `source` as a new folder under `root`, copied file for file so files this step
+    does not know about survive, with its model card written again under the new folder's own Artefact ID."""
+    from exportspredictor import artefacts
+
+    bundle = refresh(artefacts.load(source), data_root=data_root)
+    folder = artefacts.copy_version(source, root, metadata=bundle.metadata)
+    governance.write_model_card(artefacts.load(folder), folder)
+    return folder
 
 
 def recaveat(
@@ -1828,11 +1837,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(add_v1_comparison(test_year_ledger=test_year_ledger), flush=True)
         return
     if list(argv) == ["refresh"]:
-        source = artefacts.latest_folder(artefacts_dir())
-        bundle = refresh(artefacts.load(source))
-        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "sources")}), flush=True)
-        # Copied file for file, so files this step does not know about (e.g. the model card) survive.
-        print(artefacts.copy_version(source, artefacts_dir(), metadata=bundle.metadata), flush=True)
+        folder = save_refreshed(artefacts.latest_folder(artefacts_dir()), artefacts_dir())
+        metadata = json.loads((folder / artefacts.METADATA_FILE).read_text(encoding="utf-8"))
+        print(json.dumps({k: metadata[k] for k in ("version", "refreshed_from", "sources")}), flush=True)
+        print(folder, flush=True)
         return
     if list(argv) == ["rerange"]:
         print(_rerange_latest(), flush=True)

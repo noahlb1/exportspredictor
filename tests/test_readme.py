@@ -3,6 +3,10 @@
 import re
 from pathlib import Path
 
+import polars as pl
+
+from exportspredictor.product_surface import README_RECORD_SECTION
+
 REPO = Path(__file__).resolve().parents[1]
 README = REPO / "README.md"
 CHECKLIST = REPO / "docs" / "ui-checklist.md"
@@ -48,8 +52,7 @@ def test_checklist_checks_values_are_in_usd_with_no_pounds():
 
 
 def _rebuild_section() -> str:
-    text = README.read_text(encoding="utf-8")
-    return text.split("## Rebuild the data and artefacts", 1)[1].split("\n## ", 1)[0]
+    return _section(README_RECORD_SECTION)
 
 
 def test_rebuild_table_names_every_step_of_the_rebuild_script():
@@ -108,10 +111,49 @@ def test_the_rebuild_section_says_how_the_containers_pick_up_a_new_version_or_ne
     assert "podman compose up --build" in section
 
 
-def test_the_served_model_section_describes_the_blend_chosen_on_the_selection_measure():
+def test_the_served_model_section_gives_the_model_form_once_and_links_the_model_history():
     section = _section("The served model")
-    assert "Blend" in section and "Selection Measure" in section
-    assert "This is **v2**" not in section
+    assert "Selection Measure" in section
+    assert section.count("Naive Baseline (weight") == 1 and "Market Reach" in section
+    assert section.count("[Model History](notebooks/model_history.ipynb)") == 1
+
+
+def test_the_rebuild_section_sends_history_only_commands_to_the_model_history():
+    section = _rebuild_section()
+    assert "[Reproduce this record](notebooks/model_history.ipynb)" in section
+    assert "--gain-ladder" not in section and "pipeline compare" not in section
+
+
+def test_the_served_model_section_leads_its_limitations_with_sizing():
+    limitations = _section("The served model").split("**Known limitations**", 1)[1]
+    first = next(line for line in limitations.splitlines() if line.startswith("- "))
+    assert "Tweedie deviance" in first and "Trust rankings more than dollar values" in first
+
+
+def test_the_served_model_section_s_figures_are_the_released_artefact_s():
+    import pytest
+
+    from exportspredictor import artefacts, evaluation, release
+    from exportspredictor.paths import artefacts_dir
+
+    folder = artefacts_dir() / release.RELEASED_VERSION
+    if not (folder / artefacts.METADATA_FILE).exists():
+        pytest.skip(f"The released artefact is not in {artefacts_dir()}")
+    report = artefacts.read_evaluation(folder)
+    headline, sizing = report["headline"], evaluation.sizing_limitation(report)
+    section = _section("The served model")
+
+    assert f"{headline['model']:.3f} against the Naive Baseline's {headline['naive']:.3f}" in section
+    assert str(report["test_year"]) in section
+    assert (
+        f"{sizing['model_tweedie_deviance']:,.0f}, against {sizing['naive_tweedie_deviance']:,.0f} "
+        "for the Naive Baseline"
+    ) in section
+    # The Potential Range's limitation names the same size as the artefact's own (`range_below_potential_limitations`).
+    bands = pl.read_parquet(folder / "potential_range_bands.parquet")
+    (below,) = evaluation.range_below_potential_limitations(bands)
+    size = re.search(r"under \$[\d.,]+[kmbn]*", below["text"])
+    assert size and f"({size.group()})" in section
 
 
 def test_the_rebuild_table_says_the_notebook_reads_saved_results_and_how_long_it_takes():
@@ -165,5 +207,5 @@ def test_the_repo_map_says_to_start_reading_at_the_notebook_then_the_package():
 
 def test_checklist_covers_the_tie_proof_large_market_and_market_reach_figures():
     checklist = _checklist()
-    for figure in ("tie-proof", "old measure", "30 largest", "What Market Reach changes", "by size", "UK pairs"):
+    for figure in ("tie-proof", "30 largest", "What Market Reach changes", "by size", "UK pairs"):
         assert figure in checklist, figure

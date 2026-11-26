@@ -473,12 +473,13 @@ def add_to_latest(
     `panel` defaults to the real base-year panel (`base_years.load_panel`, under the data `root`), whose record must
     name the newest artefact or one it was copied from (`base_years.check_panel_version`), and whose base-year models'
     training cut-offs go into the report. Models and tables are copied byte for byte (`artefacts.copy_version`), and
-    the rest of the evaluation is kept; nothing is trained, and the test year is never read, so the Test-year Ledger
-    is not written. Returns the new folder.
+    the rest of the evaluation is kept, and the model card is written again under the new folder's Artefact ID; nothing
+    is trained, and the test year is never read, so the Test-year Ledger is not written. Returns the new folder.
     """
     # Imported here: `base_years` trains through `evaluation`, which serves this module's report.
     from exportspredictor import artefacts as store
     from exportspredictor import base_years as panels
+    from exportspredictor import governance
     from exportspredictor.paths import artefacts_dir
 
     artefacts_root = Path(artefacts_root or artefacts_dir())
@@ -496,9 +497,11 @@ def add_to_latest(
     report = realisation_report(panel, training_cut_offs=cut_offs)
     report["seconds"] = round(time.perf_counter() - started, 2)
     metadata = {**bundle.metadata, "version": version or store.new_version(), "copied_from": bundle.version}
-    return store.copy_version(
+    folder = store.copy_version(
         source, artefacts_root, metadata=metadata, evaluation=with_itc_comparison(bundle, report).evaluation
     )
+    governance.write_model_card(store.load(folder), folder)
+    return folder
 
 
 if __name__ == "__main__":

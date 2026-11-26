@@ -24,11 +24,11 @@ from exportspredictor.downloads import sha256
 from exportspredictor.evaluation import parts_not_run
 from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
+    against_model_alone,
     model_form_summary,
     ranking_summary,
     round_count,
     selection_rule_text,
-    traded_away,
 )
 from exportspredictor.paths import data_dir
 from exportspredictor.scenarios import BLOCKED_RULE
@@ -69,9 +69,9 @@ DECISIONS = [
      ("A Tweedie-loss gradient-boosted model serves Opportunities and Scenarios. Every Trade Agreement and "
      "Trading Bloc feature has a +1 monotone constraint and the Applied Tariff a −1 constraint, so adding an "
      "agreement or cutting a tariff never lowers Export Potential; it does not make the size of the effect right. "
-     "Since ADR 0008 the form is chosen on the UK ranking alone: the model summary gives the served form and its "
-     "weights. A blend with the Naive Baseline ranked UK Markets better than the model alone on all five folds of "
-     "2022. The Naive Baseline has no policy features, so Scenario Effects come from the model's share only.")),
+     "The form is chosen on the UK ranking alone (ADR 0008): the Model Form section gives its weights. A blend with "
+     "the Naive Baseline ranked UK Markets better than the model alone on all five folds of 2022. The Naive "
+     "Baseline has no policy features, so Scenario Effects come from the model's share only.")),
     ("BACI's HS 2012 revision (ADR 0003)",
      ("A longer history (2012–2024) gives the model more agreements that changed during training, and covers the "
      "EU–Japan Event Backtest; the cost is 2012-vintage Product codes.")),
@@ -94,9 +94,9 @@ DECISIONS = [
      "a model on a Sector subset and judged on 2022; a feature was dropped when the model without it had both a lower deviance and a better UK ranking. "
      "A learning curve over the sampling rates, also on 2022, set the rates.")),
     ("Hyperparameters chosen by a Tree-structured Parzen Estimator search on 2022",
-     ("Optuna's TPE with a median pruner replaced v1's five hand-picked configurations, with v1's configuration as "
-     "trial 0, judged on 2022 Tweedie deviance and guarded by the UK ranking. The fold models reuse the winner, "
-     "with its round count scaled by the ratio of training rows (a heuristic).")),
+     ("Optuna's TPE with a median pruner, starting from a hand-picked configuration, judged on 2022 Tweedie "
+     "deviance and guarded by the UK ranking. The fold models reuse the winner, with its round count scaled by the "
+     "ratio of training rows (a heuristic).")),
     ("The Export Gap is a Gap Period mean (2022–2024)",
      ("Each year's Export Potential minus Actual Exports, averaged over three years, steadies the ranking against "
      "one-off shipments and leaves out the COVID and Brexit-transition years. Scenarios and Blocked Opportunity "
@@ -119,10 +119,6 @@ DECISIONS = [
      "Flow is at least 50% and $100,000 above its 2015–2017 mean, with a size-matched Lift beside it. Event "
      "Backtests compare predicted with observed difference-in-differences against the largest high-income Control "
      "Markets with no agreement, with the tariff zeroed when the agreement is on.")),
-    ("A pre-registered comparison with v1",
-     ("v2 is said to beat v1 only if, on the same 2023 UK rows, its within-Product rank correlation is higher with a "
-     "paired-bootstrap interval above 0, it beats the Naive Baseline by more than v1 did, and no secondary metric is "
-     "worse beyond its interval. The rule was fixed before 2023 was read; a gain ladder splits the change.")),
     ("A PPML gravity benchmark for the Trade Agreement Scenario Effect",
      ("A 3-way fixed-effects Poisson pseudo-maximum-likelihood gravity model, at Sector level on the same Flows and "
      "scope, gives an independent estimate of what a Trade Agreement is associated with. It is fitted once and "
@@ -172,14 +168,17 @@ _RAW_SOURCES = {
 # --- Model card ----------------------------------------------------------------------------
 
 
-def model_card(artefacts: Artefacts) -> dict:
+def model_card(artefacts: Artefacts, *, artefact_id: str | None = None) -> dict:
     """The model card of one artefact version, built from its metadata, evaluation report and
     saved PPML benchmark (`Artefacts.ppml_benchmark`; listed under the parts not run where absent).
+
+    It describes the served model alone (ADR 0013); the history blocks the report keeps are the Model History's.
+    `artefact_id` is the folder's own Artefact ID (default: the metadata's version).
     """
-    # Read in today's words: the saved report's names and the v1 comparison's, which predate the Blend.
+    # Read in today's words: the saved report's names, which may predate the Blend.
     metadata, report = artefacts.metadata, comparison.relabelled(artefacts.evaluation or {})
     return {
-        "version": artefacts.version,
+        "version": artefact_id or artefacts.version,
         "owner": OWNER,
         "model": _model_summary(metadata),
         "model_form": model_form_summary(metadata),
@@ -194,15 +193,12 @@ def model_card(artefacts: Artefacts) -> dict:
         "excluded_products": _excluded_products(artefacts.excluded_products),
         "metrics": _metrics(report),
         "not_run": parts_not_run(report, artefacts.ppml_benchmark) if report else [],
-        "v1_comparison": _comparison_summary(report.get("v1_comparison"), comparison.version_name(report)),
-        "earlier_versions": report.get("earlier_versions"),
-        "large_markets": evaluation.large_markets_beside_earlier(report),
+        "large_market_ranking": (report.get("large_markets") or {}).get("text"),
         "market_reach_effect": _market_reach_effect(report),
-        "traded_away": traded_away(report.get("earlier_versions")),
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
         "potential_range": _potential_range(report.get("potential_range")),
         "range_coverage_by_exporter": _range_review(report.get("potential_range")),
-        # Every limitation the API serves (one source), then the card's own: the gravity benchmark.
+        # Every limitation the API serves (one source, led by sizing), then the card's own: the gravity benchmark.
         "limitations": [*evaluation.known_limitations(artefacts), *_benchmark_limitations(artefacts.ppml_benchmark)],
         "data_sources": [{"name": n, "use": u, "location": loc} for n, u, loc in DATA_SOURCES],
         "source_versions": metadata.get("sources", []),  # `sources.source_versions`, if recorded
@@ -241,11 +237,11 @@ def _model_summary(metadata: dict) -> str:
 
 
 def _headline_lines(card: dict) -> list[str]:
-    """The test-year UK ranking beside the Naive Baseline and earlier versions, else the report's headline."""
-    if card.get("earlier_versions"):
-        return _earlier_lines(card["earlier_versions"])
+    """The test-year UK ranking beside the Naive Baseline, read once (ADR 0009), then on the largest Markets."""
     headline = next((m for m in card["metrics"] if m["name"] == "UK ranking (headline)"), None)
-    return [headline["text"]] if headline else ["The test year has not been evaluated for this version."]
+    if headline is None:
+        return ["The test year has not been evaluated."]
+    return [headline["text"], *(["", card["large_market_ranking"]] if card.get("large_market_ranking") else [])]
 
 
 def _illustrative_lines(note: dict) -> list[str]:
@@ -256,7 +252,7 @@ def _illustrative_lines(note: dict) -> list[str]:
 
 def _ranking_lines(summary: dict | None) -> list[str]:
     if summary is None:
-        return ["No experiment loop is recorded for this version."]
+        return ["No experiment loop is recorded."]
     lines = [
         selection_rule_text(summary),
         "",
@@ -272,56 +268,12 @@ def _ranking_lines(summary: dict | None) -> list[str]:
             for e in summary["experiments"]
         ],
     ]
-    confirmation = summary["confirmation"]
-    if confirmation:
-        lines += ["", (
-            f"Confirmed on all {confirmation['n_folds']} folds of {summary['validation_year']}: the chosen form "
-            f"{number_text(confirmation['winner'], '.4f')}, v2's form (the model alone) {number_text(confirmation['v2'], '.4f')}, "
-            f"the Naive Baseline {number_text(confirmation['naive'], '.4f')}; difference "
-            f"{number_text(confirmation['difference'], '+.4f')} against a threshold of "
-            f"{number_text(confirmation['win_threshold'], '.4f')} ("
-            f"{'confirmed' if confirmation['beats_v2'] else 'not confirmed'})."
-        )]
+    if summary["confirmation"]:
+        lines += ["", against_model_alone(summary)["text"]]
     return lines
 
 
-def _earlier_lines(block: dict | None) -> list[str]:
-    if block is None:
-        return ["The test year has not been set beside earlier versions for this version."]
-    def cell(row, key, fmt):
-        value = row.get(key)
-        return "n/a" if value is None else number_text(value, fmt)
-    if "uk_ranking_tie_proof" not in block["rows"][0]:  # saved before the two measures were told apart
-        return [
-            f"**{block['text']}**",
-            "",
-            "| Version | UK ranking | Size-matched Lift | Lift | Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |",
-            "| --- | --- | --- | --- | --- | --- |",
-            *[
-                f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'size_matched_lift', '.2f')} | "
-                f"{cell(row, 'lift', '.2f')} | {cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | "
-                f"{cell(row, 'tweedie_deviance_uk', ',.1f')} |"
-                for row in block["rows"]
-            ],
-            *[f"| {row['name']} | {number_text(row['uk_ranking'], '.3f')} | | | | |" for row in block["naive"]],
-        ]
-    return [
-        f"**{block['text']}**",
-        "",
-        (
-            "| Version | UK ranking, old measure | UK ranking, tie-proof | Size-matched Lift | Lift | "
-            "Tweedie deviance, all Exporters | Tweedie deviance, UK pairs |"
-        ),
-        "| --- | --- | --- | --- | --- | --- | --- |",
-        *[
-            f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'uk_ranking_tie_proof', '.3f')} | "
-            f"{cell(row, 'size_matched_lift', '.2f')} | {cell(row, 'lift', '.2f')} | "
-            f"{cell(row, 'tweedie_deviance_all_exporters', ',.1f')} | {cell(row, 'tweedie_deviance_uk', ',.1f')} |"
-            for row in block["rows"]
-        ],
-        *[f"| {row['name']} | {cell(row, 'uk_ranking', '.3f')} | {cell(row, 'uk_ranking_tie_proof', '.3f')} | | | | |"
-          for row in block["naive"]],
-    ]
+
 
 
 def _training_scope(metadata: dict) -> dict:
@@ -365,7 +317,7 @@ def _excluded_products(table: pl.DataFrame) -> list[dict]:
     return [{"reason": row["reason"], "products": row["hs6"]} for row in groups.iter_rows(named=True)]
 
 
-# The row budget v2 was planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
+# The row budget the spec planned around; the measured one (`scripts/gpu_check.py`) is in the metadata.
 PLANNED_ROW_BUDGET_M = 110
 
 
@@ -426,26 +378,6 @@ def _market_reach_effect(report: dict) -> dict | None:
         return None
     return {**effect, "text": evaluation.market_reach_effect_text(effect, report["test_year"], figures=True)}
 
-
-def _comparison_summary(block: dict | None, name: str) -> dict | None:
-    """The pre-registered v1 comparison in brief: the verdict, the primary metric and the gain ladder;
-    `name` is what the words call the version compared with v1 (`comparison.version_name`)."""
-    if not block:
-        return None
-    primary = block["primary"]
-    ladder = block.get("ladder")
-    return {
-        "name": name,
-        "verdict": block["verdict"]["text"],
-        "v2_beats_v1": block["verdict"]["v2_beats_v1"],
-        "primary": {key: primary[key] for key in ("label", "v1", "v2", "naive", "difference", "ci")},
-        "rows": block["rows"],
-        "ladder": [
-            {"from": step["from"], "to": step["to"], "label": step["label"], "change": step["change"], "ci": step["ci"]}
-            for step in ladder["steps"]
-        ] if ladder else [],
-        "ladder_note": ladder["note"] if ladder else None,
-    }
 
 
 def _ci(interval, *, percent: bool = False) -> str:
@@ -562,22 +494,20 @@ def _signed_percent_with_minus_sign(value: float) -> str:
 
 
 def render_model_card(card: dict) -> str:
-    """The model card as Markdown. It leads with what the notebook leads with (the headline, the Model
-    Form and the Illustrative label), and ends with the frozen v1 comparison as a short reported result."""
-    lines = [f"# Model card: UK Exports Predictor, version {card['version']}", "",
+    """The model card as Markdown. It leads with what the notebook leads with: the headline, the Model
+    Form and the Illustrative label."""
+    lines = [f"# Model card: UK Exports Predictor, Artefact ID {card['version']}", "",
              f"**Owner:** {card['owner']}", ""]
-    lines += ["## Headline", "", *_headline_lines(card), "", *_large_market_lines(card.get("large_markets"))]
-    if card.get("traded_away"):
-        lines += [card["traded_away"]["text"], ""]
+    lines += ["## Headline", "", *_headline_lines(card), ""]
     lines += ["## Model Form", "", card["model_form"]["text"], "", f"**Model:** {card['model']}", "",
               card["round_count"]["text"], ""]
     lines += ["## Illustrative Scenario Effects", "", *_illustrative_lines(card["illustrative"]), ""]
     lines += ["## Blocked Opportunities", "", card["blocked_opportunities"]["text"], ""]
     if card.get("market_reach_effect"):
         lines += ["## What Market Reach changes", "", card["market_reach_effect"]["text"], ""]
-    lines += ["## How the Model Form was chosen", "", *_ranking_lines(card.get("ranking_experiments")), ""]
+    lines += ["## Alternatives considered on 2022", "", *_ranking_lines(card.get("ranking_experiments")), ""]
     lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
-        "text", "The artefact records no Potential Range coverage for this version."),
+        "text", "The artefact records no Potential Range coverage."),
         *_size_lines((card["potential_range"] or {}).get("by_size")), ""]
     lines += ["## Metrics", "", "| Metric | Model | Reference (Naive Baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
     lines += [
@@ -612,51 +542,9 @@ def render_model_card(card: dict) -> str:
             for s in card["source_versions"]
         ], ""]
     lines += ["## Decisions behind the model", "", *[f"- **{d['title']}.** {d['text']}" for d in card["decisions"]], ""]
-    lines += ["## Frozen results", "", ("Reported once and no longer extended: they decided v2, not the served "
-              "Model Form (ADR 0008)."), "", "### Comparison with v1", "", *_comparison_lines(card["v1_comparison"]), ""]
     return "\n".join(lines)
 
 
-def _large_market_lines(rows: list[dict] | None) -> list[str]:
-    """The tie-proof UK ranking on the largest Markets, this version beside earlier versions (none: no lines)."""
-    if not rows:
-        return []
-    labels = list(rows[0]["columns"])
-    return [
-        "The same tie-proof ranking on the Markets that import the most (no choice was made on these):",
-        "",
-        "| Version | " + " | ".join(labels) + " |",
-        "| --- |" + " --- |" * len(labels),
-        *[
-            f"| {row['name']} | " + " | ".join(number_text(row["columns"].get(label), ".3f") for label in labels) + " |"
-            for row in rows
-        ],
-        "",
-    ]
-
-
-def _comparison_lines(summary: dict | None) -> list[str]:
-    if summary is None:
-        return ["The pre-registered comparison with v1 has not been run for this version."]
-    primary, name = summary["primary"], summary["name"]
-    lines = [
-        f"**Verdict.** {summary['verdict']}",
-        "",
-        (
-            f"Primary metric ({primary['label']}): v1 {number_text(primary['v1'], '.3f')}, {name} {number_text(primary['v2'], '.3f')}, "
-            f"Naive Baseline {number_text(primary['naive'], '.3f')}; {name} − v1 {number_text(primary['difference'], '+.3f')} (95% interval "
-            f"{number_text(primary['ci'][0], '+.3f')} to {number_text(primary['ci'][1], '+.3f')})."
-        ),
-    ]
-    if summary["ladder"]:
-        lines += ["", "Gain ladder (change in the primary metric at each cumulative step):", ""]
-        lines += [
-            f"- {step['from']} → {step['to']} ({step['label']}): {number_text(step['change'], '+.3f')} (95% interval "
-            f"{number_text(step['ci'][0], '+.3f')} to {number_text(step['ci'][1], '+.3f')})"
-            for step in summary["ladder"]
-        ]
-        lines += ["", summary["ladder_note"]]
-    return lines
 
 
 def _number(value, percent: bool = False) -> str:
@@ -666,9 +554,10 @@ def _number(value, percent: bool = False) -> str:
 
 
 def write_model_card(artefacts: Artefacts, folder: Path) -> Path:
-    """Write `model_card.md` into an artefact folder, next to the models it describes."""
+    """Write `model_card.md` into an artefact folder, next to the models it describes, titled with the folder's own
+    Artefact ID."""
     path = Path(folder) / MODEL_CARD_FILE
-    path.write_text(render_model_card(model_card(artefacts)), encoding="utf-8")
+    path.write_text(render_model_card(model_card(artefacts, artefact_id=Path(folder).name)), encoding="utf-8")
     return path
 
 

@@ -579,7 +579,7 @@ def test_evaluation_includes_lift_and_the_event_backtest(client):
     lift = body["lift"]
     assert lift["lift"] is not None and len(lift["ci"]) == 2 and "times as often" in lift["text"]
     assert len(lift["size_matched"]["ci"]) == 2 and "lift" in lift["size_matched"]
-    assert lift["gap_years"] == [2022] and lift["held_out_from"] == "v1"
+    assert lift["gap_years"] == [2022]
     event = body["event_backtest"]["events"][0]
     direction = event["directions"][0]
     assert direction["controls"] and direction["pooled"]["observed"] is not None
@@ -1072,7 +1072,7 @@ def test_with_no_saved_benchmark_the_note_keeps_the_label_and_says_the_benchmark
     assert note["label"] == "Illustrative"
     for part in ("benchmark", "model_association"):
         assert note[part]["run"] is False
-        assert "not run for this version" in note[part]["text"]
+        assert "not run" in note[part]["text"]
     assert note["event_backtest"]["run"] is True
 
 
@@ -1083,7 +1083,7 @@ def test_with_no_event_backtests_the_note_keeps_the_label_and_says_they_were_not
 
     assert note["label"] == "Illustrative"
     assert note["event_backtest"]["run"] is False
-    assert "not run for this version" in note["event_backtest"]["text"]
+    assert "not run" in note["event_backtest"]["text"]
     assert note["benchmark"]["run"] is True
 
 
@@ -1116,7 +1116,7 @@ def test_with_no_saved_benchmark_the_blocked_note_says_the_benchmark_was_not_run
         note = client.get("/opportunities/blocked").json()["note"]
 
     assert note["label"] == "Illustrative"
-    assert note["benchmark"]["run"] is False and "not run for this version" in note["benchmark"]["text"]
+    assert note["benchmark"]["run"] is False and "not run" in note["benchmark"]["text"]
 
 
 # --- How the model was chosen, read from the artefact ----------
@@ -1167,16 +1167,35 @@ CONFIRMATION = {
 }
 
 
-def test_evaluation_serves_the_five_fold_confirmation_fold_by_fold(fixture_artefacts, tmp_path):
+def _confirmed(fixture_artefacts):
     ranking = {**fixture_artefacts.metadata["ranking_experiments"], "confirmation": CONFIRMATION}
-    confirmed = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": ranking})
+    return replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": ranking})
 
-    confirmation = _served(confirmed, tmp_path)["model_choice"]["confirmation"]
 
-    assert confirmation["n_folds"] == 2 and confirmation["beats_v2"] is True
-    assert confirmation["winner"] == 0.5635 and confirmation["v2"] == 0.5206 and confirmation["naive"] == 0.5332
-    assert confirmation["difference"] == 0.0429 and confirmation["win_threshold"] == 0.0089
-    assert confirmation["folds"] == [{"fold": 0, "winner": 0.5771, "v2": 0.5334}, {"fold": 1, "winner": 0.5745, "v2": 0.5295}]
+def test_evaluation_serves_the_five_fold_confirmation_against_the_model_alone(fixture_artefacts, tmp_path):
+    confirmation = _served(_confirmed(fixture_artefacts), tmp_path)["model_choice"]["confirmation"]
+
+    assert confirmation == {
+        "n_folds": 2, "winner": 0.5635, "model_alone": 0.5206, "naive": 0.5332, "difference": 0.0429,
+        "win_threshold": 0.0089, "beats_model_alone": True,
+        "folds": [{"fold": 0, "winner": 0.5771, "model_alone": 0.5334}, {"fold": 1, "winner": 0.5745, "model_alone": 0.5295}],
+        "text": (
+            "Five-fold confirmation on 2022: the chosen Model Form scores 0.5635, the model alone 0.5206 and the Naive "
+            "Baseline 0.5332; the difference, +0.0429, beats the Win Threshold of 0.0089 (confirmed)."
+        ),
+    }
+
+
+def test_the_confirmation_s_verdict_is_the_record_s(fixture_artefacts, tmp_path):
+    # The loop's rule allows for rounding, so a difference just above the threshold can still fall short.
+    short = {**CONFIRMATION, "difference": 0.0090, "beats_v2": False}
+    ranking = {**fixture_artefacts.metadata["ranking_experiments"], "confirmation": short}
+    bundle = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": ranking})
+
+    confirmation = _served(bundle, tmp_path)["model_choice"]["confirmation"]
+
+    assert confirmation["beats_model_alone"] is False
+    assert confirmation["text"].endswith("does not beat the Win Threshold of 0.0089 (not confirmed).")
 
 
 def test_the_fixture_records_no_confirmation_and_serves_none(client):
@@ -1198,52 +1217,48 @@ V2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.
       "tweedie_deviance_all_exporters": 355.5, "tweedie_deviance_uk": 568.6}
 
 
-def _with_v2(fixture_artefacts, v2: dict = V2):
-    from exportspredictor import evaluation
-
+def _with_history(fixture_artefacts):
+    """The fixture artefact with every history block the record keeps: earlier versions (with a lower deviance, so
+    something would read as traded away), their re-scores, the v1 comparison and a gain ladder."""
+    this = fixture_artefacts.evaluation["accuracy"]["all_exporters"]["overall"]["model_tweedie_deviance"]
     report = {**fixture_artefacts.evaluation}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
-    return replace(fixture_artefacts, evaluation=report)
+    report["earlier_versions"] = evaluation.earlier_versions(
+        report, v2={**V2, "tweedie_deviance_all_exporters": this / 2}, blend=None
+    )
+    report["v1_comparison"] = {**report.get("v1_comparison", {}), "ladder": {"steps": []}}
+    return replace(_confirmed(fixture_artefacts), evaluation=report)
 
 
-def test_evaluation_serves_the_test_year_ranking_beside_the_naive_baseline_and_earlier_versions(
-    fixture_artefacts, tmp_path
-):
-    artefacts = _with_v2(fixture_artefacts)
-    block = artefacts.evaluation["earlier_versions"]
-
-    ranking = _served(artefacts, tmp_path)["model_choice"]["test_year_ranking"]
-
-    assert ranking["test_year"] == block["test_year"]
-    assert [(r["name"], r["uk_ranking"]) for r in ranking["rows"]] == [(r["name"], r["uk_ranking"]) for r in block["rows"]]
-    assert [r["uk_ranking"] for r in ranking["naive"]] == [r["uk_ranking"] for r in block["naive"]]
-    assert ranking["beats_naive"] == block["beats_naive"] and ranking["text"] == block["text"]
+HISTORY_FIELDS = ("earlier_versions", "rescored_earlier_versions", "large_markets_by_version", "v1_comparison", "ladder")
 
 
-def test_evaluation_says_what_the_blend_traded_away_with_the_deviance_read_from_the_artefact(
-    fixture_artefacts, tmp_path
-):
-    this = fixture_artefacts.evaluation["accuracy"]["all_exporters"]["overall"]["model_tweedie_deviance"]
-    v2 = {**V2, "tweedie_deviance_all_exporters": round(this / 2, 1)}  # v2 estimated size better
-    artefacts = _with_v2(fixture_artefacts, v2)
+def test_evaluation_serves_no_history_even_when_the_artefact_keeps_it(fixture_artefacts, tmp_path):
+    artefacts = _with_history(fixture_artefacts)
+    assert {"earlier_versions", "rescored_earlier_versions", "v1_comparison"} <= set(artefacts.evaluation)
 
-    traded = _served(artefacts, tmp_path)["model_choice"]["traded_away"]
+    body = _served(artefacts, tmp_path)
 
-    assert traded["deviance"] == pytest.approx(this) and traded["earlier_deviance"] == round(this / 2, 1)
-    assert traded["earlier_name"] == "v2"
-    assert f"{this:,.1f}" in traded["text"] and f"{round(this / 2, 1):,.1f}" in traded["text"]
-    assert "ranking" in traded["text"] and "dollar" in traded["text"]
-
-
-def test_without_an_earlier_version_to_compare_nothing_is_said_to_be_traded_away(client):
-    assert client.get("/evaluation").json()["model_choice"]["traded_away"] is None  # the fixture has no v2
+    assert not set(HISTORY_FIELDS) & set(body)
+    assert not {"test_year_ranking", "traded_away"} & set(body["model_choice"])
+    assert not {"v2", "beats_v2"} & set(body["model_choice"]["confirmation"])
+    for lift in ("lift", "lift_without_market_reach"):
+        assert "held_out_from" not in (body.get(lift) or {})
+    assert "Gain ladder" not in [part["title"] for part in body["not_run"]]
 
 
-def test_nothing_is_said_to_be_traded_away_when_the_deviance_is_no_worse(fixture_artefacts, tmp_path):
-    this = fixture_artefacts.evaluation["accuracy"]["all_exporters"]["overall"]["model_tweedie_deviance"]
-    artefacts = _with_v2(fixture_artefacts, {**V2, "tweedie_deviance_all_exporters": this * 2})
+def test_evaluation_serves_the_headline_its_benchmarks_and_the_alternatives_considered(client, fixture_artefacts):
+    saved = fixture_artefacts.evaluation
 
-    assert _served(artefacts, tmp_path)["model_choice"]["traded_away"] is None
+    body = client.get("/evaluation").json()
+
+    assert body["artefact_version"] == fixture_artefacts.version
+    assert body["headline"]["model"] == pytest.approx(saved["headline"]["model"])
+    assert body["headline"]["naive"] == pytest.approx(saved["headline"]["naive"])  # the Naive Baseline beside it
+    overall = body["accuracy"]["uk_out_of_fold"]["overall"]
+    assert {f"naive_{metric}" for metric in body["metrics"]} <= set(overall)
+    alternatives = body["model_choice"]["experiments"]
+    assert [e["name"] for e in alternatives] == list(fixture_artefacts.metadata["ranking_experiments"]["experiments"])
+    assert body["model_choice"]["validation_year"] == fixture_artefacts.metadata["ranking_experiments"]["validation_year"]
 
 
 def test_the_event_backtest_note_says_it_measured_the_model_alone_and_served_effects_are_smaller(
@@ -1560,17 +1575,6 @@ def test_evaluation_serves_what_market_reach_changes(client, fixture_artefacts):
     assert effect["uk_pair_coverage"] == saved["uk_pair_coverage"]
 
 
-def test_evaluation_serves_the_large_market_measures_beside_earlier_versions(client, fixture_artefacts):
-    rows = client.get("/evaluation").json()["large_markets_by_version"]
-    v1 = {row["markets"]: row["model"] for row in fixture_artefacts.evaluation["rescored_earlier_versions"]["v1"]["large_markets"]}
-
-    by_name = {row["name"]: row for row in rows}
-    assert by_name["v1"]["markets"] == {"30": v1[30], "60": v1[60]}
-    assert rows[0]["name"].startswith("This version")
-    # Worded in the package, so the app shows the columns without naming them itself.
-    assert by_name["v1"]["columns"] == {"30 largest Markets": v1[30], "60 largest Markets": v1[60]}
-
-
 # --- `/evaluation`'s `itc_comparison`: ITC's realisation test on our model, worded for Advisors by the API ---
 
 
@@ -1646,7 +1650,7 @@ def test_evaluation_without_the_itc_comparison_omits_it_and_lists_the_part_as_no
 
     assert served.get("itc_comparison") is None
     [part] = [part for part in served["not_run"] if part["title"] == "ITC comparison"]
-    assert "not run for this version" in part["text"]
+    assert "not run" in part["text"]
     assert "python -m exportspredictor.realisation" in part["text"]
 
 

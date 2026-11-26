@@ -1,0 +1,64 @@
+{
+  "source": "Artefact 20261118T100524Z, evaluation.json: v1_comparison.ladder (without its v1_configuration) and v1_comparison.primary.naive, copied once on 2026-11-26 so the Model History never opens that folder.",
+  "test_year": 2023,
+  "ladder": {
+    "metric": "UK out-of-fold within-Product rank correlation",
+    "products": 5073,
+    "rungs": [
+      {
+        "name": "v1",
+        "label": "v1 as frozen",
+        "value": 0.5396899489274922
+      },
+      {
+        "name": "A",
+        "label": "v1's features and configuration, with v2's scope, sampling and exclusions",
+        "value": 0.5192906852317225
+      },
+      {
+        "name": "B",
+        "label": "A plus v2's features",
+        "value": 0.5153653533864956
+      },
+      {
+        "name": "C",
+        "label": "v2, tuned",
+        "value": 0.5114955233364546
+      }
+    ],
+    "steps": [
+      {
+        "from": "v1",
+        "to": "A",
+        "label": "v2's Exporter scope, sampling rates and Excluded Products",
+        "change": -0.02039926369576972,
+        "ci": [
+          -0.021192412503777562,
+          -0.01963347768888641
+        ]
+      },
+      {
+        "from": "A",
+        "to": "B",
+        "label": "v2's new features",
+        "change": -0.00392533184522692,
+        "ci": [
+          -0.004345633411470278,
+          -0.003483322705813805
+        ]
+      },
+      {
+        "from": "B",
+        "to": "C",
+        "label": "v2's tuned configuration",
+        "change": -0.0038698300500409344,
+        "ci": [
+          -0.004492019180777981,
+          -0.0032305973943697183
+        ]
+      }
+    ],
+    "note": "The ladder is for reporting only and decides nothing. Its steps are cumulative, so the order of the steps affects how the change is split between them; another order could split it differently."
+  },
+  "naive": 0.5231154614001996
+}

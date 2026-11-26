@@ -12,8 +12,10 @@ sign, which Markdown reads as the start of a formula.
 from dataclasses import dataclass
 
 from exportspredictor.conformal import COVERAGE, HIGH_QUANTILE, LOW_QUANTILE, N_BANDS
+from exportspredictor.experiments import VALIDATION_YEAR
 from exportspredictor.features import ZERO_SAMPLING_RATE
 from exportspredictor.folds import N_FOLDS
+from exportspredictor.ledger import TEST_YEAR
 from exportspredictor.market_reach import CHOSEN_BETA
 from exportspredictor.prediction import ModelForm
 from exportspredictor.scope import TOP_EXPORTERS
@@ -192,23 +194,7 @@ def sections(form: ModelForm, non_uk_rate: float | None) -> tuple[Section, ...]:
             ),
             Idea(
                 "The test year, read once",
-                "The test year is opened once, after every choice is fixed, so nothing is tuned to it.",
-                what=(
-                    "A version is frozen when every choice, from features to the number of trees, is fixed on the "
-                    "validation year. Only then is it measured on the test year, once. Its result is reported as it "
-                    "is; a fix belongs to a new version."
-                ),
-                why=(
-                    "Each look at a test score tempts a tweak, and a test year tweaked against becomes a second "
-                    "validation year whose score flatters the model. Read once, it stays an honest measure of a year "
-                    "the model was not tuned to."
-                ),
-                how=(
-                    "- A version is identified by its Configuration Fingerprint, a hash of the settings that decide "
-                    "its models.\n"
-                    "- Every read is a line in the Test-year Ledger, written before the year is opened.\n"
-                    "- A fingerprint already read is refused; an override is possible, and is recorded as a read too."
-                ),
+                f"Every choice was made on {VALIDATION_YEAR}, and the model was tested once on {TEST_YEAR}.",
             ),
             Idea(
                 "The ranking measure",

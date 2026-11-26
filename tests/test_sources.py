@@ -74,3 +74,22 @@ def test_the_model_card_lists_the_source_versions(fixture_artefacts, tmp_path):
 
     text = governance.render_model_card(governance.model_card(refreshed))
     assert "## Source versions" in text and "HS12 V202601" in text
+
+
+def test_a_refreshed_copy_rewrites_its_model_card_under_its_own_artefact_id(fixture_artefacts_dir, tmp_path, capsys):
+    import shutil
+
+    from exportspredictor import artefacts as store
+    from exportspredictor.pipeline import save_refreshed
+
+    found = store.latest_folder(fixture_artefacts_dir)
+    source = shutil.copytree(found, tmp_path / "source" / found.name)  # the session's folder stays as saved
+    (source / governance.MODEL_CARD_FILE).write_text("# Model card: UK Exports Predictor, version stale\n", encoding="utf-8")
+
+    folder = save_refreshed(source, tmp_path / "artefacts", data_root=_raw_tree(tmp_path))
+
+    title = (folder / governance.MODEL_CARD_FILE).read_text(encoding="utf-8").splitlines()[0]
+    assert title == f"# Model card: UK Exports Predictor, Artefact ID {folder.name}"
+    assert folder.name != source.name
+    assert store.load(folder).metadata["refreshed_from"] == source.name
+    assert capsys.readouterr().out == ""  # printing is the command's (`pipeline.main`)

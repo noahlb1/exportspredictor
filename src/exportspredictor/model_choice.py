@@ -8,7 +8,6 @@ read beyond the report. The model card (`governance`) and the notebook (`reporti
 same functions, so they cannot state different figures.
 """
 
-from exportspredictor.evaluation import relabelled
 from exportspredictor.loop import (
     count_experiments,
     experiment_label,
@@ -19,24 +18,63 @@ from exportspredictor.wording import SELECTION_MEASURE_PLAIN, number_text
 
 CHOSEN_ON_DEVIANCE = "Tweedie deviance (the hyperparameter search)"
 CHOSEN_ON_SELECTION_MEASURE = "Selection Measure"
-NOT_RECORDED = "No experiment results are recorded for this version, so how its Model Form was chosen cannot be shown."
+# Configurations the loop's record names by version, as product text names them: by role (ADR 0013). Keys take the
+# role in snake case ("beats_v2" is served as "beats_model_alone"), Arms in words.
+ROLES = {"v1": "starting configuration", "v2": "model alone"}
+NOT_RECORDED = "No experiment results are recorded, so how the Model Form was chosen cannot be shown."
 
 
-def how_chosen(metadata: dict, report: dict) -> dict:
-    """The Selection Measure, the Model Form, the Win Threshold, every experiment, the confirmation
-    and the test-year ranking beside earlier versions, JSON-ready. `recorded` is False (and the
-    experiment fields empty) when the artefact records no experiment results."""
+def how_chosen(metadata: dict) -> dict:
+    """How the served model was chosen, as the product serves it: the Selection Measure, the Model Form, the Win
+    Threshold, the alternatives considered (every experiment) and the five-fold confirmation against the model alone,
+    JSON-ready. `recorded` is False (and the experiment fields empty) when the artefact records no experiment results."""
     form = served_model_form(metadata)
     summary = ranking_summary(metadata.get("ranking_experiments"))
-    report = relabelled(report)  # today's names for a report saved earlier
     return {
         "recorded": summary is not None,
         "model_form": model_form_summary(metadata),
         **(summary or {"experiments": []}),
+        "confirmation": against_model_alone(summary),
         "text": _text(summary, form),
-        "test_year_ranking": report.get("earlier_versions"),
-        "traded_away": traded_away(report.get("earlier_versions")),
     }
+
+
+def by_role(name: str) -> str:
+    """A name from the loop's record as product text gives it (`ROLES`): the Arm "v1" is the starting configuration."""
+    return ROLES.get(name, name)
+
+
+def _key_by_role(key: str) -> str:
+    for version, role in ROLES.items():
+        if key == version or key.endswith(f"_{version}"):
+            return key.removesuffix(version) + role.replace(" ", "_")
+    return key
+
+
+def against_model_alone(summary: dict | None) -> dict | None:
+    """The five-fold confirmation of `ranking_summary` named by role (the configuration it beat is the model alone),
+    with its sentence (`confirmation_text`); None where none is recorded."""
+    confirmation = (summary or {}).get("confirmation")
+    if not confirmation:
+        return None
+    named = {_key_by_role(key): value for key, value in confirmation.items() if key != "folds"} | {
+        "folds": [{_key_by_role(key): value for key, value in fold.items()} for fold in confirmation["folds"]]
+    }
+    return named | {"text": confirmation_text(named, summary["validation_year"])}
+
+
+def confirmation_text(confirmation: dict, validation_year) -> str:
+    """The five-fold confirmation (`against_model_alone`'s fields) in one sentence; the verdict is the loop's own
+    (`beats_model_alone`), which allows for rounding."""
+    confirmed = confirmation["beats_model_alone"]
+    return (
+        f"Five-fold confirmation on {validation_year}: the chosen Model Form scores "
+        f"{number_text(confirmation['winner'], '.4f')}, the model alone {number_text(confirmation['model_alone'], '.4f')} "
+        f"and the Naive Baseline {number_text(confirmation['naive'], '.4f')}; the difference, "
+        f"{number_text(confirmation['difference'], '+.4f')}, {'beats' if confirmed else 'does not beat'} the Win "
+        f"Threshold of {number_text(confirmation['win_threshold'], '.4f')} "
+        f"({'confirmed' if confirmed else 'not confirmed'})."
+    )
 
 
 def served_model_form(metadata: dict) -> ModelForm:
@@ -83,11 +121,11 @@ def round_count(metadata: dict) -> dict:
         return {"chosen_by": CHOSEN_ON_DEVIANCE, "rounds_chosen": chosen, "rounds": rounds,
                 "next_rounds": next_rounds, "text": (
             f"Disclosed deviation: the served models were trained for {number_text(rounds, ',')} rounds, the "
-            f"hyperparameter search's {number_text(chosen, ',')} (early stopping on Tweedie deviance, v2's count) "
+            f"hyperparameter search's {number_text(chosen, ',')} (early stopping on Tweedie deviance) "
             f"scaled by the ratio of training rows ({ratio}). Under ADR 0008 deviance should choose nothing. The "
             f"artefact was not rebuilt, so that the test year stays read once; the next rebuild uses {then}.")}
     return {"chosen_by": None, "rounds_chosen": None, "rounds": rounds, "next_rounds": next_rounds,
-            "text": "How the round count was chosen is not recorded for this version."}
+            "text": "How the round count was chosen is not recorded."}
 
 
 def traded_away(block: dict | None) -> dict | None:

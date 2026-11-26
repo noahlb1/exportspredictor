@@ -434,15 +434,6 @@ class LargeMarkets(BaseModel):
     text: str
 
 
-class LargeMarketsByVersion(BaseModel):
-    """One version's tie-proof UK ranking on the largest importing Markets (`evaluation.large_markets_beside_earlier`):
-    this version, the earlier versions re-scored from their saved scores, and this run's Naive Baseline."""
-
-    name: str
-    markets: dict[int, float | None]  # count of largest Markets (30, 60) -> figure; None where not measured
-    columns: dict[str, float | None]  # the same figures by column label ("30 largest Markets"), as tables show them
-
-
 class WithAndWithout(BaseModel):
     with_: float | None = Field(alias="with")
     without: float | None
@@ -459,7 +450,7 @@ class LiftWithAndWithout(WithAndWithout):
 
 
 class MarketReachEffect(BaseModel):
-    """What Market Reach, the change this version keeps, does to the test-year figures (`evaluation.market_reach_effect`)."""
+    """What Market Reach does to the test-year figures (`evaluation.market_reach_effect`)."""
 
     selection_measure: WithAndWithout
     old_measure: WithAndWithout
@@ -503,8 +494,7 @@ class Lift(BaseModel):
     base_rate: float | None
     size_matched: SizeMatchedLift
     by_decile: list[LiftDecile]
-    held_out_exporters: list[str]  # v1's frozen held-out list, within v2's Exporter scope
-    held_out_from: str
+    held_out_exporters: list[str]  # never trained on, within the Exporter scope
     training_years: list[int]
     gap_years: list[int]  # the Gap Period the Export Gaps are averaged over
     outcome_year: int
@@ -640,62 +630,20 @@ class ExperimentOut(BaseModel):
 class ConfirmationFold(BaseModel):
     fold: int
     winner: float
-    v2: float
+    model_alone: float
 
 
 class Confirmation(BaseModel):
-    """The five-fold confirmation of the chosen form against v2's (the model alone)."""
+    """The five-fold confirmation of the chosen Model Form against the model alone (`model_choice.against_model_alone`)."""
 
     n_folds: int
     winner: float
-    v2: float
+    model_alone: float
     naive: float
     difference: float
     win_threshold: float
-    beats_v2: bool
+    beats_model_alone: bool
     folds: list[ConfirmationFold]
-
-
-class VersionResult(BaseModel):
-    """One version's test-year figures: this version or an earlier one (the Blend, v2, v1)."""
-
-    model_config = ConfigDict(extra="allow")  # v2's artefact version
-
-    name: str
-    uk_ranking: float | None = None  # on the old measure (ties share their average rank), as every version reported
-    uk_ranking_tie_proof: float | None = None  # the Selection Measure; an earlier version's from its saved scores
-    lift: float | None = None
-    size_matched_lift: float | None = None
-    tweedie_deviance_all_exporters: float | None = None
-    tweedie_deviance_uk: float | None = None
-
-
-class NaiveBaselineResult(BaseModel):
-    """The Naive Baseline's test-year UK ranking, from this run or as reported for v2."""
-
-    name: str
-    uk_ranking: float | None = None  # on the old measure
-    uk_ranking_tie_proof: float | None = None  # the Selection Measure, where measured
-
-
-class TestYearRanking(BaseModel):
-    """The test year's UK ranking beside the Naive Baseline and earlier versions' headline figures."""
-
-    test_year: int
-    rows: list[VersionResult]  # this version first, then earlier versions
-    naive: list[NaiveBaselineResult]
-    beats_naive: bool
-    text: str
-
-
-class TradedAway(BaseModel):
-    """What choosing on the ranking cost in the size of Export Potential (`model_choice.traded_away`)."""
-
-    deviance: float
-    earlier_deviance: float
-    earlier_name: str
-    size_matched_lift: float | None = None
-    earlier_size_matched_lift: float | None = None
     text: str
 
 
@@ -721,8 +669,6 @@ class ModelChoice(BaseModel):
     n_experiments: int | None = None  # the experiments the recorded decisions cover (seven for nine decisions)
     confirmation: Confirmation | None = None
     text: str
-    test_year_ranking: TestYearRanking | None = None
-    traded_away: TradedAway | None = None
 
 
 class Evaluation(BaseModel):
@@ -744,17 +690,15 @@ class Evaluation(BaseModel):
     accuracy: dict[str, ScopeAccuracy]  # "all_exporters" and "uk_out_of_fold"
     headline: Headline
     large_markets: LargeMarkets | None = None  # None for a version evaluated before the largest Markets were reported
-    # This version beside the earlier versions re-scored from their saved scores; None for a version built before this table.
-    large_markets_by_version: list[LargeMarketsByVersion] | None = None
     market_reach_effect: MarketReachEffect | None = None  # None for a version without Market Reach
     tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None
-    itc_comparison: ItcComparison | None = None  # None where it was not added to this version
+    itc_comparison: ItcComparison | None = None  # None where it was not added to the artefact
     event_backtest: EventBacktest | None = None
     model_choice: ModelChoice
     event_backtest_note: EventBacktestNote | None = None
-    not_run: list[NotRun] = []  # the opt-in parts skipped by the run that built this version
+    not_run: list[NotRun] = []  # the opt-in parts skipped by the run that built the artefact
     limitations: list[Limitation]
 
 

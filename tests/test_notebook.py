@@ -1,4 +1,4 @@
-"""Notebook smoke run: the write-up runs end to end in fixture mode and only imports logic."""
+"""Notebook smoke run: the write-up and the Model History run end to end in fixture mode and only import logic."""
 
 import ast
 import hashlib
@@ -12,23 +12,29 @@ from nbclient import NotebookClient
 
 from exportspredictor import artefacts as store
 from exportspredictor import (
+    evaluation,
     illustrative,
     pipeline,
     realisation,
     realisation_wording,
     reporting,
 )
+from exportspredictor.product_surface import banned_terms, notebook_text
 
 NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "exports_predictor.ipynb"
+HISTORY = NOTEBOOK.parent / "model_history.ipynb"
+# Both notebooks follow the same rules: fixture mode by default, no logic of their own, nothing built in real mode.
+NOTEBOOKS = pytest.mark.parametrize("path", [NOTEBOOK, HISTORY], ids=["write-up", "Model History"])
 
 
-def _code_cells():
-    notebook = nbformat.read(NOTEBOOK, as_version=4)
+def _code_cells(path: Path = NOTEBOOK):
+    notebook = nbformat.read(path, as_version=4)
     return [cell.source for cell in notebook.cells if cell.cell_type == "code"]
 
 
-def test_notebook_defines_no_reusable_functions_or_classes():
-    for source in _code_cells():
+@NOTEBOOKS
+def test_notebook_defines_no_reusable_functions_or_classes(path):
+    for source in _code_cells(path):
         tree = ast.parse(source)
         defined = [
             node
@@ -38,17 +44,18 @@ def test_notebook_defines_no_reusable_functions_or_classes():
         assert not defined, f"Notebook cell defines logic; move it into the package:\n{source}"
 
 
-def test_fixture_mode_is_the_first_parameter_and_defaults_to_on():
-    notebook = nbformat.read(NOTEBOOK, as_version=4)
+@NOTEBOOKS
+def test_fixture_mode_is_the_first_parameter_and_defaults_to_on(path):
+    notebook = nbformat.read(path, as_version=4)
     first = next(cell for cell in notebook.cells if cell.cell_type == "code")
 
     assert "parameters" in first.metadata.get("tags", [])
     assert "FIXTURE_MODE = True" in first.source
 
 
-def _sections():
+def _sections(path: Path = NOTEBOOK):
     """Top-level sections: (heading, cells up to the next heading). The title and parameters are not sections."""
-    notebook = nbformat.read(NOTEBOOK, as_version=4)
+    notebook = nbformat.read(path, as_version=4)
     sections = []
     for cell in notebook.cells:
         if cell.cell_type == "markdown" and cell.source.startswith("## "):
@@ -64,23 +71,23 @@ SECTIONS = [
     "## 2. The data: Flows, Zero Cells and policy features",
     "## 3. Features and the leakage rules",
     "## 4. The model and how it is scored out-of-fold",
-    "## 5. What v2 showed",
-    "## 6. Re-choosing the model on the Selection Measure",
-    "## 7. The 2023 result and what it cost",
+    "## 5. How the model was chosen",
+    "## 6. Design evidence",
+    "## 7. The 2023 result",
     "## 8. Scenarios and Blocked Opportunities as Illustrative figures",
     "## 9. Explaining Export Potential",
     "## 10. Limits and governance",
     "## 11. Conclusions",
-    "## Appendix: frozen results",
 ]
 # No prose cell runs over about this many words; longer detail is linked.
 WORD_LIMIT = 300
 # The whole notebook's prose comes to about this many words, within 10%.
-TOTAL_WORDS = 10_200  # 10,000 at first, plus the ITC comparison in §7
-# The parts that no longer decide anything, each one appendix entry.
-FROZEN_PARTS = (
-    "hyperparameter search", "feature ablation", "learning curve", "v1 comparison", "gain ladder",
-    "constraint comparison",
+TOTAL_WORDS = 9_800  # 10,200 before the history moved to the Model History (ADR 0013)
+# Why the model is this way, each one entry of the design evidence.
+DESIGN_EVIDENCE = ("hyperparameter search", "feature ablation", "learning curve", "constraint test")
+# Told in the Model History, not here.
+MOVED_TO_THE_HISTORY = (
+    "What v2 showed", "Ties cannot win", "The final round", "Every read of 2023", "The round count", "frozen results",
 )
 
 
@@ -110,12 +117,87 @@ def test_the_prose_comes_to_about_ten_thousand_words():
     assert 0.9 * TOTAL_WORDS <= total <= 1.1 * TOTAL_WORDS, total
 
 
-def test_each_frozen_part_is_one_appendix_entry():
-    appendix = next(cells for heading, cells in _sections() if heading.startswith("## Appendix"))
-    entries = [line.lower() for cell in appendix if cell.cell_type == "markdown" for line in cell.source.splitlines() if line.startswith("### ")]
+def _section(number: int):
+    return next(cells for heading, cells in _sections() if heading.startswith(f"## {number}. "))
 
-    for part in FROZEN_PARTS:
+
+def _section_prose(number: int) -> str:
+    return " ".join(cell.source for cell in _section(number) if cell.cell_type == "markdown")
+
+
+def _section_code(number: int) -> str:
+    return "\n".join(cell.source for cell in _section(number) if cell.cell_type == "code")
+
+
+def test_each_part_of_the_design_evidence_is_one_entry():
+    entries = [line.lower() for line in _subheadings(_section(6)).split("### ")]
+
+    for part in DESIGN_EVIDENCE:
         assert sum(part in entry for entry in entries) == 1, part
+
+
+def test_the_design_evidence_says_it_was_run_before_the_blend_and_market_reach_were_added():
+    assert "before the Blend and Market Reach were added" in _section_prose(6)
+
+
+def test_how_the_model_was_chosen_covers_the_rule_the_alternatives_market_reach_and_the_confirmation():
+    prose, code = _section_prose(5), _section_code(5)
+
+    for told in ("Selection Measure", "Noise Floor", "Win Threshold"):
+        assert f"**{told}**" in prose, told
+    for entry in ("### Alternatives considered on 2022", "### Market Reach", "### The five-fold confirmation"):
+        assert entry in prose, entry
+    assert "the model alone" in prose
+    for shown in ("model_choice.how_chosen(bundle.metadata)", "reporting.experiments(bundle)",
+                  "reporting.five_fold_confirmation(bundle)"):
+        assert shown in code, shown
+
+
+def test_the_2023_result_is_one_read_beside_the_naive_baseline_with_lift_itc_and_the_sizing_limitation():
+    prose, code = _section_prose(7), _section_code(7)
+
+    for told in ("Naive Baseline", "Lift", "ITC", "Tweedie deviance"):
+        assert told in prose, told
+    # The sizing limitation is the package's, not a second version of it.
+    for shown in ("reporting.lift_by_tenth(bundle)", "reporting.itc_coefficients(bundle)",
+                  "evaluation.sizing_limitation(report)"):
+        assert shown in code, shown
+
+
+def test_the_test_once_rule_is_told_as_method_with_a_link_to_the_test_year_ledger():
+    prose = _section_prose(7)
+
+    assert "(../docs/test-year-ledger.csv)" in prose
+    assert "Configuration Fingerprint" in prose
+    # The ledger's rows are the Model History's to show.
+    assert "test_year_ledger" not in "\n".join(_code_cells())
+
+
+def test_the_write_up_imports_nothing_from_the_history_module():
+    source = "\n".join(_code_cells())
+
+    assert "reporting.history" not in source
+    assert "import history" not in source
+    assert not re.search(r"(?<![\w.])history\.", source)  # `bundle.history` and `why.history` are tables, not the module
+
+
+def test_what_moved_to_the_model_history_is_not_told_here():
+    prose = " ".join(_prose())
+
+    for moved in MOVED_TO_THE_HISTORY:
+        assert moved.lower() not in prose.lower(), moved
+
+
+def test_the_write_up_ends_with_its_one_link_to_the_model_history():
+    prose = _prose()
+
+    assert "[Model History](model_history.ipynb)" in prose[-1]
+    assert sum(source.count("model_history.ipynb") for source in prose) == 1
+
+
+def test_the_committed_write_up_names_no_history():
+    # Its prose and saved outputs, from the real artefact; the fixture run is checked where it runs.
+    assert banned_terms(notebook_text(json.loads(NOTEBOOK.read_text(encoding="utf-8")))) == []
 
 
 def test_the_word_count_reads_whitespace_separated_words():
@@ -194,8 +276,9 @@ def _builds_outside_fixture_mode(tree: ast.AST) -> list[str]:
     return found
 
 
-def test_in_real_mode_the_notebook_trains_fits_and_builds_nothing():
-    for source in _code_cells():
+@NOTEBOOKS
+def test_in_real_mode_the_notebook_trains_fits_and_builds_nothing(path):
+    for source in _code_cells(path):
         assert not _builds_outside_fixture_mode(ast.parse(source)), f"Real mode would build here:\n{source}"
 
 
@@ -209,21 +292,22 @@ def test_the_notebook_shows_each_main_result_from_the_reporting_module():
     source = "\n".join(_code_cells())
 
     for result in (
-        "provenance", "ranking_by_version", "experiments", "experiments_chart", "confirmation", "lift_by_tenth",
-        "event_backtests", "round_count", "ppml_benchmark", "gain_ladder", "blocked_opportunity_split",
+        "provenance", "experiments", "lift_by_tenth", "event_backtests", "ppml_benchmark", "blocked_opportunity_split",
         "agreement_part_variation", "agreement_part_variation_chart", "itc_method", "itc_coefficients",
-        "itc_direct_comparison",
+        "itc_direct_comparison", "ranking_beside_naive", "five_fold_confirmation", "market_reach_effect",
     ):
         assert f"reporting.{result}(bundle)" in source, result
     # The preset table reads the presets the notebook runs.
     assert "reporting.preset_scenarios(bundle, preset_results)" in source
 
 
-def test_notebook_imports_from_the_package():
-    assert any("from exportspredictor" in source for source in _code_cells())
+@NOTEBOOKS
+def test_notebook_imports_from_the_package(path):
+    assert any("from exportspredictor" in source for source in _code_cells(path))
 
 
 def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path):
+    # About 10 s: a kernel start and the fixture build, the least that runs the notebook end to end.
     monkeypatch.setenv("EXPORTSPREDICTOR_ARTEFACTS_DIR", str(tmp_path))
     committed = hashlib.sha256(NOTEBOOK.read_bytes()).hexdigest()
     notebook = nbformat.read(NOTEBOOK, as_version=4)
@@ -263,8 +347,12 @@ def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path
     table = " ".join(o.get("data", {}).get("text/html", "") for o in coefficients.outputs)
     for shown in ("HS2", "HS6", "not compared", "Naive Baseline", "Extensive margin", "New-flow size"):
         assert shown in table, shown
-    # The pre-registered v1 comparison section runs on the fixture's synthetic frozen v1.
-    assert loaded.evaluation["v1_comparison"]["verdict"]["text"] in printed
+    # The headline and the sizing limitation are the package's own sentences.
+    assert loaded.evaluation["headline"]["text"] in printed
+    sizing = evaluation.sizing_limitation(loaded.evaluation)
+    assert sizing is None or sizing["text"] in printed
+    # Nothing the run shows names the history (ADR 0013).
+    assert banned_terms(notebook_text(notebook)) == []
     # The outputs name the artefact version they come from.
     assert (loaded.version, pipeline.FIXTURE_SOURCE) in reporting.provenance_versions(printed)
     # Charts are static images: SVG, never an interactive chart that GitHub cannot render.
@@ -281,9 +369,10 @@ def _provenance_versions(notebook) -> list[tuple[str, str]]:
     return reporting.provenance_versions(printed)
 
 
-def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
-    # Read as saved; never executed here. `scripts/rebuild.py --only notebook` refreshes these outputs.
-    notebook = nbformat.read(NOTEBOOK, as_version=4)
+@NOTEBOOKS
+def test_the_committed_notebook_carries_outputs_from_a_real_artefact(path):
+    # Read as saved; never executed here. `scripts/rebuild.py --only notebook` (or `--only history`) refreshes them.
+    notebook = nbformat.read(path, as_version=4)
     code = [cell for cell in notebook.cells if cell.cell_type == "code"]
 
     imports_only = [all(isinstance(node, (ast.Import, ast.ImportFrom)) for node in ast.parse(cell.source).body) for cell in code]
@@ -304,8 +393,9 @@ def test_the_committed_notebook_carries_outputs_from_a_real_artefact():
 OUTPUT_LIMIT_BYTES = 15_000
 
 
-def test_no_committed_output_is_large():
-    notebook = nbformat.read(NOTEBOOK, as_version=4)
+@NOTEBOOKS
+def test_no_committed_output_is_large(path):
+    notebook = nbformat.read(path, as_version=4)
 
     sizes = [
         (len(json.dumps(output)), "image/svg+xml" in output.get("data", {}), cell.source[:60])
@@ -317,5 +407,91 @@ def test_no_committed_output_is_large():
     assert not too_large, too_large
 
 
-def test_the_notebook_shows_the_test_year_ledger_from_the_reporting_module():
-    assert "reporting.test_year_ledger()" in "\n".join(_code_cells())
+# --- The Model History (ADR 0013) --------------------------------------------------------------------------------
+
+# Its chapters, in the order things happened.
+HISTORY_CHAPTERS = [
+    "## 1. v1",
+    "## 2. v2",
+    "## 3. The experiment loop and every Arm",
+    "## 4. The Blend",
+    "## 5. Market Reach's first form and its correction",
+    "## 6. The final round's dropped ideas",
+    "## 7. Every read of 2023",
+    "## 8. Reproduce this record",
+]
+
+
+def test_the_model_history_tells_its_chapters_in_order():
+    assert [heading for heading, _ in _sections(HISTORY)] == HISTORY_CHAPTERS
+
+
+def test_each_model_history_chapter_links_its_adr_or_research_note():
+    for heading, cells in _sections(HISTORY):
+        prose = " ".join(cell.source for cell in cells if cell.cell_type == "markdown")
+        assert "docs/adr/" in prose or "docs/research/" in prose, heading
+
+
+def test_the_model_history_shows_everything_the_product_no_longer_does():
+    source = "\n".join(_code_cells(HISTORY))
+    prose = " ".join(cell.source for cell in nbformat.read(HISTORY, as_version=4).cells if cell.cell_type == "markdown")
+
+    for shown in (
+        "history.ranking_by_version(bundle)", "history.large_markets_by_version(bundle)", "history.gain_ladder(bundle)",
+        "history.confirmation(bundle)", "history.round_count(bundle)", "history.test_year_ledger()",
+        "history.final_round(", "history.experiments_chart(bundle)", "history.traded_away(bundle)",
+        "history.zero_cells_against_naive(bundle)",
+    ):
+        assert shown in source, shown
+    for told in ("### Ties cannot win", "### The round count", "### The frozen results"):
+        assert told in prose, told
+
+
+def test_reproduce_this_record_lists_the_history_only_commands():
+    [cells] = [cells for heading, cells in _sections(HISTORY) if heading == "## 8. Reproduce this record"]
+    text = " ".join(cell.source for cell in cells)
+
+    for command in (
+        "python -m exportspredictor.pipeline compare",  # the v1 comparison
+        "--gain-ladder",
+        "docs/research/final-round-2022.md",  # records each command of the final round
+        "scripts/rebuild.py --only history",
+    ):
+        assert command in text, command
+
+
+# What the Model History may read in real mode: the newest artefact, the committed Test-year Ledger and the saved
+# experiment-loop results (with the final round's saved probe). Never an older artefact folder.
+OTHER_SOURCES = ("artefacts.load(", "read_evaluation(", "copy_lineage(", "experiments.load(", "load_version(")
+
+
+def test_the_model_history_reads_only_the_newest_artefact_the_ledger_and_the_loop_s_results():
+    source = "\n".join(_code_cells(HISTORY))
+
+    assert "artefacts.load_latest(artefacts_dir())" in source
+    assert "loop.load()" in source
+    assert not [name for name in OTHER_SOURCES if name in source]
+    # Its provenance line names a copy's source without opening that folder.
+    assert "reporting.provenance(bundle, lineage=False)" in source
+
+
+def test_the_model_history_runs_in_fixture_mode(monkeypatch, tmp_path):
+    # About 11 s: a kernel start and the fixture build, the least that runs the notebook end to end.
+    monkeypatch.setenv("EXPORTSPREDICTOR_ARTEFACTS_DIR", str(tmp_path))
+    committed = hashlib.sha256(HISTORY.read_bytes()).hexdigest()
+    notebook = nbformat.read(HISTORY, as_version=4)
+
+    NotebookClient(notebook, timeout=300, kernel_name="python3", resources={"metadata": {"path": str(tmp_path)}}).execute()
+
+    assert hashlib.sha256(HISTORY.read_bytes()).hexdigest() == committed
+    assert not list(tmp_path.iterdir())  # it saves nothing
+    outputs = [o for cell in notebook.cells if cell.cell_type == "code" for o in cell.outputs]
+    printed = " ".join(o.get("text", "") for o in outputs)
+    assert [source for _, source in reporting.provenance_versions(printed)] == [pipeline.FIXTURE_SOURCE]
+    kinds = {kind for o in outputs for kind in o.get("data", {})}
+    assert "image/svg+xml" in kinds
+
+
+def test_the_write_up_hides_no_output():
+    # The fixture build's progress log names no history, so nothing is silenced to keep it off the page.
+    assert not any("redirect_stdout" in source for source in _code_cells())

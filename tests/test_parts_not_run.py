@@ -1,5 +1,5 @@
 """An artefact built without an opt-in part loads, is served, and renders
-"not run for this version" for that part: in the API's evaluation, on the Model Evaluation page
+"not run" for that part: in the API's evaluation, on the Model Evaluation page
 and in the model card. An artefact with every part shows no such notice.
 """
 
@@ -12,8 +12,9 @@ from exportspredictor import artefacts as store
 from exportspredictor import governance
 
 PAGE = "pages/model_evaluation.py"
-PARTS = ["Event Backtests", "Monotone-constraint comparison", "Gain ladder", "PPML benchmark", "ITC comparison"]
-NOTICE = "not run for this version"
+# The gain ladder is history (`evaluation.NOT_SERVED`), so it is never listed.
+PARTS = ["Event Backtests", "Monotone-constraint comparison", "PPML benchmark", "ITC comparison"]
+NOTICE = "not run"
 
 
 def _evaluation(root) -> dict:
@@ -59,7 +60,6 @@ def test_the_model_card_says_which_parts_were_not_run(fixture_default_artefacts)
     text = governance.render_model_card(governance.model_card(fixture_default_artefacts))
     for part in PARTS:
         assert f"{part}: {NOTICE}" in text
-    assert "Primary metric" in text  # the v1 comparison's primary metric is still reported
 
 
 @pytest.mark.parametrize("part", PARTS)

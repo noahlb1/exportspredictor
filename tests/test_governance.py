@@ -1,9 +1,12 @@
 """Governance: the model card, data lineage and drift checks of the write-up."""
 
+from dataclasses import replace
+
 import polars as pl
 import pytest
 
-from exportspredictor import evaluation, governance, reporting, tariffs
+from exportspredictor import evaluation, governance, model_choice, tariffs
+from exportspredictor.reporting import history
 
 # --- Model card --------------------------------------------------------------------------
 
@@ -47,32 +50,13 @@ def test_model_card_renders_as_markdown_with_every_section(card):
     assert "UNASSIGNED" in text
 
 
-def test_model_card_summarises_the_v1_comparison_and_the_gain_ladder(card, fixture_artefacts):
-    block = fixture_artefacts.evaluation["v1_comparison"]
-    summary = card["v1_comparison"]
-
-    assert summary["verdict"] == block["verdict"]["text"]
-    assert summary["v2_beats_v1"] == block["verdict"]["v2_beats_v1"]
-    assert [step["to"] for step in summary["ladder"]] == ["A", "B", "C"]
-    text = governance.render_model_card(card)
-    assert "## Comparison with v1" in text
-    assert block["verdict"]["text"] in text
-
-
-def test_a_model_card_without_a_v1_comparison_says_so(fixture_artefacts):
-    from dataclasses import replace
-
-    report = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "v1_comparison"}
-    card = governance.model_card(replace(fixture_artefacts, evaluation=report))
-    assert card["v1_comparison"] is None
-    assert "## Comparison with v1" in governance.render_model_card(card)  # the section degrades, never hides
 
 
 def test_writing_the_model_card_puts_it_next_to_the_models(fixture_artefacts, tmp_path):
     path = governance.write_model_card(fixture_artefacts, tmp_path)
 
     assert path == tmp_path / "model_card.md"
-    assert fixture_artefacts.version in path.read_text(encoding="utf-8")
+    assert tmp_path.name in path.read_text(encoding="utf-8")
 
 
 def _with_metadata(artefacts, **changes):
@@ -168,7 +152,7 @@ def test_model_card_says_the_gravity_benchmark_was_not_run_for_a_version_without
     card = governance.model_card(fixture_default_artefacts)
 
     assert "gravity benchmark" not in " ".join(x["title"] for x in card["limitations"])
-    assert "PPML benchmark: not run for this version" in governance.render_model_card(card)
+    assert "PPML benchmark: not run" in governance.render_model_card(card)
 
 
 _RANGE_REPORT = {
@@ -213,12 +197,12 @@ def test_model_card_data_sources_include_trains_and_the_unsd_concordance(card):
     assert "HS 2017" in names and "HS 2012" in names
 
 
-def test_model_card_decisions_cite_every_v2_adr_and_the_map_decisions(card):
+def test_model_card_decisions_cite_every_adr_behind_the_model_and_the_map_decisions(card):
     decisions = " ".join(f"{d['title']} {d['text']}" for d in card["decisions"])
 
     for adr in ("ADR 0001", "ADR 0002", "ADR 0003", "ADR 0004", "ADR 0005", "ADR 0006", "ADR 0007"):
         assert adr in decisions, adr
-    for topic in ("Gap Period", "Tree-structured Parzen Estimator", "pre-registered", "ablation", "PPML"):
+    for topic in ("Gap Period", "Tree-structured Parzen Estimator", "ablation", "PPML"):
         assert topic in decisions, topic
 
 
@@ -312,23 +296,6 @@ def test_the_sampling_decision_notes_the_measured_row_budget_against_the_planned
     assert "100,032,198" in sampling and "110 M" in sampling
 
 
-def test_model_card_shows_the_test_year_beside_earlier_versions_and_says_whether_it_beats_the_naive_baseline(
-    fixture_artefacts,
-):
-    from dataclasses import replace
-
-    report = {**fixture_artefacts.evaluation, "headline": {
-        **fixture_artefacts.evaluation["headline"], "model": 0.55, "naive": 0.52, "beats_naive": True}}
-    v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
-          "tweedie_deviance_all_exporters": 355.5, "tweedie_deviance_uk": 568.6}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
-    text = governance.render_model_card(governance.model_card(replace(fixture_artefacts, evaluation=report)))
-
-    section = _section(text, "## Headline")
-    assert "0.511" in section and "0.523" in section and "0.550" in section and "0.520" in section
-    assert "v1" in section and "v2" in section
-    assert report["earlier_versions"]["text"] in section
-
 
 def test_model_card_names_the_form_the_selection_measure_and_the_experiments(card):
     assert card["model_form"]["form"] == "blend" and card["model_form"]["naive_weight"]
@@ -353,13 +320,6 @@ def test_model_card_opens_with_the_headline_the_model_form_and_the_illustrative_
 
     assert headings[:3] == ["## Headline", "## Model Form", "## Illustrative Scenario Effects"]
 
-
-def test_the_headline_section_gives_the_test_year_ranking_beside_the_naive_baseline(card, fixture_artefacts):
-    block = fixture_artefacts.evaluation["earlier_versions"]
-    section = _section(governance.render_model_card(card), "## Headline")
-
-    assert f"{block['rows'][0]['uk_ranking']:.3f}" in section
-    assert f"{block['naive'][0]['uk_ranking']:.3f}" in section
 
 
 def test_the_model_form_section_gives_the_blend_weight_from_the_artefact(card, fixture_artefacts):
@@ -388,7 +348,7 @@ def test_the_illustrative_section_says_which_parts_were_not_run(fixture_default_
     section = _section(governance.render_model_card(card), "## Illustrative Scenario Effects")
 
     assert "Illustrative" in section
-    assert section.count("not run for this version") == 3  # benchmark, model association, Event Backtest
+    assert section.count("not run") == 3  # benchmark, model association, Event Backtest
 
 
 def test_model_card_reports_the_share_of_opportunities_inside_their_potential_range(card, fixture_artefacts):
@@ -437,46 +397,13 @@ def test_the_model_card_and_the_notebook_state_the_same_round_counts(fixture_art
     artefacts = fixture_artefacts if shape == "selection measure" else _deviance_rounds(fixture_artefacts)
 
     stated = governance.model_card(artefacts)["round_count"]
-    served, next_rebuild = reporting.round_count(artefacts).to_dicts()
+    served, next_rebuild = history.round_count(artefacts).to_dicts()
 
     assert (stated["rounds_chosen"], stated["rounds"]) == (served["rounds_chosen"], served["rounds_trained"])
     assert stated["next_rounds"] == next_rebuild["rounds_chosen"]
 
 
-def test_the_v1_comparison_is_a_frozen_result_at_the_end_of_the_card(card):
-    text = governance.render_model_card(card)
 
-    assert _headings(text)[-1] == "## Frozen results"
-    assert "### Comparison with v1" in _section(text, "## Frozen results")
-
-
-def test_the_headline_says_what_choosing_on_the_ranking_cost_in_deviance(fixture_artefacts):
-    from dataclasses import replace
-
-    v2 = {"version": "v2-version", "uk_ranking": 0.5115, "naive": 0.5233, "lift": 5.23, "size_matched_lift": 0.788,
-          "tweedie_deviance_all_exporters": 0.5, "tweedie_deviance_uk": 568.6}  # below the fixture's deviance
-    report = {**fixture_artefacts.evaluation}
-    report["earlier_versions"] = evaluation.earlier_versions(report, v2=v2, blend=None)
-    card = governance.model_card(replace(fixture_artefacts, evaluation=report))
-
-    deviance = report["earlier_versions"]["rows"][0]["tweedie_deviance_all_exporters"]
-    section = _section(governance.render_model_card(card), "## Headline")
-    assert card["traded_away"]["deviance"] == deviance
-    assert section.count(f"{deviance:,.1f}") == 2  # in the table and in the cost sentence
-
-
-def test_the_frozen_v1_comparison_names_the_blend_it_compared_even_when_saved_as_v2(fixture_artefacts):
-    from dataclasses import replace
-
-    report = fixture_artefacts.evaluation
-    stale = {**report["v1_comparison"], "verdict": {**report["v1_comparison"]["verdict"], "text": "v2's words, saved earlier."}}
-    card = governance.model_card(replace(fixture_artefacts, evaluation={**report, "v1_comparison": stale}))
-
-    section = governance.render_model_card(card).split("### Comparison with v1", 1)[1]
-    assert "the Blend's Export Potential ranks Markets" in section
-    assert ", the Blend " in section and "the Blend − v1" in section
-    # The gain ladder's steps still name v2's configuration, which the Blend kept.
-    assert "v2's Export Potential" not in section and "v2 − v1" not in section and "for v2 " not in section
 
 
 def test_model_card_reports_potential_range_coverage_by_size(card, fixture_artefacts):
@@ -496,14 +423,6 @@ def test_model_card_reports_what_market_reach_changes(card, fixture_artefacts):
     assert "Lift is" in section and "The Potential Range holds" in section and "Scenario Effects" in section
 
 
-def test_model_card_sets_the_large_market_measures_beside_earlier_versions(card, fixture_artefacts):
-    report = fixture_artefacts.evaluation
-    v1 = {row["markets"]: row["model"] for row in report["rescored_earlier_versions"]["v1"]["large_markets"]}
-
-    section = _section(governance.render_model_card(card), "## Headline")
-    assert "| Version | 30 largest Markets | 60 largest Markets |" in section
-    assert f"| v1 | {v1[30]:.3f} | {v1[60]:.3f} |" in section
-
 
 def test_model_card_states_low_uk_pair_coverage_as_the_api_does(fixture_artefacts):
     from dataclasses import replace
@@ -519,25 +438,6 @@ def test_model_card_states_low_uk_pair_coverage_as_the_api_does(fixture_artefact
     assert {row["title"] for row in evaluation.known_limitations(artefacts)} <= titles
 
 
-def test_the_earlier_versions_table_gives_v1_the_lift_its_comparison_measured(card, fixture_artefacts):
-    secondary = {m["metric"]: m["v1"] for m in fixture_artefacts.evaluation["v1_comparison"]["secondary"]}
-    v1 = next(row for row in card["earlier_versions"]["rows"] if row["name"] == "v1")
-
-    assert (v1["lift"], v1["size_matched_lift"]) == (secondary["lift"], secondary["size_matched_lift"])
-    assert f"| {secondary['size_matched_lift']:.2f} | {secondary['lift']:.2f} |" in governance.render_model_card(card)
-
-
-def test_a_saved_v1_row_without_lift_is_filled_from_its_comparison_on_read(fixture_artefacts):
-    from dataclasses import replace
-
-    report = fixture_artefacts.evaluation
-    block = report["earlier_versions"]
-    saved = {**block, "rows": [{k: v for k, v in row.items() if row["name"] != "v1" or "lift" not in k}
-                               for row in block["rows"]]}
-    card = governance.model_card(replace(fixture_artefacts, evaluation={**report, "earlier_versions": saved}))
-
-    v1 = next(row for row in card["earlier_versions"]["rows"] if row["name"] == "v1")
-    assert v1["lift"] is not None and v1["size_matched_lift"] is not None
 
 
 def test_the_scenario_note_states_the_models_own_trade_agreement_association(card, fixture_artefacts):
@@ -576,3 +476,75 @@ def test_the_card_states_every_served_limitation_in_order_then_its_own_extras(fi
 
     assert card[: len(served)] == served
     assert [row["title"] for row in card[len(served):]] == ["Scenario Effects are far above a gravity benchmark"]
+
+
+# --- One model (ADR 0013) -------------------------------------------------
+
+
+def _sized(fixture_artefacts, model_deviance=2610.84, naive_deviance=2094.91):
+    """The fixture with the served artefact's sizing: UK deviance above the Naive Baseline's."""
+    from dataclasses import replace
+
+    report = fixture_artefacts.evaluation
+    uk = report["accuracy"]["uk_out_of_fold"]
+    overall = {**uk["overall"], "model_tweedie_deviance": model_deviance, "naive_tweedie_deviance": naive_deviance}
+    accuracy = {**report["accuracy"], "uk_out_of_fold": {**uk, "overall": overall}}
+    return replace(fixture_artefacts, evaluation={**report, "accuracy": accuracy})
+
+
+def test_the_headline_is_one_test_year_ranking_beside_the_naive_baseline(card, fixture_artefacts):
+    headline = fixture_artefacts.evaluation["headline"]
+    section = _section(governance.render_model_card(card), "## Headline")
+
+    assert headline["text"] in section
+    assert "| Version |" not in section  # no table of versions
+
+
+def test_the_card_has_no_history_sections(card):
+    text = governance.render_model_card(card)
+
+    for removed in ("## Frozen results", "### Comparison with v1", "Gain ladder"):
+        assert removed not in text, removed
+    for key in ("v1_comparison", "earlier_versions", "large_markets", "traded_away"):
+        assert key not in card, key
+
+
+def test_the_alternatives_considered_on_2022_are_their_own_section(card):
+    section = _section(governance.render_model_card(card), "## Alternatives considered on 2022")
+
+    assert "| Experiment | Best Arm | Selection Measure |" in section
+
+
+def test_the_card_states_the_confirmation_as_the_api_serves_it(fixture_artefacts):
+    confirmation = {
+        "n_folds": 5, "validation_year": 2022, "difference": 0.0429, "win_threshold": 0.0089, "beats_v2": True,
+        "winner": {"selection_measure": 0.5635, "rounds": [100]}, "v2": {"selection_measure": 0.5206},
+        "naive": {"selection_measure": 0.5332}, "folds": [],
+    }
+    record = fixture_artefacts.metadata["ranking_experiments"]
+    confirmation["settings"] = {"winner": record["best"]["settings"]}  # a confirmation of the best so far
+    ranking = {**record, "confirmation": confirmation}
+    metadata = {**fixture_artefacts.metadata, "ranking_experiments": ranking}
+
+    text = governance.render_model_card(governance.model_card(replace(fixture_artefacts, metadata=metadata)))
+
+    served = model_choice.how_chosen(metadata)["confirmation"]["text"]
+    assert served in text and "the model alone 0.5206" in served and "v2" not in served
+
+
+def test_the_limitations_lead_with_sizing_when_the_model_sizes_uk_flows_worse(fixture_artefacts):
+    card = governance.model_card(_sized(fixture_artefacts))
+
+    first = card["limitations"][0]
+    assert first == evaluation.sizing_limitation(_sized(fixture_artefacts).evaluation)
+    assert "2,611" in first["text"] and "2,095" in first["text"]
+
+
+def test_the_title_carries_the_folder_s_own_artefact_id(fixture_artefacts, tmp_path):
+    folder = tmp_path / "20991231T235959Z"
+    folder.mkdir()
+
+    text = governance.write_model_card(fixture_artefacts, folder).read_text(encoding="utf-8")
+
+    assert text.splitlines()[0] == "# Model card: UK Exports Predictor, Artefact ID 20991231T235959Z"
+    assert fixture_artefacts.version not in text.splitlines()[0]

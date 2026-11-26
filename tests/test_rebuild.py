@@ -94,7 +94,8 @@ def test_the_real_build_trains_once_before_the_notebook_reads_it():
     assert [module for module in modules if module in order] == sorted(
         (m for m in modules if m in order), key=order.index
     )
-    assert modules.index("exportspredictor.pipeline") == len(modules) - 2
+    # Only the notebooks, which read what the pipeline saved, come after it.
+    assert set(modules[modules.index("exportspredictor.pipeline") + 1:]) == {"jupyter"}
 
 
 def test_the_notebook_step_saves_its_outputs_in_place():
@@ -125,3 +126,17 @@ def test_only_with_no_matching_step_fails():
     )
 
     assert result.returncode != 0
+
+
+def test_only_history_runs_the_model_history_notebook_alone_on_real_data_saving_its_outputs():
+    rebuild = _load_script()
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--list", "--only", "history"],
+        capture_output=True, text=True, timeout=60, cwd=REPO, check=False,
+    )
+    [step] = [step for step in rebuild.STEPS if "history" in step.name.lower()]
+
+    assert result.stdout.strip().splitlines() == [f"1. {step.name}"]
+    assert rebuild.HISTORY_NOTEBOOK in step.command and "--inplace" in step.command
+    assert step.env["EXPORTSPREDICTOR_FIXTURE_MODE"] == "0"
+    assert step.env["PYTHONUTF8"] == "1"

@@ -48,6 +48,7 @@ Every model and tuning choice is planned around this machine. Training uses XGBo
 ## Writing
 
 - **Concise and tight, everywhere**: app text and help, model-evaluation text, the How the Model Works page, the notebook's prose, docs, docstrings and ticket comments. Say it once, in as few words as carry the meaning. Cut preamble, restated headings, stacked hedges and lists of everything considered. A rewrite is no longer than what it replaces unless it adds a missing unit, period or explanation. Agents tend to over-write: draft, then cut by about a third.
+- **Product text names earlier configurations by role** ("the model alone", "the starting configuration"), never by version name (`v1`, `v2`). The history belongs to the Model History; `tests/test_product_surface.py` guards each enrolled surface (ADR 0013).
 
 ## Leakage
 

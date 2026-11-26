@@ -16,40 +16,19 @@ from exportspredictor import artefacts as store
 from exportspredictor import reporting, scenarios
 from exportspredictor.caveats import CaveatContext, with_caveat_columns
 from exportspredictor.exclusions import SECTOR_71_REASON
+from exportspredictor.product_surface import banned_terms
 from exportspredictor.volatility import ONE_OFF_REASON, VOLATILE_REASON
 
 
-def test_the_ranking_by_version_holds_this_version_the_naive_baseline_and_earlier_versions(fixture_artefacts):
-    block = fixture_artefacts.evaluation["earlier_versions"]
-
-    chart = reporting.ranking_by_version(fixture_artefacts)
-
-    rows = {row["name"]: row["uk_ranking"] for row in chart.data.iter_rows(named=True)}
-    expected = {row["name"]: row["uk_ranking"] for row in block["rows"] + block["naive"]}
-    assert rows == pytest.approx(expected)
-    assert str(block["test_year"]) in chart.title
-
-
-def test_the_ranking_by_version_draws_the_tie_proof_measure_once_earlier_versions_are_re_scored(fixture_artefacts):
-    block = fixture_artefacts.evaluation["earlier_versions"]
-
-    chart = reporting.ranking_by_version(fixture_artefacts)
-
-    rows = {row["name"]: row["uk_ranking_tie_proof"] for row in chart.data.iter_rows(named=True)}
-    expected = {row["name"]: row["uk_ranking_tie_proof"] for row in block["rows"] + block["naive"]}
-    assert rows == pytest.approx(expected)
-    assert "tie-proof" in chart.title
-
-
 def test_a_chart_is_a_static_matplotlib_svg_image_naming_each_row(fixture_artefacts):
-    chart = reporting.ranking_by_version(fixture_artefacts)
+    chart = reporting.lift_by_tenth(fixture_artefacts)
 
     svg = chart._repr_svg_()
     assert svg.lstrip().startswith(("<?xml", "<svg"))
     assert "Matplotlib" in svg  # drawn by matplotlib, not by hand
     assert "<script" not in svg  # static: nothing GitHub would refuse to render
-    for name in chart.data["name"]:
-        assert escape(name, quote=False) in svg  # text stays text, so labels are searchable
+    for tenth in chart.data["tenth"]:
+        assert escape(f"tenth {tenth}", quote=False) in svg  # text stays text, so labels are searchable
 
 
 def test_a_chart_is_small_enough_for_a_committed_notebook_output(fixture_artefacts):
@@ -73,23 +52,17 @@ def test_the_experiments_table_has_every_arm_and_whether_it_was_kept(fixture_art
         assert row["stopped_early"] == (row["rounds"] < reporting.EARLY_STOP_ROUNDS)
 
 
-def test_the_experiments_chart_draws_each_arm_against_the_win_threshold(fixture_artefacts):
+def test_the_experiments_table_names_the_starting_configuration_by_role(fixture_artefacts):
+    # The loop's record calls the Arm that reruns the search's starting configuration by its version name.
     record = fixture_artefacts.metadata["ranking_experiments"]
+    [(name, section)] = record["experiments"].items()
+    planted = {**record, "experiments": {name: {**section, "arms": [*section["arms"], {**section["arms"][0], "arm": "v1"}]}}}
+    bundle = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": planted})
 
-    chart = reporting.experiments_chart(fixture_artefacts)
-
-    assert chart.data["change"].to_list() == [
-        row["change"] for section in record["experiments"].values() for row in section["arms"]
-    ]
-    assert set(chart.data["win_threshold"]) == {record["noise_floor"]["win_threshold"]}
-
-
-def test_without_experiment_results_the_experiments_are_not_run(fixture_artefacts):
-    bare = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": None})
-
-    assert isinstance(reporting.experiments(bare), reporting.NotRun)
-    assert isinstance(reporting.experiments_chart(bare), reporting.NotRun)
-    assert "not run" in repr(reporting.experiments(bare))
+    assert reporting.experiments(bundle)["arm"][-1] == "starting configuration"
+    assert banned_terms(reporting.experiments(bundle).write_csv()) == []
+    # The record's own names are still there for the Model History.
+    assert reporting.experiments(bundle, by_role=False)["arm"][-1] == "v1"
 
 
 CONFIRMATION = {
@@ -107,20 +80,50 @@ CONFIRMATION = {
 }
 
 
-def test_the_confirmation_is_shown_fold_by_fold(fixture_artefacts):
+def test_the_confirmation_sets_the_blend_beside_the_model_alone_fold_by_fold(fixture_artefacts):
     record = {**fixture_artefacts.metadata["ranking_experiments"], "confirmation": CONFIRMATION}
     bundle = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": record})
 
-    table = reporting.confirmation(bundle)
+    table = reporting.five_fold_confirmation(bundle)
 
+    assert table.columns == ["fold", "blend", "model_alone", "difference", "win_threshold"]
     assert table["fold"].to_list() == ["0", "1", "all"]
-    assert table["winner"].to_list() == [0.57, 0.55, 0.56]
-    assert table["v2"].to_list() == [0.53, 0.52, 0.52]
+    assert table["blend"].to_list() == [0.57, 0.55, 0.56]
+    assert table["model_alone"].to_list() == [0.53, 0.52, 0.52]
     assert table["difference"].to_list() == pytest.approx([0.04, 0.03, 0.04])
+    assert set(table["win_threshold"]) == {0.009}
 
 
 def test_a_version_without_the_confirmation_says_it_was_not_run(fixture_artefacts):
-    assert isinstance(reporting.confirmation(fixture_artefacts), reporting.NotRun)
+    assert isinstance(reporting.five_fold_confirmation(fixture_artefacts), reporting.NotRun)
+
+
+def test_the_headline_ranking_is_drawn_beside_the_naive_baseline_on_every_market_and_the_largest(fixture_artefacts):
+    report = fixture_artefacts.evaluation
+
+    chart = reporting.ranking_beside_naive(fixture_artefacts)
+
+    rows = chart.data.to_dicts()
+    assert rows[0] == {"markets": "every Market", "model": report["headline"]["model"], "naive": report["headline"]["naive"]}
+    assert [(row["model"], row["naive"]) for row in rows[1:]] == [
+        (row["model"], row["naive"]) for row in report["large_markets"]["rows"]
+    ]
+    assert str(report["test_year"]) in chart.title
+    svg = chart._repr_svg_()
+    assert "the model, every Market" in svg and "Naive Baseline, every Market" in svg
+
+
+def test_without_a_headline_the_ranking_beside_the_naive_baseline_is_not_run(fixture_artefacts):
+    bare = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "headline"}
+
+    assert isinstance(reporting.ranking_beside_naive(replace(fixture_artefacts, evaluation=bare)), reporting.NotRun)
+
+
+def test_without_experiment_results_the_experiments_are_not_run(fixture_artefacts):
+    bare = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": None})
+
+    assert isinstance(reporting.experiments(bare), reporting.NotRun)
+    assert "not run" in repr(reporting.experiments(bare))
 
 
 def test_lift_by_tenth_reads_each_tenths_growth_rate_beside_the_base_rate(fixture_artefacts):
@@ -166,18 +169,6 @@ def test_the_ppml_table_reads_the_saved_benchmark(fixture_artefacts):
     assert isinstance(reporting.ppml_benchmark(replace(fixture_artefacts, ppml_benchmark=None)), reporting.NotRun)
 
 
-def test_the_gain_ladder_runs_from_v1_through_each_step_to_v2(fixture_artefacts):
-    ladder = fixture_artefacts.evaluation["v1_comparison"]["ladder"]
-
-    chart = reporting.gain_ladder(fixture_artefacts)
-
-    values = {rung["name"]: rung["value"] for rung in ladder["rungs"]}
-    assert chart.data["end"].to_list() == pytest.approx(
-        [values["v1"], *(values[step["to"]] for step in ladder["steps"]), values["C"]]
-    )
-    assert chart.data["change"][1:-1].to_list() == pytest.approx([step["change"] for step in ladder["steps"]])
-
-
 def test_the_provenance_names_the_version_and_its_source(fixture_artefacts):
     text = reporting.provenance(fixture_artefacts)
 
@@ -212,39 +203,9 @@ def test_the_provenance_names_the_latest_copy_step_and_what_it_added_beside_the_
     # Where the source's folder is gone, the step alone.
     assert "a copy of version 20260201T000000Z; derived" in reporting.provenance(copy, artefacts_root=tmp_path / "elsewhere")
     assert reporting.provenance_versions(text) == [("20260301T000000Z", fixture_artefacts.metadata["source"])]
-
-
-def test_the_round_count_of_a_version_built_by_the_loop_was_chosen_on_the_selection_measure(fixture_artefacts):
-    scaling = fixture_artefacts.metadata["round_scaling"]
-
-    table = reporting.round_count(fixture_artefacts)
-
-    served = table.row(0, named=True)
-    assert served["model"] == "served"
-    assert served["chosen_on"] == "Selection Measure"
-    assert (served["rounds_chosen"], served["rounds_trained"]) == (scaling["selected_rounds"], scaling["rounds"])
-    assert table.filter(model="next rebuild")["rounds_chosen"].to_list() == [scaling["selected_rounds"]]
-
-
-def test_a_version_trained_at_the_searchs_round_count_discloses_that_deviance_chose_it(fixture_artefacts):
-    # The served artefact's shape (20261118T185910Z): the search's 1,198 rounds, scaled to 1,453, and a
-    # five-fold confirmation whose per-fold rounds the next rebuild takes the median of.
-    record = fixture_artefacts.metadata["ranking_experiments"]
-    confirmed = {"settings": {"winner": record["best"]["settings"]}, "winner": {"rounds": [951, 1075, 1097, 1303, 1120]}}
-    metadata = {
-        **fixture_artefacts.metadata,
-        "rounds": 1453,
-        "round_scaling": {"tuned_rounds": 1198, "ratio": 1.2127, "rounds": 1453},
-        "ranking_experiments": {**record, "confirmation": confirmed},
-    }
-
-    table = reporting.round_count(replace(fixture_artefacts, metadata=metadata))
-
-    assert table.to_dicts() == [
-        {"model": "served", "chosen_on": "Tweedie deviance (the hyperparameter search)", "rounds_chosen": 1198,
-         "rounds_trained": 1453},
-        {"model": "next rebuild", "chosen_on": "Selection Measure", "rounds_chosen": 1097, "rounds_trained": None},
-    ]
+    # Without lineage (the Model History reads no older folder), the step alone, though the folder is there.
+    assert "a copy of version 20260201T000000Z; derived" in reporting.provenance(
+        copy, artefacts_root=tmp_path, lineage=False)
 
 
 def test_provenance_lines_are_read_back_from_printed_outputs(fixture_artefacts):
@@ -310,34 +271,15 @@ def test_flagged_products_are_counted_by_reason(fixture_artefacts):
     assert counts.columns == ["Reason", "Products", "Opportunities"]
 
 
-def test_the_large_market_measures_by_version_list_this_version_earlier_versions_and_the_naive_baseline(
-    fixture_artefacts,
-):
-    report = fixture_artefacts.evaluation
-    v1 = {row["markets"]: row["model"] for row in report["rescored_earlier_versions"]["v1"]["large_markets"]}
-
-    table = reporting.large_markets_by_version(fixture_artefacts)
-
-    rows = {row["version"]: row for row in table.iter_rows(named=True)}
-    assert rows["v1"]["30 largest Markets"] == pytest.approx(v1[30])
-    assert rows["v1"]["60 largest Markets"] == pytest.approx(v1[60])
-    assert table["version"][0].startswith("This version")
-
-
-def test_a_version_without_large_market_measures_shows_not_run(fixture_artefacts):
-    older = {key: value for key, value in fixture_artefacts.evaluation.items() if key != "large_markets"}
-    assert isinstance(reporting.large_markets_by_version(replace(fixture_artefacts, evaluation=older)), reporting.NotRun)
-
-
 def test_what_market_reach_changes_states_every_figure_or_a_not_run_line(fixture_artefacts):
     # The notebook has no table beside it, so the sentence states every figure, as the model card does.
     without = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "market_reach_effect"}
 
     text = reporting.market_reach_effect(fixture_artefacts)
-    assert text.startswith("Market Reach is the change this version keeps. On 2023, the UK ranking is ")
-    assert "old measure" in text and "Lift is" in text and "Market Reach leaves Scenario Effects unchanged" in text
+    assert text.startswith("With Market Reach, on 2023 the UK ranking is ")
+    assert "old measure" not in text and "Lift is" in text and "Market Reach leaves Scenario Effects unchanged" in text
     assert reporting.market_reach_effect(replace(fixture_artefacts, evaluation=without)) == (
-        "Market Reach: not run for this version."
+        "Market Reach: not run."
     )
 
 
@@ -507,3 +449,29 @@ def test_preset_rows_come_in_the_order_given(india_in_cptpp):
 
     assert table["preset"].to_list() == ["Leave", "CPTPP", "EU re-join"]
     assert table["blocked_opportunities"].to_list() == [None, 2, None]
+
+
+def test_the_search_s_confirmed_configurations_are_one_table(fixture_artefacts):
+    table = reporting.search_confirmation(fixture_artefacts)
+
+    assert table.columns == ["trial", "rounds", "validation_deviance", "uk_spearman"]
+    assert table.height == len(fixture_artefacts.metadata["search"]["confirmation"])
+    bare = {k: v for k, v in fixture_artefacts.metadata.items() if k != "search"}
+    assert isinstance(reporting.search_confirmation(replace(fixture_artefacts, metadata=bare)), reporting.NotRun)
+
+
+def test_the_ablation_and_the_learning_curve_are_tables_of_their_saved_rows():
+    shared = {"training_rows": 10, "rounds": 5, "validation_deviance": 3.0, "uk_spearman": 0.5, "seconds": 1.0}
+    results = {
+        "ablation": [{"dropped": None, "features": 3, "deviance_change": None, "spearman_change": None,
+                      "hurts": None, **shared},
+                     {"dropped": "relatedness", "features": 2, "deviance_change": 0.1, "spearman_change": 0.01,
+                      "hurts": True, **shared}],
+        "learning_curve": [{"zero_rate": 0.05, "non_uk_rate": 0.3, "full_data_non_uk_rate": 0.65, "fits_budget": True,
+                            **shared}],
+    }
+
+    ablation, curve = reporting.ablation(results), reporting.learning_curve(results)
+
+    assert ablation["dropped"].to_list() == [None, "relatedness"] and "seconds" not in ablation.columns
+    assert curve["fits_budget"].to_list() == [True] and "seconds" not in curve.columns

@@ -56,7 +56,7 @@ def illustrative() -> str:
 def scenario_note(note: dict) -> None:
     """The API's Scenario note under the figures it qualifies, closed in one expander, the same on the Blocked
     Opportunities page and the Scenario Builder: the Illustrative label, then each benchmark (or that it was not
-    run for this version) and, for a Blend, what a Scenario moves."""
+    run) and, for a Blend, what a Scenario moves."""
     with st.expander(f"{labels()['illustrative']['badge']}: what these figures are read against"):
         st.info(f"**{note['label']}.** {note['text']}")
         parts = [note[part]["text"] for part in ("benchmark", "model_association", "event_backtest")]

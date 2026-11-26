@@ -222,6 +222,10 @@ _Avoid_: version hash, model ID
 The record of every read of the test year: date, version, Configuration Fingerprint, what was read, the command, its kind (an evaluation, or a re-score of earlier versions' saved scores under a new measure) and its status (started, then completed once its figures are saved). A fingerprint already completed in it is refused a second read unless overridden, and the override is recorded too (ADR 0009).
 _Avoid_: audit log, read log
 
+**Model History**:
+The record of how the served model was reached: every earlier configuration, Arm and read of the test year, told in order in its own notebook beside the ADRs, `docs/research/` and the Test-year Ledger. Product surfaces present only the served model and link to it (ADR 0013).
+_Avoid_: changelog, version history
+
 **Review Pack**:
 The served outputs, plus each Market's total imports, handed to a fresh reviewer who has not seen the code: the top Opportunities overall and in the top Markets and Products, the top Blocked Opportunities with their totals by Market and by Product, each preset Scenario's largest Scenario Effects and a random sample of Product–Market pairs. Each Product and Market is named beside its code, every amount is in US dollars, and no Caveat Tier is hidden.
 _Avoid_: review bundle, audit pack
