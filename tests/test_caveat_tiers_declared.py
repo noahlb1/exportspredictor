@@ -85,6 +85,7 @@ def test_the_api_serves_every_declared_tier(client):
         "reason_column": None,
         "row_text": None,
         "hidden_by_default": False,
+        "terms": {},
     }
     assert pair["reason_column"] == "test_pair_reason" and pair["row_text"] == "Test Pair: {reason}."
     assert "caveats" not in _get(client, "/labels")  # one source for every tier's badge and text: /caveats

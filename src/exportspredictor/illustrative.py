@@ -10,7 +10,7 @@ Event Backtest's predicted and observed change, and, for a Blend, what the Event
 
 from typing import TYPE_CHECKING
 
-from exportspredictor.evaluation import NOT_RUN, model_form_label
+from exportspredictor.evaluation import NOT_RUN
 from exportspredictor.model_choice import event_backtest_note, primary_event_backtest
 from exportspredictor.wording import percent_text
 
@@ -19,17 +19,15 @@ if TYPE_CHECKING:
 
 ILLUSTRATIVE = "Illustrative"
 ILLUSTRATIVE_TEXT = (
-    "Scenario Effects and Blocked Opportunity values are illustrative: upper-end associations the model has "
-    "learned from past trade, shown beside their benchmarks. They are not forecasts, and the model was not chosen "
-    "on them."
+    "Scenario Effects and Blocked Opportunity values are illustrative: associations learned from past trade, higher "
+    "than the changes seen after real agreements (benchmarks below). They are not forecasts."
 )
 
 # The primary Event Backtest is one agreement's Markets, scored by the model alone; the model's
 # association is every UK pair without a Trade Agreement, on the served Model Form.
 DIFFERENT_POPULATIONS = (
-    "It covers one agreement's Markets and the model alone, while the model's association above covers every UK pair "
-    "without a Trade Agreement on the served Model Form, so the two figures describe different populations and are "
-    "not compared directly."
+    "It covers one agreement and the model before blending; the figure above covers every UK pair without a Trade "
+    "Agreement, so the two are not directly comparable."
 )
 
 
@@ -66,7 +64,7 @@ def _benchmark(saved: dict | None) -> dict:
         "published_low_pct": published["low_pct"],
         "published_high_pct": published["high_pct"],
         "text": (
-            f"A PPML gravity benchmark ({saved['level']} level, {years[0]}–{years[-1]}) associates a Trade Agreement "
+            f"A standard trade-economics model (PPML gravity, {saved['level']} level, {years[0]}–{years[-1]}) associates a Trade Agreement "
             f"with {_signed_percent(fit['effect_pct'])} in Flows ({saved['ci_level']:.0%} interval {_signed_percent(fit['effect_low_pct'])} "
             f"to {_signed_percent(fit['effect_high_pct'])}); published estimates range from {_signed_percent(published['low_pct'])} to "
             f"{_signed_percent(published['high_pct'])}."
@@ -84,9 +82,8 @@ def _model_association(saved: dict | None) -> dict:
         "pairs": model["pairs"],
         "model_form": model["model_form"]["form"],
         "text": (
-            f"On the served Model Form ({model_form_label(model['model_form'])}), the model associates adding a Trade "
-            "Agreement with "
-            f"{_signed_percent(model['effect_pct'])} in Export Potential over the {model['pairs']:,} UK pairs without one "
+            "This app's model associates adding a Trade Agreement with "
+            f"{_signed_percent(model['effect_pct'])} in Export Potential across the {model['pairs']:,} UK pairs without one "
             "(weighted by Baseline Export Potential)."
         ),
     }

@@ -197,7 +197,7 @@ def model_card(artefacts: Artefacts) -> dict:
         "v1_comparison": _comparison_summary(report.get("v1_comparison"), comparison.version_name(report)),
         "earlier_versions": report.get("earlier_versions"),
         "large_markets": evaluation.large_markets_beside_earlier(report),
-        "market_reach_effect": report.get("market_reach_effect"),
+        "market_reach_effect": _market_reach_effect(report),
         "traded_away": traded_away(report.get("earlier_versions")),
         "ranking_experiments": ranking_summary(metadata.get("ranking_experiments")),
         "potential_range": _potential_range(report.get("potential_range")),
@@ -417,6 +417,14 @@ def _metrics(report: dict) -> list[dict]:
                      "naive": group["naive_spearman_within_product"],
                      "text": f"{group['non_zero_flows']:,} UK Flows in {group['rows']:,} pairs"})
     return rows
+
+
+def _market_reach_effect(report: dict) -> dict | None:
+    """What Market Reach changes, with every figure in its text: the card has no table to set them in."""
+    effect = report.get("market_reach_effect")
+    if not effect:
+        return None
+    return {**effect, "text": evaluation.market_reach_effect_text(effect, report["test_year"], figures=True)}
 
 
 def _comparison_summary(block: dict | None, name: str) -> dict | None:

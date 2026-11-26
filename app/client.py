@@ -8,6 +8,7 @@ import os
 import httpx
 
 DEFAULT_API_URL = "http://localhost:8000"
+STARTING = "The API is running but the model is still loading."  # the API answers 503 until its artefacts load
 
 
 class ApiUnavailable(RuntimeError):
@@ -31,7 +32,7 @@ def get(path: str, **params) -> dict:
     if response.status_code == 404:
         raise NotFound(response.json().get("detail", "Not found"))
     if response.status_code == 503:
-        raise ApiUnavailable("The API is running but its artefacts are not loaded yet.")
+        raise ApiUnavailable(STARTING)
     response.raise_for_status()
     return response.json()
 
@@ -50,6 +51,6 @@ def post(path: str, body: dict) -> dict:
         detail = response.json().get("detail", "Invalid request")
         raise InvalidRequest(detail if isinstance(detail, str) else "; ".join(d.get("msg", "") for d in detail))
     if response.status_code == 503:
-        raise ApiUnavailable("The API is running but its artefacts are not loaded yet.")
+        raise ApiUnavailable(STARTING)
     response.raise_for_status()
     return response.json()

@@ -15,7 +15,7 @@ from exportspredictor.loop import (
     served_configuration,
 )
 from exportspredictor.prediction import MODEL_ALONE, ModelForm
-from exportspredictor.wording import number_text
+from exportspredictor.wording import SELECTION_MEASURE_PLAIN, number_text
 
 CHOSEN_ON_DEVIANCE = "Tweedie deviance (the hyperparameter search)"
 CHOSEN_ON_SELECTION_MEASURE = "Selection Measure"
@@ -134,8 +134,8 @@ def event_backtest_note(metadata: dict, report: dict) -> dict | None:
     model_effect = primary["directions"][0]["pooled"]["predicted"] if primary else None
     served = form.served_effect(model_effect) if model_effect is not None else None
     example = (
-        f" In the primary Event Backtest ({primary['title']}), the model's {model_effect:+.0%} would be served as "
-        f"{served:+.0%}."
+        f": the model's {model_effect:+.0%} in the primary Event Backtest ({primary['title']}) would show as "
+        f"{served:+.0%}"
         if primary is not None and model_effect is not None and served is not None else ""
     )
     return {
@@ -143,9 +143,9 @@ def event_backtest_note(metadata: dict, report: dict) -> dict | None:
         "model_effect": model_effect,
         "served_effect": served,
         "text": (
-            "The Event Backtests measured the model alone, before the Blend. The Naive Baseline has no policy "
-            f"features, so a served Scenario Effect is the model's effect scaled by its weight, {weight:g}, on the log "
-            f"scale, and is smaller.{example} Both are associations, not forecasts."
+            f"The Event Backtests measured the model alone. The app blends it (weight {weight:g}) with the Naive "
+            f"Baseline, which ignores trade policy, so the Scenario Effects shown are smaller{example}. Both are "
+            "associations, not forecasts."
         ),
     }
 
@@ -199,9 +199,9 @@ def selection_rule_text(summary: dict) -> str:
     """How the experiment loop chose (`ranking_summary`): one Selection Measure, kept only above the Win Threshold."""
     return (
         f"Every choice was made on one Selection Measure, on {summary['validation_year']} only: "
-        f"{summary['selection_measure']}. An Arm was kept only if it beat the best so far by more than the Win "
-        f"Threshold, {number_text(summary['win_threshold'], '.4f')} (twice the Noise Floor's standard deviation, "
-        "three seeds of one configuration)."
+        f"{SELECTION_MEASURE_PLAIN} (the headline's rank correlation). An Arm, one tried setting, was kept only if it "
+        f"beat the best so far by more than the Win Threshold, {number_text(summary['win_threshold'], '.4f')}: twice "
+        "the Noise Floor, how far the measure moves when only the random seed changes."
     )
 
 

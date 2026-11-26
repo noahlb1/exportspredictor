@@ -5,12 +5,11 @@ from dataclasses import replace
 
 import httpx
 import pytest
-import streamlit
 from streamlit.testing.v1 import AppTest
 
 from exportspredictor import artefacts as store
 
-MENU = ["Leaderboard", "Blocked Opportunities", "Scenario Builder", "Model Evaluation"]
+MENU = ["Leaderboard", "Blocked Opportunities", "Scenario Builder", "Model Evaluation", "How the model works"]
 # Every page that shows figures, by the path the router declares it with (None: the default page).
 PAGES = {
     "Leaderboard": None,
@@ -20,21 +19,7 @@ PAGES = {
 }
 
 
-@pytest.fixture
-def menu(monkeypatch) -> list:
-    """The pages the router passes to `st.navigation` on its latest run."""
-    declared = []
-    navigation = streamlit.navigation
-
-    def record(pages, *args, **kwargs):
-        declared[:] = pages
-        return navigation(pages, *args, **kwargs)
-
-    monkeypatch.setattr(streamlit, "navigation", record)
-    return declared
-
-
-def test_the_menu_shows_the_four_pages_in_order_and_opens_on_the_leaderboard(open_page, fixture_api_url, menu):
+def test_the_menu_shows_the_five_pages_in_order_and_opens_on_the_leaderboard(open_page, fixture_api_url, menu):
     app = open_page(fixture_api_url)
 
     assert not app.exception

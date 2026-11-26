@@ -369,9 +369,10 @@ def test_the_new_version_is_shown_beside_the_blend_v2_and_v1_on_both_measures():
     assert naive == {"Naive Baseline, every Exporter's Flows (this run)": (0.53, 0.52),
                      "Naive Baseline as reported for v2 (training rows' Flows)": (0.5233, None)}
     assert block["beats_naive"] is True
-    assert "beats the Naive Baseline" in block["text"] and "2023" in block["text"]
-    assert "tie-proof" in block["text"] and "old measure" in block["text"]
-    assert "not yet re-scored" in block["text"]
+    assert block["text"].startswith(
+        "On 2023, read once, this version's UK ranking is 0.550 on the tie-proof Selection Measure, against 0.520 for "
+        "the Naive Baseline. The table sets it beside earlier versions, on that measure and the old one"
+    )
 
 
 def test_earlier_versions_tie_proof_figures_come_from_re_scoring_their_saved_scores():
@@ -388,8 +389,7 @@ def test_earlier_versions_tie_proof_figures_come_from_re_scoring_their_saved_sco
         "Blend": 0.541, "v2": 0.505, "v1": 0.522
     }
     assert rows["Blend"]["uk_ranking"] == 0.5552  # the old measure stays as reported
-    assert "not yet re-scored" not in report["earlier_versions"]["text"]
-    assert "0.541" in report["earlier_versions"]["text"]
+    assert "not yet re-scored" not in report["earlier_versions"]["text"]  # the figures are the table's
 
 
 def test_re_scoring_saved_scores_gives_both_measures_and_ties_cannot_raise_the_fixed_one():
@@ -409,7 +409,7 @@ def test_a_model_that_does_not_beat_the_naive_baseline_is_said_so_plainly():
     block = evaluation.earlier_versions(_final_report(0.515, 0.52), v2=V2, blend=BLEND)
 
     assert block["beats_naive"] is False
-    assert "does not beat the Naive Baseline" in block["text"]
+    assert "against 0.520 for the Naive Baseline, which it does not beat." in block["text"]
 
 
 def test_without_reported_figures_only_this_version_and_v1_are_listed():
@@ -460,6 +460,70 @@ def test_the_served_report_leaves_out_the_v1_comparison_and_words_the_potential_
     assert served["potential_range"]["text"] != "Worded when saved."
     assert f"{saved['potential_range']['uncertain_opportunity_share']:.0%}" in served["potential_range"]["text"]
     assert saved["potential_range"]["text"] == "Worded when saved."  # the saved report is not changed
+
+
+SAVED = "Worded when saved."
+
+
+def _saved_prose(report: dict) -> dict:
+    """`report` with its Lift, Event Backtest and Market Reach prose as an older version saved it."""
+    block = report["event_backtest"]
+    events = [{**event, "text": SAVED} for event in block["events"]]
+    return {
+        **report,
+        "lift": {**report["lift"], "text": SAVED},
+        "event_backtest": {**block, "events": events, "text": SAVED},
+        "market_reach_effect": {**report["market_reach_effect"], "text": SAVED},
+    }
+
+
+def test_the_served_report_words_lift_the_event_backtests_and_market_reach_now(fixture_artefacts):
+    saved = _saved_prose(fixture_artefacts.evaluation)
+
+    served = evaluation.served_report(saved)
+
+    lift = served["lift"]
+    assert lift["text"] != SAVED and f"{lift['lift']:.1f} times as often" in lift["text"]
+    events = served["event_backtest"]["events"]
+    assert all(event["text"].startswith(f"{event['title']} (in force") for event in events)
+    assert served["event_backtest"]["text"] == events[0]["text"]  # the block says its primary event's result
+    reach = served["market_reach_effect"]
+    assert reach["text"].startswith("Market Reach is the change this version keeps.")
+    assert saved["lift"]["text"] == SAVED and saved["event_backtest"]["text"] == SAVED  # the saved report stands
+
+
+def test_an_older_report_without_a_figure_the_wording_reads_is_served_with_its_saved_text(fixture_artefacts):
+    saved = _saved_prose(fixture_artefacts.evaluation)
+    older = {
+        **saved,
+        "lift": {key: value for key, value in saved["lift"].items() if key != "size_matched"},
+        "event_backtest": {
+            **saved["event_backtest"],
+            "events": [{key: value for key, value in event.items() if key != "directions"}
+                       for event in saved["event_backtest"]["events"]],
+        },
+        "market_reach_effect": {key: value for key, value in saved["market_reach_effect"].items()
+                                if key != "selection_measure"},
+    }
+
+    served = evaluation.served_report(older)
+
+    assert served["lift"]["text"] == SAVED
+    assert served["event_backtest"]["text"] == SAVED
+    assert {event["text"] for event in served["event_backtest"]["events"]} == {SAVED}
+    assert served["market_reach_effect"]["text"] == SAVED
+
+
+def test_the_served_report_keeps_each_event_s_saved_states_without_their_adr_citation(fixture_artefacts):
+    report = fixture_artefacts.evaluation
+    block = report["event_backtest"]
+    states = ["The states compared then (ADR 0006).", "The states compared later."]
+    events = [{**event, "states": state} for event, state in zip(block["events"], states, strict=False)]
+
+    served = evaluation.served_report({**report, "event_backtest": {**block, "events": events}})
+
+    expected = ["The states compared then.", "The states compared later."][: len(events)]
+    assert [event["states"] for event in served["event_backtest"]["events"]] == expected
 
 
 # --- Known limitations, worded for the served Model Form ---------
@@ -662,8 +726,10 @@ def test_the_kept_change_s_effect_on_the_ranking_is_reported_beside_the_served_f
     for figures in (effect["selection_measure"], effect["old_measure"], *effect["large_markets"]):
         assert figures["without"] is not None
     assert effect["uk_pair_coverage"]["with"] == report["potential_range"]["uk_pair_coverage"]["with_market_reach"]
-    assert "leaves Scenario Effects unchanged" in effect["text"] and "Event Backtests" in effect["text"]
-    assert "not a forecast" in effect["text"]
+    assert "the table gives every figure both ways" in effect["text"]
+    assert "leaves Scenario Effects unchanged" in effect["text"] and "not a forecast" in effect["text"]
+    figures = evaluation.market_reach_effect_text(effect, report["test_year"], figures=True)  # the card's, with no table
+    assert "Lift is" in figures and "The Potential Range holds" in figures and "60 largest Markets" in figures
 
 
 def test_test_year_models_on_another_feature_set_are_cached_apart(tmp_path):
@@ -740,7 +806,7 @@ def test_a_version_upgraded_by_rereach_states_one_uk_pair_coverage_in_its_market
     read = evaluation.relabelled(saved)["market_reach_effect"]
 
     assert read["uk_pair_coverage"] == {"with": 0.7346, "without": 0.8068}
-    assert "holds 73% with it against 81% without" in read["text"]
+    assert "holds 73% with it against 81% without" in evaluation.market_reach_effect_text(read, 2023, figures=True)
     assert read["selection_measure"] == effect["selection_measure"]
 
 

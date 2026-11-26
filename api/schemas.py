@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 from exportspredictor import realisation, scenarios
 from exportspredictor.caveats import TIERS, CaveatTier, caveat_texts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
+from exportspredictor.how_it_works import Section
 from exportspredictor.rankings import (
     BLOCKED,
     BLOCKED_ORDERS,
@@ -80,10 +81,19 @@ class CaveatTierOut(BaseModel):
     reason_column: str | None  # the row field holding each flagged row's reason, if the tier declares reasons
     row_text: str | None  # a flagged row's caveat text, with "{reason}" for its reason; `text` when absent
     hidden_by_default: bool  # whether the app's hide filter starts on (the query parameter itself defaults to off)
+    terms: dict[str, str]  # key terms `text` names that have their own explanation: name -> `/labels` `terms` key
+
+
+class HowItWorks(BaseModel):
+    """The How the model works page (`exportspredictor.how_it_works`), worded for the served artefact."""
+
+    intro: str  # under the page heading
+    layers: dict[str, str]  # each layer's field on an idea and its expander label, in the order a reader opens them
+    sections: list[Section]  # each a title and its ideas: name, one-sentence summary and Markdown layers
 
 
 class TotalsNote(BaseModel):
-    """Export Potential is a median-type estimate: summed, it falls short of Actual Exports."""
+    """Export Potential is a typical value, not an average: summed, it falls short of Actual Exports."""
 
     # Summed Export Potential over summed Actual Exports, every UK pair, Gap Period means; from the artefact
     potential_share_of_actual_exports: float | None
@@ -101,11 +111,11 @@ class Labels(BaseModel):
     # The label of every Scenario Effect and Blocked Opportunity value, and what it means (ADR 0008)
     illustrative: Caveat
     caution: str  # the grey line under every page heading: figures are associations, not causes or forecasts
-    # What Export Potential, Actual Exports, Export Gap and Opportunity Type mean, by row field, for tooltips;
-    # those that name the Gap Period take its label from the artefact (`wording.term_definitions`)
+    # What each key term means, by key, for every page's tooltips and `?` help; those that name the Gap Period or
+    # the Baseline year take them from the artefact (`wording.term_definitions`)
     terms: dict[str, str]
     max_rows: int  # the most rows a ranking read returns (a larger `limit` is a 422)
-    totals_note: TotalsNote  # beside every summed figure: Export Potential is median-type, so totals understate
+    totals_note: TotalsNote  # beside every summed figure: Export Potential is a typical value, so totals understate
     trade_agreement_meaning: str  # what "a Trade Agreement" means in the model (ADR 0011)
     blocked_rule: str  # the Blocked Opportunity rule at the fixed thresholds, in one sentence (ADR 0012)
 
@@ -915,7 +925,7 @@ class ScenarioResponse(BaseModel):
     # was clipped; None for every other kind of Scenario (`ScenarioResult.tariff_directions_text`).
     tariff_directions: str | None = None
     # The Blocked Opportunity prose (`ScenarioResult.blocked_note`): the Blocked Opportunities section's caption when
-    # `adds_agreement`, otherwise the line saying this Scenario adds none; each states the fixed rule.
+    # `adds_agreement`, otherwise the line saying this Scenario adds none.
     blocked_note: str
     note: ScenarioNote  # Scenario Effects are Illustrative: the label and the benchmarks beside them
 

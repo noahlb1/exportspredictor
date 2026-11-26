@@ -18,7 +18,6 @@ import polars as pl
 from exportspredictor.artefacts import Artefacts
 from exportspredictor.gap_period import OPPORTUNITY_TYPES
 from exportspredictor.scenarios import (
-    BLOCKED_RULE,
     TARIFF_KINDS,
     barrier,
     tariff_kind,
@@ -79,17 +78,16 @@ BLOCKED = RankOrder(
     "blocked",
     "blocked_opportunity_value_usd",
     "Rise with agreement",
-    "The Blocked Opportunity value: the rise in Export Potential the model associates with adding a Trade Agreement "
-    f"where none is in force (0 where one is), largest first. {BLOCKED_RULE}",
+    "The Blocked Opportunity value: the rise in Export Potential the model associates with adding a Trade Agreement, "
+    "largest first.",
 )
 # The Blocked Opportunities page's second order (ADR 0011): the tariff-led view, without changing the definition.
 TARIFF_PART = RankOrder(
     "tariff_part",
     "tariff_part_usd",
     "Tariff part",
-    "The part of the Blocked Opportunity value the model associates with the Applied Tariff alone (a known tariff set "
-    "to 0 with no Trade Agreement added), largest first; ties, such as the 0% and unknown tariffs, by Blocked "
-    "Opportunity value.",
+    "The part of the rise the model associates with setting the Applied Tariff alone to 0, largest first; ties (0% and "
+    "unknown tariffs) by Blocked Opportunity value.",
     ties=("blocked_opportunity_value_usd",),
 )
 BLOCKED_ORDERS = {order.name: order for order in (BLOCKED, TARIFF_PART)}  # the orders the Blocked page offers

@@ -48,6 +48,7 @@ from app.ui import (
     rank_orders,
     read_limit,
     term,
+    terms_help,
     usd_unit,
 )
 
@@ -271,7 +272,7 @@ def leaderboard_filters() -> Filters:
         )
         trade_agreement = st.selectbox(
             "UK Trade Agreement in force", list(_AGREEMENT_CHOICES), format_func=_AGREEMENT_CHOICES.get,
-            key="trade_agreement", persist_state="session",
+            key="trade_agreement", persist_state="session", help=term("trade_agreement"),
         )
         min_gap_usd = st.number_input(
             f"Minimum Export Gap ({usd_unit()})", value=None, step=1_000_000.0, key="min_gap_usd",
@@ -346,10 +347,9 @@ def blocked_filters() -> Filters:
             persist_state="session",
         )
         min_value_usd = st.number_input(
-            f"Show only pairs worth at least… ({usd_unit()})", value=None, step=1_000_000.0,
+            f"Minimum Blocked Opportunity value ({usd_unit()})", value=None, step=1_000_000.0,
             key=f"{BLOCKED_KEY_PREFIX}min_value_usd", persist_state="session",
-            help="Lists only the Blocked Opportunities whose Blocked Opportunity value is at least this amount. It "
-            "only narrows the list: which pairs are Blocked Opportunities is fixed, by the rule the caption states.",
+            help="Narrows the list only: which pairs are Blocked Opportunities is fixed by the rule above the table.",
         )
         hides = _hide(BLOCKED_KEY_PREFIX)
         orders = blocked_rank_orders()
@@ -458,10 +458,12 @@ def _sector(prefix: str = "") -> tuple[str | None, dict[str, str]]:
 
 
 def _hide(prefix: str = "") -> dict[str, bool]:
-    """One checkbox per Caveat Tier, e.g. Hide Re-export Hubs: whether each is on, by its hide parameter."""
+    """One checkbox per Caveat Tier, e.g. Hide Re-export Hubs: whether each is on, by its hide parameter. Its `?` is
+    the tier's caveat, then what each key term it names means (the tier's `terms`)."""
     return {
         tier["hide_param"]: st.checkbox(
-            f"Hide {tier['plural']}", key=f"{prefix}{tier['hide_param']}", help=tier["text"], persist_state="session"
+            f"Hide {tier['plural']}", key=f"{prefix}{tier['hide_param']}", persist_state="session",
+            help="\n\n".join([tier["text"], *(terms_help(term) for term in tier["terms"].items())]),
         )
         for tier in caveat_tiers()
     }

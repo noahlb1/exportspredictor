@@ -6,11 +6,11 @@ import streamlit as st
 from app import client
 from app.format import number_text, years_text
 from app.frame import page
-from app.ui import fetch, labels
+from app.ui import fetch, labels, term, terms_help
 
 SCOPES = {
-    "uk_out_of_fold": "UK Product–Market pairs (each scored by the fold model that never saw it)",
-    "all_exporters": "All Exporters (every Flow of the test year, plus sampled zero cells)",
+    "uk_out_of_fold": "UK Product–Market pairs (each scored by a model that never saw it)",
+    "all_exporters": "All Exporters (every Flow of the test year, plus a sample of pairs with no Flow)",
 }
 WEAKEST_SHOWN = 5
 
@@ -21,7 +21,7 @@ def _metric_table(overall: dict, metrics: dict) -> pd.DataFrame:
             {
                 "Metric": info["label"],
                 "Model": overall[f"model_{name}"],
-                "Naive baseline": overall[f"naive_{name}"],
+                "Naive Baseline": overall[f"naive_{name}"],
                 "Better is": info["better"],
             }
             for name, info in metrics.items()
@@ -70,11 +70,11 @@ def _breakdown_table(rows: list[dict], label: str) -> pd.DataFrame:
                 label: row["group"],
                 "Products ranked": row["ranked_products"],
                 "Rank correlation (model)": row["model_spearman_within_product"],
-                "Rank correlation (naive baseline)": row["naive_spearman_within_product"],
+                "Rank correlation (Naive Baseline)": row["naive_spearman_within_product"],
                 "RMSE of log value (model)": row["model_rmse_log"],
-                "RMSE of log value (naive baseline)": row["naive_rmse_log"],
+                "RMSE of log value (Naive Baseline)": row["naive_rmse_log"],
                 "Tweedie deviance (model)": row["model_tweedie_deviance"],
-                "Tweedie deviance (naive baseline)": row["naive_tweedie_deviance"],
+                "Tweedie deviance (Naive Baseline)": row["naive_tweedie_deviance"],
                 "Rows": row["rows"],
             }
             for row in rows
@@ -126,14 +126,13 @@ def _lift_figures(lift: dict) -> pd.DataFrame:
 
 
 def _show_lift(lift: dict) -> None:
-    st.markdown(lift["text"])
+    st.markdown(lift["text"], help=term("lift"))
     st.dataframe(_lift_figures(lift), hide_index=True)
     st.markdown(SIZE_EXPLANATION.format(usd=lift["min_growth_usd"]))
     gap = years_text(lift["gap_years"])
     st.caption(
         f"Lift is measured on {len(lift['held_out_exporters'])} Exporters that a model trained on "
-        f"{years_text(lift['training_years'])} never saw: the Exporters v1 held out, within v2's Exporter scope, so both "
-        f"models are scored on the same countries. Each of their Product–Market pairs is ranked by its Export Gap "
+        f"{years_text(lift['training_years'])} never saw. Each of their Product–Market pairs is ranked by its Export Gap "
         f"averaged over {gap}, and a pair counts as grown when its {lift['outcome_year']} Flow was at least "
         f"{lift['min_growth_share']:.0%} and ${lift['min_growth_usd']:,.0f} above its {gap} mean Actual Exports. "
         f"The intervals come from resampling whole Exporters."
@@ -149,7 +148,7 @@ def _show_lift(lift: dict) -> None:
 
 def _show_itc_comparison(itc: dict) -> None:
     """ITC's realisation test run on the model: the API's summary, the coefficients beside ITC's, and the caveats."""
-    st.markdown(itc["text"])
+    st.markdown(itc["text"], help=terms_help(("ITC", "itc"), ("Unrealised Share", "unrealised_share")))
     st.dataframe(pd.DataFrame(itc["table"]), hide_index=True)
     st.caption(
         "Each coefficient comes with its standard error in brackets, at HS2, the level nearest ITC's sub-sectors. "
@@ -172,7 +171,7 @@ def _effects_table(direction: dict, post_years: list[int]) -> pd.DataFrame:
             {
                 "Year": str(row["year"]),
                 "Predicted by the model": _pct(row["predicted"]),
-                "Observed (difference-in-differences)": _pct(row["observed"]),
+                "Observed, relative to Control Markets": _pct(row["observed"]),
                 "Observed 95% interval": _interval(row["observed_ci"]),
             }
             for row in rows
@@ -202,7 +201,7 @@ def _show_tariff_split(report: dict) -> None:
 
 
 def _show_potential_range(coverage: dict) -> None:
-    st.markdown(coverage["text"])
+    st.markdown(coverage["text"], help=term("uncertain_opportunity"))
     by_exporter = pd.DataFrame(
         [
             {"Exporter": row["exporter"], "Coverage": row["coverage"], "Rows": row["rows"]}
@@ -233,7 +232,7 @@ def _show_model_choice(choice: dict) -> None:
     """How the served model was chosen (ADR 0008): every figure comes from the API, read from the artefact."""
     st.markdown(choice["text"])
     if choice["recorded"]:
-        st.markdown(f"**Model Form.** {choice['model_form']['text']}")
+        st.markdown(f"**Model Form.** {choice['model_form']['text']}", help=term("model_form"))
         st.dataframe(
             pd.DataFrame(
                 [
@@ -248,11 +247,10 @@ def _show_model_choice(choice: dict) -> None:
                 ]
             ),
             hide_index=True,
+            column_config={"Selection Measure": st.column_config.NumberColumn(help=term("selection_measure"))},
         )
         st.caption(
-            f"Win Threshold {choice['win_threshold']:.4f}: an Arm had to beat the best so far by more than this, twice "
-            f"the Noise Floor's standard deviation, to be kept. Measured on {choice['validation_year']}, never on the "
-            "test year."
+            f"Measured on {choice['validation_year']}, never on the test year."
         )
         confirmation = choice["confirmation"]
         if confirmation:
@@ -288,7 +286,7 @@ def _show_event_backtest(backtest: dict, names: dict[str, str], note: dict | Non
         st.info(note["text"])
     for event in backtest["events"]:
         role = "Secondary check: " if event["role"] == "secondary" else ""
-        st.markdown(f"**{role}{event['title']}**, in force {event['in_force']}")
+        st.markdown(f"**{role}{event['title']}**, in force {event['in_force']}", help=term("event_backtest"))
         st.markdown(event["text"])
         for direction in event["directions"]:
             controls = "; ".join(names.get(code, code) for code in direction["controls"])
@@ -297,7 +295,7 @@ def _show_event_backtest(backtest: dict, names: dict[str, str], note: dict | Non
         st.caption(
             f"The model was trained on {years_text(event['training_years'])} only, before the agreement. \"Predicted\" "
             f"is its Scenario Effect: Export Potential with the agreement on against off. \"Observed\" is the change "
-            f"from {years_text(event['pre_years'])} relative to the change in the control Markets. "
+            f"from {years_text(event['pre_years'])} relative to the change in the Control Markets. "
             f"{event.get('states', '')} {event['control_rule']} {event['caveat']}"
         )
 
@@ -424,7 +422,7 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
                 f"Measured on {test_year}, a year the model never saw: the models were trained on "
                 f"{years_text(training_years)} with settings tuned on {report['validation_year']}, so "
                 f"neither tuning nor training ever read {test_year}. They were trained on every UK row and {sample}, "
-                f"as the Baseline models are. The naive baseline is {report['naive_baseline'][0].lower()}"
+                f"as the Baseline models are. The Naive Baseline is {report['naive_baseline'][0].lower()}"
                 f"{report['naive_baseline'][1:]}"
             )
 
@@ -440,12 +438,15 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
         with _section(f"Accuracy in {test_year}"):
             for scope, label in SCOPES.items():
                 st.markdown(f"**{label}**")
-                st.dataframe(_metric_table(report["accuracy"][scope]["overall"], report["metrics"]), hide_index=True)
+                st.dataframe(
+                    _metric_table(report["accuracy"][scope]["overall"], report["metrics"]), hide_index=True,
+                    column_config={"Naive Baseline": st.column_config.NumberColumn(help=term("naive_baseline"))},
+                )
             st.caption(
-                "Rank correlation is averaged over Products: 1 means Markets are ranked exactly as the UK's actual "
-                "exports rank them, 0 means no better than chance. RMSE of log value is the typical error in orders "
+                "Rank correlation is averaged over Products: 1 means Markets are ranked exactly as the UK's Actual "
+                "Exports rank them, 0 means no better than chance. RMSE of log value is the typical error in orders "
                 f"of magnitude on Flows that happened. Tweedie deviance (power {report['tweedie_power']}) is the "
-                "training loss over every row, zeros included."
+                "error the model was trained to reduce, over every row, zeros included."
             )
 
         with _section("Where the model is weakest"):

@@ -26,7 +26,6 @@ from app import client, panel
 from app.filters import Filters, leaderboard_filters, show_all, show_chips
 from app.format import format_usd
 from app.frame import page
-from app.panel import MARKET_REACH_HELP
 from app.tables import (
     LEADERBOARD_FORMATS,
     LEADERBOARD_RIGHT,
@@ -44,6 +43,8 @@ from app.ui import (
     labels,
     rank_orders,
     read_limit,
+    term,
+    terms_help,
 )
 from app.views import BY_MARKET, Grouping, Layout, show
 
@@ -96,7 +97,7 @@ def _left_helps(body: dict) -> tuple[str, str]:
 def _market_reach(grouping: Grouping, body: dict) -> None:
     """Above the chosen Market's Products: its Market Reach sentence (ADR 0010)."""
     if grouping.view == BY_MARKET and body.get("market_reach"):
-        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
+        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=term("market_reach"))
 
 
 def _layout(filters: Filters) -> Layout:
@@ -114,7 +115,7 @@ def _layout(filters: Filters) -> Layout:
         total_heading="Total positive Export Gap",
         left_helps=_left_helps,
         frame=leaderboard_frame,
-        columns=leaderboard_columns,
+        columns=lambda body: leaderboard_columns(),
         formats=LEADERBOARD_FORMATS,
         right_columns=LEADERBOARD_RIGHT,
         wide_columns=LEADERBOARD_SHOWN,
@@ -130,6 +131,7 @@ with page(
     "Every UK Product–Market pair, ranked by how far UK goods exports fall short of what the UK's fundamentals "
     "suggest.",
     beside=_what_is_this,
+    intro_help=terms_help(("Product–Market pair", "pair"), ("Opportunity", "opportunity")),
 ):
     _three_steps()
     try:

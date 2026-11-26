@@ -16,7 +16,7 @@ from pathlib import Path
 import streamlit as st
 
 from app import client
-from app.ui import fetch, labels
+from app.ui import fetch, labels, terms_help
 
 APP_NAME = "UK Exports Predictor"
 ASSETS = Path(__file__).parent / "assets"
@@ -91,10 +91,13 @@ def api_ready() -> bool:
 
 
 @contextmanager
-def page(heading: str, intro: str, beside: Callable[[], None] | None = None) -> Iterator[None]:
+def page(
+    heading: str, intro: str, beside: Callable[[], None] | None = None, intro_help: str | None = None
+) -> Iterator[None]:
     """A page's frame: its heading, introduction and caution line, then the content, then a divider and the footer.
 
-    `beside` draws something small beside the heading (the Leaderboard's "What is this?" link)."""
+    `beside` draws something small beside the heading (the Leaderboard's "What is this?" link); `intro_help` explains
+    the key terms of the introduction behind a `?`."""
     if beside is None:
         st.header(heading)
     else:
@@ -102,7 +105,7 @@ def page(heading: str, intro: str, beside: Callable[[], None] | None = None) -> 
         left.header(heading)
         with right:
             beside()
-    st.markdown(intro)
+    st.markdown(intro, help=intro_help)
     st.caption(labels()["caution"])
     yield
     st.divider()
@@ -116,5 +119,6 @@ def footer() -> None:
         f"Baseline year {health['baseline_year']} (provisional data). "
         f"Export Gaps are {health['gap_period_label']}s. "
         f"{labels()['usd_caption'].rstrip('.')}. "
-        f"Model version {health['artefact_version']}."
+        f"Model version {health['artefact_version']}.",
+        help=terms_help(("Baseline", "baseline"), ("Gap Period", "gap_period"), ("USD, nominal", "usd_nominal")),
     )

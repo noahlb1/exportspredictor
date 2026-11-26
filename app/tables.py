@@ -119,12 +119,12 @@ def _remember(key: str, remembered: str) -> Callable[[], None]:
 
 def product_column() -> "st.column_config.TextColumn":
     """Every table's Product column: a fixed width, so the columns after it stay in view."""
-    return st.column_config.TextColumn("Product", help="The Product (HS6, 2012 edition).", width=PRODUCT_WIDTH)
+    return st.column_config.TextColumn("Product", help=term("product"), width=PRODUCT_WIDTH)
 
 
 def market_column(width: int | None = MARKET_WIDTH) -> "st.column_config.TextColumn":
     """Every table's Market column: `MARKET_WIDTH` wide in a narrow table, or Streamlit's own width (`None`)."""
-    return st.column_config.TextColumn("Market", help="The Market the UK exports to.", width=width)
+    return st.column_config.TextColumn("Market", help=term("market"), width=width)
 
 
 def millions(values: Iterable[float | None]) -> pd.Series:
@@ -142,18 +142,10 @@ def millions_unit() -> str:
     return f"$ millions ({usd_unit()})"
 
 
-def tariff_column(baseline_year: int, label: str = "Applied Tariff %", help: str | None = None) -> (
-    "st.column_config.NumberColumn"
-):
+def tariff_column(label: str = "Applied Tariff %", help: str | None = None) -> "st.column_config.NumberColumn":
     """The column config of a ranking row's `applied_tariff_pct` (the Baseline Applied Tariff, percent; blank where
     unknown)."""
-    return st.column_config.NumberColumn(
-        label,
-        help=help
-        or f"The tariff the Market charges on this Product from the UK in the Baseline year {baseline_year}, in percent. "
-        "Blank where it is not known.",
-        format="%.1f",
-    )
+    return st.column_config.NumberColumn(label, help=help or term("applied_tariff"), format="%.1f")
 
 
 # The Leaderboard's wide table: the columns shown by default, in order. The others are hidden by default and offered
@@ -238,43 +230,30 @@ def caveats_column() -> "st.column_config.TextColumn":
     )
 
 
-def leaderboard_columns(body: dict) -> dict:
-    """The column config of `leaderboard_frame`: a tooltip on every heading, the four terms in the API's wording."""
-    year, averaged = body["baseline_year"], body["gap_period_label"]
+def leaderboard_columns() -> dict:
+    """The column config of `leaderboard_frame`: a tooltip on every heading, each key term's from `term` (which carries
+    the artefact's Baseline year and Gap Period)."""
     return {
         "Product": product_column(),
         "Market": market_column(width=None),
         "Export Gap": money_column("Export Gap", term("export_gap")),
         "Export Potential": money_column("Export Potential", term("export_potential")),
         "Actual Exports": money_column("Actual Exports", term("actual_exports")),
-        "Applied Tariff %": tariff_column(year),
+        "Applied Tariff %": tariff_column(),
         "Relative Export Gap": st.column_config.NumberColumn(
-            "Relative Export Gap",
-            help=f"Export Gap divided by Export Potential ({averaged}): the share of its Export Potential the UK "
-            "does not yet realise.",
-            format="percent",
+            "Relative Export Gap", help=term("relative_export_gap"), format="percent"
         ),
-        "UK Trade Agreement": st.column_config.TextColumn(
-            "UK Trade Agreement", help=f"Whether a UK Trade Agreement with the Market is in force in {year}."
-        ),
-        "Blocked Opportunity value": money_column(
-            "Blocked Opportunity value",
-            f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement where "
-            f"none is in force (a known Applied Tariff goes to 0 with it); 0 where one is. "
-            f"{illustrative().capitalize()}.",
-        ),
+        "UK Trade Agreement": st.column_config.TextColumn("UK Trade Agreement", help=term("trade_agreement")),
+        "Blocked Opportunity value": money_column("Blocked Opportunity value", term("blocked_opportunity_value")),
         "Blocked Opportunity": st.column_config.CheckboxColumn(
-            "Blocked Opportunity", help="The Blocked Opportunity value clears the fixed thresholds."
+            "Blocked Opportunity", help=term("blocked_opportunity")
         ),
         "Caveats": caveats_column(),
         "Opportunity Type": st.column_config.TextColumn("Opportunity Type", help=term("opportunity_type")),
-        "Potential Range": st.column_config.TextColumn(
-            "Potential Range",
-            help=f"Where Actual Exports usually fall for comparable pairs, low–high in $ millions ({averaged}).",
-        ),
-        "HS6": st.column_config.TextColumn("HS6", help="The Product's HS6 code (2012 edition)."),
-        "Sector": st.column_config.TextColumn("Sector", help="The Product's Sector (HS2 chapter)."),
-        "Region": st.column_config.TextColumn("Region", help="The Market's region."),
+        "Potential Range": st.column_config.TextColumn("Potential Range", help=term("potential_range")),
+        "HS6": st.column_config.TextColumn("HS6", help=term("hs6")),
+        "Sector": st.column_config.TextColumn("Sector", help=term("sector")),
+        "Region": st.column_config.TextColumn("Region", help=term("region")),
     }
 
 
@@ -358,45 +337,24 @@ def blocked_products_frame(rows: list[dict], *, with_market: bool = False) -> pd
 
 
 def blocked_products_columns(body: dict) -> dict:
-    """The column config of `blocked_products_frame`: a tooltip on every heading, each naming the Baseline year."""
+    """The column config of `blocked_products_frame`: a tooltip on every heading, each naming the Baseline year; each
+    key term's from `term`."""
     year, word = body["baseline_year"], illustrative().capitalize()
     return {
         "Product": product_column(),
         "Market": market_column(),
-        "Barrier": st.column_config.TextColumn(
-            "Barrier",
-            help=f"What holds this pair's Export Potential down: no UK Trade Agreement is in force, with its {year} "
-            "Applied Tariff (0%, above 0, or unknown).",
-        ),
-        "Actual Exports": money_column(
-            "Actual Exports",
-            f"What the UK actually exported of this Product to this Market in {year} (0 where there was no Flow).",
-        ),
-        "Export Potential": money_column(
-            "Export Potential", f"Baseline Export Potential: what the model expects in {year}, with no agreement."
-        ),
+        "Barrier": st.column_config.TextColumn("Barrier", help=term("barrier")),
+        "Actual Exports": money_column("Actual Exports", term("baseline_actual_exports")),
+        "Export Potential": money_column("Export Potential", term("baseline_export_potential")),
         "With a Trade Agreement": money_column(
             "With a Trade Agreement",
             f"Export Potential with a Trade Agreement: {year} Export Potential plus the Blocked Opportunity value, the "
             f"level the model associates with adding an agreement. It is above {year} Actual Exports (room to grow). "
             f"{word}.",
         ),
-        "Rise with agreement": money_column(
-            "Rise with agreement",
-            f"The Blocked Opportunity value: the rise in {year} Export Potential the model associates with adding a "
-            f"UK Trade Agreement. It is the Tariff part plus the Agreement part. {word}.",
-        ),
-        "Rise %": st.column_config.NumberColumn(
-            "Rise %",
-            help=f"The Rise share: the rise with agreement as a share of Baseline Export Potential ({year}). {word}.",
-            format="percent",
-        ),
-        "Tariff part": money_column(
-            "Tariff part",
-            "The Tariff part: the part of the rise the model associates with the Applied Tariff alone, a known tariff "
-            "set to 0 with no Trade Agreement added. It is 0 where the tariff is 0% or unknown: the rise then rests on "
-            f"the agreement as a whole. {word}.",
-        ),
+        "Rise with agreement": money_column("Rise with agreement", term("rise_with_agreement")),
+        "Rise %": st.column_config.NumberColumn("Rise %", help=term("rise_share"), format="percent"),
+        "Tariff part": money_column("Tariff part", term("tariff_part")),
         "Above Export Potential": st.column_config.CheckboxColumn(
             "Above Export Potential",
             help=f"{year} Actual Exports are already above Export Potential (though below the level with a Trade "

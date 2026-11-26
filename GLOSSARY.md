@@ -12,6 +12,7 @@ _Avoid_: trade, shipment, transaction
 
 **Product**:
 A single HS6 subheading of the Harmonized System, the most detailed internationally comparable level of goods classification.
+_Plainly_: One of about 5,000 goods categories in the international customs classification, at its six-digit level.
 _Avoid_: good, commodity, item
 
 **Sector**:
@@ -43,7 +44,7 @@ A Product left out of training, scoring and rankings, because its recorded Flows
 _Avoid_: removed product, banned product
 
 **Flagged Product**:
-A Product scored and ranked as normal, but shown with a caveat that names its reason: precious stones and jewellery of Sector 71, whose values are volatile and entrepôt-driven; UK exports that swing widely from year to year over the training years (the top fifth by volatility); or a one-off Product sold in few, large contracts.
+A Product scored and ranked as normal, but shown with a caveat that names its reason: precious stones and jewellery of Sector 71, whose values are volatile and re-export-led; UK exports that swing widely from year to year over the training years (the top fifth by volatility); or a one-off Product sold in few, large contracts.
 _Avoid_: warning product, suspect product
 
 **Re-export Hub**:
@@ -82,6 +83,7 @@ _Avoid_: UK-free demand (as a name), HS4 demand, sibling imports
 
 **Export Potential**:
 The value of a Flow that the model expects, given the fundamentals of its Exporter, Importer and Product.
+_Plainly_: What the model expects an Exporter to sell of a Product to a Market in a year, given economy size, distance, tariffs and existing trade.
 _Avoid_: forecast, expected exports, predicted trade
 
 **Actual Exports**:
@@ -90,6 +92,7 @@ _Avoid_: real exports, historic trade
 
 **Export Gap**:
 The mean, over the Gap Period, of Export Potential minus Actual Exports for one UK Product–Market pair; positive means the UK is underperforming its fundamentals. With Market Reach in the Model Form, it is specific to the Product within its Market; how widely the UK reaches the whole Market shows in the Market's reach.
+_Plainly_: Export Potential minus Actual Exports, averaged over recent years. Positive means the UK exports less than the model expects.
 _Avoid_: untapped potential, headroom, shortfall
 
 **Gap Period**:
@@ -108,6 +111,10 @@ _Avoid_: percentage gap, headroom ratio
 Every UK Product–Market pair ranked by Export Gap (or Relative Export Gap), with the Advisor's filters and a summary of the filtered pairs. It is the app's home page; Blocked Opportunities are listed on a page of their own, laid out the same way. Its pairs are shown By Market (the default), By Product, or in a Wide table, with the chosen pair's detail panel underneath.
 _Avoid_: top list, dashboard, league table
 
+**How the model works**:
+The app's last page, for a visitor learning ML: how the model is built, checked and served, each idea a one-sentence summary with layers beneath (what it is, why it is used, how it is done here).
+_Avoid_: methodology page, about page, how this works
+
 **Opportunity Type**:
 How far the UK already trades an Opportunity: **Expand** (the UK already exports the Product to this Market), **New Market** (the UK exports the Product, but not to this Market) or **New Product** (the UK exports the Product to no Market).
 _Avoid_: entry mode, opportunity status
@@ -122,6 +129,7 @@ _Avoid_: weak lead, low-confidence opportunity, false positive
 
 **Blocked Opportunity**:
 A UK Product–Market pair with no Trade Agreement in force whose Export Potential rises materially in a Scenario that removes its Barrier (a Blocked Opportunity value of at least 20% of Baseline Export Potential and at least $1M), and which has **room to grow**: its Baseline-year Actual Exports are below its Export Potential with a Trade Agreement. Any Applied Tariff qualifies, including 0% and unknown. It is measured apart from the Export Gap, because the Barrier already holds Export Potential down: a pair can be an Opportunity, a Blocked Opportunity, both or neither. One rule (`scenarios.is_blocked`) decides it on every page (ADR 0011), and a Scenario shows the Blocked Opportunities of the Markets it adds a Trade Agreement with, read from the same precomputed values (ADR 0012).
+_Plainly_: A pair with no UK Trade Agreement where the model associates adding one with a rise in Export Potential of at least 20% and $1M, and Actual Exports are below that level.
 _Avoid_: hidden opportunity, latent demand
 
 **Blocked Opportunity value**:
@@ -154,6 +162,7 @@ _Avoid_: hit rate, conversion
 
 **Realisation Test**:
 ITC's check of its Export Potential Map, run on our model as Lift's regression counterpart (`exportspredictor.realisation`): three regressions with fixed effects and errors clustered by unit. A **unit** is a Product–Market pair at HS6, or a Sector–Market pair at HS2. The **intensive margin** regresses later growth of trading pairs on their Unrealised Share in a base year; the **extensive margin** asks whether pairs not trading then start within three years, and **new-flow size** how much those that start sell, both on log Export Potential. Each runs at HS6 and at HS2, where a Sector–Market's unrealised potential is floored pair by pair, then summed, and with the Naive Baseline in Export Potential's place, each on the units it scores above zero, so the two samples differ where the Naive Baseline scores a unit 0. Each base year's Export Potential comes from fold models trained only on years up to it, and the test year is never read, so the result feeds no modelling choice and leaves the frozen version unchanged (ADR 0009). Only the HS2 coefficients are set beside ITC's published ones, as a rough benchmark of agreement, never a validation. Its method, departures and results: `docs/research/base-year-models.md`.
+_Plainly_: A check borrowed from ITC: do pairs with more unexported Export Potential grow faster, or start trading, over the next three years?
 _Avoid_: validation test, accuracy test
 
 **Base year**:
@@ -176,6 +185,7 @@ _Avoid_: comparison country, untreated unit
 
 **Selection Measure**:
 The one measure every modelling choice is made on: the mean over Products of the rank correlation between Export Potential and Actual Exports across Markets, for held-out UK pairs in the validation year. Ties in Export Potential are broken in a fixed pseudo-random order (a stable hash of the Product and the Market), and tied Actual Exports (the zeros) share their average rank, so tying the bottom of a ranking can never raise it. Every other metric is reported beside it, never chosen on. The measure before ties were broken, where tied Export Potential also shared its average rank, is the **old measure**: it is reported only to set a version beside earlier versions, which reported it. Set beside the old measure, the Selection Measure is called the **tie-proof** measure.
+_Plainly_: How well the model ranks each Product's Markets against UK Actual Exports, on pairs it was not trained on.
 _Avoid_: objective, score, headline (the headline is the same measure on the test year)
 
 **Arm**:
@@ -196,10 +206,12 @@ _Avoid_: benchmark (the PPML benchmark is another thing), naive model
 
 **Model Form**:
 How Export Potential is made from the fold models. The served form is a **Blend**: the model's Export Potential and the Naive Baseline combined on the log scale with fixed weights (the Naive Baseline's weight chosen on the Selection Measure), then scaled by each Market's Market Reach. The Naive Baseline has no policy features, so a Scenario moves only the model's share; Market Reach scales a pair with and without the Scenario alike.
+_Plainly_: How Export Potential is made: the model blended with the Naive Baseline, then scaled by Market Reach.
 _Avoid_: ensemble, model type
 
 **Market Reach**:
 How widely the UK sends its Products to a Market, against how widely the ranking expects it to, learned from the UK's other Products. It is the share of the Products the Market imports from other Exporters that the UK sends there too, against the UK's share across Markets. It scales the Export Potential of every UK pair in the Market alike, so dollar figures built on Export Potential (a Blocked Opportunity value and its $1M floor among them) follow it; learned from other folds' pairs in the year before (ADR 0010).
+_Plainly_: How many of the Products a Market imports the UK sends there, against the UK's usual share across Markets.
 _Avoid_: market penetration, market share, UK presence
 
 **Configuration Fingerprint**:
@@ -234,6 +246,7 @@ _Avoid_: what-if tool, scenario simulator
 
 **Illustrative**:
 How every Scenario Effect and Blocked Opportunity value is shown: an upper-end association the model has learned, beside its benchmarks (the PPML benchmark, the model's own Trade Agreement association and the Event Backtest result), never a forecast and never selected on (ADR 0008).
+_Plainly_: A label for Scenario figures: associations learned from past trade, higher than the changes seen after real agreements, not forecasts.
 _Avoid_: indicative, estimated, projected
 
 **Trade Agreement**:
@@ -242,6 +255,7 @@ _Avoid_: FTA (except as a type of Trade Agreement), deal
 
 **Applied Tariff**:
 The import duty a Market charges on a Product from a given Exporter: the lower of its preferential rate for that Exporter and its most-favoured-nation rate.
+_Plainly_: The import tax a Market charges on a Product from a given Exporter.
 _Avoid_: duty, tariff rate
 
 **Unrecorded preference**:

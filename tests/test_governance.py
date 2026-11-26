@@ -490,11 +490,10 @@ def test_model_card_reports_potential_range_coverage_by_size(card, fixture_artef
 
 
 def test_model_card_reports_what_market_reach_changes(card, fixture_artefacts):
-    effect = fixture_artefacts.evaluation["market_reach_effect"]
-
     section = _section(governance.render_model_card(card), "## What Market Reach changes")
-    assert effect["text"] in section
-    assert "Lift" in section and "Scenario Effects" in section
+    # The card has no table, so it states every figure in the text (`figures=True`).
+    assert card["market_reach_effect"]["text"] in section
+    assert "Lift is" in section and "The Potential Range holds" in section and "Scenario Effects" in section
 
 
 def test_model_card_sets_the_large_market_measures_beside_earlier_versions(card, fixture_artefacts):
@@ -541,11 +540,11 @@ def test_a_saved_v1_row_without_lift_is_filled_from_its_comparison_on_read(fixtu
     assert v1["lift"] is not None and v1["size_matched_lift"] is not None
 
 
-def test_the_scenario_note_names_the_served_model_form_with_its_market_reach(card, fixture_artefacts):
+def test_the_scenario_note_states_the_models_own_trade_agreement_association(card, fixture_artefacts):
     assert fixture_artefacts.ppml_benchmark["model"]["model_form"].get("market_reach")
 
     section = _section(governance.render_model_card(card), "## Illustrative Scenario Effects")
-    assert "On the served Model Form (Blend with Market Reach)," in section
+    assert "This app's model associates adding a Trade Agreement with" in section
 
 
 def test_model_card_states_the_blocked_opportunities_and_the_split_of_their_value(blocked_artefacts):

@@ -16,6 +16,7 @@ chosen = st.navigation(
         st.Page("pages/blocked_opportunities.py", title="Blocked Opportunities", url_path="Blocked_Opportunities"),
         st.Page("pages/scenarios.py", title="Scenario Builder", url_path="Scenario_Builder"),
         st.Page("pages/model_evaluation.py", title="Model Evaluation", url_path="Model_Evaluation"),
+        st.Page("pages/how_the_model_works.py", title="How the model works", url_path="How_the_model_works"),
     ]
 )
 if frame.api_ready():

@@ -311,7 +311,7 @@ def test_product_headings_carry_tooltips_in_the_glossarys_terms(monkeypatch, blo
     assert set(PRODUCT_COLUMNS) <= set(helps)
     assert "Export Potential with a Trade Agreement" in helps["With a Trade Agreement"]
     assert "llustrative" in helps["With a Trade Agreement"] and "llustrative" in helps["Rise with agreement"]
-    assert "Tariff part" in helps["Tariff part"] and "no Trade Agreement added" in helps["Tariff part"]
+    assert "setting the Applied Tariff alone to 0" in helps["Tariff part"]
     assert "0% or unknown" in helps["Tariff part"]
     assert "above" in helps["Above Export Potential"] and "Export Potential" in helps["Above Export Potential"]
     assert "Rise share" in helps["Rise %"] and "Baseline Export Potential" in helps["Rise %"]
@@ -727,9 +727,9 @@ def test_the_minimum_value_filter_reads_as_a_filter_on_the_list(monkeypatch, blo
     page = _page(monkeypatch, blocked_api_url)
 
     minimum = page.sidebar.number_input(key="blocked_min_value_usd")
-    assert minimum.label.startswith("Show only pairs worth at least")
+    assert minimum.label.startswith("Minimum Blocked Opportunity value")
     assert "threshold" not in minimum.label.lower()
-    assert "only narrows the list" in minimum.help and "fixed" in minimum.help
+    assert "Narrows the list only" in minimum.help and "fixed" in minimum.help
 
 
 def test_the_tariff_carried_forward_caveat_is_shown_once_with_a_pair_chosen(monkeypatch, blocked_api_url):

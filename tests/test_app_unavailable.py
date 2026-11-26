@@ -39,4 +39,4 @@ def test_api_without_artefacts_says_they_are_not_loaded(open_page, live_api, tmp
     with live_api(tmp_path) as url:
         errors = _errors(open_page(url, page))
 
-    assert "artefacts are not loaded" in errors
+    assert "the model is still loading" in errors

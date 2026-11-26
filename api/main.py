@@ -43,6 +43,7 @@ from api.schemas import (
     FactorOut,
     Health,
     HistoryOut,
+    HowItWorks,
     Labels,
     LeaderboardQuery,
     LeaderboardSummary,
@@ -67,7 +68,7 @@ from api.schemas import (
     tiered,
 )
 from exportspredictor import artefacts as store
-from exportspredictor import market_reach, scenarios
+from exportspredictor import how_it_works, market_reach, scenarios
 from exportspredictor.caveats import TIERS, CaveatTier
 from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
@@ -163,8 +164,8 @@ def create_app(
     @app.get("/labels", response_model=Labels)
     def labels(artefacts: store.Artefacts = Depends(loaded)):
         """The wording and options the app shows: unit, Opportunity Types, caveats, the last tariff year, the
-        caution line under every page heading, the term definitions (with the artefact's Gap Period) and the note beside
-        every summed figure, with the share of Actual Exports the artefact records."""
+        caution line under every page heading, the term definitions (with the artefact's Gap Period and Baseline
+        year) and the note beside every summed figure, with the share of Actual Exports the artefact records."""
         share = artefacts.potential_share_of_actual_exports
         return Labels(
             usd_caption=USD_CAPTION,
@@ -174,7 +175,7 @@ def create_app(
             tariff_carried_forward=TARIFF_CARRIED_FORWARD_CAVEAT,
             illustrative=Caveat(badge=ILLUSTRATIVE, text=ILLUSTRATIVE_TEXT),
             caution=CAUTION,
-            terms=term_definitions(gap_period_label(artefacts.gap_years)),
+            terms=term_definitions(artefacts.gap_years, artefacts.baseline_year),
             max_rows=MAX_ROWS,
             totals_note=TotalsNote(
                 potential_share_of_actual_exports=share,
@@ -182,6 +183,15 @@ def create_app(
             ),
             trade_agreement_meaning=TRADE_AGREEMENT_MEANING,
             blocked_rule=scenarios.BLOCKED_RULE,
+        )
+
+    @app.get("/how-it-works", response_model=HowItWorks)
+    def how_the_model_works(artefacts: store.Artefacts = Depends(loaded)):
+        """The How the model works page's text, worded for the served Model Form and the artefact's sampling rate."""
+        return HowItWorks(
+            intro=how_it_works.INTRO,
+            layers=how_it_works.LAYERS,
+            sections=list(how_it_works.sections(artefacts.model_form, artefacts.metadata.get("non_uk_sampling_rate"))),
         )
 
     @app.get("/caveats", response_model=list[CaveatTierOut])
@@ -199,6 +209,7 @@ def create_app(
                 reason_column=tier.reason_column,
                 row_text=tier.row_text,
                 hidden_by_default=tier.hidden_by_default,
+                terms=dict(tier.terms),
             )
             for tier in tiers
         ]

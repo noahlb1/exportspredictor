@@ -61,16 +61,21 @@ def test_labels_serve_the_wording_and_options_the_app_shows(client):
         "offset_pair": "Offset Pair",
     }
     assert all(caveat["text"].startswith(caveat["badge"]) for caveat in caveats.values())
+    # The key terms a caveat names that have their own explanation, by name: the hide filter's `?` explains them too
+    assert {field: caveat["terms"] for field, caveat in caveats.items() if caveat["terms"]} == {
+        "offset_pair": {"Heading": "heading"}
+    }
+    assert all(key in body["terms"] for caveat in caveats.values() for key in caveat["terms"].values())
     assert "caveats" not in body  # one source: /caveats
     # The last year of tariff data: later years carry it forward, and it is the MFN year Scenarios restore.
     assert body["last_tariff_year"] == 2021
     assert "carried forward from 2021" in body["tariff_carried_forward"]
     # What "a Trade Agreement" means in the model, said on the Blocked Opportunities page and the Scenario Builder.
     meaning = body["trade_agreement_meaning"]
-    assert "average agreement" in meaning and "not a specific deal" in meaning and "one yes/no flag" in meaning
+    assert "average agreement" in meaning and "not a specific deal" in meaning and "only whether a Trade Agreement exists" in meaning
     # The Blocked Opportunity rule at the fixed thresholds (ADR 0012), stated once for every page.
     rule = body["blocked_rule"]
-    assert "20% of its Baseline Export Potential" in rule and "$1M" in rule
+    assert "at least 20% of Baseline and $1M" in rule and "room to grow" in rule
     assert "with no UK Trade Agreement in force" in rule and "room to grow" in rule
 
 
@@ -89,7 +94,7 @@ def test_labels_serve_the_totals_note_with_the_share_the_artefact_records(fixtur
         note = client.get("/labels").json()["totals_note"]
 
     assert note["potential_share_of_actual_exports"] == pytest.approx(share)
-    assert "median-type" in note["text"] and f"{about} of Actual Exports" in note["text"]
+    assert "a typical value, not an average" in note["text"] and f"{about} of Actual Exports" in note["text"]
     assert "2022–2024 average" in note["text"]
 
 
@@ -494,7 +499,7 @@ def test_explain_returns_factors_history_and_the_baseline_it_explains(client):
     assert body["market"] == {"iso3": "JPN", "name": "Japan", "region": "East Asia & Pacific"}
     assert set(body["factors"][0]) == {"label", "value_text", "contribution", "multiplier", "direction"}
     assert [point["year"] for point in body["history"]] == sorted(point["year"] for point in body["history"])
-    assert body["potential_range_text"].startswith("**Potential Range ")
+    assert body["potential_range_text"].startswith("Pairs with about the same Export Potential have Actual Exports")
     assert body["gap_period_label"] == "2022–2024 average"
 
 
@@ -572,7 +577,7 @@ def test_evaluation_includes_lift_and_the_event_backtest(client):
     body = client.get("/evaluation").json()
 
     lift = body["lift"]
-    assert lift["lift"] is not None and len(lift["ci"]) == 2 and "tendency" in lift["text"]
+    assert lift["lift"] is not None and len(lift["ci"]) == 2 and "times as often" in lift["text"]
     assert len(lift["size_matched"]["ci"]) == 2 and "lift" in lift["size_matched"]
     assert lift["gap_years"] == [2022] and lift["held_out_from"] == "v1"
     event = body["event_backtest"]["events"][0]
@@ -1374,11 +1379,23 @@ def test_the_applied_tariff_is_null_where_it_is_unknown(blocked_artefacts, tmp_p
 def test_labels_carry_the_term_definitions_with_the_gap_period_from_the_artefact(client):
     terms = client.get("/labels").json()["terms"]
 
-    assert set(terms) == {"export_potential", "actual_exports", "export_gap", "opportunity_type"}
+    assert {
+        "export_potential", "actual_exports", "export_gap", "opportunity_type", "market_reach", "opportunity",
+        "scenario", "baseline", "gap_period", "illustrative", "agreement_part", "blocked_opportunity",
+    } <= set(terms)
+    assert not {key for key in terms if key.endswith("_in_panel")}  # one wording per term, table and panel alike
+    assert all(text.strip() for text in terms.values())
+    assert terms["trade_agreement"].startswith("Whether a UK Trade Agreement with the Market is in force in 2024. ")
     assert terms["export_potential"] == (
-        "The value of UK exports of this Product to this Market that the model expects, given the fundamentals "
-        "of the UK, the Market and the Product."
+        "The yearly value of UK exports of this Product to this Market that the model expects from their "
+        "fundamentals: economy size, distance, tariffs and existing trade."
     )
+    assert terms["gap_period"] == "The recent years (2022–2024) whose yearly Export Gaps are averaged into the Export Gap."
+    assert terms["baseline"].endswith("The Baseline year (2024) is the year scored.")
+    # The full rule at the fixed thresholds (`scenarios.BLOCKED_MIN_SHARE`, `BLOCKED_MIN_USD`), in its one wording
+    assert terms["blocked_opportunity"].startswith("A pair with no UK Trade Agreement in force is a Blocked Opportunity")
+    assert "at least 20% of Baseline and $1M" in terms["blocked_opportunity"]
+    assert terms["blocked_opportunity"] == client.get("/labels").json()["blocked_rule"]
     assert terms["actual_exports"] == (
         "What the UK actually exported of this Product to this Market (2022–2024 average)."
     )
@@ -1396,6 +1413,7 @@ def test_the_term_definitions_take_the_gap_period_label_from_the_artefact(fixtur
         terms = constructed.get("/labels").json()["terms"]
 
     assert "(2021–2023 average)" in terms["actual_exports"] and "(2021–2023 average)" in terms["export_gap"]
+    assert "(2021–2023)" in terms["gap_period"]
 
 
 # --- One definition of the row cap, one read on Blocked Opportunities, reasons counted ---------------
@@ -1630,3 +1648,42 @@ def test_evaluation_without_the_itc_comparison_omits_it_and_lists_the_part_as_no
     [part] = [part for part in served["not_run"] if part["title"] == "ITC comparison"]
     assert "not run for this version" in part["text"]
     assert "python -m exportspredictor.realisation" in part["text"]
+
+
+# --- How the model works -------------------------------------------------------------------------------------------
+
+
+def test_how_the_model_works_serves_its_outline_of_ideas_and_layers(client):
+    body = client.get("/how-it-works").json()
+
+    assert set(body) == {"intro", "layers", "sections"}
+    assert body["layers"] == {"what": "What it is", "why": "Why this project uses it", "how": "How it is done here"}
+    assert [section["title"] for section in body["sections"]] == [
+        "How the model is built", "How the model is checked", "What it produces and how it is served"
+    ]
+    ideas = [idea for section in body["sections"] for idea in section["ideas"]]
+    assert all(set(idea) == {"name", "summary", "what", "why", "how"} for idea in ideas)
+    text = " ".join(idea[field] for idea in ideas for field in ("summary", "what", "why", "how"))
+    # The package's settings: 100 Exporters, 5% of Zero Cells, five folds, 20 bands of an 80% range
+    for fact in ("100 largest economies", "5% of their Zero Cells", "into five groups", "20 bands", "80%"):
+        assert fact in text, fact
+
+
+def test_how_the_model_works_states_the_served_model_s_blend_weights_market_reach_and_sampling_rate(
+    fixture_artefacts, tmp_path
+):
+    form = fixture_artefacts.metadata["model_form"]
+    served_form = {**form, "naive_weight": 0.4, "market_reach": {**form["market_reach"], "beta": 2.0}}
+    metadata = {**fixture_artefacts.metadata, "model_form": served_form, "non_uk_sampling_rate": 0.5894}
+    store.save(replace(fixture_artefacts, metadata=metadata), tmp_path)
+
+    with TestClient(create_app(tmp_path)) as constructed:
+        body = constructed.get("/how-it-works").json()
+
+    ideas = {idea["name"]: idea for section in body["sections"] for idea in section["ideas"]}
+    blend = ideas["The blend with the Naive Baseline"]
+    assert r"0.6 \log \text{model} + 0.4 \log \text{naive}" in blend["what"]
+    assert "The weight 0.4 was chosen" in blend["how"] and "scaled by 0.6" in blend["how"]
+    assert r"e^{2 \cdot \text{offset}}" in ideas["Market Reach"]["what"]
+    assert "The strength, 2, was chosen" in ideas["Market Reach"]["how"]
+    assert "then 58.9% of all their rows" in ideas["The data"]["how"]

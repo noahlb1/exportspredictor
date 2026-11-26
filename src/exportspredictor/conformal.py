@@ -85,14 +85,13 @@ def log_residual(actual: pl.Expr, potential: pl.Expr) -> pl.Expr:
 def potential_range_text(low_usd: float, high_usd: float, actual_exports_usd: float, *, uncertain: bool) -> str:
     """One pair's Potential Range in plain words, for its detail view (never a confidence interval)."""
     text = (
-        f"**Potential Range {format_usd(low_usd)} to {format_usd(high_usd)}.** For comparable pairs, those "
-        "with about the same Export Potential, Actual Exports fall in this range 80% of the time. It shows how "
-        "much such pairs vary around their Export Potential, not how precisely Export Potential is known. "
+        "Pairs with about the same Export Potential have Actual Exports in this range 80% of the time. It shows how "
+        "much such pairs vary, not how precisely Export Potential is known. "
     )
     if uncertain:
         return text + (
-            f"UK Actual Exports of {format_usd(actual_exports_usd)} lie inside it, within the variation "
-            "normally seen among comparable pairs: an Uncertain Opportunity."
+            f"UK Actual Exports of {format_usd(actual_exports_usd)} lie inside it, so they are within normal "
+            "variation: an Uncertain Opportunity."
         )
     where = "below" if actual_exports_usd < low_usd else "above" if actual_exports_usd > high_usd else "inside"
     return text + f"UK Actual Exports of {format_usd(actual_exports_usd)} lie {where} it."
@@ -323,8 +322,8 @@ def coverage_text(report: dict) -> str:
     range, with Market Reach and without it.
     """
     text = (
-        f"On a held-out half of the calibration rows ({report['held_out_rows']:,} other Exporters' rows), "
-        f"{report['coverage']:.0%} of their Actual Exports fell inside their Potential Range, against a target of "
+        f"On rows kept back to check it ({report['held_out_rows']:,} rows of other Exporters), "
+        f"{report['coverage']:.0%} of Actual Exports fell inside their Potential Range, against a target of "
         f"{report['target']:.0%}. {report['uncertain_opportunities']:,} of the {report['opportunities']:,} "
         f"Opportunities ({report['uncertain_opportunity_share']:.0%}) have UK Actual Exports inside their "
         "Potential Range (Uncertain Opportunities): most Export Gaps are within the variation normally seen among "

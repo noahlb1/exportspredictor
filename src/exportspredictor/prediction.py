@@ -130,7 +130,7 @@ class ModelForm:
         if self.market_reach is None:
             return text + "."
         return (
-            f"{text}, then scales it by each Market's Market Reach (β = {self.market_reach.beta:g}), learned from the "
+            f"{text}, then scales it by each Market's Market Reach, learned from the "
             f"UK's other Products there in {self.market_reach.reference_year}."
         )
 

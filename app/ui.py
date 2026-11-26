@@ -32,9 +32,15 @@ def read_limit() -> int:
 
 
 def term(name: str) -> str:
-    """What a term means, worded by the API (`/labels` `terms`): `export_potential`, `actual_exports`,
-    `export_gap` or `opportunity_type`. Those that name the Gap Period carry the artefact's label."""
+    """What a key term means, worded once in the package (`wording.term_definitions`) and served by the API (`/labels`
+    `terms`): every page's tooltip or `?` help on a key term comes from here. Those naming the Gap Period or the
+    Baseline year carry the artefact's."""
     return labels()["terms"][name]
+
+
+def terms_help(*terms: tuple[str, str]) -> str:
+    """One `?` explaining several key terms, each (its name, its `term` key): "**Name**: explanation", a paragraph each."""
+    return "\n\n".join(f"**{name}**: {term(key)}" for name, key in terms)
 
 
 def usd_unit() -> str:
