@@ -8,7 +8,6 @@ read beyond the report. The model card (`governance`) and the notebook (`reporti
 same functions, so they cannot state different figures.
 """
 
-from exportspredictor.evaluation import relabelled
 from exportspredictor.loop import (
     count_experiments,
     experiment_label,
@@ -22,20 +21,28 @@ CHOSEN_ON_SELECTION_MEASURE = "Selection Measure"
 NOT_RECORDED = "No experiment results are recorded for this version, so how its Model Form was chosen cannot be shown."
 
 
-def how_chosen(metadata: dict, report: dict) -> dict:
-    """The Selection Measure, the Model Form, the Win Threshold, every experiment, the confirmation
-    and the test-year ranking beside earlier versions, JSON-ready. `recorded` is False (and the
-    experiment fields empty) when the artefact records no experiment results."""
+def how_chosen(metadata: dict) -> dict:
+    """How the served model was chosen, as the product serves it: the Selection Measure, the Model Form, the Win
+    Threshold, the alternatives considered (every experiment) and the five-fold confirmation against the model alone,
+    JSON-ready. `recorded` is False (and the experiment fields empty) when the artefact records no experiment results."""
     form = served_model_form(metadata)
     summary = ranking_summary(metadata.get("ranking_experiments"))
-    report = relabelled(report)  # today's names for a report saved earlier
     return {
         "recorded": summary is not None,
         "model_form": model_form_summary(metadata),
         **(summary or {"experiments": []}),
+        "confirmation": against_model_alone((summary or {}).get("confirmation")),
         "text": _text(summary, form),
-        "test_year_ranking": report.get("earlier_versions"),
-        "traded_away": traded_away(report.get("earlier_versions")),
+    }
+
+
+def against_model_alone(confirmation: dict | None) -> dict | None:
+    """The five-fold confirmation (`ranking_summary`'s) with the configuration it beat named by role: the model alone."""
+    if not confirmation:
+        return None
+    named = {"v2": "model_alone", "beats_v2": "beats_model_alone"}
+    return {named.get(key, key): value for key, value in confirmation.items() if key != "folds"} | {
+        "folds": [{named.get(key, key): value for key, value in fold.items()} for fold in confirmation["folds"]]
     }
 
 

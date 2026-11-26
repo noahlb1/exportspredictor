@@ -44,11 +44,6 @@ def _largest_markets_table(headline: dict, large: dict | None) -> pd.DataFrame:
     )
 
 
-def _large_markets_by_version(rows: list[dict]) -> pd.DataFrame:
-    """The tie-proof UK ranking on the largest Markets, one row per version, in the columns the API labels."""
-    return pd.DataFrame([{"Version": row["name"], **row["columns"]} for row in rows])
-
-
 def _market_reach_table(effect: dict) -> pd.DataFrame:
     """What Market Reach changes: each figure with it and without it, as the API reports them."""
     rows = [("UK ranking, tie-proof", effect["selection_measure"]), ("UK ranking, old measure", effect["old_measure"])]
@@ -233,6 +228,7 @@ def _show_model_choice(choice: dict) -> None:
     st.markdown(choice["text"])
     if choice["recorded"]:
         st.markdown(f"**Model Form.** {choice['model_form']['text']}", help=term("model_form"))
+        st.markdown(f"**Alternatives considered on {choice['validation_year']}**")
         st.dataframe(
             pd.DataFrame(
                 [
@@ -254,31 +250,17 @@ def _show_model_choice(choice: dict) -> None:
         )
         confirmation = choice["confirmation"]
         if confirmation:
-            folds = [{"Fold": str(f["fold"]), "Chosen Model Form": f["winner"], "v2 (the model alone)": f["v2"]}
+            folds = [{"Fold": str(f["fold"]), "Chosen Model Form": f["winner"], "The model alone": f["model_alone"]}
                      for f in confirmation["folds"]]
             folds.append({"Fold": "All folds", "Chosen Model Form": confirmation["winner"],
-                          "v2 (the model alone)": confirmation["v2"]})
-            verdict = "confirmed" if confirmation["beats_v2"] else "not confirmed"
+                          "The model alone": confirmation["model_alone"]})
+            verdict = "confirmed" if confirmation["beats_model_alone"] else "not confirmed"
             st.markdown(
                 f"**Confirmation on all {confirmation['n_folds']} folds of {choice['validation_year']}**: the chosen "
-                f"Model Form against v2's, difference {confirmation['difference']:+.4f} against the Win Threshold "
+                f"Model Form against the model alone, difference {confirmation['difference']:+.4f} against the Win Threshold "
                 f"{confirmation['win_threshold']:.4f} ({verdict}). The Naive Baseline scores {confirmation['naive']:.4f}."
             )
             st.dataframe(pd.DataFrame(folds), hide_index=True)
-    ranking = choice["test_year_ranking"]
-    if ranking:
-        st.markdown(f"**The UK ranking in {ranking['test_year']}, beside the Naive Baseline and earlier versions**")
-        (st.success if ranking["beats_naive"] else st.warning)(ranking["text"])
-        st.dataframe(
-            pd.DataFrame(
-                [{"Version": row["name"], "UK ranking, old measure": row["uk_ranking"],
-                  "UK ranking, tie-proof": row.get("uk_ranking_tie_proof")}
-                 for row in [*ranking["rows"], *ranking["naive"]]]
-            ),
-            hide_index=True,
-        )
-    if choice["traded_away"]:
-        st.markdown(f"**What the Blend traded away.** {choice['traded_away']['text']}")
 
 
 def _show_event_backtest(backtest: dict, names: dict[str, str], note: dict | None) -> None:
@@ -401,6 +383,7 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
         )
 
         _show_scorecard(report)
+        st.caption(f"Artefact ID {report['artefact_version']}: every figure on this page comes from it.")
 
         with _section("How accurate is the model?"):
             headline = report["headline"]
@@ -411,13 +394,6 @@ with page("Model Evaluation", "How accurate the model is, where it is weak, and 
                 large["text"] if large else "The measure on the largest importing Markets was not computed for this "
                 "version: it is reported from the next evaluation of the test year."
             )
-            if report.get("large_markets_by_version"):
-                st.markdown("**The same tie-proof measure on the largest Markets, beside earlier versions**")
-                st.dataframe(_large_markets_by_version(report["large_markets_by_version"]), hide_index=True)
-                st.caption(
-                    "Earlier versions are measured on their own saved scores of the same year; no choice was made on "
-                    "these figures."
-                )
             st.caption(
                 f"Measured on {test_year}, a year the model never saw: the models were trained on "
                 f"{years_text(training_years)} with settings tuned on {report['validation_year']}, so "

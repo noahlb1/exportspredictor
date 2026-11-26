@@ -118,9 +118,17 @@ NARROW_MARGIN = 0.05
 _PREDICTORS = {"model": "export_potential_usd", "naive": "naive_usd"}
 # The two sides of the test-metric split by `tariff_imputed` (ADR 0006), in display order.
 TARIFF_GROUPS = ("observed", "imputed")
-# Evaluation results kept in the artefact (and the model card) but never served by the API:
-# the pre-registered v1/v2 comparison (`comparison`).
-NOT_SERVED = frozenset({"v1_comparison"})
+# What the artefact keeps for the record but the product never serves (ADR 0013): the history of earlier
+# configurations. A key is a report block; "block.field" is a field inside one. The gain ladder ("ladder") is
+# also never listed as a part not run.
+NOT_SERVED = frozenset({
+    "v1_comparison",  # the pre-registered comparison (`comparison`), with its gain ladder
+    "ladder",
+    "earlier_versions",  # the test year beside earlier configurations
+    "rescored_earlier_versions",
+    "lift.held_out_from",  # where the held-out Exporters were first drawn
+    "lift_without_market_reach.held_out_from",
+})
 
 NOT_RUN = "not run for this version"
 
@@ -132,6 +140,10 @@ def served_report(report: dict) -> dict:
     what Market Reach changes; a block saved without a figure that wording reads keeps its saved text. The saved
     report is not changed."""
     served = {key: value for key, value in relabelled(report).items() if key not in NOT_SERVED}
+    for path in NOT_SERVED:
+        block, _, field = path.partition(".")
+        if field and isinstance(served.get(block), dict):
+            served[block] = {key: value for key, value in served[block].items() if key != field}
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
     for key in ("lift", "lift_without_market_reach"):
@@ -182,17 +194,17 @@ def parts_not_run(report: dict, ppml_benchmark: dict | None) -> list[dict]:
     """The opt-in parts an artefact version does not hold, each with its "not run for this version" text.
 
     `report` is its evaluation report and `ppml_benchmark` its saved benchmark
-    (`Artefacts.ppml_benchmark`), which lives beside the report, not in it. The gain ladder
-    lives inside the v1 comparison; a version with every part lists none.
+    (`Artefacts.ppml_benchmark`), which lives beside the report, not in it. A part in `NOT_SERVED`
+    is never listed; a version with every part lists none.
     """
-    blocks = {**report, **(report.get("v1_comparison") or {})}
+    blocks = {**report}
     if ppml_benchmark is not None:
         blocks["ppml_benchmark"] = ppml_benchmark
     return [
         {"title": title, "text": f"{title}: {NOT_RUN}. {why} It runs when the pipeline is asked for it "
          f"(`python -m exportspredictor.pipeline {switch}`)."}
         for title, block, switch, why in OPTIONAL_PARTS
-        if block not in blocks
+        if block not in blocks and block not in NOT_SERVED
     ] + [
         {"title": title, "text": f"{title}: {NOT_RUN}. {why} It is added to a saved version with `{command}`."}
         for title, block, command, why in ADDED_PARTS

@@ -74,7 +74,6 @@ from exportspredictor.conformal import potential_range_text
 from exportspredictor.currency import USD_CAPTION, USD_UNIT
 from exportspredictor.evaluation import (
     known_limitations,
-    large_markets_beside_earlier,
     parts_not_run,
     served_report,
 )
@@ -341,10 +340,8 @@ def create_app(
 
     @app.get("/evaluation", response_model=Evaluation)
     def evaluation(artefacts: store.Artefacts = Depends(loaded)):
-        """The evaluation artefact: test-year accuracy, breakdowns, stability, and the known limitations.
-
-        The v1/v2 comparison stays in the artefact and the model card, never in the API.
-        """
+        """The served model's evaluation: test-year accuracy, breakdowns, stability, how it was chosen and the known
+        limitations. The history the artefact keeps for the record is not served (`evaluation.NOT_SERVED`)."""
         if artefacts.evaluation is None:
             raise HTTPException(status_code=404, detail=f"Artefact version {artefacts.version} has no evaluation.")
         return Evaluation(
@@ -352,9 +349,8 @@ def create_app(
             artefact_version=artefacts.version,
             baseline_year=artefacts.baseline_year,
             limitations=known_limitations(artefacts),
-            model_choice=how_chosen(artefacts.metadata, artefacts.evaluation),
+            model_choice=how_chosen(artefacts.metadata),
             event_backtest_note=event_backtest_note(artefacts.metadata, artefacts.evaluation),
-            large_markets_by_version=large_markets_beside_earlier(artefacts.evaluation),
             not_run=parts_not_run(artefacts.evaluation, artefacts.ppml_benchmark),
         )
 

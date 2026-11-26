@@ -12,7 +12,8 @@ from exportspredictor import artefacts as store
 from exportspredictor import governance
 
 PAGE = "pages/model_evaluation.py"
-PARTS = ["Event Backtests", "Monotone-constraint comparison", "Gain ladder", "PPML benchmark", "ITC comparison"]
+# The gain ladder is history (`evaluation.NOT_SERVED`), so it is never listed.
+PARTS = ["Event Backtests", "Monotone-constraint comparison", "PPML benchmark", "ITC comparison"]
 NOTICE = "not run for this version"
 
 

@@ -113,12 +113,11 @@ def page(
 
 
 def footer() -> None:
-    """The grey line under a page's content: Baseline year, Gap Period, the API's currency caption and model version."""
+    """The grey line under a page's content: Baseline year, Gap Period and the API's currency caption."""
     health = fetch("/health", client.api_url())
     st.caption(
         f"Baseline year {health['baseline_year']} (provisional data). "
         f"Export Gaps are {health['gap_period_label']}s. "
-        f"{labels()['usd_caption'].rstrip('.')}. "
-        f"Model version {health['artefact_version']}.",
+        f"{labels()['usd_caption'].rstrip('.')}.",
         help=terms_help(("Baseline", "baseline"), ("Gap Period", "gap_period"), ("USD, nominal", "usd_nominal")),
     )
