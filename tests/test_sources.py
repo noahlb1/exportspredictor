@@ -76,7 +76,7 @@ def test_the_model_card_lists_the_source_versions(fixture_artefacts, tmp_path):
     assert "## Source versions" in text and "HS12 V202601" in text
 
 
-def test_a_refreshed_copy_rewrites_its_model_card_under_its_own_artefact_id(fixture_artefacts_dir, tmp_path):
+def test_a_refreshed_copy_rewrites_its_model_card_under_its_own_artefact_id(fixture_artefacts_dir, tmp_path, capsys):
     import shutil
 
     from exportspredictor import artefacts as store
@@ -92,3 +92,4 @@ def test_a_refreshed_copy_rewrites_its_model_card_under_its_own_artefact_id(fixt
     assert title == f"# Model card: UK Exports Predictor, Artefact ID {folder.name}"
     assert folder.name != source.name
     assert store.load(folder).metadata["refreshed_from"] == source.name
+    assert capsys.readouterr().out == ""  # printing is the command's (`pipeline.main`)

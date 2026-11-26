@@ -450,7 +450,7 @@ class LiftWithAndWithout(WithAndWithout):
 
 
 class MarketReachEffect(BaseModel):
-    """What Market Reach, the change this version keeps, does to the test-year figures (`evaluation.market_reach_effect`)."""
+    """What Market Reach does to the test-year figures (`evaluation.market_reach_effect`)."""
 
     selection_measure: WithAndWithout
     old_measure: WithAndWithout
@@ -644,6 +644,7 @@ class Confirmation(BaseModel):
     win_threshold: float
     beats_model_alone: bool
     folds: list[ConfirmationFold]
+    text: str
 
 
 class EventBacktestNote(BaseModel):
@@ -693,11 +694,11 @@ class Evaluation(BaseModel):
     tariff_split_text: str = ""  # how the test rows split between observed and imputed Applied Tariffs
     stability: Stability
     lift: Lift | None = None
-    itc_comparison: ItcComparison | None = None  # None where it was not added to this version
+    itc_comparison: ItcComparison | None = None  # None where it was not added to the artefact
     event_backtest: EventBacktest | None = None
     model_choice: ModelChoice
     event_backtest_note: EventBacktestNote | None = None
-    not_run: list[NotRun] = []  # the opt-in parts skipped by the run that built this version
+    not_run: list[NotRun] = []  # the opt-in parts skipped by the run that built the artefact
     limitations: list[Limitation]
 
 

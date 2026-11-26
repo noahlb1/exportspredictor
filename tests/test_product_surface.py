@@ -14,7 +14,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from exportspredictor import governance
-from exportspredictor.product_surface import banned_terms, notebook_text
+from exportspredictor.product_surface import banned_terms, notebook_text, readme_text
 
 MAIN_NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "exports_predictor.ipynb"
 
@@ -68,13 +68,7 @@ def _page(path: str | None) -> Callable[[], str]:
 
 def _readme() -> str:
     """The README outside its reproduction section, which is part of the record (ADR 0013)."""
-    text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
-    sections = text.split(SECTION_BREAK)
-    return SECTION_BREAK.join(section for section in sections if section.splitlines()[0] != README_RECORD_SECTION)
-
-
-SECTION_BREAK = "\n## "
-README_RECORD_SECTION = "Rebuild the data and artefacts"
+    return readme_text((Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8"))
 
 APP_PAGES = {
     "Leaderboard": None,
@@ -101,9 +95,10 @@ def history_terms_on(surfaces: list[tuple[str, Callable[[], str]]]) -> dict[str,
     return {name: terms for name, terms in found.items() if terms}
 
 
-def test_enrolled_product_surfaces_name_no_history():
-    found = history_terms_on(SURFACES)
-    assert not found, f"History terms on product surfaces; name earlier configurations by role (ADR 0013): {found}"
+@pytest.mark.parametrize("surface", SURFACES, ids=[name for name, _ in SURFACES])
+def test_enrolled_product_surfaces_name_no_history(surface):
+    found = history_terms_on([surface])
+    assert not found, f"History terms on a product surface; name earlier configurations by role (ADR 0013): {found}"
 
 
 def test_the_guard_fails_on_a_planted_history_term_and_passes_the_release_tag():
@@ -137,7 +132,7 @@ def test_a_notebook_s_text_is_its_prose_and_what_its_outputs_show():
             {"output_type": "execute_result", "data": {
                 "text/plain": "shape: (1, 1)",
                 "text/html": ["<table><tr><td>&quot;model", " alone&quot;</td></tr></table>"],
-                "text/markdown": "*Lift: not run for this version.*",
+                "text/markdown": "*Lift: not run.*",
                 "image/svg+xml": '<svg><metadata><dc:title>Matplotlib v3.11.2</dc:title></metadata>'
                                  '<text x="1">Naive Baseline, every Market</text></svg>',
             }},
@@ -147,7 +142,7 @@ def test_a_notebook_s_text_is_its_prose_and_what_its_outputs_show():
     text = notebook_text(notebook)
 
     for shown in ("## 5. How the model was chosen", "Printed line", "shape: (1, 1)", '"model alone"',
-                  "*Lift: not run for this version.*", "Naive Baseline, every Market"):
+                  "*Lift: not run.*", "Naive Baseline, every Market"):
         assert shown in text, shown
     # Code is not prose, and a chart's drawing-library stamp is not something a reader sees.
     assert "beats_v2" not in text
@@ -157,6 +152,11 @@ def test_a_notebook_s_text_is_its_prose_and_what_its_outputs_show():
 def test_history_phrases_are_found_across_case_plurals_and_line_breaks():
     text = "Beside Earlier versions, a frozen\nversion, its first form and the Arm against the model alone."
     assert banned_terms(text) == ["Earlier versions", "frozen\nversion", "first form", "Arm against"]
+
+
+def test_phrases_that_set_one_version_against_another_are_found():
+    text = "Market Reach is the change this version keeps (0.60 on the old measure); that version's Lift."
+    assert banned_terms(text) == ["this version", "old measure", "that version"]
 
 
 def test_the_readme_surface_leaves_out_only_the_reproduction_section():

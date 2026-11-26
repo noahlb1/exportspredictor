@@ -84,7 +84,7 @@ def test_a_default_run_still_computes_the_v1_comparisons_primary_metric(default_
     block = default_run[0].evaluation["v1_comparison"]
     assert block["primary"]["v2"] is not None and block["primary"]["v1"] is not None
     assert block["secondaries_not_run"] == ["Lift", "Event Backtest"]
-    assert "not run for this version" in block["verdict"]["text"]
+    assert "not run" in block["verdict"]["text"]
 
 
 @pytest.mark.parametrize("name", ["event_backtests", "constraint_comparison", "gain_ladder"])

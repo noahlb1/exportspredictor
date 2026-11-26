@@ -1,9 +1,11 @@
 """Governance: the model card, data lineage and drift checks of the write-up."""
 
+from dataclasses import replace
+
 import polars as pl
 import pytest
 
-from exportspredictor import evaluation, governance, tariffs
+from exportspredictor import evaluation, governance, model_choice, tariffs
 from exportspredictor.reporting import history
 
 # --- Model card --------------------------------------------------------------------------
@@ -150,7 +152,7 @@ def test_model_card_says_the_gravity_benchmark_was_not_run_for_a_version_without
     card = governance.model_card(fixture_default_artefacts)
 
     assert "gravity benchmark" not in " ".join(x["title"] for x in card["limitations"])
-    assert "PPML benchmark: not run for this version" in governance.render_model_card(card)
+    assert "PPML benchmark: not run" in governance.render_model_card(card)
 
 
 _RANGE_REPORT = {
@@ -346,7 +348,7 @@ def test_the_illustrative_section_says_which_parts_were_not_run(fixture_default_
     section = _section(governance.render_model_card(card), "## Illustrative Scenario Effects")
 
     assert "Illustrative" in section
-    assert section.count("not run for this version") == 3  # benchmark, model association, Event Backtest
+    assert section.count("not run") == 3  # benchmark, model association, Event Backtest
 
 
 def test_model_card_reports_the_share_of_opportunities_inside_their_potential_range(card, fixture_artefacts):
@@ -513,13 +515,21 @@ def test_the_alternatives_considered_on_2022_are_their_own_section(card):
     assert "| Experiment | Best Arm | Selection Measure |" in section
 
 
-def test_the_confirmation_is_against_the_model_alone_in_either_saved_shape():
-    confirmation = {"n_folds": 5, "difference": 0.0429, "win_threshold": 0.0089, "winner": 0.5635, "naive": 0.5332}
-    for alone in ({"v2": 0.5206, "beats_v2": True}, {"model_alone": 0.5206}, {}):
-        line = governance.confirmation_text({**confirmation, **alone}, 2022)
-        assert "Confirmed on all 5 folds of 2022" in line and "+0.0429" in line and "(confirmed)" in line
-        assert ("the model alone 0.5206" in line) == bool(alone)
-        assert "v2" not in line
+def test_the_card_states_the_confirmation_as_the_api_serves_it(fixture_artefacts):
+    confirmation = {
+        "n_folds": 5, "validation_year": 2022, "difference": 0.0429, "win_threshold": 0.0089, "beats_v2": True,
+        "winner": {"selection_measure": 0.5635, "rounds": [100]}, "v2": {"selection_measure": 0.5206},
+        "naive": {"selection_measure": 0.5332}, "folds": [],
+    }
+    record = fixture_artefacts.metadata["ranking_experiments"]
+    confirmation["settings"] = {"winner": record["best"]["settings"]}  # a confirmation of the best so far
+    ranking = {**record, "confirmation": confirmation}
+    metadata = {**fixture_artefacts.metadata, "ranking_experiments": ranking}
+
+    text = governance.render_model_card(governance.model_card(replace(fixture_artefacts, metadata=metadata)))
+
+    served = model_choice.how_chosen(metadata)["confirmation"]["text"]
+    assert served in text and "the model alone 0.5206" in served and "v2" not in served
 
 
 def test_the_limitations_lead_with_sizing_when_the_model_sizes_uk_flows_worse(fixture_artefacts):

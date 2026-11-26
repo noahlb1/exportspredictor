@@ -276,10 +276,10 @@ def test_what_market_reach_changes_states_every_figure_or_a_not_run_line(fixture
     without = {k: v for k, v in fixture_artefacts.evaluation.items() if k != "market_reach_effect"}
 
     text = reporting.market_reach_effect(fixture_artefacts)
-    assert text.startswith("Market Reach is the change this version keeps. On 2023, the UK ranking is ")
-    assert "old measure" in text and "Lift is" in text and "Market Reach leaves Scenario Effects unchanged" in text
+    assert text.startswith("With Market Reach, on 2023 the UK ranking is ")
+    assert "old measure" not in text and "Lift is" in text and "Market Reach leaves Scenario Effects unchanged" in text
     assert reporting.market_reach_effect(replace(fixture_artefacts, evaluation=without)) == (
-        "Market Reach: not run for this version."
+        "Market Reach: not run."
     )
 
 
@@ -449,3 +449,29 @@ def test_preset_rows_come_in_the_order_given(india_in_cptpp):
 
     assert table["preset"].to_list() == ["Leave", "CPTPP", "EU re-join"]
     assert table["blocked_opportunities"].to_list() == [None, 2, None]
+
+
+def test_the_search_s_confirmed_configurations_are_one_table(fixture_artefacts):
+    table = reporting.search_confirmation(fixture_artefacts)
+
+    assert table.columns == ["trial", "rounds", "validation_deviance", "uk_spearman"]
+    assert table.height == len(fixture_artefacts.metadata["search"]["confirmation"])
+    bare = {k: v for k, v in fixture_artefacts.metadata.items() if k != "search"}
+    assert isinstance(reporting.search_confirmation(replace(fixture_artefacts, metadata=bare)), reporting.NotRun)
+
+
+def test_the_ablation_and_the_learning_curve_are_tables_of_their_saved_rows():
+    shared = {"training_rows": 10, "rounds": 5, "validation_deviance": 3.0, "uk_spearman": 0.5, "seconds": 1.0}
+    results = {
+        "ablation": [{"dropped": None, "features": 3, "deviance_change": None, "spearman_change": None,
+                      "hurts": None, **shared},
+                     {"dropped": "relatedness", "features": 2, "deviance_change": 0.1, "spearman_change": 0.01,
+                      "hurts": True, **shared}],
+        "learning_curve": [{"zero_rate": 0.05, "non_uk_rate": 0.3, "full_data_non_uk_rate": 0.65, "fits_budget": True,
+                            **shared}],
+    }
+
+    ablation, curve = reporting.ablation(results), reporting.learning_curve(results)
+
+    assert ablation["dropped"].to_list() == [None, "relatedness"] and "seconds" not in ablation.columns
+    assert curve["fits_budget"].to_list() == [True] and "seconds" not in curve.columns

@@ -119,31 +119,32 @@ _PREDICTORS = {"model": "export_potential_usd", "naive": "naive_usd"}
 # The two sides of the test-metric split by `tariff_imputed` (ADR 0006), in display order.
 TARIFF_GROUPS = ("observed", "imputed")
 # What the artefact keeps for the record but the product never serves (ADR 0013): the history of earlier
-# configurations. A key is a report block; "block.field" is a field inside one. The gain ladder ("ladder") is
-# also never listed as a part not run.
+# configurations, as report blocks (`NOT_SERVED`) and (block, field) pairs inside served blocks. The gain ladder
+# ("ladder") is also never listed as a part not run.
 NOT_SERVED = frozenset({
     "v1_comparison",  # the pre-registered comparison (`comparison`), with its gain ladder
     "ladder",
     "earlier_versions",  # the test year beside earlier configurations
     "rescored_earlier_versions",
-    "lift.held_out_from",  # where the held-out Exporters were first drawn
-    "lift_without_market_reach.held_out_from",
+})
+NOT_SERVED_FIELDS = frozenset({
+    ("lift", "held_out_from"),  # where the held-out Exporters were first drawn
+    ("lift_without_market_reach", "held_out_from"),
 })
 
-NOT_RUN = "not run for this version"
+NOT_RUN = "not run"
 
 
 def served_report(report: dict) -> dict:
-    """An evaluation report as the API serves it: without the parts in `NOT_SERVED`, with today's names
+    """An evaluation report as the API serves it: without `NOT_SERVED` and `NOT_SERVED_FIELDS`, with today's names
     (`relabelled`) and with its prose worded now from the saved figures, not when saved: the Potential Range
     (`conformal.coverage_text`), Lift (`backtests.lift_text`), each Event Backtest (`backtests.event_text`) and
     what Market Reach changes; a block saved without a figure that wording reads keeps its saved text. The saved
     report is not changed."""
     served = {key: value for key, value in relabelled(report).items() if key not in NOT_SERVED}
-    for path in NOT_SERVED:
-        block, _, field = path.partition(".")
-        if field and isinstance(served.get(block), dict):
-            served[block] = {key: value for key, value in served[block].items() if key != field}
+    for block, withheld in NOT_SERVED_FIELDS:
+        if isinstance(served.get(block), dict):
+            served[block] = {key: value for key, value in served[block].items() if key != withheld}
     if served.get("potential_range"):
         served["potential_range"] = {**served["potential_range"], "text": coverage_text(served["potential_range"])}
     for key in ("lift", "lift_without_market_reach"):
@@ -191,7 +192,7 @@ ADDED_PARTS = (
 
 
 def parts_not_run(report: dict, ppml_benchmark: dict | None) -> list[dict]:
-    """The opt-in parts an artefact version does not hold, each with its "not run for this version" text.
+    """The opt-in parts an artefact version does not hold, each with its "not run" text.
 
     `report` is its evaluation report and `ppml_benchmark` its saved benchmark
     (`Artefacts.ppml_benchmark`), which lives beside the report, not in it. A part in `NOT_SERVED`
@@ -318,7 +319,6 @@ def known_limitations(artefacts: store.Artefacts) -> list[dict]:
         *size_coverage_limitations(report.get("potential_range")),
         *uk_pair_coverage_limitations(artefacts.metadata, report.get("potential_range")),
         *offset_pair_limitations(artefacts.metadata),
-        *read_configuration_limitations(artefacts.metadata, report),
         *LIMITATIONS,
     ]
 
@@ -343,37 +343,6 @@ def range_below_potential_limitations(bands: pl.DataFrame) -> list[dict]:
         "Most comparable pairs of that size trade nothing, and Export Potential is an average that the few which do "
         "trade pull up, so at least 90% of comparable pairs trade less than it. A range such as $0 to $200 beside an "
         "Export Potential of $1.3k is that pattern, not an error.",
-    }]
-
-
-# A Model Form's fitted values, which a rebuild of the same configuration recomputes (ADR 0010): no change of form.
-_FITTED_FORM_KEYS = ("reference_year", "constant")
-
-
-def _form_settings(form: dict | None) -> dict:
-    form = dict(form or {})
-    reach = {k: v for k, v in (form.pop("market_reach", None) or {}).items() if k not in _FITTED_FORM_KEYS}
-    return {**form, **{f"Market Reach {k}": v for k, v in reach.items()}}
-
-
-def read_configuration_limitations(metadata: dict, report: dict) -> list[dict]:
-    """When the served Model Form differs from the one the report's test-year figures were read on, as after `rereach`
-    corrected Market Reach's form without a new read (ADR 0009, ADR 0010 Amendment). None for a version without a
-    report, or one whose report records no Model Form."""
-    served, read_on = _form_settings(metadata.get("model_form")), _form_settings(report.get("model_form"))
-    if not report.get("model_form") or served == read_on:
-        return []
-    changes = "; ".join(
-        f"{key} {read_on.get(key)!s} then, {served.get(key)!s} now"
-        for key in sorted(set(served) | set(read_on)) if served.get(key) != read_on.get(key)
-    )
-    year = report.get("test_year", "the test year")
-    return [{
-        "title": "The test-year figures were read on an earlier configuration",
-        "text": f"Every {year} figure shown (the headline, Lift and the comparison with earlier versions) was read on "
-        f"the Model Form served before a correction chosen on the validation year ({changes}). This "
-        f"version has not read {year} itself: its own figures come from the next frozen version's one read through "
-        "the Test-year Ledger.",
     }]
 
 
@@ -1292,8 +1261,8 @@ SCENARIO_EFFECTS_UNCHANGED = f"It {_LEAVES_SCENARIO_EFFECTS}"
 
 
 def market_reach_effect(report: dict) -> dict | None:
-    """What Market Reach, the change this version keeps (ADR 0010), does to the test-year figures: the served form
-    beside the same models without it, on the headline (tie-proof and old measure), the large-Market measures, Lift
+    """What Market Reach (ADR 0010) does to the test-year figures: the served form beside the same models without
+    it, on the headline (the Selection Measure, and `old_measure` with average ranks for ties), the large-Market measures, Lift
     (`lift` against `lift_without_market_reach`) and the Potential Range's coverage of UK pairs; Scenario Effects are
     unchanged by it (`SCENARIO_EFFECTS_UNCHANGED`). None for a version without Market Reach."""
     without = report.get("without_market_reach")
@@ -1331,15 +1300,14 @@ def market_reach_effect_text(block: dict, test_year: int, *, figures: bool = Fal
     ending = "These are associations on one test year, not a forecast."
     if not figures:
         return (
-            f"Market Reach is the change this version keeps. On {test_year}, the UK ranking is "
+            f"With Market Reach, on {test_year} the UK ranking is "
             f"{pair(block['selection_measure'])} (tie-proof Selection Measure); the table gives every figure both "
             f"ways. {SCENARIO_EFFECTS_UNCHANGED} {ending}"
         )
     large = "; ".join(f"on the {row['markets']} largest Markets {pair(row)}" for row in block["large_markets"])
     parts = [
-        f"Market Reach is the change this version keeps. On {test_year}, the UK ranking is "
-        f"{pair(block['selection_measure'])} on the tie-proof Selection Measure ({pair(block['old_measure'])} on the "
-        f"old measure)" + (f"; {large}" if large else "") + ".",
+        f"With Market Reach, on {test_year} the UK ranking is "
+        f"{pair(block['selection_measure'])} on the tie-proof Selection Measure" + (f"; {large}" if large else "") + ".",
     ]
     if "lift" in block:
         lift = block["lift"]

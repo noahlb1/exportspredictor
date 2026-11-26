@@ -147,6 +147,16 @@ def test_a_version_without_the_gain_ladder_says_it_was_not_run(fixture_default_a
     assert isinstance(history.gain_ladder(fixture_default_artefacts), reporting.NotRun)
 
 
+def test_the_saved_gain_ladder_draws_v2_s_ladder_from_its_committed_record():
+    # Copied once from the one artefact that ran it, so the record never opens that folder.
+    record = history.saved_gain_ladder_record()
+    chart = history.saved_gain_ladder()
+
+    assert record["source"].startswith("Artefact 20261118T100524Z")
+    assert chart.data["end"].to_list() == pytest.approx([0.5397, 0.5193, 0.5154, 0.5115, 0.5115], abs=1e-4)
+    assert chart.data["change"][1:-1].to_list() == pytest.approx([-0.0204, -0.0039, -0.0039], abs=1e-4)
+
+
 # --- The experiment loop -----------------------------------------------------------------------------------------
 
 
@@ -337,3 +347,12 @@ def test_the_probe_is_read_from_its_saved_file_or_is_none(tmp_path):
     (saved / "unrecorded_preferences.json").write_text('{"gain": -0.0001}', encoding="utf-8")
 
     assert history.final_round_probe(tmp_path) == {"gain": -0.0001}
+
+
+def test_the_earlier_versions_table_holds_every_row_and_both_naive_baselines(fixture_artefacts):
+    block = fixture_artefacts.evaluation["earlier_versions"]
+
+    table = history.earlier_versions(fixture_artefacts)
+
+    assert table.height == len(block["rows"]) + len(block["naive"])
+    assert history.earlier_versions(fixture_artefacts, only="v1")["name"].to_list() == ["v1"]

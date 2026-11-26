@@ -36,7 +36,7 @@ Scenario Effects and Blocked Opportunity values are **Illustrative**: upper-end 
 **Known limitations**, also in the model card and on the Model Evaluation page:
 
 - **It ranks UK Markets better than it sizes UK Flows.** On held-out UK pairs in 2023, its Tweedie deviance is 2,611, against 2,095 for the Naive Baseline (lower is better). Trust rankings more than dollar values.
-- **The Potential Range lies below Export Potential for small pairs** (under about $8k). Most comparable pairs of that size trade nothing, and Export Potential is an average that the few which do trade pull up.
+- **The Potential Range lies below Export Potential for small pairs** (under $5.0k). Most comparable pairs of that size trade nothing, and Export Potential is an average that the few which do trade pull up.
 - **A Tariff part is not a tariff elasticity.** The model's response to a tariff is more a step than a slope, so removing a tariff of 1% or less can be associated with a rise of tens of percent (turbo-jets to China: +37%).
 - **Some Trade Agreements carry most-favoured-nation tariffs.** TRAINS records no preferential rates for some agreements in force, among them Canada's and Israel's, and none for UK goods under the UK–Türkiye agreement, so those pairs read as dutiable.
 

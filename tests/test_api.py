@@ -1072,7 +1072,7 @@ def test_with_no_saved_benchmark_the_note_keeps_the_label_and_says_the_benchmark
     assert note["label"] == "Illustrative"
     for part in ("benchmark", "model_association"):
         assert note[part]["run"] is False
-        assert "not run for this version" in note[part]["text"]
+        assert "not run" in note[part]["text"]
     assert note["event_backtest"]["run"] is True
 
 
@@ -1083,7 +1083,7 @@ def test_with_no_event_backtests_the_note_keeps_the_label_and_says_they_were_not
 
     assert note["label"] == "Illustrative"
     assert note["event_backtest"]["run"] is False
-    assert "not run for this version" in note["event_backtest"]["text"]
+    assert "not run" in note["event_backtest"]["text"]
     assert note["benchmark"]["run"] is True
 
 
@@ -1116,7 +1116,7 @@ def test_with_no_saved_benchmark_the_blocked_note_says_the_benchmark_was_not_run
         note = client.get("/opportunities/blocked").json()["note"]
 
     assert note["label"] == "Illustrative"
-    assert note["benchmark"]["run"] is False and "not run for this version" in note["benchmark"]["text"]
+    assert note["benchmark"]["run"] is False and "not run" in note["benchmark"]["text"]
 
 
 # --- How the model was chosen, read from the artefact ----------
@@ -1179,7 +1179,23 @@ def test_evaluation_serves_the_five_fold_confirmation_against_the_model_alone(fi
         "n_folds": 2, "winner": 0.5635, "model_alone": 0.5206, "naive": 0.5332, "difference": 0.0429,
         "win_threshold": 0.0089, "beats_model_alone": True,
         "folds": [{"fold": 0, "winner": 0.5771, "model_alone": 0.5334}, {"fold": 1, "winner": 0.5745, "model_alone": 0.5295}],
+        "text": (
+            "Five-fold confirmation on 2022: the chosen Model Form scores 0.5635, the model alone 0.5206 and the Naive "
+            "Baseline 0.5332; the difference, +0.0429, beats the Win Threshold of 0.0089 (confirmed)."
+        ),
     }
+
+
+def test_the_confirmation_s_verdict_is_the_record_s(fixture_artefacts, tmp_path):
+    # The loop's rule allows for rounding, so a difference just above the threshold can still fall short.
+    short = {**CONFIRMATION, "difference": 0.0090, "beats_v2": False}
+    ranking = {**fixture_artefacts.metadata["ranking_experiments"], "confirmation": short}
+    bundle = replace(fixture_artefacts, metadata={**fixture_artefacts.metadata, "ranking_experiments": ranking})
+
+    confirmation = _served(bundle, tmp_path)["model_choice"]["confirmation"]
+
+    assert confirmation["beats_model_alone"] is False
+    assert confirmation["text"].endswith("does not beat the Win Threshold of 0.0089 (not confirmed).")
 
 
 def test_the_fixture_records_no_confirmation_and_serves_none(client):
@@ -1634,7 +1650,7 @@ def test_evaluation_without_the_itc_comparison_omits_it_and_lists_the_part_as_no
 
     assert served.get("itc_comparison") is None
     [part] = [part for part in served["not_run"] if part["title"] == "ITC comparison"]
-    assert "not run for this version" in part["text"]
+    assert "not run" in part["text"]
     assert "python -m exportspredictor.realisation" in part["text"]
 
 

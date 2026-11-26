@@ -151,8 +151,8 @@ def term_definitions(gap_years: Sequence[int], baseline_year: int) -> dict[str, 
             "imports of it. The model has to beat it."
         ),
         "selection_measure": (
-            f"The one score every modelling choice was made on: {SELECTION_MEASURE_PLAIN}. Tie-proof is its current "
-            "form; the old measure let tied predictions share a rank."
+            f"The one score every modelling choice was made on: {SELECTION_MEASURE_PLAIN}. It is tie-proof: tied "
+            "predictions cannot share a rank."
         ),
         "model_form": (
             "How Export Potential is made from the model: alone or blended with the Naive Baseline, with or without "

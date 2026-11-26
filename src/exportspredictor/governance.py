@@ -24,6 +24,7 @@ from exportspredictor.downloads import sha256
 from exportspredictor.evaluation import parts_not_run
 from exportspredictor.illustrative import scenario_note
 from exportspredictor.model_choice import (
+    against_model_alone,
     model_form_summary,
     ranking_summary,
     round_count,
@@ -239,7 +240,7 @@ def _headline_lines(card: dict) -> list[str]:
     """The test-year UK ranking beside the Naive Baseline, read once (ADR 0009), then on the largest Markets."""
     headline = next((m for m in card["metrics"] if m["name"] == "UK ranking (headline)"), None)
     if headline is None:
-        return ["The test year has not been evaluated for this version."]
+        return ["The test year has not been evaluated."]
     return [headline["text"], *(["", card["large_market_ranking"]] if card.get("large_market_ranking") else [])]
 
 
@@ -251,7 +252,7 @@ def _illustrative_lines(note: dict) -> list[str]:
 
 def _ranking_lines(summary: dict | None) -> list[str]:
     if summary is None:
-        return ["No experiment loop is recorded for this version."]
+        return ["No experiment loop is recorded."]
     lines = [
         selection_rule_text(summary),
         "",
@@ -268,24 +269,10 @@ def _ranking_lines(summary: dict | None) -> list[str]:
         ],
     ]
     if summary["confirmation"]:
-        lines += ["", confirmation_text(summary["confirmation"], summary["validation_year"])]
+        lines += ["", against_model_alone(summary)["text"]]
     return lines
 
 
-def confirmation_text(confirmation: dict, validation_year) -> str:
-    """The five-fold confirmation (`model_choice.ranking_summary`) in one sentence, against the model alone where the
-    summary records it (`model_alone`, or its older key). It is confirmed when the difference beats the Win Threshold,
-    so the sentence reads only fields every saved shape keeps."""
-    alone = confirmation.get("model_alone", confirmation.get("v2"))
-    confirmed = confirmation["difference"] > confirmation["win_threshold"]
-    return (
-        f"Confirmed on all {confirmation['n_folds']} folds of {validation_year}: the chosen form "
-        f"{number_text(confirmation['winner'], '.4f')}"
-        + ("" if alone is None else f", the model alone {number_text(alone, '.4f')}")
-        + f", the Naive Baseline {number_text(confirmation['naive'], '.4f')}; difference "
-        f"{number_text(confirmation['difference'], '+.4f')} against a threshold of "
-        f"{number_text(confirmation['win_threshold'], '.4f')} ({'confirmed' if confirmed else 'not confirmed'})."
-    )
 
 
 
@@ -520,7 +507,7 @@ def render_model_card(card: dict) -> str:
         lines += ["## What Market Reach changes", "", card["market_reach_effect"]["text"], ""]
     lines += ["## Alternatives considered on 2022", "", *_ranking_lines(card.get("ranking_experiments")), ""]
     lines += ["## Potential Range", "", (card["potential_range"] or {}).get(
-        "text", "The artefact records no Potential Range coverage for this version."),
+        "text", "The artefact records no Potential Range coverage."),
         *_size_lines((card["potential_range"] or {}).get("by_size")), ""]
     lines += ["## Metrics", "", "| Metric | Model | Reference (Naive Baseline, chance, or observed) | Note |", "| --- | --- | --- | --- |"]
     lines += [

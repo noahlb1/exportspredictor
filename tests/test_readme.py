@@ -3,6 +3,10 @@
 import re
 from pathlib import Path
 
+import polars as pl
+
+from exportspredictor.product_surface import README_RECORD_SECTION
+
 REPO = Path(__file__).resolve().parents[1]
 README = REPO / "README.md"
 CHECKLIST = REPO / "docs" / "ui-checklist.md"
@@ -48,8 +52,7 @@ def test_checklist_checks_values_are_in_usd_with_no_pounds():
 
 
 def _rebuild_section() -> str:
-    text = README.read_text(encoding="utf-8")
-    return text.split("## Rebuild the data and artefacts", 1)[1].split("\n## ", 1)[0]
+    return _section(README_RECORD_SECTION)
 
 
 def test_rebuild_table_names_every_step_of_the_rebuild_script():
@@ -146,6 +149,11 @@ def test_the_served_model_section_s_figures_are_the_released_artefact_s():
         f"{sizing['model_tweedie_deviance']:,.0f}, against {sizing['naive_tweedie_deviance']:,.0f} "
         "for the Naive Baseline"
     ) in section
+    # The Potential Range's limitation names the same size as the artefact's own (`range_below_potential_limitations`).
+    bands = pl.read_parquet(folder / "potential_range_bands.parquet")
+    (below,) = evaluation.range_below_potential_limitations(bands)
+    size = re.search(r"under \$[\d.,]+[kmbn]*", below["text"])
+    assert size and f"({size.group()})" in section
 
 
 def test_the_rebuild_table_says_the_notebook_reads_saved_results_and_how_long_it_takes():
@@ -199,5 +207,5 @@ def test_the_repo_map_says_to_start_reading_at_the_notebook_then_the_package():
 
 def test_checklist_covers_the_tie_proof_large_market_and_market_reach_figures():
     checklist = _checklist()
-    for figure in ("tie-proof", "old measure", "30 largest", "What Market Reach changes", "by size", "UK pairs"):
+    for figure in ("tie-proof", "30 largest", "What Market Reach changes", "by size", "UK pairs"):
         assert figure in checklist, figure

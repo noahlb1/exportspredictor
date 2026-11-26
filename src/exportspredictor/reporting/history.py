@@ -20,7 +20,7 @@ from exportspredictor.artefacts import Artefacts
 from exportspredictor.evaluation import large_markets_beside_earlier, relabelled
 from exportspredictor.ledger import LEDGER_PATH, read_ledger
 from exportspredictor.loop import experiment_label
-from exportspredictor.paths import data_dir
+from exportspredictor.paths import REPO_ROOT, data_dir
 from exportspredictor.reporting import (
     ACCENT,
     EARLY_STOP_ROUNDS,
@@ -31,8 +31,12 @@ from exportspredictor.reporting import (
     NotRun,
     bar_svg,
     experiments,
+    five_fold_confirmation,
 )
 
+# v2's gain ladder, copied once from the one artefact that ran it (its `source` says which), so the real-data record
+# draws it without opening an older artefact folder.
+GAIN_LADDER_RECORD = REPO_ROOT / "docs" / "gain-ladder-2023.json"
 NO_TRADE_OFF = "No earlier version of this artefact records a lower Tweedie deviance."
 # The loop's measures that show v2's weakness on Zero Cells beside the Naive Baseline (`zero_cells_against_naive`).
 ZERO_CELL_MEASURES = ("selection_measure", "non_zero_spearman", "zero_vs_non_zero_spearman", "tweedie_deviance")
@@ -66,6 +70,17 @@ def ranking_by_version(bundle: Artefacts) -> Chart | NotRun:
         title,
         [Bar(r["name"], 0.0, r[column], colours[r["kind"]], f"{r[column]:.3f}") for r in rows if r[column] is not None],
     ))
+
+
+def earlier_versions(bundle: Artefacts, *, only: str | None = None) -> pl.DataFrame | NotRun:
+    """Every figure the report keeps for each earlier version (`earlier_versions`), then its two Naive Baseline rows;
+    with `only`, that version's row alone."""
+    block = relabelled(bundle.evaluation or {}).get("earlier_versions")
+    if not block:
+        return NotRun("Earlier versions")
+    if only is not None:
+        return pl.from_dicts(block["rows"], infer_schema_length=None).filter(pl.col("name") == only)
+    return pl.from_dicts(block["rows"] + block["naive"], infer_schema_length=None)
 
 
 def large_markets_by_version(bundle: Artefacts) -> pl.DataFrame | NotRun:
@@ -108,8 +123,22 @@ def gain_ladder(bundle: Artefacts) -> Chart | NotRun:
     ladder = ((bundle.evaluation or {}).get("v1_comparison") or {}).get("ladder")
     if not ladder:
         return NotRun("The gain ladder")
+    return _ladder_chart(ladder, bundle.evaluation["v1_comparison"]["primary"].get("naive"))
+
+
+def saved_gain_ladder_record(path: Path = GAIN_LADDER_RECORD) -> dict:
+    """v2's gain ladder as committed (`GAIN_LADDER_RECORD`): its `ladder`, the Naive Baseline's figure and its `source`."""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def saved_gain_ladder(path: Path = GAIN_LADDER_RECORD) -> Chart:
+    """`gain_ladder`'s chart from the committed record, for the real data: the ladder ran for v2 only."""
+    record = saved_gain_ladder_record(path)
+    return _ladder_chart(record["ladder"], record["naive"])
+
+
+def _ladder_chart(ladder: Mapping, naive: float | None) -> Chart:
     values = {rung["name"]: rung["value"] for rung in ladder["rungs"]}
-    naive = bundle.evaluation["v1_comparison"]["primary"].get("naive")
     floor = round(min([*values.values(), *([naive] if naive is not None else [])]) - 0.02, 2)
     rows = (
         [{"bar": "v1", "start": floor, "end": values["v1"], "change": None}]
@@ -162,19 +191,9 @@ def experiments_chart(bundle: Artefacts) -> Chart | NotRun:
 
 
 def confirmation(bundle: Artefacts) -> pl.DataFrame | NotRun:
-    """The five-fold confirmation against v2, fold by fold: the winner's and v2's Selection Measure on each held-out
-    fold, then over every pair (`fold` "all"), with the winner's margin and the Win Threshold. Read from the loop's
-    saved record, not from what the API serves."""
-    confirmed = (bundle.metadata.get("ranking_experiments") or {}).get("confirmation")
-    if not confirmed or "v2" not in confirmed:
-        return NotRun("The five-fold confirmation")
-    rows = [{"fold": str(f["fold"]), "winner": f["winner"]["selection_measure"], "v2": f["v2"]["selection_measure"]}
-            for f in confirmed["folds"]]
-    rows.append({"fold": "all", "winner": confirmed["winner"]["selection_measure"],
-                 "v2": confirmed["v2"]["selection_measure"]})
-    return pl.DataFrame(rows, schema={"fold": pl.String, "winner": pl.Float64, "v2": pl.Float64}).with_columns(
-        difference=pl.col("winner") - pl.col("v2"), win_threshold=pl.lit(confirmed["win_threshold"], dtype=pl.Float64)
-    )
+    """The five-fold confirmation against v2, fold by fold (`reporting.five_fold_confirmation` under the record's names:
+    `winner`, `v2`)."""
+    return five_fold_confirmation(bundle, by_role=False)
 
 
 def round_count(bundle: Artefacts) -> pl.DataFrame | NotRun:

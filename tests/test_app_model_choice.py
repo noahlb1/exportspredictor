@@ -115,6 +115,7 @@ def test_page_shows_the_five_fold_confirmation_fold_by_fold(monkeypatch, live_ap
     assert list(table["The model alone"]) == pytest.approx(
         [f["model_alone"] for f in served["folds"]] + [served["model_alone"]]
     )
+    assert served["text"] in [markdown.value for markdown in page.markdown]  # the package's sentence, not the page's
 
 
 def test_an_artefact_without_experiment_results_still_renders_the_section_saying_so(

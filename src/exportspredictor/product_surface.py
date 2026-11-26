@@ -8,7 +8,8 @@ configuration"), never by version name. `banned_terms` finds the history terms i
   own release names (`V202601`, "Licence v3.0") pass;
 - a phrase in `HISTORY_PHRASES`, in any case, plural, or across a line break.
 
-`notebook_text` is a notebook as its reader sees it: the prose and what the outputs show.
+`notebook_text` is a notebook as its reader sees it: the prose and what the outputs show. `readme_text` is the
+README without its reproduction section, which is part of the record.
 """
 
 import re
@@ -28,7 +29,14 @@ HISTORY_PHRASES = (
     "first form",
     "Arm against",
     "gain ladder",
+    "this version",
+    "that version",
+    "old measure",
 )
+
+# The README's `##` section that is record, not product.
+README_RECORD_SECTION = "Rebuild the data and artefacts"
+_SECTION_BREAK = "\n## "
 
 # Data sources' own release names: CEPII's dated releases (`V202601`) and the Open Government Licence's `v3.0`.
 _SOURCE_RELEASE = r"(?<![A-Za-z0-9])v\d{6}(?![A-Za-z0-9])|Licence\s+v\d+(?:\.\d+)*"
@@ -69,3 +77,10 @@ def notebook_text(notebook: Mapping) -> str:
 
 def _joined(value: str | list[str]) -> str:
     return value if isinstance(value, str) else "".join(value)
+
+
+def readme_text(readme: str) -> str:
+    """The README outside its reproduction section (`README_RECORD_SECTION`, with its `###` subsections)."""
+    return _SECTION_BREAK.join(
+        section for section in readme.split(_SECTION_BREAK) if section.splitlines()[0] != README_RECORD_SECTION
+    )

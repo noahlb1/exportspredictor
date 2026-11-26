@@ -488,7 +488,7 @@ def test_the_served_report_words_lift_the_event_backtests_and_market_reach_now(f
     assert all(event["text"].startswith(f"{event['title']} (in force") for event in events)
     assert served["event_backtest"]["text"] == events[0]["text"]  # the block says its primary event's result
     reach = served["market_reach_effect"]
-    assert reach["text"].startswith("Market Reach is the change this version keeps.")
+    assert reach["text"].startswith("With Market Reach, on 2023 the UK ranking is ")
     assert saved["lift"]["text"] == SAVED and saved["event_backtest"]["text"] == SAVED  # the saved report stands
 
 
@@ -845,46 +845,10 @@ def test_a_version_upgraded_by_rereach_states_one_uk_pair_coverage_in_its_market
     assert read["selection_measure"] == effect["selection_measure"]
 
 
-# --- Which configuration the test-year figures were read on (ADR 0009) -------------
+def test_no_limitation_sets_the_served_form_against_the_one_the_test_year_was_read_on(fixture_artefacts):
+    # The product shows one model (ADR 0013): a report read on another Model Form adds no limitation of its own.
+    report = {**fixture_artefacts.evaluation, "model_form": {"form": "model", "naive_weight": 0.0}}
 
-READ_ON_EARLIER = "The test-year figures were read on an earlier configuration"
+    titles = [item["title"] for item in evaluation.known_limitations(replace(fixture_artefacts, evaluation=report))]
 
-
-def _served_after_a_correction(artefacts):
-    """The fixture version as `rereach` leaves it after a Market Reach correction: the served form changed, the report
-    kept the figures read on the form before (as served 20261122T223312Z, nested_share, over a read on share)."""
-    form = artefacts.metadata["model_form"]
-    corrected = {**form, "market_reach": {**form["market_reach"], "form": "nested_share"}}
-    read_on = {**form, "market_reach": {**form["market_reach"], "form": "share"}}
-    return replace(
-        artefacts,
-        metadata={**artefacts.metadata, "model_form": corrected,
-                  "market_reach": {**artefacts.metadata["market_reach"], "form": "nested_share"}},
-        evaluation={**artefacts.evaluation, "model_form": read_on},
-    )
-
-
-def test_a_version_serving_another_form_than_its_test_year_read_says_so_in_its_limitations_and_model_card(
-    fixture_artefacts,
-):
-    from exportspredictor import governance
-
-    artefacts = _served_after_a_correction(fixture_artefacts)
-
-    [limit] = [x for x in evaluation.known_limitations(artefacts) if x["title"] == READ_ON_EARLIER]
-    card = {x["title"]: x["text"] for x in governance.model_card(artefacts)["limitations"]}
-
-    assert "share" in limit["text"] and "nested_share" in limit["text"]
-    assert "has not read" in limit["text"]
-    assert card[READ_ON_EARLIER] == limit["text"]
-
-
-def test_a_version_serving_the_form_its_test_year_was_read_on_has_no_such_limitation(fixture_artefacts):
-    # A refit Market Reach constant or reference year is no change of configuration (ADR 0010).
-    form = fixture_artefacts.metadata["model_form"]
-    refit = {**form, "market_reach": {**form["market_reach"], "constant": 0.5, "reference_year": 1999}}
-    artefacts = replace(fixture_artefacts, evaluation={**fixture_artefacts.evaluation, "model_form": refit})
-
-    titles = [x["title"] for x in evaluation.known_limitations(artefacts)]
-
-    assert READ_ON_EARLIER not in titles
+    assert titles == [item["title"] for item in evaluation.known_limitations(fixture_artefacts)]

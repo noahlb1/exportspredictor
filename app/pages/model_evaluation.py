@@ -46,7 +46,7 @@ def _largest_markets_table(headline: dict, large: dict | None) -> pd.DataFrame:
 
 def _market_reach_table(effect: dict) -> pd.DataFrame:
     """What Market Reach changes: each figure with it and without it, as the API reports them."""
-    rows = [("UK ranking, tie-proof", effect["selection_measure"]), ("UK ranking, old measure", effect["old_measure"])]
+    rows = [("UK ranking, tie-proof", effect["selection_measure"])]
     rows += [(f"UK ranking, {row['markets']} largest Markets", row) for row in effect["large_markets"]]
     if effect.get("lift"):
         rows += [("Lift", effect["lift"]), ("Size-matched Lift", effect["lift"]["size_matched"])]
@@ -254,12 +254,7 @@ def _show_model_choice(choice: dict) -> None:
                      for f in confirmation["folds"]]
             folds.append({"Fold": "All folds", "Chosen Model Form": confirmation["winner"],
                           "The model alone": confirmation["model_alone"]})
-            verdict = "confirmed" if confirmation["beats_model_alone"] else "not confirmed"
-            st.markdown(
-                f"**Confirmation on all {confirmation['n_folds']} folds of {choice['validation_year']}**: the chosen "
-                f"Model Form against the model alone, difference {confirmation['difference']:+.4f} against the Win Threshold "
-                f"{confirmation['win_threshold']:.4f} ({verdict}). The Naive Baseline scores {confirmation['naive']:.4f}."
-            )
+            st.markdown(confirmation["text"])
             st.dataframe(pd.DataFrame(folds), hide_index=True)
 
 

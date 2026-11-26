@@ -18,7 +18,10 @@ from exportspredictor.wording import SELECTION_MEASURE_PLAIN, number_text
 
 CHOSEN_ON_DEVIANCE = "Tweedie deviance (the hyperparameter search)"
 CHOSEN_ON_SELECTION_MEASURE = "Selection Measure"
-NOT_RECORDED = "No experiment results are recorded for this version, so how its Model Form was chosen cannot be shown."
+# Configurations the loop's record names by version, as product text names them: by role (ADR 0013). Keys take the
+# role in snake case ("beats_v2" is served as "beats_model_alone"), Arms in words.
+ROLES = {"v1": "starting configuration", "v2": "model alone"}
+NOT_RECORDED = "No experiment results are recorded, so how the Model Form was chosen cannot be shown."
 
 
 def how_chosen(metadata: dict) -> dict:
@@ -31,19 +34,47 @@ def how_chosen(metadata: dict) -> dict:
         "recorded": summary is not None,
         "model_form": model_form_summary(metadata),
         **(summary or {"experiments": []}),
-        "confirmation": against_model_alone((summary or {}).get("confirmation")),
+        "confirmation": against_model_alone(summary),
         "text": _text(summary, form),
     }
 
 
-def against_model_alone(confirmation: dict | None) -> dict | None:
-    """The five-fold confirmation (`ranking_summary`'s) with the configuration it beat named by role: the model alone."""
+def by_role(name: str) -> str:
+    """A name from the loop's record as product text gives it (`ROLES`): the Arm "v1" is the starting configuration."""
+    return ROLES.get(name, name)
+
+
+def _key_by_role(key: str) -> str:
+    for version, role in ROLES.items():
+        if key == version or key.endswith(f"_{version}"):
+            return key.removesuffix(version) + role.replace(" ", "_")
+    return key
+
+
+def against_model_alone(summary: dict | None) -> dict | None:
+    """The five-fold confirmation of `ranking_summary` named by role (the configuration it beat is the model alone),
+    with its sentence (`confirmation_text`); None where none is recorded."""
+    confirmation = (summary or {}).get("confirmation")
     if not confirmation:
         return None
-    named = {"v2": "model_alone", "beats_v2": "beats_model_alone"}
-    return {named.get(key, key): value for key, value in confirmation.items() if key != "folds"} | {
-        "folds": [{named.get(key, key): value for key, value in fold.items()} for fold in confirmation["folds"]]
+    named = {_key_by_role(key): value for key, value in confirmation.items() if key != "folds"} | {
+        "folds": [{_key_by_role(key): value for key, value in fold.items()} for fold in confirmation["folds"]]
     }
+    return named | {"text": confirmation_text(named, summary["validation_year"])}
+
+
+def confirmation_text(confirmation: dict, validation_year) -> str:
+    """The five-fold confirmation (`against_model_alone`'s fields) in one sentence; the verdict is the loop's own
+    (`beats_model_alone`), which allows for rounding."""
+    confirmed = confirmation["beats_model_alone"]
+    return (
+        f"Five-fold confirmation on {validation_year}: the chosen Model Form scores "
+        f"{number_text(confirmation['winner'], '.4f')}, the model alone {number_text(confirmation['model_alone'], '.4f')} "
+        f"and the Naive Baseline {number_text(confirmation['naive'], '.4f')}; the difference, "
+        f"{number_text(confirmation['difference'], '+.4f')}, {'beats' if confirmed else 'does not beat'} the Win "
+        f"Threshold of {number_text(confirmation['win_threshold'], '.4f')} "
+        f"({'confirmed' if confirmed else 'not confirmed'})."
+    )
 
 
 def served_model_form(metadata: dict) -> ModelForm:
@@ -94,7 +125,7 @@ def round_count(metadata: dict) -> dict:
             f"scaled by the ratio of training rows ({ratio}). Under ADR 0008 deviance should choose nothing. The "
             f"artefact was not rebuilt, so that the test year stays read once; the next rebuild uses {then}.")}
     return {"chosen_by": None, "rounds_chosen": None, "rounds": rounds, "next_rounds": next_rounds,
-            "text": "How the round count was chosen is not recorded for this version."}
+            "text": "How the round count was chosen is not recorded."}
 
 
 def traded_away(block: dict | None) -> dict | None:

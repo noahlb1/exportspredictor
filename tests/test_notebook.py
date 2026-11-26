@@ -307,6 +307,7 @@ def test_notebook_imports_from_the_package(path):
 
 
 def test_notebook_runs_in_fixture_mode_and_saves_artefacts(monkeypatch, tmp_path):
+    # About 10 s: a kernel start and the fixture build, the least that runs the notebook end to end.
     monkeypatch.setenv("EXPORTSPREDICTOR_ARTEFACTS_DIR", str(tmp_path))
     committed = hashlib.sha256(NOTEBOOK.read_bytes()).hexdigest()
     notebook = nbformat.read(NOTEBOOK, as_version=4)
@@ -489,3 +490,8 @@ def test_the_model_history_runs_in_fixture_mode(monkeypatch, tmp_path):
     assert [source for _, source in reporting.provenance_versions(printed)] == [pipeline.FIXTURE_SOURCE]
     kinds = {kind for o in outputs for kind in o.get("data", {})}
     assert "image/svg+xml" in kinds
+
+
+def test_the_write_up_hides_no_output():
+    # The fixture build's progress log names no history, so nothing is silenced to keep it off the page.
+    assert not any("redirect_stdout" in source for source in _code_cells())

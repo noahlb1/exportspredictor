@@ -102,7 +102,7 @@ Every hide filter is off by default, and ticking one removes exactly its rows. N
 - [ ] The plain-English accuracy headline renders, green if the model beats the Naive Baseline and amber with a plain warning if not, with the test year and the non-UK training sample stated below it.
 - [ ] Under the headline, one table sets every Market against the 30 largest and 60 largest importers, model against Naive Baseline.
 - [ ] "How the model was chosen" shows the "Alternatives considered on 2022" table, then the confirmation on all five folds with columns "Chosen Model Form" and "The model alone". The page shows no version names, no table of earlier versions and nothing "traded away".
-- [ ] "What Market Reach changes" states, with it and without it, the tie-proof and old measure, the 30 largest and 60 largest Markets, Lift and size-matched Lift, and the share of UK pairs inside their Potential Range, and says Scenario Effects are unchanged by it.
+- [ ] "What Market Reach changes" states, with it and without it, the tie-proof Selection Measure, the 30 largest and 60 largest Markets, Lift and size-matched Lift, and the share of UK pairs inside their Potential Range, and says Scenario Effects are unchanged by it.
 - [ ] The metric tables (model against Naive Baseline) render for UK pairs and for all Exporters.
 - [ ] "Where the model is weakest" lists the weakest Sectors and regions; switching "Rows evaluated" changes the tables.
 - [ ] "Observed against carried-forward tariffs" splits the test rows by Applied Tariff (observed, carried forward from 2021) for both scopes, with a sentence saying how they split (on 2023 every row is carried forward).

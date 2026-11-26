@@ -1,5 +1,5 @@
 """An artefact built without an opt-in part loads, is served, and renders
-"not run for this version" for that part: in the API's evaluation, on the Model Evaluation page
+"not run" for that part: in the API's evaluation, on the Model Evaluation page
 and in the model card. An artefact with every part shows no such notice.
 """
 
@@ -14,7 +14,7 @@ from exportspredictor import governance
 PAGE = "pages/model_evaluation.py"
 # The gain ladder is history (`evaluation.NOT_SERVED`), so it is never listed.
 PARTS = ["Event Backtests", "Monotone-constraint comparison", "PPML benchmark", "ITC comparison"]
-NOTICE = "not run for this version"
+NOTICE = "not run"
 
 
 def _evaluation(root) -> dict:

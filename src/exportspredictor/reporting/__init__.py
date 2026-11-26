@@ -171,22 +171,20 @@ def market_reach_effect(bundle: Artefacts) -> str:
 # A best round under this means the stopping rule, not the configuration, decided the Arm
 # (`exportspredictor.loop`, "Pitfalls").
 EARLY_STOP_ROUNDS = 50
-# Arms the loop's record names by version, as product text names them: by role (ADR 0013).
-ARM_ROLES = {"v1": "starting configuration"}
 
 
 def experiments(bundle: Artefacts, *, by_role: bool = True) -> pl.DataFrame | NotRun:
     """Every Arm of every experiment the loop ran: its experiment (`loop.experiment_label`), its Selection
     Measure, its change on the best so far, its best round, whether it was kept, and whether it stopped
-    within its first `EARLY_STOP_ROUNDS` rounds. Arms are named by role (`ARM_ROLES`); the Model History passes
-    `by_role=False` for the record's own names."""
+    within its first `EARLY_STOP_ROUNDS` rounds. Arms are named by role (`model_choice.by_role`); the Model History
+    passes `by_role=False` for the record's own names."""
     record = bundle.metadata.get("ranking_experiments")
     if not record or not record.get("experiments"):
         return NotRun("The experiment loop")
     rows = [
         {
             "experiment": experiment_label(name, [arm["arm"] for arm in section.get("arms", [])]),
-            "arm": ARM_ROLES.get(row["arm"], row["arm"]) if by_role else row["arm"],
+            "arm": model_choice.by_role(row["arm"]) if by_role else row["arm"],
             "selection_measure": row.get("selection_measure"),
             "change": row.get("change"),
             "rounds": row.get("rounds"),
@@ -202,19 +200,45 @@ def experiments(bundle: Artefacts, *, by_role: bool = True) -> pl.DataFrame | No
     })
 
 
-def five_fold_confirmation(bundle: Artefacts) -> pl.DataFrame | NotRun:
-    """The five-fold confirmation, fold by fold: the Blend's Selection Measure beside the model alone's on each
-    held-out fold, then over every pair (`fold` "all"), with the Blend's margin and the Win Threshold
-    (`model_choice.how_chosen`)."""
-    confirmed = model_choice.how_chosen(bundle.metadata)["confirmation"]
+def five_fold_confirmation(bundle: Artefacts, *, by_role: bool = True) -> pl.DataFrame | NotRun:
+    """The five-fold confirmation, fold by fold: the chosen form's Selection Measure beside the model alone's on each
+    held-out fold, then over every pair (`fold` "all"), with the margin and the Win Threshold
+    (`model_choice.ranking_summary`). Columns are named by role (`blend`, `model_alone`); the Model History passes
+    `by_role=False` for the record's own names (`winner`, `v2`)."""
+    confirmed = (model_choice.ranking_summary(bundle.metadata.get("ranking_experiments")) or {}).get("confirmation")
     if not confirmed:
         return NotRun("The five-fold confirmation")
-    rows = [{"fold": str(fold["fold"]), "blend": fold["winner"], "model_alone": fold["model_alone"]}
-            for fold in confirmed["folds"]]
-    rows.append({"fold": "all", "blend": confirmed["winner"], "model_alone": confirmed["model_alone"]})
-    return pl.DataFrame(rows, schema={"fold": pl.String, "blend": pl.Float64, "model_alone": pl.Float64}).with_columns(
-        difference=pl.col("blend") - pl.col("model_alone"),
+    chosen, alone = ("blend", "model_alone") if by_role else ("winner", "v2")
+    rows = [{"fold": str(fold["fold"]), chosen: fold["winner"], alone: fold["v2"]} for fold in confirmed["folds"]]
+    rows.append({"fold": "all", chosen: confirmed["winner"], alone: confirmed["v2"]})
+    return pl.DataFrame(rows, schema={"fold": pl.String, chosen: pl.Float64, alone: pl.Float64}).with_columns(
+        difference=pl.col(chosen) - pl.col(alone),
         win_threshold=pl.lit(confirmed["win_threshold"], dtype=pl.Float64),
+    )
+
+
+def search_confirmation(bundle: Artefacts) -> pl.DataFrame | NotRun:
+    """The configurations the hyperparameter search retrained on every Product: each trial's rounds, 2022 Tweedie
+    deviance and UK ranking."""
+    confirmed = (bundle.metadata.get("search") or {}).get("confirmation")
+    if not confirmed:
+        return NotRun("The hyperparameter search")
+    return pl.DataFrame(confirmed).select("trial", "rounds", "validation_deviance", "uk_spearman")
+
+
+def ablation(results: Mapping) -> pl.DataFrame:
+    """The feature ablation on 2022 (`experiments.load`'s `ablation`): every feature, then one without each candidate."""
+    return pl.DataFrame(results["ablation"]).select(
+        "dropped", "features", "training_rows", "rounds", "validation_deviance", "deviance_change",
+        "uk_spearman", "spearman_change", "hurts",
+    )
+
+
+def learning_curve(results: Mapping) -> pl.DataFrame:
+    """The learning curve on 2022 (`experiments.load`'s `learning_curve`): one model per sampling rate."""
+    return pl.DataFrame(results["learning_curve"]).select(
+        "zero_rate", "non_uk_rate", "training_rows", "rounds", "validation_deviance", "uk_spearman",
+        "full_data_non_uk_rate", "fits_budget",
     )
 
 
