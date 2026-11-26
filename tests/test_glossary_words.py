@@ -7,12 +7,16 @@ cells, every string literal in `app/` and `api/`, and the package's docstrings.
 It checks every avoided phrase of two or more words, and the single words in `DISTINCTIVE`. Most
 single avoided words ("trade", "score", "user") have a legitimate everyday sense, so checking them
 would flag correct prose; add a single word here once a review finds it misused.
+
+It also checks that every key term the app shows has an explanation in `wording.term_definitions`.
 """
 
 import ast
 import json
 import re
 from pathlib import Path
+
+from exportspredictor.wording import term_definitions
 
 ROOT = Path(__file__).resolve().parent.parent
 DISTINCTIVE = {"shortfall", "headroom", "entrepôt", "supplier", "shipment", "commodity", "prospect", "blocker"}
@@ -68,6 +72,63 @@ def test_prose_uses_glossary_terms_not_the_words_it_avoids():
                 if not any(allowed in around for allowed in ALLOWED.get(name, ())):
                     found.append((name, word, around))
     assert not found, f"Words GLOSSARY.md avoids; use its term instead: {found}"
+
+
+# Key terms the app shows, each with the `wording.term_definitions` entries that explain it on hover or behind `?`.
+# A term may have one entry per context (a table column, the detail panel), until #195 settles one wording.
+EXPLAINED_BY = {
+    "Product": ["product"],
+    "Market": ["market"],
+    "Sector": ["sector"],
+    "HS6": ["hs6"],
+    "Export Potential": ["export_potential", "baseline_export_potential"],
+    "Actual Exports": ["actual_exports", "baseline_actual_exports"],
+    "Export Gap": ["export_gap"],
+    "Relative Export Gap": ["relative_export_gap", "relative_export_gap_in_panel"],
+    "Opportunity Type": ["opportunity_type"],
+    "Potential Range": ["potential_range"],
+    "Blocked Opportunity": ["blocked_opportunity"],
+    "Blocked Opportunity value": ["blocked_opportunity_value", "blocked_opportunity_value_in_panel"],
+    "Barrier": ["barrier"],
+    "Rise with agreement": ["rise_with_agreement"],
+    "Rise share": ["rise_share"],
+    "Tariff part": ["tariff_part"],
+    "Trade Agreement": ["trade_agreement"],
+    "Applied Tariff": ["applied_tariff", "applied_tariff_in_panel"],
+    "Scenario Effect": ["scenario_effect"],
+    "Market Reach": ["market_reach"],
+}
+# Key terms the app shows with no explanation yet (listed on #181); #195 adds them.
+KNOWN_GAPS = {"Opportunity", "Scenario", "Baseline", "Gap Period", "Illustrative", "Agreement part"}
+TRADE_TERMS = {"HS6"}  # key terms outside GLOSSARY.md
+
+
+def app_text() -> str:
+    """Every string literal in `app/` (f-strings' fixed parts included) and every term explanation the app shows."""
+    texts = list(term_definitions("2022–2024 average", 2024).values())
+    for path in sorted((ROOT / "app").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                texts.append(node.value)
+    return "\n".join(texts)
+
+
+def test_every_key_term_the_app_shows_has_an_explanation():
+    definitions = term_definitions("2022–2024 average", 2024)
+    text = app_text()
+    listed = {*EXPLAINED_BY, *KNOWN_GAPS}
+
+    assert {term for term in listed if re.search(rf"\b{re.escape(term)}s?\b", text)} == listed, (
+        "a key term the app no longer shows: drop it here"
+    )
+    assert not KNOWN_GAPS & set(EXPLAINED_BY), "an explained term is still listed as a gap"
+    missing = {key: term for term, keys in EXPLAINED_BY.items() for key in keys if not definitions.get(key)}
+    assert not missing, f"Key terms with no explanation in wording.term_definitions: {missing}"
+
+
+def test_the_key_terms_are_glossary_terms():
+    glossary = set(re.findall(r"^\*\*(.+?)\*\*:", (ROOT / "GLOSSARY.md").read_text(encoding="utf-8"), re.MULTILINE))
+    assert {*EXPLAINED_BY, *KNOWN_GAPS} <= glossary | TRADE_TERMS
 
 
 def test_the_glossary_lists_are_read():

@@ -1374,7 +1374,9 @@ def test_the_applied_tariff_is_null_where_it_is_unknown(blocked_artefacts, tmp_p
 def test_labels_carry_the_term_definitions_with_the_gap_period_from_the_artefact(client):
     terms = client.get("/labels").json()["terms"]
 
-    assert set(terms) == {"export_potential", "actual_exports", "export_gap", "opportunity_type"}
+    assert {"export_potential", "actual_exports", "export_gap", "opportunity_type", "market_reach"} <= set(terms)
+    assert all(text.strip() for text in terms.values())
+    assert terms["trade_agreement"] == "Whether a UK Trade Agreement with the Market is in force in 2024."  # Baseline
     assert terms["export_potential"] == (
         "The value of UK exports of this Product to this Market that the model expects, given the fundamentals "
         "of the UK, the Market and the Product."

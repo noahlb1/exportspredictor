@@ -44,11 +44,6 @@ RAISED, LOWERED = "#2a78d6", "#e34948"  # the factor bars that raise and lower t
 TEXT = {"light": "#1b1915", "dark": "#f5f2ec"}  # chart value labels take the mode's text colour
 # The Factor column has a fixed width, so the value and association beside it stay in view in a narrow panel.
 FACTOR_WIDTHS = {"Factor": st.column_config.TextColumn("Factor", width="medium")}
-MARKET_REACH_HELP = (
-    "How widely the UK sends its Products to this Market, against how widely it does across Markets. The model "
-    "associates broad UK reach into a Market with higher Export Potential there, for every Product alike, so where "
-    "the UK sends fewer Products to a whole Market than expected, it shows here, not in any one Product's figures."
-)
 FACTOR_COLUMNS = {
     "label": "Factor",
     "value_text": "Value for this pair",
@@ -170,22 +165,19 @@ def facts(row: dict, body: dict, *, with_gap: bool = True, with_policy: bool = T
         (
             f"Applied Tariff, {year}",
             tariff_text(row["applied_tariff_pct"]),
-            f"The tariff the Market charges on this Product from the UK in the Baseline year {year}.",
+            term("applied_tariff_in_panel"),
         ),
         ("UK Trade Agreement in force", "Yes" if row["trade_agreement"] else "No", None),
         (
             "Blocked Opportunity value",
             f"{value}{blocked} ({labels()['illustrative']['badge'].lower()})",
-            (
-                f"The rise in {year} Export Potential the model associates with adding a UK Trade Agreement where none "
-                "is in force (a known Applied Tariff goes to 0 with it); 0 where one is."
-            ),
+            term("blocked_opportunity_value_in_panel"),
         ),
         ("Opportunity Type", f"{kind}: {meaning[:1].lower()}{meaning[1:]}", kinds),
         (
             "Relative Export Gap",
             "n/a" if relative is None else f"{relative:.0%}",
-            "Export Gap divided by Export Potential: the share of its Export Potential the UK does not yet realise.",
+            term("relative_export_gap_in_panel"),
         ),
         (
             "Potential Range",
@@ -205,7 +197,7 @@ def facts(row: dict, body: dict, *, with_gap: bool = True, with_policy: bool = T
 def market_reach(body: dict) -> None:
     """The Market's Market Reach in one sentence (ADR 0010), where the API serves one."""
     if body.get("market_reach"):
-        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=MARKET_REACH_HELP)
+        st.markdown(f"**Market Reach.** {body['market_reach']['text']}", help=term("market_reach"))
 
 
 def barrier(row: dict, body: dict) -> None:
