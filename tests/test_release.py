@@ -219,5 +219,5 @@ def test_the_command_line_says_when_a_newer_version_will_be_served_instead(packe
 
 def test_the_default_url_is_the_pinned_release():
     assert release.RELEASE_URL == (
-        "https://github.com/noahlb1/exportspredictor/releases/download/v1.1/20261126T204856Z.zip"
+        "https://github.com/noahlb1/exportspredictor/releases/download/v1.1/20261126T232453Z.zip"
     )

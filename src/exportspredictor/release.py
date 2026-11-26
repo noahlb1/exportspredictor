@@ -34,7 +34,7 @@ from exportspredictor.paths import artefacts_dir, data_dir
 
 TAG = "v1.1"
 REPOSITORY = "noahlb1/exportspredictor"
-RELEASED_VERSION = "20261126T204856Z"
+RELEASED_VERSION = "20261126T232453Z"
 ASSET_SUFFIX = ".zip"
 CHECKSUM_SUFFIX = ".sha256"
 # GitHub refuses a release asset of 2 GiB or more.

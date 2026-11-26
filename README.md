@@ -18,7 +18,7 @@ podman compose up               # or: docker compose up
 Then open <http://localhost:8501>. Stop with `Ctrl+C` or `podman compose down`.
 
 - **The fetch** downloads the artefact from the [`v1.1` release](https://github.com/noahlb1/exportspredictor/releases/tag/v1.1), checks its SHA-256 and unpacks it into `./artefacts`. It skips a version already there.
-- **By hand**, if the fetch fails: download `20261126T204856Z.zip` and `20261126T204856Z.zip.sha256` from the release page, run `sha256sum -c 20261126T204856Z.zip.sha256` (in PowerShell, compare `Get-FileHash 20261126T204856Z.zip` with the hash in the file), then unzip into `artefacts/`, which gives `artefacts/20261126T204856Z/`.
+- **By hand**, if the fetch fails: download `20261126T232453Z.zip` and `20261126T232453Z.zip.sha256` from the release page, run `sha256sum -c 20261126T232453Z.zip.sha256` (in PowerShell, compare `Get-FileHash 20261126T232453Z.zip` with the hash in the file), then unzip into `artefacts/`, which gives `artefacts/20261126T232453Z/`.
 - **Timings**: `compose up` is ready in about 20 s once the image is built. On two cores of a Ryzen 5800X the API loads the artefact in 3.5 s, a Trading Bloc preset takes 2.4–3.6 s and a custom Scenario about 1 s.
 - **If the app says the API is unavailable**, check `podman compose logs api` and <http://localhost:8000/health>, which gives the reason. The API serves only the lexically newest folder in `./artefacts`, and only artefact format 4.
 - On Windows, if `podman compose` cannot connect after a reboot, run `podman machine start`.
