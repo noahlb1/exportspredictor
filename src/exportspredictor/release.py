@@ -19,6 +19,7 @@ Command line:
 Fetch reads the public download URL over HTTPS: no `gh`, no token.
 """
 
+import re
 import shutil
 import tempfile
 import zipfile
@@ -32,22 +33,21 @@ from exportspredictor.artefacts import METADATA_FILE, latest_folder
 TAG = "v1.0"
 REPOSITORY = "noahlb1/exportspredictor"
 RELEASED_VERSION = "20261125T171812Z"
+ASSET_SUFFIX = ".zip"
 CHECKSUM_SUFFIX = ".sha256"
 # GitHub refuses a release asset of 2 GiB or more.
 MAX_ASSET_BYTES = 2 * 1024**3
+# A fetch's temporary folder under the artefacts directory, named `.fetch-<version>-<random>`.
+_STAGING_PREFIX = ".fetch-"
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def asset_name(version: str) -> str:
     """The release asset holding artefact `version`."""
-    return f"{version}.zip"
+    return version + ASSET_SUFFIX
 
 
-def download_url(version: str = RELEASED_VERSION, tag: str = TAG) -> str:
-    """The public download URL of `version`'s asset on the release tagged `tag`."""
-    return f"https://github.com/{REPOSITORY}/releases/download/{tag}/{asset_name(version)}"
-
-
-RELEASE_URL = download_url()
+RELEASE_URL = f"https://github.com/{REPOSITORY}/releases/download/{TAG}/{asset_name(RELEASED_VERSION)}"
 
 
 class ChecksumMismatch(Exception):
@@ -75,8 +75,12 @@ def pack(
                 f"{target.name} would be {size:,} bytes, over the {max_bytes:,}-byte limit on a release asset"
             )
     checksum = target.with_name(target.name + CHECKSUM_SUFFIX)
-    with downloads.writing(checksum) as part:
-        part.write_text(f"{downloads.sha256(target)}  {target.name}\n", encoding="utf-8")
+    try:
+        with downloads.writing(checksum) as part:
+            part.write_text(f"{downloads.sha256(target)}  {target.name}\n", encoding="utf-8")
+    except BaseException:
+        target.unlink(missing_ok=True)  # a zip without its checksum file is no release
+        raise
     return target
 
 
@@ -85,16 +89,28 @@ def fetch(url: str, artefacts_root: Path) -> Path:
 
     A version already under `artefacts_root` is skipped without downloading; no other version is touched.
     The version appears only once complete: the zip downloads to a temporary folder (through a `.part`
-    file), unpacks there, and is renamed into place. Returns the version folder."""
+    file), unpacks there, and is renamed into place. Temporary folders left by an interrupted fetch are
+    removed first. Returns the version folder."""
     root = Path(artefacts_root)
     name = PurePosixPath(unquote(urlparse(url).path)).name
-    version = name.removesuffix(".zip")
+    if not name.endswith(ASSET_SUFFIX) or name == ASSET_SUFFIX:
+        raise ValueError(f"{url} is not a release asset: its name must be <version>{ASSET_SUFFIX}")
+    version = name.removesuffix(ASSET_SUFFIX)
     target = root / version
-    if target.exists():
+    for stale in root.glob(f"{_STAGING_PREFIX}*") if root.is_dir() else []:
+        shutil.rmtree(stale, ignore_errors=True)
+    if (target / METADATA_FILE).exists():
         return target
-    expected = downloads.fetch(url + CHECKSUM_SUFFIX).decode("utf-8").split()[0]
+    if target.exists():
+        raise FileExistsError(
+            f"{target} exists without {METADATA_FILE}, so it is incomplete. Move or delete it, then fetch again."
+        )
+    published = downloads.fetch(url + CHECKSUM_SUFFIX).decode("utf-8").split()
+    expected = published[0] if published else ""
+    if not _SHA256.fullmatch(expected):
+        raise ValueError(f"{name}{CHECKSUM_SUFFIX} holds no SHA-256 (got {expected[:20]!r}). Nothing was fetched.")
     root.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".fetch-{version}-", dir=root))
+    staging = Path(tempfile.mkdtemp(prefix=f"{_STAGING_PREFIX}{version}-", dir=root))
     try:
         archive = staging / name
         downloads.download(url, archive)
@@ -110,6 +126,8 @@ def fetch(url: str, artefacts_root: Path) -> Path:
                        or ".." in PurePosixPath(entry).parts]
             if outside:
                 raise ValueError(f"{name} holds entries outside {version}/: {outside[:3]}")
+            if f"{version}/{METADATA_FILE}" not in opened.namelist():
+                raise ValueError(f"{name} holds no {version}/{METADATA_FILE}, so it is not an artefact version")
             opened.extractall(unpacked)
         (unpacked / version).rename(target)
     finally:

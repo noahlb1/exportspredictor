@@ -1,5 +1,9 @@
 """The release module at its boundary: pack an artefact version, fetch it back from a `file://` URL."""
 
+import hashlib
+import io
+import zipfile
+
 import pytest
 from conftest import FIXTURE_VERSION
 from fastapi.testclient import TestClient
@@ -16,16 +20,82 @@ def packed(fixture_artefacts_dir, tmp_path_factory):
     return release.pack(fixture_artefacts_dir, tmp_path_factory.mktemp("release"))
 
 
-def answers(root):
+def health_and_scenario_responses(root):
+    """The API's /health and Scenario responses when serving the artefacts under `root`."""
     with TestClient(create_app(root)) as client:
         return client.get("/health").json(), client.post("/scenarios", json=SCENARIO).json()
+
+
+def serve(folder, name, archive, checksum):
+    """A release asset `name` holding `archive` (bytes) beside a `.sha256` holding `checksum`: its URL."""
+    folder.mkdir()
+    (folder / name).write_bytes(archive)
+    (folder / f"{name}.sha256").write_text(checksum, encoding="utf-8")
+    return (folder / name).as_uri()
+
+
+def zipped(entries):
+    """A zip archive holding `entries` ({name: text}), as bytes."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, text in entries.items():
+            archive.writestr(name, text)
+    return buffer.getvalue()
 
 
 def test_a_fetched_release_serves_as_the_original_does(fixture_artefacts_dir, packed, tmp_path):
     fetched = release.fetch(packed.as_uri(), tmp_path)
 
     assert fetched == tmp_path / FIXTURE_VERSION
-    assert answers(tmp_path) == answers(fixture_artefacts_dir)
+    assert health_and_scenario_responses(tmp_path) == health_and_scenario_responses(fixture_artefacts_dir)
+
+
+@pytest.mark.parametrize("checksum", ["", "not-a-hash  x.zip\n"])
+def test_a_missing_or_malformed_checksum_fails_clearly_and_unpacks_nothing(packed, tmp_path, checksum):
+    url = serve(tmp_path / "served", packed.name, packed.read_bytes(), checksum)
+    root = tmp_path / "artefacts"
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        release.fetch(url, root)
+
+    assert not root.exists() or list(root.iterdir()) == []
+
+
+def test_an_archive_without_the_version_folder_fails_clearly_and_unpacks_nothing(tmp_path):
+    archive = zipped({f"{FIXTURE_VERSION}/notes.txt": "no metadata"})
+    url = serve(tmp_path / "served", f"{FIXTURE_VERSION}.zip", archive, hashlib.sha256(archive).hexdigest())
+    root = tmp_path / "artefacts"
+
+    with pytest.raises(ValueError, match=f"no {FIXTURE_VERSION}/metadata.json"):
+        release.fetch(url, root)
+
+    assert list(root.iterdir()) == []
+
+
+def test_a_url_that_is_not_a_release_asset_fails_clearly(tmp_path):
+    with pytest.raises(ValueError, match=r"\.zip"):
+        release.fetch((tmp_path / "20261125T171812Z.tar").as_uri(), tmp_path / "artefacts")
+
+
+def test_stale_staging_folders_from_an_interrupted_fetch_are_removed(packed, tmp_path):
+    stale = tmp_path / f".fetch-{FIXTURE_VERSION}-abc123"
+    stale.mkdir()
+    (stale / f"{FIXTURE_VERSION}.zip.part").write_bytes(b"half")
+
+    release.fetch(packed.as_uri(), tmp_path)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [FIXTURE_VERSION]
+
+
+def test_a_version_folder_without_metadata_is_not_reported_ready_and_is_kept(packed, tmp_path):
+    incomplete = tmp_path / FIXTURE_VERSION
+    incomplete.mkdir()
+    (incomplete / "baseline.parquet").write_bytes(b"partial")
+
+    with pytest.raises(FileExistsError, match="metadata.json"):
+        release.fetch(packed.as_uri(), tmp_path)
+
+    assert (incomplete / "baseline.parquet").read_bytes() == b"partial"
 
 
 def test_a_checksum_mismatch_fails_and_leaves_nothing_behind(packed, tmp_path):
@@ -42,31 +112,39 @@ def test_a_checksum_mismatch_fails_and_leaves_nothing_behind(packed, tmp_path):
     assert list(root.iterdir()) == []
 
 
-def test_a_version_already_present_is_skipped_and_others_are_untouched(packed, tmp_path):
-    other = tmp_path / "20200101T000000Z"
-    other.mkdir()
-    (other / "metadata.json").write_text("{}", encoding="utf-8")
+def test_a_version_already_present_is_skipped_without_downloading(packed, tmp_path):
     present = tmp_path / FIXTURE_VERSION
     present.mkdir()
-    (present / "marker").write_text("kept", encoding="utf-8")
+    (present / "metadata.json").write_text("kept", encoding="utf-8")
     # A URL with nothing behind it: fetching would fail, so passing shows nothing was downloaded.
     absent = (tmp_path / "nowhere" / packed.name).as_uri()
 
     assert release.fetch(absent, tmp_path) == present
-    assert (present / "marker").read_text(encoding="utf-8") == "kept"
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["20200101T000000Z", FIXTURE_VERSION]
-    assert (other / "metadata.json").read_text(encoding="utf-8") == "{}"
+    assert (present / "metadata.json").read_text(encoding="utf-8") == "kept"
 
 
-def test_fetch_leaves_other_versions_untouched(packed, tmp_path):
+@pytest.mark.parametrize("already_present", [False, True])
+def test_fetch_leaves_other_versions_untouched(packed, tmp_path, already_present):
     other = tmp_path / "20200101T000000Z"
     other.mkdir()
     (other / "metadata.json").write_text("{}", encoding="utf-8")
+    if already_present:
+        release.fetch(packed.as_uri(), tmp_path)
 
     release.fetch(packed.as_uri(), tmp_path)
 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["20200101T000000Z", FIXTURE_VERSION]
     assert (other / "metadata.json").read_text(encoding="utf-8") == "{}"
+
+
+def test_pack_leaves_no_zip_when_the_checksum_file_cannot_be_written(fixture_artefacts_dir, tmp_path):
+    # A folder where the checksum file goes: writing it fails.
+    (tmp_path / f"{FIXTURE_VERSION}.zip.sha256").mkdir()
+
+    with pytest.raises(OSError):
+        release.pack(fixture_artefacts_dir, tmp_path)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [f"{FIXTURE_VERSION}.zip.sha256"]
 
 
 def test_pack_refuses_an_archive_at_the_size_limit_and_writes_nothing(fixture_artefacts_dir, packed, tmp_path):

@@ -24,10 +24,10 @@ def writing(target: Path) -> Iterator[Path]:
     part = target.with_name(target.name + ".part")
     try:
         yield part
+        part.replace(target)
     except BaseException:
         part.unlink(missing_ok=True)
         raise
-    part.replace(target)
 
 
 def write_parquet(frame: pl.DataFrame, target: Path, **options) -> Path:
