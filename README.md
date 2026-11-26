@@ -72,7 +72,7 @@ The model underneath is v2's: it trains on the top 100 Exporters into every Mark
 | `pyproject.toml`, `uv.lock` | The environment. |
 | `UK_Exports_Predictor_presentation.pptx` | The presentation. |
 
-`data/` and `artefacts/` are not tracked: the fetch fills `artefacts/`, and the rebuild makes both.
+`data/` is not tracked, and `artefacts/` holds only a placeholder: the fetch fills `artefacts/`, and the rebuild makes both.
 
 ## Development with uv
 
@@ -171,6 +171,10 @@ Each command copies the newest version into a new one, from its saved fold model
 | `python -m exportspredictor.pipeline rerange` | The Potential Range, recomputed from the Baseline year's feature file. | A few minutes, CPU |
 | `python -m exportspredictor.pipeline recaveat` | The Caveat Tiers on the Baseline. Run it after adding a tier or changing a tier's table. | Seconds |
 | `python -m exportspredictor.pipeline rereach` | Format 3 becomes format 4, with Market Reach. | |
+
+### Serve a new version in the containers
+
+The API container mounts `./artefacts` read-only, so a new version needs only `podman compose restart api`. The API refuses a format-3 artefact: `python -m exportspredictor.pipeline rereach` upgrades it. After a code change, `podman compose up --build` rebuilds the image.
 
 ## Manual UI checklist
 
