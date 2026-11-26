@@ -108,6 +108,10 @@ _Avoid_: percentage gap, headroom ratio
 Every UK Product–Market pair ranked by Export Gap (or Relative Export Gap), with the Advisor's filters and a summary of the filtered pairs. It is the app's home page; Blocked Opportunities are listed on a page of their own, laid out the same way. Its pairs are shown By Market (the default), By Product, or in a Wide table, with the chosen pair's detail panel underneath.
 _Avoid_: top list, dashboard, league table
 
+**How the model works**:
+The app's last page, for a visitor learning ML: how the model is built, checked and served, each idea a one-sentence summary with layers beneath (what it is, why it is used, how it is done here).
+_Avoid_: methodology page, about page, how this works
+
 **Opportunity Type**:
 How far the UK already trades an Opportunity: **Expand** (the UK already exports the Product to this Market), **New Market** (the UK exports the Product, but not to this Market) or **New Product** (the UK exports the Product to no Market).
 _Avoid_: entry mode, opportunity status

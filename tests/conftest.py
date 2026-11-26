@@ -61,6 +61,22 @@ def open_page(monkeypatch):
     return open_
 
 
+@pytest.fixture
+def menu(monkeypatch) -> list:
+    """The pages the router passes to `st.navigation` on its latest run."""
+    import streamlit
+
+    declared = []
+    navigation = streamlit.navigation
+
+    def record(pages, *args, **kwargs):
+        declared[:] = pages
+        return navigation(pages, *args, **kwargs)
+
+    monkeypatch.setattr(streamlit, "navigation", record)
+    return declared
+
+
 @pytest.fixture(scope="session")
 def fixture_world():
     return build_world()

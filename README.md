@@ -121,7 +121,7 @@ The experiment loop (`python -m exportspredictor.loop`) caches its models in `da
 Run this before a release, against `podman compose up` with real artefacts, in a browser window 1280 px wide or wider (the app is designed for 1280 px and wider; phones are unsupported). Each item names its page and what to click. Tick each item.
 
 **UK Exports Predictor (every page)**
-- [ ] The menu lists four pages, Leaderboard, Blocked Opportunities, Scenario Builder and Model Evaluation, with no group headings, and the app opens on the Leaderboard.
+- [ ] The menu lists five pages, Leaderboard, Blocked Opportunities, Scenario Builder, Model Evaluation and How the model works, with no group headings, and the app opens on the Leaderboard.
 - [ ] The logo tile (a white container ship on a blue square) sits alone at the top of the sidebar, shows in a collapsed sidebar, and is the browser-tab icon.
 - [ ] The app follows the computer's light or dark mode: in light mode, near-black text on a light page with a sidebar that stands apart; in dark mode, light text on a warm near-black page. Check captions, charts and the info, warning and error boxes in both.
 - [ ] Click something slow (e.g. a filter on the real Leaderboard): after a short delay the logo's ship rides the waves in the middle of the page until the app is done.
@@ -216,3 +216,7 @@ Run this before a release, against `podman compose up` with real artefacts, in a
 - [ ] The known-limitations panel (the result limitations such as "Does not beat a naive ranking for UK pairs" when it does not, goods only, tariffs carried forward from 2021, Excluded Products, the top-100 Exporter scope, nominal US dollars, what the Potential Range assumes, associations not causes, provisional 2024, the 2012 edition, reporting quality, sanctions) renders, with no "no tariffs" entry.
 - [ ] The Lift section states how many times more often the largest Export Gaps grew, with a 95% interval, worded as a tendency, shows size-matched Lift next to raw Lift with the explanation that raw Lift mostly reflects pair size, and shows the growth share for each tenth of Export Gaps.
 - [ ] The Event Backtest shows, for EU exports to Japan and Japan's exports to the EU, a table of predicted against observed change per year, names the control Markets, says the Applied Tariff is 0 with the agreement on and the MFN rate with it off, and states the COVID caveat; the UK–Australia/New Zealand secondary check follows.
+
+**How the model works**
+- [ ] The page is last in the menu. Three headings (How the model is built, How the model is checked, What it produces and how it is served) each list their ideas in bold, with a one-sentence summary.
+- [ ] Under each idea of "How the model is built", three folded layers open: What it is, Why this project uses it, How it is done here. The boosting formula renders as maths. The page names no course notes and no ADR file.
