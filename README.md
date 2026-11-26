@@ -17,8 +17,8 @@ podman compose up               # or: docker compose up
 
 Then open <http://localhost:8501>. Stop with `Ctrl+C` or `podman compose down`.
 
-- **The fetch** downloads the artefact from the [`v1.0` release](https://github.com/noahlb1/exportspredictor/releases/tag/v1.0), checks its SHA-256 and unpacks it into `./artefacts`. It skips a version already there.
-- **By hand**, if the fetch fails: download `20261125T171812Z.zip` and `20261125T171812Z.zip.sha256` from the release page, run `sha256sum -c 20261125T171812Z.zip.sha256` (in PowerShell, compare `Get-FileHash 20261125T171812Z.zip` with the hash in the file), then unzip into `artefacts/`, which gives `artefacts/20261125T171812Z/`.
+- **The fetch** downloads the artefact from the [`v1.1` release](https://github.com/noahlb1/exportspredictor/releases/tag/v1.1), checks its SHA-256 and unpacks it into `./artefacts`. It skips a version already there.
+- **By hand**, if the fetch fails: download `20261126T204856Z.zip` and `20261126T204856Z.zip.sha256` from the release page, run `sha256sum -c 20261126T204856Z.zip.sha256` (in PowerShell, compare `Get-FileHash 20261126T204856Z.zip` with the hash in the file), then unzip into `artefacts/`, which gives `artefacts/20261126T204856Z/`.
 - **Timings**: `compose up` is ready in about 20 s once the image is built. On two cores of a Ryzen 5800X the API loads the artefact in 3.5 s, a Trading Bloc preset takes 2.4–3.6 s and a custom Scenario about 1 s.
 - **If the app says the API is unavailable**, check `podman compose logs api` and <http://localhost:8000/health>, which gives the reason. The API serves only the lexically newest folder in `./artefacts`, and only artefact format 4.
 - On Windows, if `podman compose` cannot connect after a reboot, run `podman machine start`.
@@ -27,30 +27,22 @@ Then open <http://localhost:8501>. Stop with `Ctrl+C` or `podman compose down`.
 
 ## The served model
 
-It is the **Blend** with **Market Reach**. Export Potential blends an XGBoost model (weight 0.7) with the Naive Baseline (weight 0.3) on the log scale, then scales every UK pair in a Market by how widely the UK already sells there (ADR 0010). An experiment loop chose it on the **Selection Measure**, how well it ranks Markets for each Product on held-out UK pairs in 2022, keeping a change only if it beat the Win Threshold (ADR 0008, [research note](docs/research/opportunity-ranking-experiments.md)).
+Export Potential blends an XGBoost model (weight 0.7) with the Naive Baseline (weight 0.3) on the log scale, then scales every UK pair in a Market by its **Market Reach**: how widely the UK already sells there (ADR 0010). Every choice was made on 2022, on the **Selection Measure**: how well the model ranks Markets for each Product on held-out UK pairs. A change was kept only if it beat the Win Threshold (ADR 0008, [research note](docs/research/opportunity-ranking-experiments.md)).
 
-**Results on 2023, read once**: how well each version ranks UK Markets, on the tie-proof measure.
+**Result on 2023, read once**: the model ranks UK Markets at 0.603 against the Naive Baseline's 0.514 (rank correlation with UK Actual Exports for a typical Product; 1 is a perfect ranking).
 
-| Version | UK ranking |
-| --- | --- |
-| Blend with Market Reach (served) | 0.600 |
-| Blend | 0.555 |
-| v1 | 0.540 |
-| Naive Baseline | 0.514 |
-| v2 | 0.511 |
-
-The cost is accuracy on size: its Tweedie deviance is higher than the Blend's and v2's, so trust rankings more than dollar values. Scenario Effects and Blocked Opportunity values are **Illustrative**: upper-end associations shown beside a PPML gravity benchmark and the Event Backtests, never forecasts.
+Scenario Effects and Blocked Opportunity values are **Illustrative**: upper-end associations shown beside a PPML gravity benchmark and the Event Backtests, never forecasts.
 
 **Known limitations**, also in the model card and on the Model Evaluation page:
 
-- **The 2023 figures were read on Market Reach's first form**, which let a Market's share exceed 1 (Test-year Ledger, fingerprint `a748777eac4b`). The served version carries the corrected form, chosen again on 2022 (ADR 0010, Amendment). That is a new Configuration Fingerprint, which has not read 2023 (ADR 0009); its figures come from the next frozen version's one read.
+- **It ranks UK Markets better than it sizes UK Flows.** On held-out UK pairs in 2023, its Tweedie deviance is 2,611, against 2,095 for the Naive Baseline (lower is better). Trust rankings more than dollar values.
 - **The Potential Range lies below Export Potential for small pairs** (under about $8k). Most comparable pairs of that size trade nothing, and Export Potential is an average that the few which do trade pull up.
 - **A Tariff part is not a tariff elasticity.** The model's response to a tariff is more a step than a slope, so removing a tariff of 1% or less can be associated with a rise of tens of percent (turbo-jets to China: +37%).
 - **Some Trade Agreements carry most-favoured-nation tariffs.** TRAINS records no preferential rates for some agreements in force, among them Canada's and Israel's, and none for UK goods under the UK–Türkiye agreement, so those pairs read as dutiable.
 
 The last three come from a review of the served outputs by a reader who had not seen the code.
 
-The model underneath is v2's: it trains on the top 100 Exporters into every Market, leaves out Excluded Products, uses the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. The notebook and the model card (`model_card.md` in the artefact folder) give the detail.
+The model trains on the top 100 Exporters into every Market, leaves out Excluded Products, uses the Applied Tariff, Relatedness and the re-export ratio as features, averages Export Gaps over the 2022–2024 Gap Period and gives each pair a Potential Range. The notebook and the model card (`model_card.md` in the artefact folder) give the detail; the [Model History](notebooks/model_history.ipynb) is the full record of how the model was reached.
 
 ## Repo map
 
@@ -58,7 +50,7 @@ The model underneath is v2's: it trains on the top 100 Exporters into every Mark
 
 | Path | What it holds |
 | --- | --- |
-| `notebooks/` | The write-up. |
+| `notebooks/` | The write-up, and the Model History. |
 | `src/` | The package, `exportspredictor`: data loading, features, training, evaluation, Scenarios and prediction. Its experiment loop is in `loop/`. |
 | `api/` | The FastAPI service over the saved artefacts. |
 | `app/` | The Streamlit app Advisors use. |
@@ -131,14 +123,14 @@ Every step runs as `python -m exportspredictor.<command>`. The steps are the lis
 | Feature ablation on 2022 (GPU) | `experiments ablation` | 2–4 minutes a model. Results in `derived/experiments_V202601/results.json`. |
 | Learning curve on 2022 (GPU) | `experiments curve` | Nine models, about half an hour. |
 | Hyperparameter search on 2022 (GPU, resumable, about 3 h) | `search` | Optuna TPE. The study is in `derived/search_V202601/study.sqlite3`. |
-| Experiment loop on 2022: noise (GPU, resumable) | `loop noise` | v2's configuration with three seeds on fold 0: the Noise Floor and the Win Threshold every later Arm must beat. |
+| Experiment loop on 2022: noise (GPU, resumable) | `loop noise` | The starting configuration with three seeds on fold 0: the Noise Floor and the Win Threshold every later Arm must beat. |
 | Experiment loop on 2022: naive (GPU, resumable) | `loop naive` | The blend with the Naive Baseline (weight chosen from 0.1 to 0.9) and the starting-point model. |
-| Experiment loop on 2022: select (GPU, resumable) | `loop select` | Five configurations from the saved search and v1, each with its own blend weight. |
+| Experiment loop on 2022: select (GPU, resumable) | `loop select` | Five configurations, from the saved search and the project's first model, each with its own blend weight. |
 | Experiment loop on 2022: two-part (GPU, resumable) | `loop two-part` | A binary model of any Flow times a size model on non-zero Flows. |
 | Experiment loop on 2022: scope (GPU, resumable) | `loop scope` | UK Zero Cells sampled like other Exporters', then a 2% zero rate. |
 | Experiment loop on 2022: product-detail (GPU, resumable) | `loop product-detail` | Three Product-level features, each added on its own. |
 | Experiment loop on 2022: constraints (GPU, resumable) | `loop constraints` | The best Arm without the monotone constraints. |
-| Five-fold confirmation of the loop's best form on 2022 (GPU, resumable, about 1 h) | `loop confirm` | The best Arm against v2 on every held-out UK pair of five folds. |
+| Five-fold confirmation of the loop's best form on 2022 (GPU, resumable, about 1 h) | `loop confirm` | The best Arm beside the model alone, on every held-out UK pair of five folds. |
 
 Every Arm of the loop is judged on the Selection Measure. Its results are in `derived/loop_V202601/results.json` and its models are cached beside them in `models` (about 9.5 GB). Keep `results.json` and `confirmation/`: the notebook and the pipeline read them. The loop's package docstring says how to add an Arm.
 
@@ -153,14 +145,13 @@ Every Arm of the loop is judged on the Selection Measure. Its results are in `de
 ### The pipeline step
 
 - **It reads 2023.** Before evaluating, it records the read in the Test-year Ledger, which may refuse it (the test-year rule in the [modelling guardrails](CODING_STANDARDS.md#modelling-guardrails)). Commit the ledger with the run.
-- **Three parts run only when asked for**: `--event-backtests` (Lift included), `--constraint-comparison` and `--gain-ladder`, or `--every-part` for all three (about two more hours). The Model Evaluation page and the model card show a skipped part as not run.
-- `python -m exportspredictor.pipeline compare` adds the v1 comparison with its gain ladder to a copy of the newest version, which must hold the Event Backtests.
+- **Three parts run only when asked for**: `--event-backtests` (Lift included), `--constraint-comparison` and `--ppml-benchmark`. The Model Evaluation page and the model card show a skipped part as not run.
+- **History-only commands** are in the Model History's [Reproduce this record](notebooks/model_history.ipynb).
 
 ### Outside the script
 
 - **The notebooks' outputs**: `uv run python scripts/rebuild.py --only notebook` (or `--only history` for the Model History) is the one way to refresh them. Rerun it after any edit to the notebook.
 - **The PPML gravity benchmark**: `python -m exportspredictor.ppml` derives a new version from the newest one, with the benchmark saved beside it and the model card rewritten (about 25 minutes on the CPU; no training, and the 2023 Flows are not read).
-- **The final round's experiments** were run once and every idea was dropped, so the served model does not depend on them. The notebook reads their saved results; [docs/research/final-round-2022.md](docs/research/final-round-2022.md) records each command.
 
 ### Change an artefact without retraining
 

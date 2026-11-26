@@ -66,6 +66,16 @@ def _page(path: str | None) -> Callable[[], str]:
     return collect
 
 
+def _readme() -> str:
+    """The README outside its reproduction section, which is part of the record (ADR 0013)."""
+    text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    sections = text.split(SECTION_BREAK)
+    return SECTION_BREAK.join(section for section in sections if section.splitlines()[0] != README_RECORD_SECTION)
+
+
+SECTION_BREAK = "\n## "
+README_RECORD_SECTION = "Rebuild the data and artefacts"
+
 APP_PAGES = {
     "Leaderboard": None,
     "Blocked Opportunities": "pages/blocked_opportunities.py",
@@ -76,6 +86,7 @@ APP_PAGES = {
 
 # Enrolment point: (surface name, collector returning its text).
 SURFACES: list[tuple[str, Callable[[], str]]] = [
+    ("README outside its reproduction section", _readme),
     ("model card", _model_card),
     ("main notebook", _main_notebook),
     ("API /evaluation", _api("/evaluation")),
@@ -146,3 +157,9 @@ def test_a_notebook_s_text_is_its_prose_and_what_its_outputs_show():
 def test_history_phrases_are_found_across_case_plurals_and_line_breaks():
     text = "Beside Earlier versions, a frozen\nversion, its first form and the Arm against the model alone."
     assert banned_terms(text) == ["Earlier versions", "frozen\nversion", "first form", "Arm against"]
+
+
+def test_the_readme_surface_leaves_out_only_the_reproduction_section():
+    readme = _readme()
+    assert "## The served model" in readme and "## Run the app" in readme and "## Repo map" in readme
+    assert "## Rebuild the data and artefacts" not in readme and "loop confirm" not in readme
