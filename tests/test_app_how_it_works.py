@@ -74,6 +74,17 @@ def test_how_the_model_is_built_is_written_at_every_layer(open_page, fixture_api
         assert fact in text, fact
 
 
+def test_what_it_produces_and_how_it_is_served_is_written_at_every_layer(open_page, fixture_api_url):
+    app = _open(open_page, fixture_api_url)
+    served = len(OUTLINE["What it produces and how it is served"])
+
+    labels = [expander.label for expander in app.expander]
+    assert labels[-served * len(LAYERS) :] == LAYERS * served
+    text = " ".join(m.value for expander in app.expander[-served * len(LAYERS) :] for m in expander.markdown)
+    for fact in ("80%", "other Exporters", "year before", "PPML", "policy features", "FastAPI", "Streamlit", "uv"):
+        assert fact in text, fact
+
+
 def test_every_layer_opens_and_is_short(open_page, fixture_api_url):
     app = _open(open_page, fixture_api_url)
 

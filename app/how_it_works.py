@@ -136,15 +136,124 @@ CHECKED = Section(
 SERVED = Section(
     "What it produces and how it is served",
     (
-        Idea("The Potential Range", "Each Export Potential comes with the range Actual Exports of comparable pairs "
-             "fall in 80% of the time."),
-        Idea("Market Reach", "Export Potential is scaled by how widely the UK already sells across each Market."),
-        Idea("The gravity-model benchmark", "A classic trade-economics regression is fitted beside the model as a "
-             "check on its Scenario Effects."),
-        Idea("Scenarios as re-prediction", "A Scenario changes only the policy features and asks the same model "
-             "again."),
-        Idea("From data to app", "Polars builds the data, FastAPI serves the model and Streamlit shows it, each in a "
-             "container."),
+        Idea(
+            "The Potential Range",
+            "Each Export Potential comes with the range Actual Exports of comparable pairs fall in 80% of the time.",
+            what=(
+                "An 80% prediction interval for a pair's Actual Exports, built by conformal prediction: look at how "
+                "far real outcomes landed from comparable predictions, and take the 10th and 90th percentiles of "
+                "those misses. It describes how much comparable pairs vary, not how precisely Export Potential is "
+                "known."
+            ),
+            why=(
+                "A UK pair's miss is its Export Gap with the sign flipped. Calibrating on UK misses would only "
+                "measure a typical UK gap, and every gap would look normal. So the range is calibrated on other "
+                "Exporters, whose misses are honestly out of sample. An Opportunity whose Actual Exports lie inside "
+                "its range is an Uncertain Opportunity: still ranked, but within normal variation."
+            ),
+            how=(
+                "- Calibration rows: other Exporters' Flows and Zero Cells in the Baseline year, which no fold model "
+                "trained on.\n"
+                "- Misses on the log scale, so each range is a ratio of Export Potential:\n\n"
+                r"$$\log(1 + \text{Actual Exports}) - \log(1 + \text{Export Potential})$$"
+                "\n\n"
+                "- Calibrated separately in 20 bands by size of Export Potential, the widest split at decade edges.\n"
+                "- Coverage is checked on a held-out half of the calibration rows, split by Exporter."
+            ),
+        ),
+        Idea(
+            "Market Reach",
+            "Export Potential is scaled by how widely the UK already sells across each Market.",
+            what=(
+                "For each Market: of the Products it imports from other Exporters, the share the UK sends there too, "
+                "against the UK's share across all Markets. That gives an offset per Market, and"
+                "\n\n"
+                r"$$\text{Export Potential} \times e^{4 \cdot \text{offset}} \times c$$"
+                "\n\nwhere $c$ keeps the UK's total Export Potential unchanged."
+            ),
+            why=(
+                "Most of the ranking's errors lay in which Markets get any UK trade at all, and the model did not "
+                "know where the UK already sells. With Market Reach, an Export Gap is specific to the Product within "
+                "its Market; the Market-wide part shows as the Market's reach. The model associates broad UK reach "
+                "with higher Export Potential; reach is not shown to drive exports."
+            ),
+            how=(
+                "- Applied after the model, not as a feature: no fold model trains on it, so every feature stays "
+                "leave-one-out.\n"
+                "- Each pair's offsets come only from pairs in other folds, in the year before, so none of its own "
+                "Flows enters them.\n"
+                "- The strength, 4, was chosen on the ranking measure in the validation year.\n"
+                "- Other Exporters' rows, including the Potential Range's calibration rows, get no Market Reach."
+            ),
+        ),
+        Idea(
+            "The gravity-model benchmark",
+            "A classic trade-economics regression is fitted beside the model as a check on its Scenario Effects.",
+            what=(
+                "A gravity regression, the economist's standard tool for trade, estimated by Poisson pseudo-maximum "
+                "likelihood (PPML):\n\n"
+                r"$$\text{Flow}_{eist} = \exp(a_{est} + b_{ist} + c_{eis} + \beta \cdot \text{Agreement}_{eit})$$"
+                "\n\nfor Exporter $e$, Importer $i$, Sector $s$ and year $t$; $e^{\\beta} - 1$ is the change in "
+                "Flows it associates with a Trade Agreement."
+            ),
+            why=(
+                "The model learns its Trade Agreement association from patterns, and the monotone constraint pushes "
+                "it one way. The benchmark checks its size against an independent, established method. It is not "
+                "served instead: it works at Sector level, with no HS6 detail, and a held-out pair has no pair term "
+                "to predict with."
+            ),
+            how=(
+                "- Flows summed to Sector level, at three-year intervals so trade has time to adjust.\n"
+                "- Fixed effects for Exporter-year, Importer-year and each pair, within each Sector, so only pairs "
+                "whose agreement status changes identify the effect.\n"
+                "- Errors clustered by Exporter–Importer pair; fitted once and saved with the model.\n"
+                "- Shown beside every Scenario Effect, with published estimates and the Event Backtest."
+            ),
+        ),
+        Idea(
+            "Scenarios as re-prediction",
+            "A Scenario changes only the policy features and asks the same model again.",
+            what=(
+                "A Scenario is a hypothetical policy change: joining a Trading Bloc, adding or removing Trade "
+                "Agreements, or changing a tariff. The model scores the Baseline year with the change applied, and "
+                "the Scenario Effect is the difference from the Baseline."
+            ),
+            why=(
+                "Changing only policy features keeps every other fact fixed, so the effect isolates what the model "
+                "associates with the policy. It is an association learned from past trade, not a measured result of "
+                "any deal, so every Scenario Effect is labelled Illustrative and shown beside its benchmarks."
+            ),
+            how=(
+                "- Copies the affected Markets' UK rows, changes only the policy columns, and checks nothing else "
+                "moved.\n"
+                "- Each pair is re-predicted by its own fold model, through the same prediction function.\n"
+                "- Adding a Trade Agreement sets a known tariff to 0; tariffs are clipped to the training range.\n"
+                "- The Naive Baseline has no policy features, so only the model's share of the Blend moves.\n"
+                "- Blocked Opportunity values are this Scenario, precomputed for every pair without an agreement."
+            ),
+        ),
+        Idea(
+            "From data to app",
+            "Polars builds the data, FastAPI serves the model and Streamlit shows it, each in a container.",
+            what=(
+                "Four layers: a Python package that builds features, trains and predicts; saved artefacts (the fold "
+                "models and precomputed tables); a FastAPI service that loads them; and a Streamlit app that "
+                "Advisors use."
+            ),
+            why=(
+                "Training and serving import the same package, so features are computed identically in both; a "
+                "copy in the API would drift. The app talks to the model only through the API, so it holds no "
+                "model logic. Containers and locked dependencies let anyone run the same stack with one command."
+            ),
+            how=(
+                "- Polars scans Parquet files lazily, so the full trade data never sits in memory at once.\n"
+                "- The API loads the newest artefact at startup, serves rankings from precomputed tables and "
+                "re-predicts Scenarios on the processor.\n"
+                "- The app calls the API over HTTP.\n"
+                "- One container image serves both, started together by a compose file.\n"
+                "- uv manages Python and pins every dependency in a lock file."
+            ),
+        ),
     ),
 )
 
