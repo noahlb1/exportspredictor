@@ -19,6 +19,7 @@ Command line:
 Fetch reads the public download URL over HTTPS: no `gh`, no token.
 """
 
+import argparse
 import re
 import shutil
 import tempfile
@@ -29,6 +30,7 @@ from urllib.parse import unquote, urlparse
 
 from exportspredictor import downloads
 from exportspredictor.artefacts import METADATA_FILE, latest_folder
+from exportspredictor.paths import artefacts_dir, data_dir
 
 TAG = "v1.0"
 REPOSITORY = "noahlb1/exportspredictor"
@@ -45,6 +47,11 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 def asset_name(version: str) -> str:
     """The release asset holding artefact `version`."""
     return version + ASSET_SUFFIX
+
+
+def checksum_name(version: str) -> str:
+    """The release asset holding the SHA-256 of `asset_name(version)`."""
+    return asset_name(version) + CHECKSUM_SUFFIX
 
 
 RELEASE_URL = f"https://github.com/{REPOSITORY}/releases/download/{TAG}/{asset_name(RELEASED_VERSION)}"
@@ -74,10 +81,11 @@ def pack(
             raise ValueError(
                 f"{target.name} would be {size:,} bytes, over the {max_bytes:,}-byte limit on a release asset"
             )
-    checksum = target.with_name(target.name + CHECKSUM_SUFFIX)
+    checksum = target.with_name(checksum_name(folder.name))
     try:
         with downloads.writing(checksum) as part:
-            part.write_text(f"{downloads.sha256(target)}  {target.name}\n", encoding="utf-8")
+            # Bytes, so Windows writes no `\r`, which `sha256sum -c` would read as part of the name.
+            part.write_bytes(f"{downloads.sha256(target)}  {target.name}\n".encode("ascii"))
     except BaseException:
         target.unlink(missing_ok=True)  # a zip without its checksum file is no release
         raise
@@ -89,15 +97,15 @@ def fetch(url: str, artefacts_root: Path) -> Path:
 
     A version already under `artefacts_root` is skipped without downloading; no other version is touched.
     The version appears only once complete: the zip downloads to a temporary folder (through a `.part`
-    file), unpacks there, and is renamed into place. Temporary folders left by an interrupted fetch are
-    removed first. Returns the version folder."""
+    file), unpacks there, and is renamed into place. Temporary folders left by an interrupted fetch of the
+    same version are removed first. Returns the version folder."""
     root = Path(artefacts_root)
     name = PurePosixPath(unquote(urlparse(url).path)).name
     if not name.endswith(ASSET_SUFFIX) or name == ASSET_SUFFIX:
         raise ValueError(f"{url} is not a release asset: its name must be <version>{ASSET_SUFFIX}")
     version = name.removesuffix(ASSET_SUFFIX)
     target = root / version
-    for stale in root.glob(f"{_STAGING_PREFIX}*") if root.is_dir() else []:
+    for stale in root.glob(f"{_STAGING_PREFIX}{version}-*") if root.is_dir() else []:
         shutil.rmtree(stale, ignore_errors=True)
     if (target / METADATA_FILE).exists():
         return target
@@ -105,10 +113,10 @@ def fetch(url: str, artefacts_root: Path) -> Path:
         raise FileExistsError(
             f"{target} exists without {METADATA_FILE}, so it is incomplete. Move or delete it, then fetch again."
         )
-    published = downloads.fetch(url + CHECKSUM_SUFFIX).decode("utf-8").split()
+    published = downloads.fetch(url + CHECKSUM_SUFFIX).decode("utf-8").split()  # any line ending
     expected = published[0] if published else ""
     if not _SHA256.fullmatch(expected):
-        raise ValueError(f"{name}{CHECKSUM_SUFFIX} holds no SHA-256 (got {expected[:20]!r}). Nothing was fetched.")
+        raise ValueError(f"{checksum_name(version)} holds no SHA-256 (got {expected[:20]!r}). Nothing was fetched.")
     root.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f"{_STAGING_PREFIX}{version}-", dir=root))
     try:
@@ -122,12 +130,7 @@ def fetch(url: str, artefacts_root: Path) -> Path:
             )
         unpacked = staging / "unpacked"
         with zipfile.ZipFile(archive) as opened:
-            outside = [entry for entry in opened.namelist() if PurePosixPath(entry).parts[0] != version
-                       or ".." in PurePosixPath(entry).parts]
-            if outside:
-                raise ValueError(f"{name} holds entries outside {version}/: {outside[:3]}")
-            if f"{version}/{METADATA_FILE}" not in opened.namelist():
-                raise ValueError(f"{name} holds no {version}/{METADATA_FILE}, so it is not an artefact version")
+            _check_entries(opened.namelist(), name, version)
             opened.extractall(unpacked)
         (unpacked / version).rename(target)
     finally:
@@ -135,12 +138,17 @@ def fetch(url: str, artefacts_root: Path) -> Path:
     return target
 
 
+def _check_entries(entries: list[str], name: str, version: str) -> None:
+    """Refuse archive `name` unless every entry is under `<version>/` and it holds the version's metadata."""
+    outside = [entry for entry in entries if (parts := PurePosixPath(entry).parts)[0] != version or ".." in parts]
+    if outside:
+        raise ValueError(f"{name} holds entries outside {version}/: {outside[:3]}")
+    if f"{version}/{METADATA_FILE}" not in entries:
+        raise ValueError(f"{name} holds no {version}/{METADATA_FILE}, so it is not an artefact version")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """`python -m exportspredictor.release pack|fetch`: see the module docstring."""
-    import argparse
-
-    from exportspredictor.paths import artefacts_dir, data_dir
-
     parser = argparse.ArgumentParser(prog="python -m exportspredictor.release", description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     pack_command = commands.add_parser("pack", help="zip an artefact version and write its checksum file")
@@ -151,9 +159,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "pack":
         zip_path = pack(artefacts_dir(), args.out or data_dir() / "release", version=args.version)
-        print(f"Wrote {zip_path} and {zip_path.name}{CHECKSUM_SUFFIX}")
+        print(f"Wrote {zip_path} and {checksum_name(zip_path.stem)}")
     else:
-        print(f"Artefact version ready: {fetch(args.url, artefacts_dir())}")
+        fetched = fetch(args.url, artefacts_dir())
+        print(f"Artefact version ready: {fetched}")
+        served = latest_folder(artefacts_dir())
+        if served != fetched:
+            print(f"Note: the API will serve the newer {served.name} instead.")
 
 
 if __name__ == "__main__":

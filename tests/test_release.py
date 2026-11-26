@@ -10,6 +10,9 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from exportspredictor import release
+from exportspredictor.artefacts import METADATA_FILE
+from exportspredictor.downloads import sha256
+from exportspredictor.release import CHECKSUM_SUFFIX
 
 SCENARIO = {"add_agreements": ["IND"]}
 
@@ -30,7 +33,7 @@ def serve(folder, name, archive, checksum):
     """A release asset `name` holding `archive` (bytes) beside a `.sha256` holding `checksum`: its URL."""
     folder.mkdir()
     (folder / name).write_bytes(archive)
-    (folder / f"{name}.sha256").write_text(checksum, encoding="utf-8")
+    (folder / (name + CHECKSUM_SUFFIX)).write_bytes(checksum.encode("utf-8"))
     return (folder / name).as_uri()
 
 
@@ -66,7 +69,7 @@ def test_an_archive_without_the_version_folder_fails_clearly_and_unpacks_nothing
     url = serve(tmp_path / "served", f"{FIXTURE_VERSION}.zip", archive, hashlib.sha256(archive).hexdigest())
     root = tmp_path / "artefacts"
 
-    with pytest.raises(ValueError, match=f"no {FIXTURE_VERSION}/metadata.json"):
+    with pytest.raises(ValueError, match=f"no {FIXTURE_VERSION}/{METADATA_FILE}"):
         release.fetch(url, root)
 
     assert list(root.iterdir()) == []
@@ -92,7 +95,7 @@ def test_a_version_folder_without_metadata_is_not_reported_ready_and_is_kept(pac
     incomplete.mkdir()
     (incomplete / "baseline.parquet").write_bytes(b"partial")
 
-    with pytest.raises(FileExistsError, match="metadata.json"):
+    with pytest.raises(FileExistsError, match=METADATA_FILE):
         release.fetch(packed.as_uri(), tmp_path)
 
     assert (incomplete / "baseline.parquet").read_bytes() == b"partial"
@@ -103,7 +106,8 @@ def test_a_checksum_mismatch_fails_and_leaves_nothing_behind(packed, tmp_path):
     served.mkdir()
     altered = served / packed.name
     altered.write_bytes(packed.read_bytes() + b"tail")
-    (served / f"{packed.name}.sha256").write_bytes((packed.parent / f"{packed.name}.sha256").read_bytes())
+    checksum = packed.name + CHECKSUM_SUFFIX
+    (served / checksum).write_bytes((packed.parent / checksum).read_bytes())
     root = tmp_path / "artefacts"
 
     with pytest.raises(release.ChecksumMismatch, match="not the published"):
@@ -115,36 +119,36 @@ def test_a_checksum_mismatch_fails_and_leaves_nothing_behind(packed, tmp_path):
 def test_a_version_already_present_is_skipped_without_downloading(packed, tmp_path):
     present = tmp_path / FIXTURE_VERSION
     present.mkdir()
-    (present / "metadata.json").write_text("kept", encoding="utf-8")
+    (present / METADATA_FILE).write_text("kept", encoding="utf-8")
     # A URL with nothing behind it: fetching would fail, so passing shows nothing was downloaded.
     absent = (tmp_path / "nowhere" / packed.name).as_uri()
 
     assert release.fetch(absent, tmp_path) == present
-    assert (present / "metadata.json").read_text(encoding="utf-8") == "kept"
+    assert (present / METADATA_FILE).read_text(encoding="utf-8") == "kept"
 
 
 @pytest.mark.parametrize("already_present", [False, True])
 def test_fetch_leaves_other_versions_untouched(packed, tmp_path, already_present):
     other = tmp_path / "20200101T000000Z"
     other.mkdir()
-    (other / "metadata.json").write_text("{}", encoding="utf-8")
+    (other / METADATA_FILE).write_text("{}", encoding="utf-8")
     if already_present:
         release.fetch(packed.as_uri(), tmp_path)
 
     release.fetch(packed.as_uri(), tmp_path)
 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["20200101T000000Z", FIXTURE_VERSION]
-    assert (other / "metadata.json").read_text(encoding="utf-8") == "{}"
+    assert (other / METADATA_FILE).read_text(encoding="utf-8") == "{}"
 
 
 def test_pack_leaves_no_zip_when_the_checksum_file_cannot_be_written(fixture_artefacts_dir, tmp_path):
     # A folder where the checksum file goes: writing it fails.
-    (tmp_path / f"{FIXTURE_VERSION}.zip.sha256").mkdir()
+    (tmp_path / release.checksum_name(FIXTURE_VERSION)).mkdir()
 
     with pytest.raises(OSError):
         release.pack(fixture_artefacts_dir, tmp_path)
 
-    assert sorted(p.name for p in tmp_path.iterdir()) == [f"{FIXTURE_VERSION}.zip.sha256"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [release.checksum_name(FIXTURE_VERSION)]
 
 
 def test_pack_refuses_an_archive_at_the_size_limit_and_writes_nothing(fixture_artefacts_dir, packed, tmp_path):
@@ -154,12 +158,28 @@ def test_pack_refuses_an_archive_at_the_size_limit_and_writes_nothing(fixture_ar
     assert list(tmp_path.iterdir()) == []
 
 
-def test_the_checksum_file_names_the_zip_as_sha256sum_writes_it(packed):
-    from exportspredictor.downloads import sha256
+def test_the_checksum_file_names_the_zip_as_sha256sum_writes_it_with_a_bare_newline(packed):
+    # Raw bytes: a text read turns `\r\n` into `\n` and hides it, and `sha256sum -c` rejects the `\r`.
+    written = (packed.parent / release.checksum_name(FIXTURE_VERSION)).read_bytes()
 
-    line = (packed.parent / f"{packed.name}.sha256").read_text(encoding="utf-8")
+    assert written == f"{sha256(packed)}  {FIXTURE_VERSION}.zip\n".encode("ascii")
 
-    assert line == f"{sha256(packed)}  {FIXTURE_VERSION}.zip\n"
+
+def test_a_checksum_file_with_windows_line_endings_is_accepted(packed, tmp_path):
+    root = tmp_path / "artefacts"
+    url = serve(tmp_path / "served", packed.name, packed.read_bytes(), f"{sha256(packed)}  {packed.name}\r\n")
+
+    assert release.fetch(url, root) == root / FIXTURE_VERSION
+
+
+def test_stale_staging_folders_of_another_version_are_left_alone(packed, tmp_path):
+    # A concurrent fetch of another version may be using it.
+    other = tmp_path / ".fetch-20200101T000000Z-abc123"
+    other.mkdir()
+
+    release.fetch(packed.as_uri(), tmp_path)
+
+    assert other.is_dir()
 
 
 def test_pack_names_a_version(fixture_artefacts, tmp_path):
@@ -182,8 +202,19 @@ def test_the_command_line_packs_and_fetches(fixture_artefacts_dir, tmp_path, mon
     monkeypatch.setenv("EXPORTSPREDICTOR_ARTEFACTS_DIR", str(tmp_path / "artefacts"))
     release.main(["fetch", "--url", zip_path.as_uri()])
 
-    assert (tmp_path / "artefacts" / FIXTURE_VERSION / "metadata.json").exists()
+    assert (tmp_path / "artefacts" / FIXTURE_VERSION / METADATA_FILE).exists()
     assert "Artefact version ready" in capsys.readouterr().out
+
+
+def test_the_command_line_says_when_a_newer_version_will_be_served_instead(packed, tmp_path, monkeypatch, capsys):
+    newer = tmp_path / "zz-newer"
+    newer.mkdir()
+    (newer / METADATA_FILE).write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("EXPORTSPREDICTOR_ARTEFACTS_DIR", str(tmp_path))
+
+    release.main(["fetch", "--url", packed.as_uri()])
+
+    assert "the API will serve the newer zz-newer instead" in capsys.readouterr().out
 
 
 def test_the_default_url_is_the_pinned_release():
