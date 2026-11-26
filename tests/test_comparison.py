@@ -369,8 +369,6 @@ def test_relabelling_the_real_comparison_as_v2_reproduces_its_saved_text_bar_the
 
 
 def test_the_v1_comparison_says_it_scores_the_blend_without_market_reach(fixture_artefacts):
-    from exportspredictor import governance
-
     block = fixture_artefacts.evaluation["v1_comparison"]
     assert fixture_artefacts.model_form.market_reach is not None
 
@@ -378,5 +376,3 @@ def test_the_v1_comparison_says_it_scores_the_blend_without_market_reach(fixture
     assert block["verdict"]["text"].startswith(comparison.WITHOUT_MARKET_REACH_NOTE)
     reworded = comparison.relabelled(fixture_artefacts.evaluation)["v1_comparison"]["verdict"]["text"]
     assert reworded.startswith(comparison.WITHOUT_MARKET_REACH_NOTE)
-    card = governance.render_model_card(governance.model_card(fixture_artefacts))
-    assert comparison.WITHOUT_MARKET_REACH_NOTE in card

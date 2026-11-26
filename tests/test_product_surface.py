@@ -7,10 +7,32 @@ surface's text as a reader or client sees it, built on the fixture.
 
 from collections.abc import Callable
 
+import pytest
+
+from exportspredictor import governance
 from exportspredictor.product_surface import banned_terms
 
+_REQUEST: dict[str, pytest.FixtureRequest] = {}
+
+
+@pytest.fixture(autouse=True)
+def _fixture_request(request):
+    _REQUEST["now"] = request
+
+
+def fixture(name: str):
+    """A conftest fixture's value, for a collector: `fixture("fixture_artefacts")`."""
+    return _REQUEST["now"].getfixturevalue(name)
+
+
+def _model_card() -> str:
+    return governance.render_model_card(governance.model_card(fixture("fixture_artefacts")))
+
+
 # Enrolment point: (surface name, collector returning its text).
-SURFACES: list[tuple[str, Callable[[], str]]] = []
+SURFACES: list[tuple[str, Callable[[], str]]] = [
+    ("model card", _model_card),
+]
 
 
 def history_terms_on(surfaces: list[tuple[str, Callable[[], str]]]) -> dict[str, list[str]]:
@@ -34,6 +56,12 @@ def test_version_names_are_found_as_words_and_in_identifiers():
 
 def test_the_release_tag_and_ordinary_words_pass():
     assert banned_terms("release v1.0; the artefact_version, version 3, uv run, nv2x, prev2") == []
+
+
+def test_data_source_release_names_pass():
+    text = "BACI HS12 V202601, CEPII Gravity V202211, Open Government Licence v3.0"
+    assert banned_terms(text) == []
+    assert banned_terms("Licence v3.0 aside, v3.0 is a version") == ["v3.0"]
 
 
 def test_a_dotted_name_that_is_not_a_release_tag_is_found():

@@ -63,7 +63,7 @@ def test_the_model_card_labels_the_nine_decisions_as_seven_experiments(fixture_a
 
     text = governance.render_model_card(governance.model_card(bundle))
 
-    section = text.split("\n## How the Model Form was chosen\n", 1)[1].split("\n## ", 1)[0]
+    section = text.split("\n## Alternatives considered on 2022\n", 1)[1].split("\n## ", 1)[0]
     assert "9 decisions for 7 experiments" in section
     assert "| 1–2. Naive Baseline | blend |" in section
     assert "| naive baseline |" not in section

@@ -553,6 +553,41 @@ def test_a_ranking_well_above_the_naive_baseline_is_not_called_slightly_better()
     assert "dollar values with more caution than rankings" in text
 
 
+def _sized_report(model_deviance=2610.84, naive_deviance=2094.91, ranking=(0.603, 0.514)):
+    """The served artefact's shape: it ranks UK Markets better than the Naive Baseline and sizes UK Flows worse."""
+    overall = {"model_tweedie_deviance": model_deviance, "naive_tweedie_deviance": naive_deviance}
+    return {**_headline_report(*ranking), "test_year": 2023, "accuracy": {"uk_out_of_fold": {"overall": overall}}}
+
+
+def test_the_sizing_limitation_gives_the_uk_deviance_beside_the_naive_baseline_s():
+    sizing = evaluation.sizing_limitation(_sized_report())
+
+    assert (sizing["model_tweedie_deviance"], sizing["naive_tweedie_deviance"]) == (2610.84, 2094.91)
+    assert sizing["title"] == "Ranks UK Markets better than it sizes UK Flows"
+    assert "2,611" in sizing["text"] and "2,095" in sizing["text"] and "2023" in sizing["text"]
+    assert "held-out UK pairs" in sizing["text"]
+    assert sizing["text"].endswith("Trust rankings more than dollar values.")
+
+
+def test_no_sizing_limitation_when_the_model_sizes_uk_flows_no_worse_than_the_naive_baseline():
+    assert evaluation.sizing_limitation(_sized_report(2000.0, 2094.91)) is None
+    assert evaluation.sizing_limitation(_headline_report()) is None  # no UK accuracy recorded
+
+
+def test_a_model_that_also_ranks_worse_is_not_said_to_rank_better():
+    sizing = evaluation.sizing_limitation(_sized_report(ranking=(0.50, 0.51)))
+
+    assert sizing["title"] == "Sizes UK Flows less well than the Naive Baseline"
+
+
+def test_the_sizing_limitation_leads_and_replaces_the_ranking_trade_off():
+    limits = evaluation.result_limitations({"model_form": {"form": "blend", "naive_weight": 0.3}}, _sized_report())
+
+    assert limits[0]["title"] == "Ranks UK Markets better than it sizes UK Flows"
+    assert "Ranks Markets better than it sizes them" not in {x["title"] for x in limits}
+    assert not any("more caution than rankings" in x["text"] for x in limits)  # said once, by the sizing limitation
+
+
 def test_the_model_alone_s_ranking_limitation_still_says_its_value_is_in_the_size():
     limits = evaluation.result_limitations({}, _headline_report())
 

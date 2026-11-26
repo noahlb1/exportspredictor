@@ -41,7 +41,7 @@ Both paths run the same steps (`_train_and_score`), so the fixture tests what re
 `build_artefacts(world)` runs this on the fixture world (CPU, seconds).
 `build_real_artefacts()` runs it on the per-year feature files of `features.build()`
 (GPU); `uv run python -m exportspredictor.pipeline` runs it and saves the artefact folder.
-`... pipeline refresh` copies the newest version with fresh metadata (`refresh`), `... pipeline rerange`
+`... pipeline refresh` copies the newest version with fresh metadata and model card (`save_refreshed`), `... pipeline rerange`
 copies it with its Potential Range recomputed (`rerange`), and `--help` lists both.
 """
 
@@ -1522,6 +1522,18 @@ def refresh(bundle: Artefacts, *, version: str | None = None, data_root: Path | 
     return replace(bundle, metadata=metadata)
 
 
+def save_refreshed(source: Path, root: Path, *, data_root: Path | None = None) -> Path:
+    """Save `refresh` of the version in `source` as a new folder under `root`, copied file for file so files this step
+    does not know about survive, with its model card written again under the new folder's own Artefact ID."""
+    from exportspredictor import artefacts
+
+    bundle = refresh(artefacts.load(source), data_root=data_root)
+    print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "sources")}), flush=True)
+    folder = artefacts.copy_version(source, root, metadata=bundle.metadata)
+    governance.write_model_card(artefacts.load(folder), folder)
+    return folder
+
+
 def recaveat(
     bundle: Artefacts,
     *,
@@ -1828,11 +1840,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(add_v1_comparison(test_year_ledger=test_year_ledger), flush=True)
         return
     if list(argv) == ["refresh"]:
-        source = artefacts.latest_folder(artefacts_dir())
-        bundle = refresh(artefacts.load(source))
-        print(json.dumps({k: bundle.metadata[k] for k in ("version", "refreshed_from", "sources")}), flush=True)
-        # Copied file for file, so files this step does not know about (e.g. the model card) survive.
-        print(artefacts.copy_version(source, artefacts_dir(), metadata=bundle.metadata), flush=True)
+        print(save_refreshed(artefacts.latest_folder(artefacts_dir()), artefacts_dir()), flush=True)
         return
     if list(argv) == ["rerange"]:
         print(_rerange_latest(), flush=True)

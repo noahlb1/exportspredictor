@@ -415,9 +415,33 @@ def uk_pair_coverage_limitations(metadata: dict, potential_range: dict | None) -
     }]
 
 
+def sizing_limitation(report: Mapping) -> dict | None:
+    """When the served model sizes UK Flows less well than the Naive Baseline: its Tweedie deviance on held-out UK
+    pairs in the test year against the Naive Baseline's, read from the report's `accuracy`, with the sentence every
+    surface shows. None when the report records no UK accuracy or the model's deviance is no higher."""
+    overall = ((report.get("accuracy") or {}).get("uk_out_of_fold") or {}).get("overall") or {}
+    model, naive = overall.get("model_tweedie_deviance"), overall.get("naive_tweedie_deviance")
+    if model is None or naive is None or model <= naive:
+        return None
+    ranks_better = (report.get("headline") or {}).get("beats_naive")
+    year = report.get("test_year", "the test year")
+    return {
+        "title": "Ranks UK Markets better than it sizes UK Flows" if ranks_better
+        else "Sizes UK Flows less well than the Naive Baseline",
+        "model_tweedie_deviance": model,
+        "naive_tweedie_deviance": naive,
+        "test_year": report.get("test_year"),
+        "text": f"On held-out UK pairs in {year}, the model's Tweedie deviance is {model:,.0f}, against {naive:,.0f} "
+        "for the Naive Baseline (lower is better): it estimates the size of UK Flows less well than that naive rule. "
+        "Trust rankings more than dollar values.",
+    }
+
+
 def result_limitations(metadata: dict, report: dict) -> list[dict]:
-    """The limitations an artefact's own results show: its headline, Lift, Event Backtest and sampling."""
-    limits = []
+    """The limitations an artefact's own results show: sizing first (`sizing_limitation`), then its headline, Lift,
+    Event Backtest and sampling. Where the sizing limitation applies, it replaces the headline's trade-off sentence."""
+    sizing = sizing_limitation(report)
+    limits = [sizing] if sizing else []
     headline = report.get("headline")
     if headline and headline.get("beats_naive") is False:
         limits.append({"title": "Does not beat a naive ranking for UK pairs",
@@ -433,11 +457,12 @@ def result_limitations(metadata: dict, report: dict) -> list[dict]:
             if blend else "Its value is mostly in the size of Export Potential, not its order."
         )
         narrow = headline["model"] - headline["naive"] < NARROW_MARGIN  # as the headline words the margin
-        limits.append({"title": "Only slightly better than a naive ranking for UK pairs" if narrow
-                       else "Ranks Markets better than it sizes them",
-                       "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
-                       f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share times "
-                       f"each Market's imports. {trade_off}"})
+        if narrow or not sizing:
+            limits.append({"title": "Only slightly better than a naive ranking for UK pairs" if narrow
+                           else "Ranks Markets better than it sizes them",
+                           "text": f"Within a Product, the model ranks UK Markets with a rank correlation of "
+                           f"{number_text(headline['model'], '.2f')}, against {number_text(headline['naive'], '.2f')} for the UK's market share times "
+                           f"each Market's imports." + ("" if sizing else f" {trade_off}")})
     lift = report.get("lift")
     if lift:
         limits.append({"title": "Large Export Gaps mostly mark large pairs",
