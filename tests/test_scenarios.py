@@ -143,7 +143,7 @@ def test_rebuilt_blocked_values_rewrite_the_model_card_and_re_read_the_ppml_comp
     assert rebuilt.ppml_benchmark["model"]["model_form"] == saved["model"]["model_form"]
     assert rebuilt.ppml_benchmark["ppml"] == saved["ppml"]
     card = (folder / "model_card.md").read_text(encoding="utf-8")
-    assert "version 20260102T000000Z" in card
+    assert "Artefact ID 20260102T000000Z" in card
     assert "## Blocked Opportunities" in card
 
 

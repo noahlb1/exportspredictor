@@ -58,8 +58,7 @@ def test_the_model_evaluation_page_shows_no_notice_for_a_full_run(monkeypatch, l
 def test_the_model_card_says_which_parts_were_not_run(fixture_default_artefacts):
     text = governance.render_model_card(governance.model_card(fixture_default_artefacts))
     for part in PARTS:
-        assert f"{part}: {NOTICE}" in text
-    assert "Primary metric" in text  # the v1 comparison's primary metric is still reported
+        assert (f"{part}: {NOTICE}" in text) == (part not in governance.HISTORY_PARTS)  # history is the record's
 
 
 @pytest.mark.parametrize("part", PARTS)

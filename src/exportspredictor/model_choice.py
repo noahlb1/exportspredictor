@@ -83,7 +83,7 @@ def round_count(metadata: dict) -> dict:
         return {"chosen_by": CHOSEN_ON_DEVIANCE, "rounds_chosen": chosen, "rounds": rounds,
                 "next_rounds": next_rounds, "text": (
             f"Disclosed deviation: the served models were trained for {number_text(rounds, ',')} rounds, the "
-            f"hyperparameter search's {number_text(chosen, ',')} (early stopping on Tweedie deviance, v2's count) "
+            f"hyperparameter search's {number_text(chosen, ',')} (early stopping on Tweedie deviance) "
             f"scaled by the ratio of training rows ({ratio}). Under ADR 0008 deviance should choose nothing. The "
             f"artefact was not rebuilt, so that the test year stays read once; the next rebuild uses {then}.")}
     return {"chosen_by": None, "rounds_chosen": None, "rounds": rounds, "next_rounds": next_rounds,
