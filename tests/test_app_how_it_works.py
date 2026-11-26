@@ -85,6 +85,20 @@ def test_what_it_produces_and_how_it_is_served_is_written_at_every_layer(open_pa
         assert fact in text, fact
 
 
+def test_how_the_model_is_checked_is_written_at_every_layer(open_page, fixture_api_url):
+    app = _open(open_page, fixture_api_url)
+    checked = len(OUTLINE["How the model is checked"])
+    start = len(OUTLINE["How the model is built"]) * len(LAYERS)
+    end = start + checked * len(LAYERS)
+
+    labels = [expander.label for expander in app.expander]
+    assert labels[start:end] == LAYERS * checked
+    text = " ".join(m.value for expander in app.expander[start:end] for m in expander.markdown)
+    for fact in ("five", "all its years", "validation year", "Test-year Ledger", "Spearman", "ties",
+                 "Naive Baseline", "monotone", "training range"):
+        assert fact in text, fact
+
+
 def test_every_layer_opens_and_is_short(open_page, fixture_api_url):
     app = _open(open_page, fixture_api_url)
 
