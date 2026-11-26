@@ -101,6 +101,13 @@ def test_the_rebuild_section_says_it_needs_an_nvidia_gpu_and_is_not_needed_to_ru
     assert "not needed to run the app" in start
 
 
+def test_the_rebuild_section_says_how_the_containers_pick_up_a_new_version_or_new_code():
+    section = _rebuild_section()
+    assert "read-only" in section and "podman compose restart api" in section
+    assert "pipeline rereach" in section and "format-3" in section
+    assert "podman compose up --build" in section
+
+
 def test_the_served_model_section_describes_the_blend_chosen_on_the_selection_measure():
     section = _section("The served model")
     assert "Blend" in section and "Selection Measure" in section

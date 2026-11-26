@@ -44,6 +44,19 @@ def test_fetch_writes_into_the_folder_the_api_serves(services):
     assert fetch["image"] == api["image"]
 
 
+def test_a_fresh_clone_has_the_artefacts_folder_the_services_mount_and_tracks_nothing_in_it(services):
+    """podman refuses to start a container whose bind-mount source is missing, so the folder must come
+    with the clone; the artefact versions fetched into it must stay untracked."""
+    sources = {volume.split(":", 1)[0] for service in services.values() for volume in service.get("volumes", [])}
+    assert sources == {"./artefacts"}
+    tracked = subprocess.run(
+        ["git", "ls-files", "artefacts"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert tracked == ["artefacts/.gitkeep"]
+    version = f"artefacts/{release.RELEASED_VERSION}/{store.METADATA_FILE}"
+    assert subprocess.run(["git", "check-ignore", "-q", "--no-index", version], cwd=REPO, check=False).returncode == 0
+
+
 def test_the_fetch_command_unpacks_a_release_into_the_artefacts_folder(services, fixture_artefacts_dir, tmp_path):
     """The fetch service's command, run here instead of in the container, with `--url` appended as
     `compose run --rm fetch --url URL` appends it."""
