@@ -42,7 +42,7 @@ If the app says the API is unavailable, check `podman compose logs api` and <htt
 - `api/`: the FastAPI service over the saved artefacts.
 - `app/`: the Streamlit app Advisors use.
 - `tests/`: the pytest suite, on a small fixture world.
-- `scripts/`: `rebuild.py` rebuilds every derived file and artefact (below); `research/` holds the scripts behind the research notes; `gpu_check.py` measured the GPU row budget (ADR 0004); `wt.ps1` runs a command in a git worktree against the main checkout's environment.
+- `scripts/`: `rebuild.py` rebuilds every derived file and artefact the model, the app and the notebook depend on (below); `research/` holds the scripts behind the research notes; `gpu_check.py` measured the GPU row budget (ADR 0004); `wt.ps1` runs a command in a git worktree against the main checkout's environment.
 - `docs/`: the decision records in [`adr/`](docs/adr/), the research notes in [`research/`](docs/research/README.md) and the Test-year Ledger, `test-year-ledger.csv`.
 - `.githooks/`: the pre-push hook (ruff, pyright and the suite).
 - Top-level files: [GLOSSARY.md](GLOSSARY.md) (the project's terms), [CODING_STANDARDS.md](CODING_STANDARDS.md) (the modelling guardrails, the rules for each folder and the hardware budget), `Containerfile` and `compose.yaml` (the containers), `pyproject.toml` and `uv.lock` (the environment) and the presentation.
@@ -83,7 +83,7 @@ uv run python scripts/rebuild.py --only notebook   # refresh the committed noteb
 
 The script downloads every source and builds the derived Parquet in `EXPORTSPREDICTOR_DATA_DIR`. It then makes every modelling choice on the 2022 validation year (the feature ablation, the learning curve and the hyperparameter search), and `python -m exportspredictor.pipeline` trains the v2 fold models, evaluates them on 2023 and saves a new artefact version (format 4) in `EXPORTSPREDICTOR_ARTEFACTS_DIR`. That version serves the Model Form the experiment loop chose (`python -m exportspredictor.loop`, whose saved results the pipeline reads and records), and the pipeline writes `model_card.md` into its folder. To add the PPML gravity benchmark, which the script does not run, `python -m exportspredictor.ppml` derives a new version from the newest one with the benchmark saved beside it and its model card rewritten (about 25 minutes on the CPU, no training, the 2023 Flows not read). Last, it runs the notebook on the real data and saves the outputs into the committed file. `--only notebook` runs that step alone, and it is the one way to refresh the committed outputs; rerun it after any edit to the notebook. The script stops at the first step that fails. Long steps cache their results under `data/derived/`, so a re-run resumes rather than starting again.
 
-The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild.py). The times are from the machine in [CODING_STANDARDS.md's hardware budget](CODING_STANDARDS.md#hardware-budget).
+The steps are one ordered list, `STEPS`, in [scripts/rebuild.py](scripts/rebuild.py). The final round's experiments are not among them: they were run once, every idea was dropped, and the served model does not depend on them. The notebook reads their saved results, and [docs/research/final-round-2022.md](docs/research/final-round-2022.md) records the command behind each one. The times are from the machine in [CODING_STANDARDS.md's hardware budget](CODING_STANDARDS.md#hardware-budget).
 
 | Step | What it runs and what it costs |
 | --- | --- |
