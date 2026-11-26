@@ -5,14 +5,18 @@ A ticket that cleans a surface enrols it in `SURFACES`: a name and a function re
 surface's text as a reader or client sees it, built on the fixture.
 """
 
+import json
 from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from exportspredictor import governance
-from exportspredictor.product_surface import banned_terms
+from exportspredictor.product_surface import banned_terms, notebook_text
+
+MAIN_NOTEBOOK = Path(__file__).resolve().parents[1] / "notebooks" / "exports_predictor.ipynb"
 
 _requests: list[pytest.FixtureRequest] = []
 
@@ -31,6 +35,11 @@ def fixture(name: str):
 
 def _model_card() -> str:
     return governance.render_model_card(governance.model_card(fixture("fixture_artefacts")))
+
+
+def _main_notebook() -> str:
+    """The main notebook as committed: its prose and the outputs saved from the real artefact."""
+    return notebook_text(json.loads(MAIN_NOTEBOOK.read_text(encoding="utf-8")))
 
 
 def _api(path: str) -> Callable[[], str]:
@@ -68,6 +77,7 @@ APP_PAGES = {
 # Enrolment point: (surface name, collector returning its text).
 SURFACES: list[tuple[str, Callable[[], str]]] = [
     ("model card", _model_card),
+    ("main notebook", _main_notebook),
     ("API /evaluation", _api("/evaluation")),
     ("API /health", _api("/health")),
     ("API /how-it-works", _api("/how-it-works")),
@@ -106,6 +116,31 @@ def test_data_source_release_names_pass():
 
 def test_a_dotted_name_that_is_not_a_release_tag_is_found():
     assert banned_terms("v1.2 and v2.0") == ["v1.2", "v2.0"]
+
+
+def test_a_notebook_s_text_is_its_prose_and_what_its_outputs_show():
+    notebook = {"cells": [
+        {"cell_type": "markdown", "source": ["## 5. How the model ", "was chosen"]},
+        {"cell_type": "code", "source": "summary['beats_v2']", "outputs": [
+            {"output_type": "stream", "text": ["Printed ", "line\n"]},
+            {"output_type": "execute_result", "data": {
+                "text/plain": "shape: (1, 1)",
+                "text/html": ["<table><tr><td>&quot;model", " alone&quot;</td></tr></table>"],
+                "text/markdown": "*Lift: not run for this version.*",
+                "image/svg+xml": '<svg><metadata><dc:title>Matplotlib v3.11.2</dc:title></metadata>'
+                                 '<text x="1">Naive Baseline, every Market</text></svg>',
+            }},
+        ]},
+    ]}
+
+    text = notebook_text(notebook)
+
+    for shown in ("## 5. How the model was chosen", "Printed line", "shape: (1, 1)", '"model alone"',
+                  "*Lift: not run for this version.*", "Naive Baseline, every Market"):
+        assert shown in text, shown
+    # Code is not prose, and a chart's drawing-library stamp is not something a reader sees.
+    assert "beats_v2" not in text
+    assert "Matplotlib" not in text
 
 
 def test_history_phrases_are_found_across_case_plurals_and_line_breaks():
