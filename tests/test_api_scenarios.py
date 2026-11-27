@@ -574,6 +574,31 @@ def test_scenario_drill_down_market_must_be_known(client):
     assert client.post("/scenarios", json={"preset": "cptpp", "market": "ZZZ"}).status_code == 422
 
 
+def test_scenario_top_pairs_can_be_asked_for_one_product(client):
+    everywhere = client.post("/scenarios", json={"add_agreements": ["IND"]}).json()
+    last = everywhere["top_pairs"][-1]  # the smallest effect: a limit of 1 alone would leave it out
+    asked = {"add_agreements": ["IND"], "limit": 1, "market": "IND", "product": last["hs6"]}
+
+    body = client.post("/scenarios", json=asked).json()
+
+    assert body["top_pairs"] == [last]
+    assert body["product"] == last["hs6"] and everywhere["product"] is None
+    assert body["total"] == everywhere["total"]  # the totals are unchanged
+    # A Product the Scenario leaves unchanged in that Market has no pair.
+    assert client.post("/scenarios", json={**asked, "market": "JPN"}).json()["top_pairs"] == []
+
+
+def test_scenario_drill_down_product_must_be_known_and_not_excluded(client):
+    excluded = next(row["hs6"] for row in client.get("/products/excluded").json())
+
+    unknown = client.post("/scenarios", json={"preset": "cptpp", "product": "000000"})
+    left_out = client.post("/scenarios", json={"preset": "cptpp", "product": excluded})
+
+    assert unknown.status_code == left_out.status_code == 422
+    assert unknown.json()["detail"] == "Unknown Product: 000000"
+    assert "Excluded Product" in left_out.json()["detail"]
+
+
 def test_the_thresholds_read_is_gone(client):
     # Nothing to read: the thresholds are fixed, and every response applying them states them (ADR 0012).
     assert client.get("/scenarios/thresholds").status_code == 404
