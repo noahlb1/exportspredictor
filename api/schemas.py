@@ -758,6 +758,10 @@ class ScenarioRequest(ScenarioIn):
 
     limit: int = Field(50, ge=1, le=1000, description="Rows returned in each list")
     market: str | None = Field(None, description="Drill-down: top pairs of this Market (ISO3) only")
+    product: str | None = Field(
+        None,
+        description="Drill-down: top pairs of this Product (HS6 code, 2012 edition) only; 422 if unknown or Excluded",
+    )
 
 
 class EffectTotals(BaseModel):
@@ -844,12 +848,13 @@ class ScenarioResponse(BaseModel):
     scenario: ScenarioIn
     thresholds: Thresholds
     market: str | None  # the drill-down Market `top_pairs` is limited to, if any
+    product: str | None  # and the drill-down Product (HS6), if any
     changes_nothing: bool
     summary: str  # one associational sentence
     total: EffectTotals  # over the pairs the Scenario changes
     markets: list[MarketEffect]  # every changed Market, largest effect first
     products: list[ProductEffect]  # top Products by effect
-    top_pairs: list[PairEffect]  # top Product–Market pairs by effect (of `market` only, if given)
+    top_pairs: list[PairEffect]  # top Product–Market pairs by effect (of `market` and `product` only, if given)
     # The Scenario adds a Trade Agreement with a Market that has none in force in the Baseline year (ADR 0012). Only then
     # does it have Blocked Opportunities: those of the Markets it adds one with, as `/opportunities/blocked` serves them
     # (read from the precomputed Blocked Opportunity table, not from this Scenario's own Scenario Effects), with the

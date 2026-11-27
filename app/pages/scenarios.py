@@ -23,6 +23,10 @@ test can set it as a click does: `scenario_market` (ISO3; the top Market when un
 drill-down, `scenario_drill_pair` (`{"hs6", "iso3"}`) and `scenario_blocked_pair` ((HS6, ISO3), as on the Blocked
 Opportunities page) open a pair's box under that table; no pair is selected until one is clicked.
 
+The drill-down lists the Market's top pairs only, so a Product search above it (`app.filters.product_search`, as in
+the ranking pages' sidebars) asks for one Product instead: its pair's box replaces the table, or a line says the
+Scenario does not change that pair.
+
 The page words nothing about a result: the summary, the raised/lowered line (`tariff_directions`) and the Blocked
 Opportunity prose (`blocked_note`: the section's caption or the neutral line, each stating the fixed rule) come from
 the API, worded in `exportspredictor.scenarios`.
@@ -35,6 +39,7 @@ import pandas as pd
 import streamlit as st
 
 from app import client, panel
+from app.filters import product_search
 from app.format import format_change, format_usd, tariff_text
 from app.frame import page
 from app.tables import (
@@ -70,6 +75,7 @@ DRILL_DOWN_ROWS = 50
 MARKET = "scenario_market"
 DRILL_PAIR = "scenario_drill_pair"
 BLOCKED_PAIR = "scenario_blocked_pair"
+PRODUCT_KEY_PREFIX = "scenario_"  # the drill-down's Product search: `scenario_product_query`, `scenario_product`
 LEADERBOARD = "pages/leaderboard.py"
 BLOCKED_PAGE = "pages/blocked_opportunities.py"
 ADD_PARAM = "add"  # URL parameter: ISO3 codes, comma-separated, to add a Trade Agreement with (`prefill`)
@@ -89,13 +95,13 @@ def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str
     """The Scenario controls; returns the request body they describe. There are no threshold controls: the Blocked
     Opportunity thresholds are fixed (ADR 0012)."""
     preset_info = {preset["name"]: preset for preset in presets}
-    kind = st.radio("Scenario", [PRESET, CUSTOM, TARIFF], key="kind", horizontal=True)
+    kind = st.radio("Scenario", [PRESET, CUSTOM, TARIFF], key="kind", persist_state="session", horizontal=True)
     if kind == PRESET:
         preset = st.selectbox(
             "Trading Bloc preset",
             list(preset_info),
             format_func=lambda name: preset_info[name]["title"],
-            key="preset",
+            key="preset", persist_state="session",
         )
         st.caption(preset_info[preset]["description"])
         body: dict = {"preset": preset}
@@ -106,22 +112,22 @@ def builder(presets: list[dict], market_names: dict[str, str], sectors: dict[str
             f"restores the Market's {labels()['last_tariff_year']} standard (most-favoured-nation, MFN) rate."
         )
         tariff_markets = st.multiselect(
-            "Markets that charge the tariff", list(market_names), format_func=market_names.get, key="tariff_markets"
+            "Markets that charge the tariff", list(market_names), format_func=market_names.get, key="tariff_markets", persist_state="session"
         )
-        rate = st.number_input("Applied Tariff, %", min_value=0.0, value=10.0, step=1.0, key="tariff_rate")
+        rate = st.number_input("Applied Tariff, %", min_value=0.0, value=10.0, step=1.0, key="tariff_rate", persist_state="session")
         chosen = st.multiselect(
             "Sectors; leave empty for every Sector",
             list(sectors),
             format_func=lambda code: f"{sectors[code]} ({code})",
-            key="tariff_sectors",
+            key="tariff_sectors", persist_state="session",
         )
         body = {"tariff": {"markets": tariff_markets, "rate_pct": rate, "sectors": chosen or None}}
     else:
         add = st.multiselect(
-            "Add a Trade Agreement with", list(market_names), format_func=market_names.get, key="add"
+            "Add a Trade Agreement with", list(market_names), format_func=market_names.get, key="add", persist_state="session"
         )
         remove = st.multiselect(
-            "Remove the Trade Agreement with", list(market_names), format_func=market_names.get, key="remove"
+            "Remove the Trade Agreement with", list(market_names), format_func=market_names.get, key="remove", persist_state="session"
         )
         body = {"add_agreements": add, "remove_agreements": remove}
     return body | {"limit": ROWS}
@@ -283,14 +289,24 @@ def show_result(result: dict, shown: str, market_names: dict[str, str]) -> None:
 
     st.subheader(f"Pairs most affected in {market_names.get(iso3, iso3)}")
     # Ask for this Market's own most affected pairs: those of every Market together can leave a smaller Market out.
-    drill_body = {**json.loads(shown), "market": iso3, "limit": DRILL_DOWN_ROWS}
+    st.caption(f"The table lists at most {DRILL_DOWN_ROWS} pairs. Search for a Product to see its pair, however small.")
+    with st.columns([1, 1])[0]:
+        hs6, _ = product_search(PRODUCT_KEY_PREFIX)
+    drill_body = {**json.loads(shown), "market": iso3, "limit": DRILL_DOWN_ROWS} | ({"product": hs6} if hs6 else {})
     try:
         drilled = run_scenario(json.dumps(drill_body, sort_keys=True), client.api_url())
     except (client.InvalidRequest, client.ApiUnavailable) as error:
-        st.error(f"This Market's pairs did not load: {error}")
+        if hs6 and isinstance(error, client.InvalidRequest):
+            st.info(str(error))  # an Excluded Product, with its reason
+        else:
+            st.error(f"This Market's pairs did not load: {error}")
     else:
-        drill_key = f"drill_{run_key}_{iso3}"
-        pair_table(drilled["top_pairs"], DRILL_PAIR, drill_key, year)
+        if hs6 is None:
+            pair_table(drilled["top_pairs"], DRILL_PAIR, f"drill_{run_key}_{iso3}", year)
+        elif drilled["top_pairs"]:
+            pair_box(drilled["top_pairs"][0])  # a Product and a Market are one pair
+        else:
+            st.info(f"This Scenario does not change Product {hs6} in {market_names.get(iso3, iso3)}.")
 
     st.subheader("Top Products gaining")
     product_table = effects(result["products"], {"description": "Product"})

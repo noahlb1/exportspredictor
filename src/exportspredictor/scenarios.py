@@ -283,6 +283,15 @@ class ScenarioResult:
         only then does it show Blocked Opportunities, those of `added_agreements` (ADR 0012)."""
         return bool(self.added_agreements)
 
+    def pairs_of(self, *, iso3: str | None = None, hs6: str | None = None) -> pl.DataFrame:
+        """`pairs` of one Market, one Product or both (at most one pair), largest effect first; all when neither."""
+        chosen = self.pairs
+        if iso3 is not None:
+            chosen = chosen.filter(pl.col("iso3") == iso3)
+        if hs6 is not None:
+            chosen = chosen.filter(pl.col("hs6") == hs6)
+        return chosen
+
     def by_market(self) -> pl.DataFrame:
         """Baseline, Scenario and effect totals per Market, largest effect first."""
         return _totals(self.pairs, "iso3")

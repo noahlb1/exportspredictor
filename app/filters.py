@@ -259,7 +259,7 @@ def leaderboard_filters() -> Filters:
     _start(url_params, defaults)
     with st.sidebar:
         st.header("Filters")
-        product, found = _product_search()
+        product, found = product_search()
         market, region = _market_and_region()
         sector, sectors = _sector()
         opportunity_type = st.selectbox(
@@ -338,7 +338,7 @@ def blocked_filters() -> Filters:
     _start(url_params, defaults, BLOCKED_KEY_PREFIX)
     with st.sidebar:
         st.header("Filters")
-        product, found = _product_search(BLOCKED_KEY_PREFIX)
+        product, found = product_search(BLOCKED_KEY_PREFIX)
         sector, sectors = _sector(BLOCKED_KEY_PREFIX)
         markets = fetch("/markets", client.api_url())
         region = st.selectbox(
@@ -418,7 +418,7 @@ def show_all(pairs: int) -> bool:
     return False
 
 
-def _product_search(prefix: str = "") -> tuple[str | None, bool]:
+def product_search(prefix: str = "") -> tuple[str | None, bool]:
     """Search Products by HS6 code or words and choose one: the chosen HS6 code (or None), and whether any matched.
 
     Excluded Products are found and marked; choosing one makes the ranking read answer with its reason.

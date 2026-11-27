@@ -163,6 +163,19 @@ def test_a_line_says_when_the_controls_differ_from_the_result_shown(monkeypatch,
     assert not _stale(page)
 
 
+def test_the_builder_and_its_result_are_kept_across_a_visit_to_another_page(monkeypatch, api_url):
+    page = _run_india(monkeypatch, api_url)
+    tables = len(page.dataframe)
+
+    page.switch_page("pages/leaderboard.py").run()
+    page.switch_page(SCENARIOS).run()
+
+    assert not page.exception
+    assert page.radio(key="kind").value == "Custom Trade Agreements"
+    assert page.multiselect(key="add").value == ["IND"]
+    assert len(page.dataframe) == tables and not _stale(page)
+
+
 def test_the_top_market_drives_the_drill_down_on_open(monkeypatch, api_url):
     top = httpx.post(f"{api_url}/scenarios", json={"preset": "cptpp", "limit": 100}).json()["markets"][0]
 
@@ -218,6 +231,38 @@ def test_a_selected_pair_shows_its_box_with_a_link_to_the_leaderboard(monkeypatc
     assert pair["description"] in _page_text(page)
     assert any("Scenario Effect" in label for label in labels)
     assert {"Tariff, Baseline", "Tariff, Scenario"} <= set(labels)
+
+
+def test_a_product_search_shows_that_products_pair_in_place_of_the_table(monkeypatch, api_url):
+    pair = httpx.post(f"{api_url}/scenarios", json={**INDIA, "market": "IND"}).json()["top_pairs"][-1]
+
+    page = _run_india(monkeypatch, api_url)
+    tables = len(page.dataframe)
+    page.text_input(key="scenario_product_query").set_value(pair["hs6"]).run()
+
+    assert not page.exception
+    assert len(page.dataframe) == tables - 1  # the pair's box stands in for the drill-down table
+    [link] = _pair_links(page)
+    assert sorted(link.proto.query_string.split("&")) == sorted([f"product={pair['hs6']}", "market=IND"])
+    assert pair["description"] in _page_text(page)
+
+    page.text_input(key="scenario_product_query").set_value("").run()
+    assert len(page.dataframe) == tables and not _pair_links(page)
+
+
+def test_a_product_search_says_when_the_scenario_leaves_the_pair_unchanged(monkeypatch, api_url):
+    # A tariff on Japan's beverages (Sector 22) only: cars to Japan are not changed.
+    cars = "870323"
+    page = _scenarios_page(monkeypatch, api_url)
+    page.radio(key="kind").set_value("Tariff change").run()
+    page.multiselect(key="tariff_markets").set_value(["JPN"]).run()
+    page.multiselect(key="tariff_sectors").set_value(["22"]).run()
+    page.button(key="run").click().run()
+    page.text_input(key="scenario_product_query").set_value(cars).run()
+
+    assert not page.exception
+    assert not _pair_links(page)
+    assert f"does not change Product {cars} in Japan" in _page_text(page)
 
 
 def test_a_remembered_pair_not_in_the_rows_shows_no_box(monkeypatch, api_url):

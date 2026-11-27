@@ -422,6 +422,10 @@ def create_app(
         if request.market is not None and artefacts.markets.filter(pl.col("iso3") == request.market).is_empty():
             raise HTTPException(status_code=422, detail=f"Unknown Market: {request.market}")
         try:
+            _check_product(artefacts, request.product)
+        except HTTPException as error:  # a read's 404 is this request's invalid field
+            raise HTTPException(status_code=422, detail=error.detail) from error
+        try:
             result = scenarios.run(
                 artefacts.baseline_features,
                 artefacts.baseline,
@@ -565,13 +569,16 @@ def scenario_response(
     markets = artefacts.markets.select("iso3", market="name")
     products = artefacts.products.select("hs6", "description")
     caveats = artefacts.baseline.select("hs6", "iso3", *(column for tier in tiers for column in tier.columns))
-    pairs = (
-        with_baseline_actual_exports(result.pairs, artefacts.history, artefacts.baseline_year)
+    top = (
+        with_baseline_actual_exports(
+            result.pairs_of(iso3=request.market, hs6=request.product).head(request.limit),
+            artefacts.history,
+            artefacts.baseline_year,
+        )
         .join(markets, on="iso3", how="left", maintain_order="left")
         .join(products, on="hs6", how="left", maintain_order="left")
         .join(caveats, on=["hs6", "iso3"], how="left", maintain_order="left")
     )
-    top = pairs if request.market is None else pairs.filter(pl.col("iso3") == request.market)
     total = result.total()
     raised, lowered = result.tariff_directions() or (None, None)
     # One source (ADR 0012): a Scenario adding a Trade Agreement where none is in force lists the Blocked
@@ -592,6 +599,7 @@ def scenario_response(
         scenario=ScenarioIn.model_validate(asdict(result.scenario)),
         thresholds=Thresholds(),
         market=request.market,
+        product=request.product,
         changes_nothing=result.changes_nothing,
         summary=result.summary(year=artefacts.baseline_year),
         total=total,
@@ -600,7 +608,7 @@ def scenario_response(
         .head(request.limit)
         .join(products, on="hs6", how="left", maintain_order="left")
         .to_dicts(),
-        top_pairs=top.head(request.limit).to_dicts(),
+        top_pairs=top.to_dicts(),
         adds_agreement=result.adds_agreement,
         blocked_opportunities=blocked,
         blocked_count=blocked_count,
