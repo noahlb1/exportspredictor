@@ -62,7 +62,6 @@ The model trains on the top 100 Exporters into every Market, leaves out Excluded
 | [CODING_STANDARDS.md](CODING_STANDARDS.md) | The modelling guardrails, the rules for each folder and the hardware budget. |
 | `Containerfile`, `compose.yaml` | The containers. |
 | `pyproject.toml`, `uv.lock` | The environment. |
-| `UK_Exports_Predictor_presentation.pptx` | The presentation. |
 
 `data/` is not tracked, and `artefacts/` holds only a placeholder: the fetch fills `artefacts/`, and the rebuild makes both.
 
