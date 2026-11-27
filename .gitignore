@@ -29,3 +29,6 @@ ML_AI_Concept_Notes.html
 
 # Crash dumps from Git Bash tools
 *.stackdump
+
+# Presentation decks: kept locally, not published
+*.pptx
